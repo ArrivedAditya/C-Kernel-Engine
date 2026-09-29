@@ -1384,11 +1384,125 @@ make test-native-session-v8</pre>
     <p style="margin-bottom: 0;" class="mini-note">Nightly row: <code>v8 Serve Localhost E2E</code> (10 min total limit, including reserved cleanup time). The target first runs model-free validator regressions, then the real localhost path. Failure artifacts are uploaded from <code>build/v8_serve_e2e_last_failure/</code>.</p>
 </div>
 
+<div class="card" id="converted-jinja-serving">
+    <h3 style="margin-top: 0;">Converted Jinja Serving Contract</h3>
+    <p>
+        GGUF conversion writes <code>chat_template.jinja</code> beside the generated runtime;
+        safetensors conversion stages its tokenizer template assets. The live server loads the
+        selected sidecar, renders the conversation with Jinja, and passes that raw prompt to
+        the native tokenizer. A separate <code>tool_protocol.json</code> declares how tool output
+        is parsed and binds the protocol to the selected template's SHA-256. An unreadable
+        sidecar, empty render, or stale hash is an error, not a reason to silently switch
+        prompt formats.
+    </p>
+    <p>
+        A cached GGUF conversion can recover a missing native sidecar by reading only GGUF
+        metadata. It rejects a sidecar whose bytes differ from the source. Serving a complete
+        converted bundle with <code>--no-build</code> needs no source GGUF, download, or conversion.
+        Keep the generated libraries, BUMP weights, tokenizer, template sidecars, and manifest
+        together when moving the bundle.
+    </p>
+    <p>
+        Normal serving requires a nonempty <code>chat_template.jinja</code> before opening the
+        native session. To intentionally serve untemplated raw prompts, set both
+        <code>--no-chat-template</code> and <code>--allow-raw-prompt</code>. Serving overrides use
+        <code>--chat-template-file PATH</code> or <code>--chat-template-inline SOURCE</code>;
+        the ambiguous <code>--chat-template</code> option is rejected by the serve command.
+        An override replaces the native template and all tool variants. An existing
+        <code>tool_protocol.json</code> must match that effective template or startup fails.
+        String tool arguments preserve their payload whitespace; the native Qwen XML form
+        removes only one paired framing newline. Unsupported tool-schema forms fail before
+        generation, while supported arguments are checked against their declared schema.
+    </p>
+    <p>
+        The cached Qwen3.8 Q4_K_M runtime has a known native-template tokenizer mismatch:
+        its tool delimiter is split into ordinary CKE tokens while the upstream tokenizer uses
+        one special token. That numerical gap remains open. A separate Ryzen probe with the
+        publisher Jinja and native <code>qwen_xml</code> output protocol nevertheless completed
+        a Qwen Code <code>read_file</code> continuation and an HTML <code>read_file</code> →
+        <code>edit</code> task using the harness's ordinary system prompt. The compatibility
+        template installation path has therefore been retired; its bytes are retained only as
+        a legacy protocol test fixture. The <code>qwen38.json</code> circuit owns
+        an explicit <code>serving.profile_ref</code> to this reusable profile. Bundle construction
+        resolves the selected variant together with imported publisher assets, then packages
+        content-addressed templates and circuit/profile snapshots in the deployment bundle.
+        The server reads only that bundle's <code>serving.json</code> and assets; it never searches
+        repository profiles or <code>server/templates/</code> at request time.
+        Publisher templates are the shipped profile's only variant. Task success does not
+        certify exact native token IDs, cancellation recovery, or compatibility with other artifacts.
+    </p>
+    <p>
+        A separate native-BPE input limit once reduced a 33,379-byte Qwen Code tool prompt
+        to 304 CKE tokens instead of the independent GGUF tokenizer's 7,773 tokens. A rebuilt
+        model, engine, and tokenizer matched all 7,773 IDs and completed a cached
+        <code>read_file</code> and tool-result continuation. Rebuild those three libraries
+        together; replacing only the tokenizer under an older generated model is unsafe.
+        The declared <code>qwen_code_xml_raw_v2</code> protocol accepts a short plain-text
+        introduction followed by one terminal XML envelope. It still rejects inline
+        examples, fenced XML, trailing text, and unadvertised tools. If a request sets
+        <code>parallel_tool_calls=false</code>, multiple invokes fail atomically; the server
+        does not forward the first call while dropping the rest.
+        Its delimited
+        parameter bodies preserve raw HTML and code for edit arguments; a literal
+        closing <code>&lt;/parameter&gt;</code> inside a value is outside this
+        compatibility protocol. The older <code>qwen_code_xml</code> protocol keeps its
+        strict whole-response XML/entity interpretation for existing bundles; opt in to v2
+        only for existing explicitly configured compatibility bundles. Legacy bundles without
+        <code>serving.json</code> retain their hash-bound <code>tool_protocol.json</code> path.
+        One cached Qwen Code run recovered from a
+        read-before-edit rejection, read the file, and applied a bounded HTML
+        edit in a disposable worktree. That does not certify general edit-and-test
+        reliability, cancellation recovery, or 262K actual input.
+    </p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>RUN_DIR=/path/to/dedicated/qwen38-generated-runtime
+# Explicit metadata upgrade of an existing, complete generated bundle.
+# Publisher assets are the default; no repository template installation is needed.
+python3 version/v8/scripts/resolve_serving_bundle_v8.py \
+  --run "$RUN_DIR" --circuit version/v8/circuits/qwen38.json
+version/v8/scripts/ck_serve_v8.py "$RUN_DIR" --run "$RUN_DIR" \
+  --no-build --model-name qwen38-27b-q4km --host 127.0.0.1 --port 8080</pre>
+    </div>
+    <p>
+        For a new chat bundle, <code>ck_run_v8.py run ... --generate-only --resolve-serving</code>
+        resolves the circuit profile after compilation. Normal chat serving requests this automatically.
+        Raw/token-ID builds do not require publisher chat assets; omit <code>--resolve-serving</code>
+        or build with <code>--no-chat-template</code>. Unsupported selections
+        fail explicitly. The circuit's publisher variant is the default. Safetensors
+        tokenizer configuration can supply embedded or named publisher templates; conflicts with
+        colocated Jinja files fail instead of choosing one silently. Startup validates template,
+        tokenizer, weights, configuration, layout, and generated-library hashes, so hashing large
+        weights is part of setup time. Rebuilding these assets requires explicit re-resolution.
+        Explicit upgrades verify the retained manifest → IR → generated C → runtime stamp chain
+        against the current bundle bytes. A matching model name alone is insufficient. Missing build
+        provenance requires a rebuild. Computational circuit changes are rejected; only changes confined
+        to the <code>serving</code> section may be allowed with <code>--allow-serving-update</code>.
+        A missing or invalid resolved asset never falls back to a legacy template. Raw serving skips
+        formatting but still validates a present resolved bundle and actual loaded libraries. Runtime template
+        overrides are rejected for resolved bundles. The sidecar marks certification
+        <code>NOT_TESTED</code>; dependency resolution alone is not a model/tool certification.
+    </p>
+    <p>
+        Run <code>make test-v8-serve-native-jinja</code> for the deterministic sidecar-loader,
+        Jinja-renderer, request/continuation, hash, and render-failure contract. The nightly
+        <code>v8 Serve Localhost E2E</code> also requires the converted Jinja sidecar in a real
+        Qwen3-0.6B generated-model request. The pinned Qwen3.8 contract uses scripted model
+        output; its green result does not certify Qwen3.8 token IDs or generated tool calls.
+        Cached Ryzen Qwen Code 0.24.6 runs completed server-issued <code>read_file</code> and
+        bounded <code>read_file</code> → <code>edit</code> calls through this variant. A
+        <code>write_file</code> request was rejected because that tool was absent from the
+        client's advertised tool set. File creation and native-template prompt-token parity
+        remain open.
+    </p>
+</div>
+
 <div class="card">
     <h3 style="margin-top: 0;">Qwen Code Interactive And Overnight Profiles</h3>
     <p>
-        The historical validated pilot connects Qwen Code 0.21.5 to the Chat Completions compatibility route
-        backed by the native Responses server. It uses the pinned Qwen3.8 27B Q4_K_M artifact and a
+        A cached Qwen Code 0.24.6 <code>read_file</code> task passed through the Responses server
+        using the dedicated Jinja tool-use bundle above. The earlier 0.21.5 pilot used the
+        Chat Completions compatibility route. Both use the pinned Qwen3.8 27B Q4_K_M artifact and a
         generated runtime with at least 16K context. Repository-owned settings separate short
         interactive work from large overnight artifact generation without replacing the user's
         <code>~/.qwen/settings.json</code>.
@@ -1401,7 +1515,6 @@ version/v8/scripts/cks-v8-run serve \
   --run /path/to/qwen38-agent-runtime \
   --context-len 16384 \
   --force-compile \
-  --tool-protocol qwen_xml \
   --model-name qwen38-27b-q4km</pre>
     </div>
     <div class="cmd-block">
@@ -1412,6 +1525,7 @@ OPENAI_MODEL=qwen38-27b-q4km \
 QWEN_CODE_MAX_OUTPUT_TOKENS=2048 \
 QWEN_CODE_SYSTEM_SETTINGS_PATH="$PWD/server/qwen-code/interactive.settings.json" \
 qwen --bare \
+  --auth-type openai-responses \
   --system-prompt 'Use read_file exactly once when asked, then answer without another tool call.' \
   --allowed-tools read_file \
   --exclude-tools edit,notebook_edit,run_shell_command,get_goal,update_goal \
@@ -1426,6 +1540,7 @@ OPENAI_MODEL=qwen38-27b-q4km \
 QWEN_CODE_MAX_OUTPUT_TOKENS=32768 \
 QWEN_CODE_SYSTEM_SETTINGS_PATH="$PWD/server/qwen-code/overnight.settings.json" \
 qwen --bare \
+  --auth-type openai-responses \
   --allowed-tools read_file \
   --exclude-tools edit,notebook_edit,run_shell_command,get_goal,update_goal \
   --max-wall-time 18h \
@@ -1435,16 +1550,19 @@ qwen --bare \
   &gt; /path/to/task-events.jsonl</pre>
     </div>
     <p style="margin-bottom: 0;" class="mini-note">
-        The explicit <code>qwen_xml</code> protocol matches the inspected Qwen3.8 template's
-        <code>&lt;function=...&gt;</code> and <code>&lt;parameter=...&gt;</code> tool-call format.
+        The native template's <code>qwen_xml</code> protocol matches its
+        <code>&lt;tool_call&gt;</code> form. The compatibility sidecar above instead declares
+        <code>qwen_code_xml</code> for the two XML forms observed in Qwen Code 0.24.6.
         Other converted bundles must select their own actual protocol. A hash-bound
         <code>tool_protocol.json</code> sidecar can carry this selection; a stale template hash
         fails startup. Tool-bearing streams keep the connection alive and publish parsed calls
         only after validation. The source GGUF is unnecessary for <code>--no-build</code> serving
-        when the generated bundle and sidecars are retained.
+        when the generated bundle and sidecars are retained. The first command builds the runtime;
+        stop it, install the dedicated Jinja variant as shown above, then restart with
+        <code>--no-build</code> before giving Qwen Code a tool task.
     </p>
     <p style="margin-bottom: 0;" class="mini-note">
-        Qwen Code 0.21.5 ignores <code>--core-tools</code> in bare mode, so these commands explicitly
+        Qwen Code bare mode ignores <code>--core-tools</code>, so these commands explicitly
         remove unused bare-mode tools. The interactive profile uses 16K context and a 2K output
         allowance. The overnight profile requires a 256K generated runtime, advertises that capacity
         to the client, and reserves up to 32K output tokens. It does not add mid-generation resume,

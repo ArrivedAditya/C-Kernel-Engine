@@ -444,6 +444,8 @@ SRCS    := src/backend_native.c \
             src/kernels/layout_kernels.c \
             src/kernels/gemm_microkernel.c \
 	           src/kernels/layernorm_kernels.c \
+	           src/kernels/layernorm_rows_checked.c \
+	           src/kernels/gelu_rows_tanh_checked.c \
 	           src/kernels/layernorm_kernels_bf16.c \
 	           src/kernels/gelu_kernels.c \
 	           src/kernels/geglu_kernels.c \
@@ -1390,6 +1392,10 @@ test-server-schema:
 test-v8-serve-localhost-e2e:
 	$(PYTHON) $(PYTHONFLAGS) -m pytest -q tests/test_v8_serve_localhost_e2e.py
 	$(PYTHON) $(PYTHONFLAGS) version/v8/scripts/test_serve_localhost_e2e.py
+
+.PHONY: test-v8-serve-native-jinja
+test-v8-serve-native-jinja:
+	$(PYTHON) $(PYTHONFLAGS) -m pytest -q server/tests/test_native_qwen_jinja_contract.py server/tests/test_serving_bundle.py
 
 .PHONY: test-native-session-v8
 test-native-session-v8: $(BUILD_DIR)/libckernel_engine.so ck-cli-v8 ck-session-v8

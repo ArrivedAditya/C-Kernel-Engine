@@ -1,0 +1,231 @@
+{
+  "id": "gelu_rows_tanh_checked_f32",
+  "op": "gelu",
+  "operation_interface": "activation.gelu.tanh.rows.checked.fp32.v1",
+  "variant": "checked_legacy_scalar_tanh",
+  "selection": {
+    "status": "candidate",
+    "priority": 100,
+    "equivalence_group": "gelu_rows_tanh_checked_f32",
+    "phases": [
+      "prefill"
+    ]
+  },
+  "quant": {
+    "weight": "none",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {
+      "name": "input",
+      "dtype": "fp32",
+      "shape": [
+        "M",
+        "C"
+      ],
+      "layout": "row_major_strided",
+      "placement": "local",
+      "access": "read",
+      "storage_class": "activation",
+      "consumption": "required"
+    }
+  ],
+  "weights": [],
+  "outputs": [
+    {
+      "name": "output",
+      "dtype": "fp32",
+      "shape": [
+        "M",
+        "C"
+      ],
+      "layout": "row_major_strided",
+      "placement": "local",
+      "access": "write",
+      "storage_class": "activation",
+      "consumption": "required"
+    }
+  ],
+  "scratch": [
+    {
+      "name": "scratch",
+      "dtype": "fp32",
+      "shape": [
+        "Q"
+      ],
+      "layout": "contiguous",
+      "placement": "local",
+      "access": "read_write",
+      "storage_class": "scratch",
+      "consumption": "required",
+      "lifetime": "kernel_call",
+      "alignment": 4,
+      "desc": "Caller-owned staged output; Q must cover rows*channels.",
+      "size_bytes": "4 * Q",
+      "size_resolution": "required"
+    }
+  ],
+  "dims": [
+    "input_elements",
+    "input_stride",
+    "output_elements",
+    "output_stride",
+    "scratch_elements",
+    "rows",
+    "channels"
+  ],
+  "constraints": {
+    "notes": "Positive rows/channels, checked physical spans and capacities; no aliasing of output/scratch with accessed read buffers. Input row padding is ignored; output padding unchanged. All valid inputs/results finite. Rejection leaves output unchanged. No internal allocation."
+  },
+  "impl": {
+    "function": "gelu_rows_tanh_checked_f32",
+    "c_declaration": "int gelu_rows_tanh_checked_f32(const float *input, size_t input_elements, size_t input_stride, float *output, size_t output_elements, size_t output_stride, float *scratch, size_t scratch_elements, size_t rows, size_t channels);",
+    "sources": [
+      "src/kernels/gelu_rows_tanh_checked.c",
+      "src/kernels/gelu_kernels.c",
+      "src/ckernel_strict.c",
+      "src/ck_threadpool.c"
+    ]
+  },
+  "modes": {
+    "inference": true,
+    "training": false,
+    "backward": false
+  },
+  "call_constant_contract": {
+    "shape_symbols": {
+      "M": "gelu_rows",
+      "C": "gelu_channels",
+      "Q": "gelu_scratch_elements"
+    },
+    "buffer_spans": [
+      {
+        "pointer": "input",
+        "elements": "gelu_input_elements",
+        "stride": "gelu_input_stride",
+        "physical_row_stride": true,
+        "rows": "gelu_rows",
+        "width": "gelu_channels",
+        "element_bytes": 4
+      },
+      {
+        "pointer": "output",
+        "elements": "gelu_output_elements",
+        "stride": "gelu_output_stride",
+        "physical_row_stride": true,
+        "rows": "gelu_rows",
+        "width": "gelu_channels",
+        "element_bytes": 4
+      },
+      {
+        "pointer": "scratch",
+        "elements": "gelu_scratch_elements",
+        "rows": "gelu_scratch_elements",
+        "width": 1,
+        "element_bytes": 4
+      }
+    ]
+  },
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {
+        "name": "input",
+        "source": "activation:input",
+        "cast": "const float*",
+        "ports": [
+          "input:input"
+        ]
+      },
+      {
+        "name": "input_elements",
+        "source": "runtime:gelu_input_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "input_stride",
+        "source": "runtime:gelu_input_stride",
+        "value_type": "size_t"
+      },
+      {
+        "name": "output",
+        "source": "output:output",
+        "cast": "float*",
+        "ports": [
+          "output:output"
+        ]
+      },
+      {
+        "name": "output_elements",
+        "source": "runtime:gelu_output_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "output_stride",
+        "source": "runtime:gelu_output_stride",
+        "value_type": "size_t"
+      },
+      {
+        "name": "scratch",
+        "source": "scratch:scratch",
+        "cast": "float*"
+      },
+      {
+        "name": "scratch_elements",
+        "source": "runtime:gelu_scratch_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "rows",
+        "source": "runtime:gelu_rows",
+        "value_type": "size_t"
+      },
+      {
+        "name": "channels",
+        "source": "runtime:gelu_channels",
+        "value_type": "size_t"
+      }
+    ]
+  },
+  "numerical_capabilities": [
+    {
+      "contract_id": "gelu_tanh_legacy_scalar_fp32_checked",
+      "status": "validated",
+      "phases": [
+        "prefill"
+      ],
+      "function": "gelu_rows_tanh_checked_f32",
+      "explicit_selector": true,
+      "implementation": {
+        "isa_dispatch": "scalar",
+        "threading": {
+          "runtime": "serial",
+          "work_partition": [
+            "independent_rows"
+          ],
+          "dispatch": [
+            "inline"
+          ],
+          "reduction_order_effect": "none"
+        }
+      },
+      "arithmetic": {
+        "partial_accumulator": "none",
+        "merge_order": "none",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false,
+        "split_strategy": "independent_outputs"
+      }
+    }
+  ],
+  "tests": {
+    "unit": [
+      "tests/test_v8_normalization_checked_oracle.py",
+      "tests/test_v8_normalization_checked_generated.py",
+      "tests/test_v8_kokoro_generated_albert_layer.py", "tests/test_v8_kokoro_generated_encoder.py"
+    ],
+    "oracle": "Pinned independent Kokoro/PyTorch 2.8 first-layer operation captures; live PyTorch at small widths and SIMD tails; bounds, padding, rejection and repeated calls"
+  },
+  "notes": "Checked adapter preserves the existing arithmetic. Independent native-versus-PyTorch contract uses a 1e-6 elementwise absolute bound for tanh GELU. The legacy function named gelu_exact_inplace implements tanh; erf is a different provider. Backward support is explicitly uncertified. Complete native model remains NOT_TESTED."
+}

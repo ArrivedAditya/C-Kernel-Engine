@@ -770,12 +770,16 @@ class AudioEncoderContractTests(unittest.TestCase):
             ROOT / ".github" / "requirements-nightly-constraints.txt"
         ).read_text(encoding="utf-8")
         self.assertIn("torch==2.12.1", constraints.splitlines())
+        historical_constraints = (
+            ROOT / ".github" / "requirements-nightly-torch28-constraints.txt"
+        ).read_text(encoding="utf-8")
+        self.assertIn("torch==2.8.0", historical_constraints.splitlines())
         workflow = (
             ROOT / ".github" / "workflows" / "nightly.yml"
         ).read_text(encoding="utf-8")
         dependency_installs = [
             line.strip()
-            for line in workflow.splitlines()
+            for line in workflow.replace("\\\n", " ").splitlines()
             if "pip install" in line and "--upgrade pip" not in line
         ]
         self.assertTrue(
@@ -785,10 +789,34 @@ class AudioEncoderContractTests(unittest.TestCase):
         self.assertTrue(
             all(
                 "-c .github/requirements-nightly-constraints.txt" in line
+                or '-c "$constraints"' in line
+                or "-c .github/requirements-nightly-torch28-constraints.txt" in line
                 for line in dependency_installs
             ),
             "every nightly dependency install must use the pinned constraints file",
         )
+        # Versioned references execute inside standard nightly, using literal
+        # pinned specs to bind the constraints variable; no standalone matrix.
+        self.assertIn(
+            "for spec in '28:2.8.0:.github/requirements-nightly-torch28-constraints.txt' "
+            "'212:2.12.1:.github/requirements-nightly-constraints.txt'; do",
+            workflow,
+        )
+        self.assertIn('IFS=: read -r tag version constraints <<< "$spec"', workflow)
+        self.assertIn('CKE_EXPECTED_TORCH_VERSION="$version"', workflow)
+        self.assertIn('CKE_ADALN_STAGE_REPORT="$reports/tts-adaln-reference-stages-${lane}.json"', workflow)
+        self.assertIn('settings+=(ATEN_CPU_CAPABILITY=default)', workflow)
+        self.assertIn('tests+=(tts_adaptive_layer_norm_reference)', workflow)
+        self.assertIn('tests=(tts_adaptive_layer_norm_live)', workflow)
+        self.assertIn('for lane in historical native default; do', workflow)
+        self.assertIn('--require-executed', workflow)
+        self.assertIn('exit "$oracle_status"', workflow)
+        self.assertNotIn('matrix.torch_version', workflow)
+        oracle_step = workflow.split('      - name: Run versioned numerical oracle environments inside nightly', 1)[1].split('      - name:', 1)[0]
+        self.assertIn("if: always() && github.event_name != 'pull_request'", oracle_step)
+        self.assertIn('run_case() { "$@" || oracle_status=1; }', oracle_step)
+        self.assertIn("--index-url https://download.pytorch.org/whl/cpu",
+                      workflow)
         parsed = nightly.parse_sub_tests(
             "audio_encoder_self_attention_equal "
             "max_diff=2.98e-08 tol=2.0e-06 [PASS]\n"

@@ -3,6 +3,99 @@
   "schema_version": 1,
   "engine_contract_version": "8",
   "contracts": {
+    "layernorm_rows_checked_fp32_ggml_chunked_contracted": {
+      "status": "validated",
+      "operator_family": "layernorm",
+      "storage": {
+        "input": "fp32",
+        "weight": "fp32",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "fp32",
+        "accumulator": "fp64",
+        "contraction": "enabled",
+        "evaluation_order": "ascending_channel_fp64_mean_sum_then_fp32_mean_then_fp32_centered_variance_compile_time_SSE_four_or_AVX2_eight_channel_chunks_or_scalar_then_fp64_ascending_chunk_merge_then_fp32_variance_scale_affine"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": ["reduction_finalize", "activation_intermediate_store", "reciprocal_sqrt", "affine_normalization", "output_store"]
+      },
+      "reduction": {
+        "kind": "normalization",
+        "order": "contract_defined_chunks",
+        "partial_accumulator": "fp32",
+        "merge_order": "ascending_chunk"
+      },
+      "threading": {
+        "work_partition": "independent_rows",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Checked strided-row adapter for the existing layernorm_fp32_ggml_chunked_contracted arithmetic. Capacity validation and staged caller-owned scratch preserve output on rejection. Independent PyTorch contract is 1e-5 absolute; no new reduction order and no bitwise PyTorch claim."
+    },
+    "gelu_tanh_legacy_scalar_fp32_checked": {
+      "operator_family": "gelu",
+      "status": "validated",
+      "storage": {
+        "input": "fp32",
+        "weight": "none",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "none",
+        "accumulator": "fp32",
+        "contraction": "enabled",
+        "evaluation_order": "legacy_scalar_tanh_polynomial_with_compile_time_contraction_then_stage_and_validate_all_results_before_output_commit"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "activation_intermediate_store",
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "none",
+        "order": "none",
+        "partial_accumulator": "none",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "independent_rows",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Checked row/stride adapter delegates unchanged tanh GELU arithmetic to gelu_exact_inplace. Historical function name does not mean erf GELU. Independent PyTorch gelu_new captures use a 1e-6 absolute elementwise bound; rejection preserves output."
+    },
+    "attention_full_token_major_scalar_fp64_dot_fp32_scores_fp64_softmax": {
+      "operator_family": "attention",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "none", "output": "fp32"},
+      "compute": {"input": "fp32", "weight": "none", "accumulator": "fp64", "contraction": "disabled", "evaluation_order": "validate_geometry_inputs_and_all_fp32_score_ranges_before_writes_then_ascending_query_head_key_channel_fp64_dot_then_fp32_score_store_then_max_of_stored_fp32_scores_then_stable_fp64_softmax_then_ascending_key_fp64_value_sum_then_fp32_output_store"},
+      "rounding": {"mode": "rne", "points": ["activation_intermediate_store", "softmax_probability_store", "output_store"]},
+      "reduction": {"kind": "sum", "order": "left_to_right", "partial_accumulator": "fp64", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Checked full unmasked attention for token-major FP32 Q/K/V with 36x12x64 Kokoro PyTorch eager context oracle. FP64 dot and weighted reductions differ from PyTorch FP32 matmul; elementwise tolerance is explicit."
+    },
+    "linear_rows_checked_f32_scalar_fp64_accumulation": {
+      "operator_family": "linear_rows_checked",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "fp32", "output": "fp32"},
+      "compute": {"input": "fp32", "weight": "fp32", "accumulator": "fp64", "contraction": "disabled", "evaluation_order": "validate_all_spans_and_finiteness_then_preflight_every_row_output_in_ascending_order_then_repeat_dot_and_store"},
+      "rounding": {"mode": "rne", "points": ["weighted_product", "reduction_update", "output_store"]},
+      "reduction": {"kind": "sum", "order": "left_to_right", "partial_accumulator": "fp64", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Checked row-major FP32 linear with FP64 ascending-channel dot accumulation, strided rows, explicit capacities, and unchanged output on rejection. PyTorch F.linear comparison uses elementwise tolerance because its reduction differs."
+    },
     "embedding_three_table_layer_norm_fp32_reference": {
       "operator_family": "embedding_three_table_layer_norm",
       "status": "validated",
@@ -3510,7 +3603,7 @@
         "thread_count_changes_arithmetic_order": false
       },
       "position_transform": null,
-      "description": "Token-major FP32 adaptive LayerNorm with output-major FP32 style projection, double mean and biased variance, (1+gamma)*normalized+beta, caller-owned 2C projection scratch, and output unchanged on rejection."
+      "description": "Token-major FP32 adaptive LayerNorm with ascending FP32 output-major style projection, ascending FP64 mean and biased-variance channel reductions, (1+gamma)*normalized+beta, caller-owned 2C projection scratch, and output unchanged on rejection. Across separate AVX512 and AVX2 nightly hosts, the first reference-stage difference appears in PyTorch F.linear while LayerNorm outputs match; a version-specific cause is unproven. A new reduction order requires a distinct provider and numerical contract."
     },
     "audio_lstm_pytorch_ifgo_single_step_fp32": {
       "operator_family": "audio_lstm",

@@ -1,0 +1,75 @@
+{
+  "schema": "cke.kokoro.first_albert_layer.oracle.v1",
+  "scope": "LayerNorm/tanh GELU operation captures with oracle-supplied inputs",
+  "model_pin": {
+    "repository": "hexgrad/Kokoro-82M",
+    "revision": "e8a90b41091c3c5b70375c47cc959799920fa4d6",
+    "files": [
+      "config.json",
+      "kokoro-v1_0.pth",
+      "voices/af_heart.pt"
+    ],
+    "license": "Apache-2.0"
+  },
+  "asset_hashes": {
+    "config.json": "5abb01e2403b072bf03d04fde160443e209d7a0dad49a423be15196b9b43c17f",
+    "kokoro-v1_0.pth": "496dba118d1a58f5f3db2efc88dbdc216e0483fc89fe6e47ee1f2c53f18ad1e4",
+    "voices/af_heart.pt": "0ab5709b8ffab19bfd849cd11d98f75b60af7733253ad0d67b12382a102cb4ff"
+  },
+  "dependencies": {
+    "kokoro": "0.9.4",
+    "torch": "2.8.0+cpu",
+    "transformers": "5.17.0"
+  },
+  "torch_git_revision": "a1cb3cc05d46d198467bebbb6e8fba50a325d4e7",
+  "torch_build_configuration": "PyTorch built with:\n  - GCC 13.3\n  - C++ Version: 201703\n  - Intel(R) oneAPI Math Kernel Library Version 2024.2-Product Build 20240605 for Intel(R) 64 architecture applications\n  - Intel(R) MKL-DNN v3.7.1 (Git Hash 8d263e693366ef8db40acc569cc7d8edf644556d)\n  - OpenMP 201511 (a.k.a. OpenMP 4.5)\n  - LAPACK is enabled (usually provided by MKL)\n  - NNPACK is enabled\n  - CPU capability usage: AVX2\n  - Build settings: BLAS_INFO=mkl, BUILD_TYPE=Release, COMMIT_SHA=a1cb3cc05d46d198467bebbb6e8fba50a325d4e7, CXX_COMPILER=/opt/rh/gcc-toolset-13/root/usr/bin/c++, CXX_FLAGS= -fvisibility-inlines-hidden -DUSE_PTHREADPOOL -DNDEBUG -DUSE_KINETO -DLIBKINETO_NOCUPTI -DLIBKINETO_NOROCTRACER -DLIBKINETO_NOXPUPTI=ON -DUSE_FBGEMM -DUSE_PYTORCH_QNNPACK -DUSE_XNNPACK -DSYMBOLICATE_MOBILE_DEBUG_HANDLE -O2 -fPIC -DC10_NODEPRECATED -Wall -Wextra -Werror=return-type -Werror=non-virtual-dtor -Werror=range-loop-construct -Werror=bool-operation -Wnarrowing -Wno-missing-field-initializers -Wno-unknown-pragmas -Wno-unused-parameter -Wno-strict-overflow -Wno-strict-aliasing -Wno-stringop-overflow -Wsuggest-override -Wno-psabi -Wno-error=old-style-cast -faligned-new -Wno-maybe-uninitialized -fno-math-errno -fno-trapping-math -Werror=format -Wno-dangling-reference -Wno-error=dangling-reference -Wno-stringop-overflow, LAPACK_INFO=mkl, PERF_WITH_AVX=1, PERF_WITH_AVX2=1, TORCH_VERSION=2.8.0, USE_CUDA=0, USE_CUDNN=OFF, USE_CUSPARSELT=OFF, USE_GFLAGS=OFF, USE_GLOG=OFF, USE_GLOO=ON, USE_MKL=ON, USE_MKLDNN=ON, USE_MPI=OFF, USE_NCCL=OFF, USE_NNPACK=ON, USE_OPENMP=ON, USE_ROCM=OFF, USE_ROCM_KERNEL_ASSERT=OFF, USE_XCCL=OFF, USE_XPU=OFF, \n",
+  "torch_cpu_capability_reported": "AVX2",
+  "dispatch_identity": "NOT_VERIFIED",
+  "threads": 1,
+  "attention_implementation": "eager",
+  "activation": "gelu_new",
+  "epsilon": 1e-12,
+  "bump_bundle_manifest_sha256": "63ce42852349aade8bdc96335a503779baef5e8c0d829c70d479e694f02ae575",
+  "fixture_sha256": "35c735bdc4934720a2ce6d602dc7fd7f1237b5acb8da9dae78e449cf19a5b809",
+  "capture_source_sha256": "ab92265a8c5ca1ef7278661fcda1f5d963d67d7107be84cc41dc2355d194a80c",
+  "shapes": {
+    "attention_norm_input": [
+      36,
+      768
+    ],
+    "attention_norm_expected": [
+      36,
+      768
+    ],
+    "layer_output_input": [
+      36,
+      768
+    ],
+    "layer_output_expected": [
+      36,
+      768
+    ],
+    "weight__attention__LayerNorm__weight": [
+      768
+    ],
+    "weight__attention__LayerNorm__bias": [
+      768
+    ],
+    "weight__full_layer_layer_norm__weight": [
+      768
+    ],
+    "weight__full_layer_layer_norm__bias": [
+      768
+    ],
+    "ffn_linear_expected": [
+      36,
+      2048
+    ],
+    "ffn_projection_input": [
+      36,
+      2048
+    ]
+  },
+  "complete_native_layer": "NOT_TESTED",
+  "generated_waveform": "NOT_TESTED"
+}

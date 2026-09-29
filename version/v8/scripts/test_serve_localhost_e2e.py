@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import signal
 import socket
 import subprocess
@@ -87,6 +88,18 @@ def _wait_port_free(port: int, timeout: float = 5.0) -> bool:
             return True
         time.sleep(0.2)
     return _port_is_free(port)
+
+
+def _require_native_jinja_log(log_text: str) -> None:
+    """The model-backed nightly must use the converted Jinja sidecar."""
+    clean = re.sub(r"\x1b\[[0-9;]*m", "", log_text)
+    if "Using explicit serving Jinja override" in clean:
+        raise RuntimeError("serve E2E used a template override instead of the converted Jinja sidecar")
+    if not re.search(
+        r"(?m)^Loaded chat_template \([1-9][0-9]* chars\) from chat_template\.jinja$",
+        clean,
+    ):
+        raise RuntimeError("serve E2E did not load the converted chat_template.jinja sidecar")
 
 
 def _http(
@@ -592,6 +605,8 @@ def main(argv: list[str] | None = None) -> int:
         chat_answer = json.loads(chat_continuation_text)["choices"][0]["message"].get("content")
         if not isinstance(chat_answer, str) or not chat_answer.strip():
             raise RuntimeError(f"Chat Completions tool continuation has no answer: {chat_continuation_text[:500]}")
+
+        _require_native_jinja_log(Path(log_path).read_text(encoding="utf-8"))
 
         summary.update(
             {"status": "pass", "response_id": response_id, "terminal": terminal,

@@ -20,7 +20,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ck_serve_v8 import (
-    create_app,
+    create_app as _create_app,
     SessionBusyError,
     _load_builtin_chat_contract,
     _load_runtime_chat_contract,
@@ -28,6 +28,11 @@ from ck_serve_v8 import (
     _resolve_contract_thinking_overrides,
     CK_SESSION_REQUEST_RAW_PROMPT,
 )
+
+
+def create_app(*args, **kwargs):
+    # This HTTP suite retains explicit legacy contract/raw-prompt fixtures.
+    return _create_app(*args, allow_untemplated=True, **kwargs)
 
 
 class FakeSession:

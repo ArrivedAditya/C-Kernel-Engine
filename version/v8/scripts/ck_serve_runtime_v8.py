@@ -124,6 +124,7 @@ def _build_runtime(
     python_tokenizer: bool,
     profile: bool,
     gemm_schedule: str | None,
+    serving_variant: str | None = None,
 ) -> Path:
     args = [
         "run",
@@ -144,8 +145,10 @@ def _build_runtime(
         args.extend(["--logits-layout", logits_layout])
     if no_chat_template:
         args.append("--no-chat-template")
-    elif chat_template:
-        args.extend(["--chat-template", chat_template])
+    else:
+        args.append("--resolve-serving")
+        if chat_template:
+            args.extend(["--chat-template", chat_template])
     if allow_raw_prompt:
         args.append("--allow-raw-prompt")
     if python_tokenizer:
@@ -154,6 +157,8 @@ def _build_runtime(
         args.append("--profile")
     if gemm_schedule:
         args.extend(["--gemm-schedule", gemm_schedule])
+    if serving_variant is not None:
+        args.extend(["--serving-variant", serving_variant])
 
     log("Building runtime via ck_run pipeline ...", C_ORANGE)
     proc = subprocess.run(
@@ -186,7 +191,7 @@ def add_build_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     build.add_argument(
         "--chat-template",
         default=None,
-        help="Raw Jinja template or path to a .jinja file (overrides chat_template.jinja)",
+        help="Runtime-build override; the serve command requires --chat-template-file or --chat-template-inline",
     )
     build.add_argument("--no-chat-template", action="store_true")
     build.add_argument(

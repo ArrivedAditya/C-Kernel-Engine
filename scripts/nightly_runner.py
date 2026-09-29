@@ -26,6 +26,8 @@ Categories:
 """
 
 import argparse
+import ast
+import math
 import json
 import os
 import platform
@@ -566,7 +568,27 @@ def parse_sub_tests(stdout: str) -> list:
         if kind == "accuracy":
             unmatched_accuracy.setdefault(match_id, []).append(case_id)
 
-    return [SubTestResult(**record) for record in records.values()]
+    structured = []
+    for line in stdout.splitlines():
+        if not line.startswith("CKE_NUMERICAL_CASE "):
+            continue
+        payload = json.loads(line.split(" ", 1)[1])
+        status = payload["status"]
+        maximum, tolerance = payload.get("max_diff"), payload.get("tolerance")
+        if status not in {"pass", "fail", "not_tested"}:
+            raise ValueError("invalid numerical case status")
+        if status == "pass" and (maximum is None or tolerance is None or
+                                 not math.isfinite(maximum) or not math.isfinite(tolerance) or
+                                 maximum < 0 or tolerance < 0 or maximum > tolerance):
+            raise ValueError("PASS numerical case has invalid metrics")
+        structured.append(SubTestResult(
+            name=payload["name"], case_id=payload["case_id"], status=status,
+            max_diff=maximum, tolerance=tolerance,
+            configuration=payload.get("configuration", ""),
+            metadata={k: v for k, v in payload.items() if k not in
+                      {"name", "case_id", "status", "max_diff", "tolerance", "configuration"}},
+        ))
+    return [SubTestResult(**record) for record in records.values()] + structured
 
 
 @dataclass
@@ -582,6 +604,7 @@ class SubTestResult:
     case_id: str = ""
     configuration: str = ""
     evidence_kind: str = "numerical"
+    metadata: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -611,6 +634,8 @@ class TestSuite:
     timeout_sec: int = 120
     perf_pattern: Optional[str] = None  # Regex to extract perf metric
     ci_skip: bool = False  # Skip in CI mode (tests requiring full shared library)
+    unittest_targets: tuple[str, ...] = ()
+    explicit_only: bool = False
 
 
 def prepare_local_build() -> TestResult:
@@ -726,6 +751,53 @@ TEST_SUITES = {
         "TTS Kokoro Generated Embedding and X-Ray Oracle", "kernels",
         ROOT / "tests" / "test_v8_kokoro_generated_embedding.py",
     ),
+    "tts_linear_rows_oracle": TestSuite(
+        "TTS Checked FP32 Linear Rows PyTorch Oracle", "kernels",
+        ROOT / "tests" / "test_v8_linear_rows_oracle.py",
+    ),
+    "tts_kokoro_generated_projection": TestSuite(
+        "TTS Kokoro Generated Embedding and Projection X-Ray Oracle", "kernels",
+        ROOT / "tests" / "test_v8_kokoro_generated_projection.py",
+    ),
+    "tts_checked_op_constants": TestSuite(
+        "Checked Per-Operation ABI Constants Generated Graph", "kernels",
+        ROOT / "tests" / "test_v8_checked_op_constants.py",
+    ),
+    "tts_kokoro_generated_qkv": TestSuite(
+        "TTS Kokoro Generated QKV X-Ray Oracle", "kernels",
+        ROOT / "tests" / "test_v8_kokoro_generated_qkv.py",
+    ),
+    "tts_attention_full_token_major_oracle": TestSuite(
+        "TTS Full Token-Major Attention PyTorch Oracle", "kernels",
+        ROOT / "tests" / "test_v8_attention_full_token_major_oracle.py",
+    ),
+    "tts_attention_full_token_major_generated": TestSuite(
+        "Model-Neutral Generated Full Token-Major Attention", "kernels",
+        ROOT / "tests" / "test_v8_attention_full_token_major_generated.py",
+    ),
+    "tts_kokoro_generated_attention_context": TestSuite(
+        "TTS Kokoro Generated Attention Context X-Ray Oracle", "kernels",
+        ROOT / "tests" / "test_v8_kokoro_generated_attention_context.py",
+    ),
+    "normalization_checked_generated": TestSuite(
+        "Model-Neutral Checked Normalization Generated Graph", "kernels",
+        ROOT / "tests" / "test_v8_normalization_checked_generated.py",
+    ),
+    "tts_kokoro_generated_albert_layer": TestSuite(
+        "Kokoro Complete First ALBERT Layer and X-Ray Oracle", "kernels",
+        ROOT / "tests" / "test_v8_kokoro_generated_albert_layer.py",
+    ),
+    "tts_kokoro_generated_encoder": TestSuite(
+        "Kokoro Complete Shared-Layer Encoder and X-Ray Oracle", "inference",
+        ROOT / "tests" / "test_v8_kokoro_generated_encoder.py",
+        # Four compiled 147-operation graphs, independent affine checks and
+        # standalone replay exceeded the default 120s on a hosted runner.
+        timeout_sec=300,
+    ),
+    "normalization_checked_oracle": TestSuite(
+        "Checked LayerNorm and Tanh GELU Numerical Contracts", "kernels",
+        ROOT / "tests" / "test_v8_normalization_checked_oracle.py",
+    ),
     "tts_duration_logits_runtime_graph": TestSuite(
         "TTS Duration Logits Full v8 Lowering", "kernels",
         ROOT / "tests" / "test_v8_duration_logits_runtime_graph.py",
@@ -763,8 +835,23 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_audio_lstm_scan_oracle.py",
     ),
     "tts_adaptive_layer_norm_oracle": TestSuite(
-        "TTS Adaptive LayerNorm PyTorch Oracle", "kernels",
+        "Adaptive LayerNorm Native Fixture and Safety", "kernels",
         ROOT / "tests" / "test_v8_audio_adaptive_layer_norm_oracle.py",
+        unittest_targets=tuple("tests.test_v8_audio_adaptive_layer_norm_oracle.AdaptiveLayerNormOracleTest." + name for name in (
+            "test_committed_torch_fixture", "test_optimized_matches_scalar",
+            "test_rejection_preserves_output", "test_exact_capacity_and_large_geometry_rejection")),
+    ),
+    "tts_adaptive_layer_norm_live": TestSuite(
+        "Adaptive LayerNorm Native versus Live PyTorch", "kernels",
+        ROOT / "tests" / "test_v8_audio_adaptive_layer_norm_oracle.py",
+        unittest_targets=("tests.test_v8_audio_adaptive_layer_norm_oracle.AdaptiveLayerNormOracleTest.test_live_torch_oracle",
+                          "tests.test_v8_audio_adaptive_layer_norm_oracle.AdaptiveLayerNormOracleTest.test_live_production_geometry"),
+    ),
+    "tts_adaptive_layer_norm_reference": TestSuite(
+        "Adaptive LayerNorm Fixture versus Live PyTorch", "kernels",
+        ROOT / "tests" / "test_v8_audio_adaptive_layer_norm_oracle.py",
+        unittest_targets=("tests.test_v8_audio_adaptive_layer_norm_oracle.AdaptiveLayerNormOracleTest.test_fixture_vs_live_oracle",),
+        explicit_only=True,
     ),
     "tts_kokoro_bump_export": TestSuite(
         "Kokoro BUMP Export Contract", "kernels",
@@ -782,9 +869,9 @@ TEST_SUITES = {
         "Kokoro Pinned Predictor Checkpoint Recapture", "kernels",
         ROOT / "tests" / "test_v8_kokoro_checkpoint_capture_live.py",
     ),
-    "tts_live_torch_oracles": TestSuite(
-        "TTS Live PyTorch Oracles", "kernels",
-        ROOT / "tests" / "test_v8_tts_live_torch_oracles.py",
+    "kernel_oracle_reporting": TestSuite(
+        "Kernel Oracle Reporting and Registration Contracts", "kernels",
+        ROOT / "tests" / "test_kernel_oracle_reporting.py",
     ),
     "nightly_runner_hardware": TestSuite(
         "Nightly Runner Hardware Capture",
@@ -1356,6 +1443,12 @@ MAKE_TARGETS = {
         "target": "test-v8-serve-localhost-e2e",
         "timeout_sec": 600,
     },
+    "v8_serve_native_jinja": {
+        "name": "v8 Serve Native Qwen Jinja Tool Contract",
+        "category": "inference",
+        "target": "test-v8-serve-native-jinja",
+        "timeout_sec": 60,
+    },
 }
 
 # Benchmark targets with perf extraction
@@ -1402,12 +1495,11 @@ QUICK_TESTS = [
     "q4k_kernels", "idle_nightly_coordinator",
     "tts_kokoro_shape_bounds", "tts_istft_oracle", "tts_duration_expand_oracle",
     "tts_lstm_scan_oracle",
-    "tts_adaptive_layer_norm_oracle",
+    "tts_adaptive_layer_norm_oracle", "tts_adaptive_layer_norm_live",
     "tts_kokoro_bump_export", "tts_kokoro_bump_export_live",
     "tts_kokoro_checkpoint_manifest", "tts_kokoro_checkpoint_live",
     "tts_runtime_extent", "tts_runtime_extent_contract", "tts_checked_call_codegen",
     "tts_runtime_extent_lowering",
-    "tts_live_torch_oracles",
 ]
 
 NIGHTLY_PROFILES = {
@@ -1469,6 +1561,57 @@ NIGHTLY_PROFILE_TESTS = {
         "qwen3vl_private_corpus_contract",
     ],
 }
+
+
+def bind_registered_unittest_targets() -> None:
+    """Use standard unittest entry points for mapped test modules, once per suite."""
+    mapped = set()
+    for path in (ROOT / "version/v8/kernel_maps").glob("*.json"):
+        payload = json.loads(path.read_text())
+        if isinstance(payload, dict):
+            mapped.update(payload.get("tests", {}).get("unit", []))
+    for suite in TEST_SUITES.values():
+        relative = suite.test_file.relative_to(ROOT).as_posix()
+        if suite.unittest_targets or relative not in mapped or not relative.startswith("tests/"):
+            continue
+        tree = ast.parse(suite.test_file.read_text())
+        if any(isinstance(node, ast.ClassDef) and any(
+                isinstance(base, ast.Attribute) and base.attr == "TestCase" for base in node.bases)
+                for node in tree.body):
+            suite.unittest_targets = (relative[:-3].replace("/", "."),)
+
+
+bind_registered_unittest_targets()
+
+
+def parse_unittest_cases(stderr: str) -> list[SubTestResult]:
+    cases = []
+    for match in re.finditer(r"^(?:test\w+|setUpClass|setUpModule) \(([^)]+)\) \.\.\. (ok|FAIL|ERROR|skipped .+)$", stderr, re.MULTILINE):
+        identity, outcome = match.groups()
+        status = "pass" if outcome == "ok" else "not_tested" if outcome.startswith("skipped") else "fail"
+        cases.append(SubTestResult(name=identity, case_id=identity, status=status,
+                                   evidence_kind="test_execution", metadata={"outcome": outcome}))
+    return cases
+
+
+def select_kernel_map_tests(map_paths: list[str]) -> list[str]:
+    paths = set()
+    for name in map_paths:
+        path = (ROOT / name).resolve()
+        if not path.is_relative_to(ROOT.resolve()):
+            raise ValueError(f"map outside repository: {name}")
+        payload = json.loads(path.read_text())
+        for unit in payload.get("tests", {}).get("unit", []):
+            if unit.endswith(".py"):
+                paths.add((ROOT / unit).resolve())
+    registered = {suite.test_file.resolve() for suite in TEST_SUITES.values()}
+    missing = paths - registered
+    if missing:
+        raise ValueError("map test missing nightly registration: " + ", ".join(map(str, sorted(missing))))
+    selected = [key for key, suite in TEST_SUITES.items() if suite.test_file.resolve() in paths and not suite.explicit_only]
+    if not selected:
+        raise ValueError("maps select no executable Python suites")
+    return selected
 
 
 def _select_make_targets(*, category: Optional[str] = None) -> list[str]:
@@ -1750,7 +1893,8 @@ def run_python_test(suite: TestSuite, verbose: bool = False) -> TestResult:
     start = time.time()
     try:
         result = subprocess.run(
-            [sys.executable, str(suite.test_file)],
+            ([sys.executable, "-u", "-m", "unittest", *suite.unittest_targets, "-v"]
+             if suite.unittest_targets else [sys.executable, "-u", str(suite.test_file)]),
             cwd=str(ROOT),
             capture_output=True,
             text=True,
@@ -1767,7 +1911,7 @@ def run_python_test(suite: TestSuite, verbose: bool = False) -> TestResult:
                 perf_metric = float(match.group(1))
 
         # Parse sub-test results from output
-        sub_tests = parse_sub_tests(result.stdout)
+        sub_tests = parse_sub_tests(result.stdout) + parse_unittest_cases(result.stderr)
 
         combined_output = f"{result.stdout}\n{result.stderr}"
         explicit_skip = next(
@@ -1779,6 +1923,16 @@ def run_python_test(suite: TestSuite, verbose: bool = False) -> TestResult:
             "",
         )
 
+        counts = re.search(r"Ran (\d+) tests?", combined_output)
+        skips = re.search(r"OK \(skipped=(\d+)\)", combined_output)
+        execution_cases = [case for case in sub_tests if case.evidence_kind == "test_execution"]
+        if counts and skips and (counts.group(1) == skips.group(1) or (execution_cases and all(case.status == "not_tested" for case in execution_cases))):
+            reasons = [case.metadata["outcome"] for case in sub_tests if case.status == "not_tested" and case.evidence_kind == "test_execution"]
+            explicit_skip = "all selected unittest cases skipped: " + ("; ".join(reasons) if reasons else skips.group(0))
+        if result.returncode == 0 and counts and counts.group(1) == "0" and not skips:
+            return TestResult(name=suite.name, category=suite.category, status="fail",
+                duration_sec=duration, error_msg="registered unittest suite executed zero cases",
+                stdout=result.stdout, stderr=result.stderr, sub_tests=sub_tests)
         if result.returncode == 0 and explicit_skip:
             return TestResult(
                 name=suite.name,
@@ -1821,13 +1975,27 @@ def run_python_test(suite: TestSuite, verbose: bool = False) -> TestResult:
                 sub_tests=sub_tests,
             )
 
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as expired:
+        # TimeoutExpired can hold bytes even when subprocess.run(text=True).
+        # Preserve completed cases without turning an incomplete suite into PASS.
+        def decoded(output):
+            return output.decode("utf-8", errors="replace") if isinstance(output, bytes) else output or ""
+        stdout, stderr = decoded(expired.stdout), decoded(expired.stderr)
+        error_msg = f"Test timed out after {suite.timeout_sec}s"
+        try:
+            sub_tests = parse_sub_tests(stdout) + parse_unittest_cases(stderr)
+        except (ValueError, TypeError) as parse_error:
+            sub_tests = []
+            error_msg += f"; partial-output parsing failed: {parse_error}"
         return TestResult(
             name=suite.name,
             category=suite.category,
             status="timeout",
             duration_sec=suite.timeout_sec,
-            error_msg=f"Test timed out after {suite.timeout_sec}s",
+            error_msg=error_msg,
+            stdout=_trim_output(stdout, FAIL_STDOUT_CHARS, keep_head_tail=True),
+            stderr=_trim_output(stderr, FAIL_STDERR_CHARS, keep_head_tail=True),
+            sub_tests=sub_tests,
         )
     except Exception as e:
         return TestResult(
@@ -2037,7 +2205,7 @@ def _execution_inventory(
             else (os.cpu_count() or 1)
         )
         inventory.append({"kind": "command", "id": "make", "args": [f"-j{allowed_cpus}"]})
-    inventory.extend({"kind": "python", "id": key, "args": []} for key in tests)
+    inventory.extend({"kind": "python", "id": key, "args": list(TEST_SUITES[key].unittest_targets)} for key in tests)
     inventory.extend(
         {
             "kind": "make",
@@ -2189,6 +2357,8 @@ def save_json_report(
         "run_identity": {
             "attempt_id": os.environ.get("CK_IDLE_NIGHTLY_ATTEMPT", ""),
             "repository_commit": _repository_commit(),
+            "github_run_id": os.environ.get("GITHUB_RUN_ID", ""),
+            "github_run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT", ""),
         },
         "selection": selection or {},
         "duration_sec": sum(r.duration_sec for r in results),
@@ -2197,6 +2367,13 @@ def save_json_report(
             "version": platform.python_version(),
         },
         "runner_hardware": capture_runner_hardware(),
+        "oracle_environment": {
+            "lane": os.environ.get("CKE_ORACLE_LANE", "ordinary-native"),
+            "torch_version_requested": os.environ.get("CKE_EXPECTED_TORCH_VERSION"),
+            "mkl_cbwr_requested": os.environ.get("MKL_CBWR"),
+            "aten_cpu_capability_requested": os.environ.get("ATEN_CPU_CAPABILITY"),
+            "dispatch_identity_verified": False,
+        },
         "summary": {
             "total": len(results),
             "passed": sum(1 for r in results if r.status == "pass"),
@@ -2357,9 +2534,80 @@ def update_nightly_index(results_dir=None):
     print(f"Created index.json with {len(index_data['reports'])} reports")
 
 
+def merge_environment_reports(primary_path: Path, directory: Path, expected_count: int) -> int:
+    """Attach standard nightly reports, preserving per-host identity and failures."""
+    try:
+        primary = json.loads(primary_path.read_text())
+    except (OSError, ValueError) as exc:
+        primary = {"results": [asdict(TestResult(name="Primary nightly report unavailable",
+                   category="kernels", status="fail", duration_sec=0., error_msg=str(exc)))],
+                   "summary": {}, "selection": {}, "run_identity": {
+                       "repository_commit": _repository_commit(),
+                       "github_run_id": os.environ.get("GITHUB_RUN_ID", ""),
+                       "github_run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT", "")}}
+    rows = primary["results"]
+    paths = sorted(directory.glob("**/nightly-report*.json"))
+    errors = []
+    if len(paths) != expected_count:
+        errors.append(f"expected {expected_count} oracle reports, found {len(paths)}")
+    for path in paths:
+        try:
+            extra = json.loads(path.read_text())
+            identity = extra["run_identity"]
+            for field in ("repository_commit", "github_run_id", "github_run_attempt"):
+                if identity.get(field) != primary["run_identity"].get(field):
+                    raise ValueError(f"mismatched {field}")
+            source = {"path": str(path), "run_identity": identity,
+                      "runner_python": extra.get("runner_python"),
+                      "runner_hardware": extra.get("runner_hardware"),
+                      "oracle_environment": extra.get("oracle_environment")}
+            environment = extra.get("oracle_environment", {})
+            label = f"torch={environment.get('torch_version_requested')} {environment.get('lane')}"
+            if extra.get("selection", {}).get("require_executed") and any(
+                row["status"] == "skip" or any(
+                    case["status"] == "not_tested" and case.get("evidence_kind") == "test_execution"
+                    for case in row.get("sub_tests", []))
+                for row in extra["results"]
+            ):
+                errors.append(f"{path}: required oracle execution is missing")
+            for row in extra["results"]:
+                row["name"] += f" [{label}]"
+                row["oracle_report_source"] = source
+                row["execution_args"] = list(row.get("execution_args", [])) + [label]
+                rows.append(row)
+                primary.setdefault("selection", {}).setdefault("expected_executions", []).append({
+                    "kind": row.get("execution_kind", ""), "id": row.get("execution_id", ""),
+                    "args": row["execution_args"]})
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            errors.append(f"{path}: {exc}")
+    for error in errors:
+        rows.append(asdict(TestResult(name="Oracle environment report integration",
+                    category="kernels", status="fail", duration_sec=0., error_msg=error)))
+    summary = primary["summary"]
+    summary.update(total=len(rows), **{
+        key: sum(row["status"] == status for row in rows)
+        for key, status in (("passed", "pass"), ("failed", "fail"), ("skipped", "skip"), ("timeout", "timeout"))})
+    sub_cases = [case for row in rows for case in row.get("sub_tests", [])]
+    summary.update(sub_tests_total=len(sub_cases),
+                   sub_tests_passed=sum(case["status"] == "pass" for case in sub_cases),
+                   sub_tests_failed=sum(case["status"] == "fail" for case in sub_cases),
+                   sub_tests_not_tested=sum(case["status"] == "not_tested" for case in sub_cases))
+    primary["duration_sec"] = sum(row["duration_sec"] for row in rows)
+    primary_path.parent.mkdir(parents=True, exist_ok=True)
+    primary_path.write_text(json.dumps(primary, indent=2) + "\n")
+    print(json.dumps(summary, sort_keys=True))
+    return int(bool(summary["failed"] or summary["timeout"]))
+
+
 def main():
     parser = argparse.ArgumentParser(description="C-Kernel-Engine Nightly Test Runner")
     parser.add_argument("--quick", action="store_true", help="Run quick subset only")
+    parser.add_argument("--merge-reports", type=Path, help="Attach independent environment reports to --json")
+    parser.add_argument("--expected-reports", type=int, help="Require this many environment reports")
+    parser.add_argument("--tests", nargs="+", choices=sorted(TEST_SUITES),
+                        help="Select registered Python suites; no make/performance targets")
+    parser.add_argument("--kernel-map-tests", nargs="+",
+                        help="Select registered suites from canonical map tests.unit paths")
     parser.add_argument(
         "--profile",
         choices=sorted(NIGHTLY_PROFILES),
@@ -2387,10 +2635,16 @@ def main():
     parser.add_argument("--save-baseline", action="store_true", help="Save current perf as baseline")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
     parser.add_argument("--list", action="store_true", help="List all tests")
+    parser.add_argument("--require-executed", action="store_true", help="Fail selected required suites on SKIP, after saving reports")
     parser.add_argument("--no-fail", action="store_true", help="Always return exit code 0 (for CI warning mode)")
     parser.add_argument("--update-index", action="store_true", help="Update nightly results index (for CI)")
     parser.add_argument("--results-dir", type=str, help="Directory for nightly results (used with --update-index)")
     args = parser.parse_args()
+
+    if args.merge_reports:
+        if not args.json or args.expected_reports is None:
+            parser.error("--merge-reports requires --json and --expected-reports")
+        return merge_environment_reports(Path(args.json), args.merge_reports, args.expected_reports)
 
     # Handle --update-index (must be done before normal flow)
     if args.update_index:
@@ -2411,22 +2665,32 @@ def main():
             print(f"    {key:<25} [{info['category']}]")
         return 0
 
+    if args.tests and args.kernel_map_tests:
+        parser.error("select --tests or --kernel-map-tests, not both")
+
     # Determine which tests to run
     tests_to_run = []
     make_targets_to_run = []
     bench_targets_to_run = []
 
-    if args.profile:
+    if args.tests:
+        tests_to_run = list(dict.fromkeys(args.tests))
+    elif args.kernel_map_tests:
+        try:
+            tests_to_run = select_kernel_map_tests(args.kernel_map_tests)
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
+    elif args.profile:
         tests_to_run = list(NIGHTLY_PROFILE_TESTS.get(args.profile, []))
         make_targets_to_run = list(NIGHTLY_PROFILES[args.profile])
     elif args.quick:
         tests_to_run = [k for k in QUICK_TESTS if k in TEST_SUITES]
     elif args.category:
-        tests_to_run = [k for k, v in TEST_SUITES.items() if v.category == args.category]
+        tests_to_run = [k for k, v in TEST_SUITES.items() if v.category == args.category and not v.explicit_only]
         make_targets_to_run = _select_make_targets(category=args.category)
         bench_targets_to_run = [k for k, v in BENCH_TARGETS.items() if v["category"] == args.category]
     else:
-        tests_to_run = list(TEST_SUITES.keys())
+        tests_to_run = [key for key, suite in TEST_SUITES.items() if not suite.explicit_only]
         make_targets_to_run = _select_make_targets()
         bench_targets_to_run = list(BENCH_TARGETS.keys())
 
@@ -2463,9 +2727,11 @@ def main():
     results = []
     baseline = load_baseline()
     selection = {
+        "require_executed": args.require_executed,
         "mode": (
             f"profile:{args.profile}"
             if args.profile
+            else "registered-tests" if args.tests else "kernel-map-tests" if args.kernel_map_tests
             else "quick" if args.quick else f"category:{args.category}" if args.category else "full"
         ),
         "expected_executions": _execution_inventory(
@@ -2491,6 +2757,7 @@ def main():
         result = run_python_test(suite, verbose=args.verbose)
         result.execution_kind = "python"
         result.execution_id = test_key
+        result.execution_args = list(suite.unittest_targets)
         results.append(result)
 
         status_icon = {"pass": "✓", "fail": "✗", "skip": "○", "timeout": "⏱"}[result.status]
@@ -2593,7 +2860,7 @@ def main():
     # --no-fail: always return 0 for CI warning mode
     if args.no_fail:
         return 0
-    return exit_code
+    return 1 if args.require_executed and any(result.status == "skip" or any(case.status == "not_tested" and case.evidence_kind == "test_execution" for case in result.sub_tests) for result in results) else exit_code
 
 
 if __name__ == "__main__":

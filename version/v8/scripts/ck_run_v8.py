@@ -1217,12 +1217,33 @@ def step_convert_gguf(
     manifest_path = output_dir / "weights_manifest.json"
     if weights_path.exists() and config_path.exists() and manifest_path.exists() and not force:
         log(f"  Using cached weights at {weights_path}", C_DIM)
-        if not (output_dir / "chat_template.jinja").is_file():
-            log(
-                "  Warning: chat_template.jinja missing in cached run dir; "
-                "rebuild with --force-convert to emit the GGUF-native sidecar",
-                C_DIM,
+        from convert_gguf_to_bump_v8 import read_native_chat_template_from_gguf
+
+        native = read_native_chat_template_from_gguf(str(gguf_path))
+        sidecar = output_dir / "chat_template.jinja"
+        if native is not None:
+            native_bytes = native.encode("utf-8")
+            if sidecar.is_file():
+                if sidecar.read_bytes() != native_bytes:
+                    raise RuntimeError(
+                        f"cached chat template {sidecar} differs from GGUF source {gguf_path}; "
+                        "rebuild with --force-convert"
+                    )
+            else:
+                with tempfile.NamedTemporaryFile(
+                    mode="wb", dir=output_dir,
+                    prefix=".chat-template-", suffix=".jinja", delete=False,
+                ) as staged:
+                    staged.write(native_bytes)
+                    staged_path = Path(staged.name)
+                os.replace(staged_path, sidecar)
+                log(f"  Restored GGUF-native chat template at {sidecar}", C_DIM)
+        elif sidecar.is_file():
+            raise RuntimeError(
+                f"cached chat template {sidecar} has no tokenizer.chat_template in {gguf_path}"
             )
+        else:
+            log("  GGUF contains no native chat template sidecar", C_DIM)
         return weights_path, config_path, manifest_path
     output_dir.mkdir(parents=True, exist_ok=True)
     cmd = [
@@ -1374,6 +1395,30 @@ def _refresh_manifest_circuit_snapshot(manifest_path: Path) -> bool:
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     log(f"  Refreshed cached circuit snapshot: {circuit_name}", C_DIM)
     return True
+
+
+def step_resolve_serving(args, work_dir: Path, manifest_path: Path) -> None:
+    """Chat bundle construction is explicit; raw compilation needs no chat assets."""
+    requested = getattr(args, "resolve_serving", False) or getattr(args, "serving_variant", None) is not None
+    if not requested:
+        return
+    if args.no_chat_template:
+        raise ValueError("serving resolution conflicts with --no-chat-template")
+    manifest_doc = json.loads(manifest_path.read_bytes())
+    circuit_doc = manifest_doc.get("template", {})
+    if isinstance(circuit_doc, dict) and "serving" in circuit_doc:
+        from resolve_serving_bundle_v8 import resolve_serving_bundle
+
+        circuit_name = circuit_doc.get("name")
+        circuit_path = V8_ROOT / "circuits" / f"{circuit_name}.json"
+        if json.loads(circuit_path.read_bytes()) != circuit_doc:
+            raise ValueError("serving circuit snapshot differs from compiled circuit")
+        resolved = resolve_serving_bundle(
+            work_dir, circuit_path, variant=getattr(args, "serving_variant", None)
+        )
+        log(f"  Resolved serving bundle: {resolved['identity']} ({resolved['variant']})", C_DIM)
+    elif getattr(args, "serving_variant", None) is not None:
+        raise ValueError("selected circuit has no serving profile declaration")
 
 
 def step_codegen(output_dir: Path, ir_paths: dict[str, Path], *, force: bool = False, profile: bool = False) -> Path:
@@ -2081,6 +2126,8 @@ def run_pipeline(args: argparse.Namespace) -> int:
         profile=getattr(args, "profile", False),
     )
 
+    step_resolve_serving(args, work_dir, manifest_path)
+
     if getattr(args, "sweep_kernels", False):
         step_sweep_kernels(
             work_dir,
@@ -2593,6 +2640,10 @@ Examples:
     run_parser.add_argument("--force-compile", action="store_true")
     run_parser.add_argument("--generate-visualizer", action="store_true")
     run_parser.add_argument("--generate-only", action="store_true")
+    run_parser.add_argument("--resolve-serving", action="store_true",
+                            help="Resolve circuit-owned chat assets after compilation; raw builds do not require them")
+    run_parser.add_argument("--serving-variant", default=None,
+                            help="Explicit variant from the circuit-linked serving profile; publisher assets remain the default")
     run_parser.add_argument(
         "--plan-only",
         action="store_true",

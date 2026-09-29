@@ -267,6 +267,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--model-name", default="ck-v8", help="Model string reported in responses"
     )
     parser.add_argument(
+        "--chat-template-file", default=None,
+        help="Explicit UTF-8 Jinja file for serving; replaces native and tool variants",
+    )
+    parser.add_argument(
+        "--chat-template-inline", default=None,
+        help="Explicit inline Jinja source for serving; replaces native and tool variants",
+    )
+    parser.add_argument(
         "--run", dest="run_dir", default=None, help="Explicit run directory"
     )
     parser.add_argument(
@@ -274,9 +282,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip building; require an existing run directory",
     )
+    parser.add_argument("--serving-variant", default=None,
+                        help="Explicit circuit-linked serving variant to resolve during bundle build")
     parser.add_argument(
         "--tool-protocol",
-        choices=("none", "tagged_json", "bare_json", "qwen_xml"),
+        choices=("none", "tagged_json", "bare_json", "qwen_xml", "qwen_code_xml", "qwen_code_xml_raw_v2"),
         default=None,
         help="Explicit tool output protocol; defaults to a hash-bound tool_protocol.json sidecar or disabled",
     )
@@ -370,6 +380,35 @@ def main(argv: list[str] | None = None) -> int:
 
     args = _build_arg_parser().parse_args(argv)
 
+    if args.no_build and args.serving_variant is not None:
+        raise ValueError("--serving-variant requires bundle construction; use the explicit serving resolver for an existing bundle")
+
+    if args.chat_template is not None:
+        raise ValueError(
+            "--chat-template is ambiguous for serving; use --chat-template-file "
+            "or --chat-template-inline"
+        )
+    if args.chat_template_file is not None and args.chat_template_inline is not None:
+        raise ValueError("select only one serving template override")
+    if args.no_chat_template and (args.chat_template_file or args.chat_template_inline):
+        raise ValueError("--no-chat-template conflicts with a serving template override")
+    if args.no_chat_template and not args.allow_raw_prompt:
+        raise ValueError("--no-chat-template requires explicit --allow-raw-prompt")
+    override: str | None = None
+    build_template_arg: str | None = None
+    if args.chat_template_file is not None:
+        override_path = Path(args.chat_template_file).expanduser()
+        try:
+            override = override_path.read_bytes().decode("utf-8")
+        except (OSError, UnicodeError) as exc:
+            raise ValueError(f"cannot read --chat-template-file {override_path}: {exc}") from exc
+        build_template_arg = str(override_path)
+    elif args.chat_template_inline is not None:
+        override = args.chat_template_inline
+        build_template_arg = override
+    if override is not None and not override.strip():
+        raise ValueError("serving template override is empty")
+
     _ensure_native_session_lib()
 
     run_dir = _resolve_run_dir(args.model, args.run_dir)
@@ -382,12 +421,13 @@ def main(argv: list[str] | None = None) -> int:
             args.force_compile,
             args.force_download,
             args.logits_layout,
-            args.chat_template,
+            build_template_arg,
             args.no_chat_template,
             args.allow_raw_prompt,
             args.python_tokenizer,
             args.profile,
             args.gemm_schedule,
+            **({"serving_variant": args.serving_variant} if args.serving_variant is not None else {}),
         )
 
     ignored = []
@@ -421,50 +461,47 @@ def main(argv: list[str] | None = None) -> int:
             C_ORANGE,
         )
 
-    chat_template, chat_templates, chat_contract = _load_runtime_templates(run_dir)
+    from server.serving_bundle import load_resolved_serving, resolved_templates
+    resolved_serving = load_resolved_serving(run_dir)
     if args.no_chat_template:
-        chat_template = None
-        chat_templates = None
-        log("Chat templates disabled via --no-chat-template", C_GRAY)
-    elif args.chat_template:
-        override = str(args.chat_template)
-        override_path = Path(override).expanduser()
-        if override_path.is_file():
-            try:
-                override = override_path.read_text(encoding="utf-8")
-            except OSError as exc:
-                log_error(f"cannot read --chat-template file {override_path}: {exc}")
-                override = ""
-        if override.strip():
-            chat_template = override
-            log(
-                f"Using explicit --chat-template override ({len(chat_template)} chars); "
-                "chat_template.jinja sidecar ignored",
-                C_GRAY,
-            )
+        chat_template, chat_templates, chat_contract = None, None, None
+        log("Using explicitly requested untemplated raw-prompt serving", C_GRAY)
+    else:
+        if resolved_serving is not None:
+            chat_template, chat_templates, chat_contract = resolved_templates(run_dir, resolved_serving)
         else:
-            chat_template = None
-            chat_templates = None
-    elif chat_template:
+            chat_template, chat_templates, chat_contract = _load_runtime_templates(run_dir)
+    if override is not None:
+        if resolved_serving is not None:
+            raise ValueError("template override conflicts with resolved serving bundle; rebuild with the circuit profile variant")
+        chat_template = override
+        chat_templates = None
         log(
-            f"Loaded chat_template ({len(chat_template)} chars) from chat_template.jinja",
+            f"Using explicit serving Jinja override ({len(chat_template)} chars); "
+            "native sidecar and tool variants ignored",
             C_GRAY,
         )
-    else:
+    elif chat_template:
         log(
-            "chat_template.jinja missing or empty in run dir; "
-            "continuing without native Jinja template",
-            C_ORANGE,
+            f"Loaded chat_template ({len(chat_template)} chars) from "
+            + ("resolved serving bundle" if resolved_serving is not None else "chat_template.jinja"),
+            C_GRAY,
+        )
+    elif not args.no_chat_template:
+        raise ValueError(
+            f"normal chat serving requires {run_dir / 'chat_template.jinja'}; "
+            "use --no-chat-template --allow-raw-prompt only for intentional raw serving"
         )
     if chat_templates:
         log(
-            f"Loaded chat_templates variants {list(chat_templates.keys())} from additional_chat_templates/",
+            f"Loaded chat_templates variants {list(chat_templates.keys())} from "
+            + ("resolved serving bundle" if resolved_serving is not None else "additional_chat_templates/"),
             C_GRAY,
         )
     log("Chat contract disabled; prompt rendering is pure Jinja", C_GRAY)
-    sidecar_protocol = None if args.no_chat_template else load_tool_protocol(
-        run_dir, chat_template, chat_templates
-    )
+    sidecar_protocol = (None if args.no_chat_template else
+                        resolved_serving["output_protocol"] if resolved_serving is not None else
+                        load_tool_protocol(run_dir, chat_template, chat_templates))
     if args.tool_protocol is not None and sidecar_protocol is not None and args.tool_protocol != sidecar_protocol:
         raise ValueError(
             f"--tool-protocol {args.tool_protocol!r} conflicts with tool_protocol.json "
@@ -483,6 +520,13 @@ def main(argv: list[str] | None = None) -> int:
         run_dir,
         context_length=runtime_context_length,
     )
+    if resolved_serving is not None:
+        from server.serving_bundle import verify_loaded_libraries
+        try:
+            verify_loaded_libraries(resolved_serving)
+        except Exception:
+            session.close()
+            raise
 
     vision_capability = resolve_runtime_vision_capability(run_dir)
     if vision_capability:
@@ -510,7 +554,7 @@ def main(argv: list[str] | None = None) -> int:
         chat_template=chat_template,
         chat_templates=chat_templates,
         tool_protocol=selected_tool_protocol,
-        vision_capability=vision_capability,
+        allow_untemplated=args.no_chat_template and args.allow_raw_prompt,
     )
 
     try:

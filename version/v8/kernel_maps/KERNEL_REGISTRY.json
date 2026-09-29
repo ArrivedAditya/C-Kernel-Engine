@@ -5,12 +5,13 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "version/v8/kernel_maps",
     "counts": {
-      "total": 389,
+      "total": 393,
       "by_op": {
         "add_backward": 1,
         "add_stream": 2,
         "assistant_layer_scale": 1,
         "attention": 38,
+        "attention_full_token_major_checked": 1,
         "attention_projection": 1,
         "attention_sliding": 13,
         "attn_gate_sigmoid_mul": 2,
@@ -63,7 +64,7 @@
         "gated_deltanet": 7,
         "gated_shared_swiglu_expert_mlp": 4,
         "geglu": 5,
-        "gelu": 8,
+        "gelu": 9,
         "gemm": 23,
         "gemm_backward": 1,
         "gemma4_per_layer_embed": 1,
@@ -79,9 +80,10 @@
         "kv_cache_store_batch_f16": 1,
         "kv_cache_store_batch_f32": 1,
         "kv_lora_decompress": 2,
-        "layernorm": 4,
+        "layernorm": 5,
         "layout_convert": 2,
         "layout_transform": 1,
+        "linear_rows_checked": 1,
         "logits_store_indexed": 1,
         "mamba_conv1d_state_update": 1,
         "mamba_dt_softplus": 1,
@@ -11212,6 +11214,285 @@
       "_source_file": "attention_forward_query_key_head_major_tiled_f16kv_fp32.json"
     },
     {
+      "id": "attention_full_token_major_f32_checked",
+      "op": "attention_full_token_major_checked",
+      "operation_interface": "attention.full_unmasked.token_major.fp32.checked.v1",
+      "variant": "scalar_fp64_dot_fp32_scores_fp64_softmax",
+      "selection": {
+        "status": "candidate",
+        "priority": 100,
+        "equivalence_group": "attention_full_unmasked_token_major_fp32",
+        "phases": [
+          "prefill"
+        ]
+      },
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "query",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "H*D"
+          ],
+          "layout": "token_major_contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        },
+        {
+          "name": "key",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "H*D"
+          ],
+          "layout": "token_major_contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        },
+        {
+          "name": "value",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "H*D"
+          ],
+          "layout": "token_major_contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "H*D"
+          ],
+          "layout": "token_major_contiguous",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "scratch": [
+        {
+          "name": "scores",
+          "dtype": "fp32",
+          "shape": [
+            "T"
+          ],
+          "size_bytes": "4 * T",
+          "size_resolution": "required",
+          "lifetime": "kernel_call",
+          "alignment": 64,
+          "layout": "contiguous",
+          "access": "read_write",
+          "storage_class": "scratch",
+          "consumption": "required"
+        }
+      ],
+      "dims": [
+        "query_elements",
+        "key_elements",
+        "value_elements",
+        "output_elements",
+        "scratch_bytes",
+        "tokens",
+        "heads",
+        "head_dim"
+      ],
+      "constraints": {
+        "notes": "Softmax maximum is computed from stored FP32 scores; exponent differences are nonpositive and at least one weight is exactly one. Full bidirectional, unmasked attention. Batch one, token-major contiguous FP32 Q/K/V and output. All tokens are valid. Caller-owned nonaliasing buffers and scratch. Checked spans, nonfinite and FP32-score-overflow rejection before output writes; no internal allocation."
+      },
+      "impl": {
+        "function": "attention_full_token_major_f32_checked",
+        "c_declaration": "int attention_full_token_major_f32_checked(const float *query, size_t query_elements, const float *key, size_t key_elements, const float *value, size_t value_elements, float *output, size_t output_elements, float *scratch, size_t scratch_bytes, size_t tokens, size_t heads, size_t head_dim);",
+        "sources": [
+          "src/kernels/attention_full_token_major.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "call_constant_contract": {
+        "shape_symbols": {
+          "T": "attention_tokens",
+          "H": "attention_heads",
+          "D": "attention_head_dim"
+        },
+        "buffer_spans": [
+          {
+            "pointer": "query",
+            "elements": "attention_query_elements",
+            "rows": "attention_tokens",
+            "width": 1,
+            "element_bytes": 4
+          },
+          {
+            "pointer": "key",
+            "elements": "attention_key_elements",
+            "rows": "attention_tokens",
+            "width": 1,
+            "element_bytes": 4
+          },
+          {
+            "pointer": "value",
+            "elements": "attention_value_elements",
+            "rows": "attention_tokens",
+            "width": 1,
+            "element_bytes": 4
+          },
+          {
+            "pointer": "output",
+            "elements": "attention_output_elements",
+            "rows": "attention_tokens",
+            "width": 1,
+            "element_bytes": 4
+          }
+        ]
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "attention_full_token_major_scalar_fp64_dot_fp32_scores_fp64_softmax",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "attention_full_token_major_f32_checked",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp64",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "serial"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "query",
+            "source": "activation:query",
+            "cast": "const float*",
+            "ports": [
+              "input:query"
+            ]
+          },
+          {
+            "name": "query_elements",
+            "source": "runtime:attention_query_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "key",
+            "source": "activation:key",
+            "cast": "const float*",
+            "ports": [
+              "input:key"
+            ]
+          },
+          {
+            "name": "key_elements",
+            "source": "runtime:attention_key_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "value",
+            "source": "activation:value",
+            "cast": "const float*",
+            "ports": [
+              "input:value"
+            ]
+          },
+          {
+            "name": "value_elements",
+            "source": "runtime:attention_value_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output",
+            "source": "output:output",
+            "cast": "float*",
+            "ports": [
+              "output:output"
+            ]
+          },
+          {
+            "name": "output_elements",
+            "source": "runtime:attention_output_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "scratch",
+            "source": "scratch:scores",
+            "cast": "float*"
+          },
+          {
+            "name": "scratch_bytes",
+            "source": "scratch_size:scores"
+          },
+          {
+            "name": "tokens",
+            "source": "runtime:attention_tokens",
+            "value_type": "size_t"
+          },
+          {
+            "name": "heads",
+            "source": "runtime:attention_heads",
+            "value_type": "size_t"
+          },
+          {
+            "name": "head_dim",
+            "source": "runtime:attention_head_dim",
+            "value_type": "size_t"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "tests/test_v8_attention_full_token_major_oracle.py",
+          "tests/test_v8_attention_full_token_major_generated.py",
+          "tests/test_v8_kokoro_generated_attention_context.py",
+          "tests/test_v8_kokoro_generated_encoder.py"
+        ],
+        "oracle": "Independent PyTorch matmul/softmax/matmul on small and pinned first Kokoro ALBERT attention-context shapes; model-neutral generated-C graph"
+      },
+      "notes": "Inference-only full attention for token-major FP32 inputs. No causal mask, key padding, dropout, output projection, or residual/LayerNorm. Kokoro's fixed 36-token fixture has no padding; other mask semantics require a separate contract.",
+      "name": "attention_full_token_major_f32_checked",
+      "_source_file": "attention_full_token_major_f32_checked.json"
+    },
+    {
       "id": "attn_gate_sigmoid_mul_backward_f32",
       "op": "attn_gate_sigmoid_mul_backward",
       "variant": "fp32",
@@ -12155,9 +12436,9 @@
         "unit": [
           "tests/test_v8_audio_adaptive_layer_norm_oracle.py"
         ],
-        "oracle": "Independent torch.nn.functional.linear and layer_norm FP32 CPU; committed fixture and live 24x512x128 test"
+        "oracle": "Independent torch.nn.functional.linear and layer_norm FP32 CPU; separately registered native-versus-fixture, native-versus-live at small and 24x512x128 shapes, and historical fixture-versus-live PyTorch 2.8.0 and 2.12.1 comparisons; all use existing nightly reporting."
       },
-      "notes": "Batch-one token-major input with explicit input/output row strides. Style projection uses [2*C,S] output-feature-major weights and first C gamma, second C beta. Biased variance uses ascending double accumulation; projection and modulation are FP32. Epsilon is positive finite. Only logical columns are read; padding is untouched. All buffers caller-owned; no aliasing between input, weights, style, output or scratch. Output remains unchanged on null, geometry, capacity or nonfinite rejection. Inference only; backward unsupported.",
+      "notes": "Batch-one token-major input with explicit input/output row strides. Style projection uses [2*C,S] output-feature-major weights, first C gamma, second C beta, and an ascending FP32 multiply/add reduction. Mean and biased variance each use an ascending FP64 channel reduction; normalization casts to FP32 before affine modulation. This reduction order is a separate numerical identity from a future alternative provider. The pinned Kokoro fixture was captured under PyTorch 2.8.0. Nightly stage captures first differed at PyTorch F.linear projection while normalized LayerNorm output matched. The compared hosts reported AVX512 and AVX2 capability; this does not identify the exact operation backend dispatch or prove version-specific drift. Historical fixture reproduction requests MKL_CBWR=AVX2 and preserves its original 1e-7 bound. Separate native-dispatch lanes compare CKE to live PyTorch at the unchanged 5e-6 bound; neither lane silently refreshes the fixture. Reports retain versions, stage tensors and requested settings, explicitly marking actual dispatch identity unverified. Fixture reproduction and native parity have distinct case identities and execute independently. Epsilon is positive finite. Only logical columns are read; padding is untouched. All buffers caller-owned; no aliasing between input, weights, style, output or scratch. Output remains unchanged on null, geometry, capacity or nonfinite rejection. Inference only; backward unsupported.",
       "name": "audio_adaptive_layer_norm_f32",
       "_source_file": "audio_adaptive_layer_norm_f32.json"
     },
@@ -17795,7 +18076,8 @@
       },
       "tests": {
         "unit": [
-          "unittest/test_audio_encoder.py"
+          "unittest/test_audio_encoder.py",
+          "tests/test_v8_kokoro_generated_encoder.py"
         ],
         "oracle": "NumPy FP32 multiply followed by FP32 add"
       },
@@ -23366,7 +23648,8 @@
       "tests": {
         "unit": [
           "tests/test_v8_bert_embedding_oracle.py",
-          "tests/test_v8_bert_embedding_live.py"
+          "tests/test_v8_bert_embedding_live.py",
+          "tests/test_v8_kokoro_generated_encoder.py"
         ],
         "oracle": "Pinned Kokoro/Transformers PyTorch ALBERT embedding module output at 36x128; independent committed fixture and optional live pinned-model recomputation"
       },
@@ -27288,6 +27571,240 @@
       },
       "name": "gelu_pytorch_tanh_bf16_storage",
       "_source_file": "gelu_pytorch_tanh_bf16_storage.json"
+    },
+    {
+      "id": "gelu_rows_tanh_checked_f32",
+      "op": "gelu",
+      "operation_interface": "activation.gelu.tanh.rows.checked.fp32.v1",
+      "variant": "checked_legacy_scalar_tanh",
+      "selection": {
+        "status": "candidate",
+        "priority": 100,
+        "equivalence_group": "gelu_rows_tanh_checked_f32",
+        "phases": [
+          "prefill"
+        ]
+      },
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "input",
+          "dtype": "fp32",
+          "shape": [
+            "M",
+            "C"
+          ],
+          "layout": "row_major_strided",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "M",
+            "C"
+          ],
+          "layout": "row_major_strided",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "scratch": [
+        {
+          "name": "scratch",
+          "dtype": "fp32",
+          "shape": [
+            "Q"
+          ],
+          "layout": "contiguous",
+          "placement": "local",
+          "access": "read_write",
+          "storage_class": "scratch",
+          "consumption": "required",
+          "lifetime": "kernel_call",
+          "alignment": 4,
+          "desc": "Caller-owned staged output; Q must cover rows*channels.",
+          "size_bytes": "4 * Q",
+          "size_resolution": "required"
+        }
+      ],
+      "dims": [
+        "input_elements",
+        "input_stride",
+        "output_elements",
+        "output_stride",
+        "scratch_elements",
+        "rows",
+        "channels"
+      ],
+      "constraints": {
+        "notes": "Positive rows/channels, checked physical spans and capacities; no aliasing of output/scratch with accessed read buffers. Input row padding is ignored; output padding unchanged. All valid inputs/results finite. Rejection leaves output unchanged. No internal allocation."
+      },
+      "impl": {
+        "function": "gelu_rows_tanh_checked_f32",
+        "c_declaration": "int gelu_rows_tanh_checked_f32(const float *input, size_t input_elements, size_t input_stride, float *output, size_t output_elements, size_t output_stride, float *scratch, size_t scratch_elements, size_t rows, size_t channels);",
+        "sources": [
+          "src/kernels/gelu_rows_tanh_checked.c",
+          "src/kernels/gelu_kernels.c",
+          "src/ckernel_strict.c",
+          "src/ck_threadpool.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "call_constant_contract": {
+        "shape_symbols": {
+          "M": "gelu_rows",
+          "C": "gelu_channels",
+          "Q": "gelu_scratch_elements"
+        },
+        "buffer_spans": [
+          {
+            "pointer": "input",
+            "elements": "gelu_input_elements",
+            "stride": "gelu_input_stride",
+            "physical_row_stride": true,
+            "rows": "gelu_rows",
+            "width": "gelu_channels",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "output",
+            "elements": "gelu_output_elements",
+            "stride": "gelu_output_stride",
+            "physical_row_stride": true,
+            "rows": "gelu_rows",
+            "width": "gelu_channels",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "scratch",
+            "elements": "gelu_scratch_elements",
+            "rows": "gelu_scratch_elements",
+            "width": 1,
+            "element_bytes": 4
+          }
+        ]
+      },
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "input",
+            "source": "activation:input",
+            "cast": "const float*",
+            "ports": [
+              "input:input"
+            ]
+          },
+          {
+            "name": "input_elements",
+            "source": "runtime:gelu_input_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "input_stride",
+            "source": "runtime:gelu_input_stride",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output",
+            "source": "output:output",
+            "cast": "float*",
+            "ports": [
+              "output:output"
+            ]
+          },
+          {
+            "name": "output_elements",
+            "source": "runtime:gelu_output_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output_stride",
+            "source": "runtime:gelu_output_stride",
+            "value_type": "size_t"
+          },
+          {
+            "name": "scratch",
+            "source": "scratch:scratch",
+            "cast": "float*"
+          },
+          {
+            "name": "scratch_elements",
+            "source": "runtime:gelu_scratch_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "rows",
+            "source": "runtime:gelu_rows",
+            "value_type": "size_t"
+          },
+          {
+            "name": "channels",
+            "source": "runtime:gelu_channels",
+            "value_type": "size_t"
+          }
+        ]
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "gelu_tanh_legacy_scalar_fp32_checked",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "gelu_rows_tanh_checked_f32",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "independent_rows"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "none",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "tests": {
+        "unit": [
+          "tests/test_v8_normalization_checked_oracle.py",
+          "tests/test_v8_normalization_checked_generated.py",
+          "tests/test_v8_kokoro_generated_albert_layer.py",
+          "tests/test_v8_kokoro_generated_encoder.py"
+        ],
+        "oracle": "Pinned independent Kokoro/PyTorch 2.8 first-layer operation captures; live PyTorch at small widths and SIMD tails; bounds, padding, rejection and repeated calls"
+      },
+      "notes": "Checked adapter preserves the existing arithmetic. Independent native-versus-PyTorch contract uses a 1e-6 elementwise absolute bound for tanh GELU. The legacy function named gelu_exact_inplace implements tanh; erf is a different provider. Backward support is explicitly uncertified. Complete native model remains NOT_TESTED.",
+      "name": "gelu_rows_tanh_checked_f32",
+      "_source_file": "gelu_rows_tanh_checked_f32.json"
     },
     {
       "id": "gemm_backward_f32",
@@ -39268,6 +39785,311 @@
       "_source_file": "layernorm_fp32_exact.json"
     },
     {
+      "id": "layernorm_rows_checked_f32",
+      "op": "layernorm",
+      "operation_interface": "normalization.layernorm.rows.checked.fp32.v1",
+      "variant": "checked_legacy_ggml_reduction",
+      "selection": {
+        "status": "candidate",
+        "priority": 100,
+        "equivalence_group": "layernorm_rows_checked_f32",
+        "phases": [
+          "prefill"
+        ]
+      },
+      "quant": {
+        "weight": "fp32",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "input",
+          "dtype": "fp32",
+          "shape": [
+            "M",
+            "C"
+          ],
+          "layout": "row_major_strided",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "weights": [
+        {
+          "name": "gamma",
+          "dtype": "fp32",
+          "shape": [
+            "C"
+          ],
+          "layout": "feature_contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "weight",
+          "consumption": "required"
+        },
+        {
+          "name": "beta",
+          "dtype": "fp32",
+          "shape": [
+            "C"
+          ],
+          "layout": "feature_contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "weight",
+          "consumption": "required"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "M",
+            "C"
+          ],
+          "layout": "row_major_strided",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "scratch": [
+        {
+          "name": "scratch",
+          "dtype": "fp32",
+          "shape": [
+            "Q"
+          ],
+          "layout": "contiguous",
+          "placement": "local",
+          "access": "read_write",
+          "storage_class": "scratch",
+          "consumption": "required",
+          "lifetime": "kernel_call",
+          "alignment": 4,
+          "desc": "Caller-owned staged output and row statistics. Q must cover rows*(channels+2).",
+          "size_bytes": "4 * Q",
+          "size_resolution": "required"
+        }
+      ],
+      "dims": [
+        "input_elements",
+        "input_stride",
+        "gamma_elements",
+        "beta_elements",
+        "output_elements",
+        "output_stride",
+        "scratch_elements",
+        "rows",
+        "channels"
+      ],
+      "constraints": {
+        "notes": "Positive rows/channels, checked physical spans and capacities; no aliasing of output/scratch with accessed read buffers. Input row padding is ignored; output padding unchanged. All valid inputs/results finite. Rejection leaves output unchanged. No internal allocation."
+      },
+      "impl": {
+        "function": "layernorm_rows_checked_f32",
+        "c_declaration": "int layernorm_rows_checked_f32(const float *input, size_t input_elements, size_t input_stride, const float *gamma, size_t gamma_elements, const float *beta, size_t beta_elements, float *output, size_t output_elements, size_t output_stride, float *scratch, size_t scratch_elements, size_t rows, size_t channels, float epsilon);",
+        "sources": [
+          "src/kernels/layernorm_rows_checked.c",
+          "src/kernels/layernorm_kernels.c",
+          "src/ckernel_strict.c",
+          "src/ck_threadpool.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "call_constant_contract": {
+        "shape_symbols": {
+          "M": "norm_rows",
+          "C": "norm_channels",
+          "Q": "norm_scratch_elements"
+        },
+        "buffer_spans": [
+          {
+            "pointer": "input",
+            "elements": "norm_input_elements",
+            "stride": "norm_input_stride",
+            "physical_row_stride": true,
+            "rows": "norm_rows",
+            "width": "norm_channels",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "output",
+            "elements": "norm_output_elements",
+            "stride": "norm_output_stride",
+            "physical_row_stride": true,
+            "rows": "norm_rows",
+            "width": "norm_channels",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "gamma",
+            "elements": "norm_gamma_elements",
+            "rows": "norm_channels",
+            "width": 1,
+            "element_bytes": 4
+          },
+          {
+            "pointer": "beta",
+            "elements": "norm_beta_elements",
+            "rows": "norm_channels",
+            "width": 1,
+            "element_bytes": 4
+          },
+          {
+            "pointer": "scratch",
+            "elements": "norm_scratch_elements",
+            "rows": "norm_scratch_elements",
+            "width": 1,
+            "element_bytes": 4
+          }
+        ]
+      },
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "input",
+            "source": "activation:input",
+            "cast": "const float*",
+            "ports": [
+              "input:input"
+            ]
+          },
+          {
+            "name": "input_elements",
+            "source": "runtime:norm_input_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "input_stride",
+            "source": "runtime:norm_input_stride",
+            "value_type": "size_t"
+          },
+          {
+            "name": "gamma",
+            "source": "weight:gamma",
+            "cast": "const float*",
+            "ports": [
+              "weight:gamma"
+            ]
+          },
+          {
+            "name": "gamma_elements",
+            "source": "runtime:norm_gamma_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "beta",
+            "source": "weight:beta",
+            "cast": "const float*",
+            "ports": [
+              "weight:beta"
+            ]
+          },
+          {
+            "name": "beta_elements",
+            "source": "runtime:norm_beta_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output",
+            "source": "output:output",
+            "cast": "float*",
+            "ports": [
+              "output:output"
+            ]
+          },
+          {
+            "name": "output_elements",
+            "source": "runtime:norm_output_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output_stride",
+            "source": "runtime:norm_output_stride",
+            "value_type": "size_t"
+          },
+          {
+            "name": "scratch",
+            "source": "scratch:scratch",
+            "cast": "float*"
+          },
+          {
+            "name": "scratch_elements",
+            "source": "runtime:norm_scratch_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "rows",
+            "source": "runtime:norm_rows",
+            "value_type": "size_t"
+          },
+          {
+            "name": "channels",
+            "source": "runtime:norm_channels",
+            "value_type": "size_t"
+          },
+          {
+            "name": "epsilon",
+            "source": "config:epsilon"
+          }
+        ]
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "layernorm_rows_checked_fp32_ggml_chunked_contracted",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "layernorm_rows_checked_f32",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "compile_time",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "independent_rows"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "contract_defined"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp32",
+            "merge_order": "ascending_chunk",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "tests": {
+        "unit": [
+          "tests/test_v8_normalization_checked_oracle.py",
+          "tests/test_v8_normalization_checked_generated.py",
+          "tests/test_v8_kokoro_generated_albert_layer.py",
+          "tests/test_v8_kokoro_generated_encoder.py"
+        ],
+        "oracle": "Pinned independent Kokoro/PyTorch 2.8 first-layer operation captures; live PyTorch at small widths and SIMD tails; bounds, padding, rejection and repeated calls"
+      },
+      "notes": "Checked adapter preserves the existing arithmetic. Independent native-versus-PyTorch contract uses the existing FP32 LayerNorm family 1e-5 absolute bound; this is not the AdaLN reproducibility bound. Backward support is explicitly uncertified. Complete native model remains NOT_TESTED.",
+      "name": "layernorm_rows_checked_f32",
+      "_source_file": "layernorm_rows_checked_f32.json"
+    },
+    {
       "id": "layout_convert_head_to_token_f32",
       "op": "layout_convert",
       "selection": {
@@ -39406,6 +40228,284 @@
       },
       "name": "layout_convert_token_to_head_f32",
       "_source_file": "layout_convert_token_to_head_f32.json"
+    },
+    {
+      "id": "linear_rows_checked_f32",
+      "op": "linear_rows_checked",
+      "operation_interface": "linear.row_major.checked.fp32.v1",
+      "variant": "strided_row_major_scalar_fp64_accumulation",
+      "selection": {
+        "status": "candidate",
+        "priority": 100,
+        "equivalence_group": "linear_rows_checked_fp32",
+        "phases": [
+          "prefill"
+        ]
+      },
+      "quant": {
+        "weight": "fp32",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "input",
+          "dtype": "fp32",
+          "shape": [
+            "M",
+            "K"
+          ],
+          "layout": "row_major_input_stride",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "weights": [
+        {
+          "name": "weight",
+          "dtype": "fp32",
+          "shape": [
+            "N",
+            "K"
+          ],
+          "layout": "row_major_weight_stride",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "weight",
+          "consumption": "required"
+        },
+        {
+          "name": "bias",
+          "dtype": "fp32",
+          "shape": [
+            "N"
+          ],
+          "layout": "feature_contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "weight",
+          "consumption": "required"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "M",
+            "N"
+          ],
+          "layout": "row_major_output_stride",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "input_elements",
+        "input_stride",
+        "weight_elements",
+        "weight_stride",
+        "bias_elements",
+        "output_elements",
+        "output_stride",
+        "rows",
+        "input_channels",
+        "output_channels"
+      ],
+      "constraints": {
+        "notes": "M, K, N positive; checked physical spans; nonaliasing caller-owned buffers; all accessed inputs and results finite. Rejection leaves all output unchanged. No allocation or global state."
+      },
+      "impl": {
+        "function": "linear_rows_checked_f32",
+        "c_declaration": "int linear_rows_checked_f32(const float *input, size_t input_elements, size_t input_stride, const float *weight, size_t weight_elements, size_t weight_stride, const float *bias, size_t bias_elements, float *output, size_t output_elements, size_t output_stride, size_t rows, size_t input_channels, size_t output_channels);",
+        "sources": [
+          "src/kernels/linear_rows_checked.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "call_constant_contract": {
+        "shape_symbols": {
+          "M": "linear_rows",
+          "K": "linear_input_channels",
+          "N": "linear_output_channels"
+        },
+        "buffer_spans": [
+          {
+            "pointer": "input",
+            "elements": "linear_input_elements",
+            "stride": "linear_input_stride",
+            "physical_row_stride": true,
+            "rows": "linear_rows",
+            "width": "linear_input_channels",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "weight",
+            "elements": "linear_weight_elements",
+            "stride": "linear_weight_stride",
+            "rows": "linear_output_channels",
+            "width": "linear_input_channels",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "bias",
+            "elements": "linear_bias_elements",
+            "rows": "linear_output_channels",
+            "width": 1,
+            "element_bytes": 4
+          },
+          {
+            "pointer": "output",
+            "elements": "linear_output_elements",
+            "stride": "linear_output_stride",
+            "physical_row_stride": true,
+            "rows": "linear_rows",
+            "width": "linear_output_channels",
+            "element_bytes": 4
+          }
+        ]
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "linear_rows_checked_f32_scalar_fp64_accumulation",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "linear_rows_checked_f32",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp64",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "serial"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "input",
+            "source": "activation:input",
+            "cast": "const float*",
+            "ports": [
+              "input:input"
+            ]
+          },
+          {
+            "name": "input_elements",
+            "source": "runtime:linear_input_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "input_stride",
+            "source": "runtime:linear_input_stride",
+            "value_type": "size_t"
+          },
+          {
+            "name": "weight",
+            "source": "weight:weight",
+            "cast": "const float*",
+            "ports": [
+              "weight:weight"
+            ]
+          },
+          {
+            "name": "weight_elements",
+            "source": "runtime:linear_weight_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "weight_stride",
+            "source": "runtime:linear_weight_stride",
+            "value_type": "size_t"
+          },
+          {
+            "name": "bias",
+            "source": "weight:bias",
+            "cast": "const float*",
+            "ports": [
+              "weight:bias"
+            ]
+          },
+          {
+            "name": "bias_elements",
+            "source": "runtime:linear_bias_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output",
+            "source": "output:output",
+            "cast": "float*",
+            "ports": [
+              "output:output"
+            ]
+          },
+          {
+            "name": "output_elements",
+            "source": "runtime:linear_output_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output_stride",
+            "source": "runtime:linear_output_stride",
+            "value_type": "size_t"
+          },
+          {
+            "name": "rows",
+            "source": "runtime:linear_rows",
+            "value_type": "size_t"
+          },
+          {
+            "name": "input_channels",
+            "source": "runtime:linear_input_channels",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output_channels",
+            "source": "runtime:linear_output_channels",
+            "value_type": "size_t"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "tests/test_v8_linear_rows_oracle.py",
+          "tests/test_v8_kokoro_generated_projection.py",
+          "tests/test_v8_checked_op_constants.py",
+          "tests/test_v8_kokoro_generated_qkv.py",
+          "tests/test_v8_kokoro_generated_albert_layer.py",
+          "tests/test_v8_kokoro_generated_encoder.py"
+        ],
+        "oracle": "Independent PyTorch torch.nn.functional.linear at small, pinned Kokoro [36,128]\u2192[36,768], and first shared-layer [36,768]\u2192[36,768] Q/K/V shapes; checked strided rows, bounded per-call capacities, and connected generated graphs"
+      },
+      "notes": "Reusable checked linear operator for inference only; Kokoro ALBERT projection is one consumer. FP64 accumulation is deliberately distinct from PyTorch's FP32 reduction and uses an explicit numerical tolerance. Pinned first Kokoro ALBERT FFN projection at [36,2048] to [36,768] differs from PyTorch 2.8 FP32 by 3.814697265625e-5 on oracle-fed inputs while matching independently executed FP64 arithmetic exactly. Its new composition fixture declares its own 5e-5 absolute projection/residual bound and keeps normalized outputs at 1e-5; existing projection/QKV bounds remain unchanged. If a tighter PyTorch-dispatch match is required, add a separately named reduction provider/contract rather than modifying this FP64 provider.",
+      "name": "linear_rows_checked_f32",
+      "_source_file": "linear_rows_checked_f32.json"
     },
     {
       "id": "logits_copy_to_position",

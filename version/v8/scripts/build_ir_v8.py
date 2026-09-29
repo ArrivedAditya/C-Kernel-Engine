@@ -84,7 +84,7 @@ from validate_circuit_interfaces_v8 import (
     validate_graph_slots,
 )
 from resolve_layout_chain_v8 import rank_layout_routes
-from runtime_extent_contract_v8 import normalize_runtime_extents
+from runtime_extent_contract_v8 import SIZE_MAX, normalize_runtime_extents
 
 
 class BuildDiagnosticError(RuntimeError):
@@ -1811,6 +1811,18 @@ def _validate_segmented_prefill_contract(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 OP_DATAFLOW = {
+    "audio_scaled_residual_add": {
+        "inputs": {"residual": "external:residual", "branch": "external:branch"},
+        "outputs": {"output": {"slot": "residual_sum", "dtype": "fp32"}},
+    },
+    "attention_full_token_major_checked": {
+        "inputs": {"query": "external:query", "key": "external:key", "value": "external:value"},
+        "outputs": {"output": {"slot": "attention_context", "dtype": "fp32"}},
+    },
+    "linear_rows_checked": {
+        "inputs": {"input": "external:linear_input"},
+        "outputs": {"output": {"slot": "linear_output", "dtype": "fp32"}},
+    },
     "embedding_three_table_layer_norm": {
         "inputs": {"word_ids": "external:word_ids", "type_ids": "external:type_ids"},
         "outputs": {"output": {"slot": "embedding_output", "dtype": "fp32"}},
@@ -4375,6 +4387,9 @@ def _validated_kernel_codegen_capability(kernel_id: str, kernel_map: Dict) -> Op
 # source model is dense, recurrent, DeepStack-style, MoE, SSM, or something else.
 # Note: "matmul" is a logical op that maps to gemv (decode) or gemm (prefill) based on mode
 TEMPLATE_TO_KERNEL_OP = {
+    "audio_scaled_residual_add": "audio_scaled_residual_add",
+    "attention_full_token_major_checked": "attention_full_token_major_checked",
+    "linear_rows_checked": "linear_rows_checked",
     "embedding_three_table_layer_norm": "embedding_three_table_layer_norm",
     "audio_duration_logits_to_frames": "audio_duration_logits_to_frames",
     "runtime_extent_sum": "runtime_extent_sum",
@@ -5239,6 +5254,109 @@ def _dtype_size_bytes(dtype: str) -> int:
     }.get(str(dtype or "").strip().lower(), 4)
 
 
+def _validated_call_constants(op: Dict[str, Any], kernel_map: Dict[str, Any]) -> Dict[str, int]:
+    """Check circuit scalar ABI bindings before memory planning consumes them."""
+    params = op.get("params") or {}
+    if not isinstance(params, dict):
+        raise RuntimeError("HARD CALL CONSTANT FAULT: operation params must be an object")
+    raw = params.get("call_constants", {})
+    if not isinstance(raw, dict):
+        raise RuntimeError("HARD CALL CONSTANT FAULT: params.call_constants must be an object")
+    if not raw:
+        return {}
+    contract = kernel_map.get("call_constant_contract")
+    if not isinstance(contract, dict):
+        raise RuntimeError("HARD CALL CONSTANT FAULT: selected map has no call-constant contract")
+    abi = kernel_map.get("call_abi") or {}
+    declaration = str((kernel_map.get("impl") or {}).get("c_declaration", ""))
+    signature = re.search(r"\((.*)\)\s*;\s*$", declaration)
+    declared_args = signature.group(1).split(",") if signature else []
+    abi_args = abi.get("params", [])
+    if len(declared_args) != len(abi_args):
+        raise RuntimeError("HARD CALL CONSTANT FAULT: map ABI and C declaration disagree")
+    typed = {}
+    for index, arg in enumerate(abi_args):
+        source = str(arg.get("source", ""))
+        if source.startswith("runtime:"):
+            typed[source.split(":", 1)[1]] = (arg, declared_args[index])
+    lengths = (op.get("runtime_extent_contract") or {}).get("runtime_lengths", {})
+    values = {}
+    for name, value in raw.items():
+        arg, declared_type = typed.get(name, ({}, ""))
+        if (not isinstance(name, str) or not name.isidentifier()
+                or arg.get("value_type") != "size_t"
+                or not re.search(r"\bsize_t\s+" + re.escape(str(arg.get("name", "")))
+                                 + r"\s*$", declared_type.strip())
+                or "*" in str(arg.get("cast", "")) or arg.get("ports")
+                or name in lengths):
+            raise RuntimeError(f"HARD CALL CONSTANT FAULT: {name!r} is not an overridable size_t scalar")
+        if (not isinstance(value, int) or isinstance(value, bool)
+                or value < 0 or value > SIZE_MAX):
+            raise RuntimeError(f"HARD CALL CONSTANT FAULT: {name!r} is outside size_t")
+        values[name] = value
+    for symbol, abi_name in (contract.get("shape_symbols") or {}).items():
+        declared = params.get(symbol)
+        if (not isinstance(declared, int) or isinstance(declared, bool)
+                or declared < 0 or declared > SIZE_MAX or abi_name not in values
+                or declared != values[abi_name]):
+            raise RuntimeError(
+                f"HARD CALL CONSTANT FAULT: shape {symbol} disagrees with ABI {abi_name}")
+    for span in contract.get("buffer_spans", []):
+        count_name = span.get("elements")
+        row_name = span.get("rows")
+        width_name = span.get("width")
+        stride_name = span.get("stride")
+        count = values.get(count_name)
+        rows = values.get(row_name)
+        width = values.get(width_name) if isinstance(width_name, str) else width_name
+        stride = values.get(stride_name) if stride_name else width
+        if (not all(isinstance(v, int) and not isinstance(v, bool) for v in
+                    (count, rows, width, stride))
+                or rows <= 0 or width <= 0 or stride < width or count < 0
+                or rows - 1 > (SIZE_MAX - width) // stride
+                or (rows - 1) * stride + width > count):
+            raise RuntimeError(
+                f"HARD CALL CONSTANT FAULT: {span.get('pointer')} span exceeds claimed capacity")
+    return values
+
+
+def _validate_planned_call_constant_spans(
+    values: Dict[str, int], kernel_map: Dict[str, Any], args: List[Dict[str, Any]],
+    memory: Dict[str, Any],
+) -> None:
+    """Reject claimed buffer capacities larger than planner-owned storage."""
+    if not values:
+        return
+    contract = kernel_map["call_constant_contract"]
+    by_arg = {arg.get("name"): arg for arg in args}
+    activations = {item.get("name"): item for item in
+                   (memory.get("activations") or {}).get("buffers", [])}
+    weights = {item.get("name"): item for item in
+               (memory.get("weights") or {}).get("entries", [])}
+    for span in contract["buffer_spans"]:
+        pointer = by_arg.get(span["pointer"], {})
+        ref = pointer.get("buffer_ref") or pointer.get("weight_ref")
+        planned = activations.get(ref) or weights.get(ref)
+        element_bytes = span.get("element_bytes")
+        claimed = values.get(span["elements"])
+        if (not isinstance(element_bytes, int) or element_bytes <= 0
+                or not isinstance(claimed, int) or planned is None
+                or claimed > SIZE_MAX // element_bytes
+                or claimed * element_bytes > int(planned.get("size", -1))):
+            raise RuntimeError(
+                f"HARD CALL CONSTANT FAULT: {span['pointer']} capacity exceeds planned storage")
+        if span.get("physical_row_stride") is True:
+            try:
+                physical_shape = ast.literal_eval(str(planned.get("shape", "")))
+                physical_stride = int(physical_shape[-1])
+            except (ValueError, TypeError, SyntaxError, IndexError):
+                raise RuntimeError(
+                    f"HARD CALL CONSTANT FAULT: {span['pointer']} has no planned physical stride")
+            if values.get(span.get("stride")) != physical_stride:
+                raise RuntimeError(
+                    f"HARD CALL CONSTANT FAULT: {span['pointer']} stride disagrees with planned layout")
+
+
 def _kernel_port_size_bytes(
     port: Dict[str, Any], params: Dict[str, Any], config: Dict[str, Any]
 ) -> Optional[int]:
@@ -5255,6 +5373,8 @@ def _kernel_port_size_bytes(
     values = dict(config)
     values.update(runtime_constants)
     values.update(params)
+    if isinstance(params.get("call_constants"), dict):
+        values.update(params["call_constants"])
     symbols = {
         **values,
         "M": values.get("M", values.get("_m", values.get("seq_len"))),
@@ -8908,6 +9028,8 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
     # Op → Weight mapping (which weights each op uses for quant lookup)
     # ═══════════════════════════════════════════════════════════
     OP_TO_WEIGHT_KEYS = {
+        "attention_full_token_major_checked": None,
+        "linear_rows_checked": ["weight", "bias"],
         "embedding_three_table_layer_norm": ["word", "position", "token_type", "gamma", "beta"],
         "audio_duration_logits_to_frames": None,
         "runtime_extent_sum": None,
@@ -11261,6 +11383,7 @@ def generate_ir_lower_1(
         if not kernel_map:
             print(f"  Warning: Kernel '{kernel_id}' not in registry, skipping")
             continue
+        _validated_call_constants(ir_op, kernel_map)
 
         # Build lowered op - preserve ALL weights from IR1
         # Also preserve op_id and dataflow for memory planner
@@ -12225,6 +12348,7 @@ WEIGHT_PATTERNS = {
 # Template op → weight refs it uses
 # This tells us which weights each template op needs
 TEMPLATE_OP_WEIGHTS = {
+    "linear_rows_checked": ["weight", "bias"],
     "embedding_three_table_layer_norm": ["word", "position", "token_type", "gamma", "beta"],
     "audio_duration_logits_to_frames": [],
     "runtime_extent_sum": [],
@@ -15841,7 +15965,7 @@ def _validate_kernel_call_abi(kernel_id: str, function: str, call_abi: Dict, sou
             raise RuntimeError(
                 f"HARD CALL ABI FAULT: {kernel_id!r} call_abi.params[{index}] is not an object."
             )
-        unknown = sorted(set(param) - {"name", "source", "cast", "alt", "ports"})
+        unknown = sorted(set(param) - {"name", "source", "cast", "alt", "ports", "value_type"})
         if unknown:
             raise RuntimeError(
                 f"HARD CALL ABI FAULT: {kernel_id!r} call parameter {index} has unknown "
@@ -15849,6 +15973,13 @@ def _validate_kernel_call_abi(kernel_id: str, function: str, call_abi: Dict, sou
             )
         name = str(param.get("name", "") or "").strip()
         source_expr = str(param.get("source", "") or "").strip()
+        if "value_type" in param and (
+            param["value_type"] != "size_t" or not source_expr.startswith("runtime:")
+            or "*" in str(param.get("cast", "")) or param.get("ports")
+        ):
+            raise RuntimeError(
+                f"HARD CALL ABI FAULT: {kernel_id!r}.{name} has invalid scalar value_type"
+            )
         if not name or not source_expr:
             raise RuntimeError(
                 f"HARD CALL ABI FAULT: {kernel_id!r} call parameter {index} requires "
@@ -16310,6 +16441,7 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
         scratch_list = op.get("scratch", [])
         scratch = {s.get("name"): s for s in scratch_list if s.get("name")}
         params = op.get("params", {})
+        call_constants = _validated_call_constants(op, physical_maps[kernel_id])
 
         # Aliases for activation/output key lookups (handles case differences between bindings and IR)
         act_aliases = {
@@ -16555,6 +16687,8 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
                 declared_constants = extent_contract.get("runtime_constants", {}) if isinstance(extent_contract, dict) else {}
                 if key in declared_lengths:
                     expr = f"runtime_extents.{key}"
+                elif key in call_constants:
+                    expr = str(call_constants[key])
                 elif key in declared_constants:
                     expr = str(declared_constants[key])
                 elif key in audio_runtime_exprs:
@@ -16713,6 +16847,11 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
                 arg_doc["weight_ref"] = resolved_weight_ref
             args.append(arg_doc)
 
+        if call_constants and not op_errors:
+            _validate_planned_call_constant_spans(
+                call_constants, physical_maps[kernel_id], args,
+                lowered_ir.get("memory", {}),
+            )
         if op_errors:
             all_errors.append({
                 "idx": op.get("idx", -1),

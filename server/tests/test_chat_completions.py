@@ -12,7 +12,12 @@ sys.path.insert(
     0, str(Path(__file__).resolve().parents[2] / "version" / "v8" / "scripts")
 )
 
-from ck_serve_v8 import create_app
+from ck_serve_v8 import create_app as _create_app
+
+
+def create_app(*args, **kwargs):
+    # Compatibility tests include a deliberate untemplated fake session.
+    return _create_app(*args, allow_untemplated=True, **kwargs)
 
 
 TOOL_TEMPLATE = """

@@ -7,11 +7,107 @@ server (429 storm) and then dies on an unparseable 400 when context runs out.
 from __future__ import annotations
 
 import concurrent.futures
+import json
+import socket
+import threading
 import time
 
 from fastapi.testclient import TestClient
+import uvicorn
 
-from server.live import create_app
+from server.live import create_app as _create_app
+
+
+def create_app(*args, **kwargs):
+    # Error-envelope fixtures use a deliberately untemplated fake runtime.
+    return _create_app(*args, allow_untemplated=True, **kwargs)
+
+
+def test_nonstream_disconnect_cancels_native_generation(monkeypatch):
+    class WaitingSession:
+        def __init__(self):
+            self.cancelled = threading.Event()
+
+        def generate(self, system, user, *, max_tokens, temperature, top_p,
+                     on_token, flags=0, stop_on_text=(), stop_at_eos=False):
+            if not self.cancelled.wait(timeout=2):
+                raise AssertionError("native generation was not cancelled")
+            on_token(0, "")
+            return {"prompt_tokens": 1, "generated_tokens": 0, "stop_reason": 3}
+
+        def cancel(self):
+            self.cancelled.set()
+
+        def close(self):
+            pass
+
+    async def disconnected(_request):
+        return True
+
+    monkeypatch.setattr("server.live.Request.is_disconnected", disconnected)
+    session = WaitingSession()
+    app = create_app(session, model="m")
+    response = TestClient(app).post("/v1/responses", json={"model": "m", "input": "hello"})
+    assert response.status_code == 200
+    assert session.cancelled.is_set()
+    assert not app.state.flight_lock.locked()
+
+
+def test_nonstream_socket_disconnect_releases_session():
+    class WaitingSession:
+        def __init__(self):
+            self.started = threading.Event()
+            self.cancelled = threading.Event()
+
+        def generate(self, system, user, *, max_tokens, temperature, top_p,
+                     on_token, flags=0, stop_on_text=(), stop_at_eos=False):
+            self.started.set()
+            if not self.cancelled.wait(timeout=5):
+                raise AssertionError("disconnected request kept generating")
+            return {"prompt_tokens": 1, "generated_tokens": 0, "stop_reason": 3}
+
+        def cancel(self):
+            self.cancelled.set()
+
+        def close(self):
+            pass
+
+    session = WaitingSession()
+    app = _create_app(session, model="m", chat_template="{{ messages[0].content }}")
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    port = listener.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
+    thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
+    thread.start()
+    try:
+        for _ in range(100):
+            if server.started:
+                break
+            time.sleep(0.02)
+        assert server.started
+        payload = json.dumps({"model": "m", "input": "hello"}).encode()
+        connection = socket.create_connection(("127.0.0.1", port), timeout=3)
+        try:
+            connection.sendall(
+                b"POST /v1/responses HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+                b"Content-Type: application/json\r\nContent-Length: "
+                + str(len(payload)).encode() + b"\r\nConnection: close\r\n\r\n" + payload
+            )
+            assert session.started.wait(timeout=3)
+        finally:
+            connection.close()
+        assert session.cancelled.wait(timeout=3)
+        for _ in range(100):
+            if not app.state.flight_lock.locked():
+                break
+            time.sleep(0.02)
+        assert not app.state.flight_lock.locked()
+    finally:
+        server.should_exit = True
+        thread.join(timeout=3)
+        listener.close()
 
 
 class FakeSession:

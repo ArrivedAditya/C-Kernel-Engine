@@ -1182,9 +1182,9 @@
 
     <h2>Test Details</h2>
     <p class="sub-test-summary">
-      <span id="sub-tests-passed">0</span> kernel tests passed,
+      <span id="sub-tests-passed">0</span> reported cases passed,
       <span id="sub-tests-failed">0</span> failed,
-      <span id="sub-tests-not-tested">0</span> uncertified measurements
+      <span id="sub-tests-not-tested">0</span> without a correctness verdict
       (click rows to expand)
     </p>
     <table class="results-table">
@@ -1194,7 +1194,7 @@
           <th>Status</th>
           <th>Test</th>
           <th>Category</th>
-          <th>Kernels</th>
+          <th>Cases</th>
           <th>Duration</th>
         </tr>
       </thead>
@@ -1767,6 +1767,7 @@ function renderResults(data) {
         <td colspan="6">
           <div class="sub-tests-container">
             <div class="sub-tests-grid">
+              ${result.oracle_report_source ? `<details style="grid-column: 1 / -1"><summary>Oracle environment provenance</summary><pre>${escapeHtml(JSON.stringify(result.oracle_report_source, null, 2))}</pre></details>` : ''}
               ${subTests.map(st => renderSubTest(st)).join('')}
             </div>
           </div>
@@ -2574,11 +2575,15 @@ function renderSubTest(st) {
     metrics += `<span class="sub-test-speedup ${speedClass}">${st.speedup.toFixed(2)}x</span>`;
   }
 
+  const evidence = st.metadata && Object.keys(st.metadata).length
+    ? `<details style="grid-column: 1 / -1"><summary>${st.evidence_kind === 'test_execution' ? 'Test execution' : 'Numerical contract and oracle'}</summary><pre>${escapeHtml(JSON.stringify({case_id: st.case_id, tolerance: st.tolerance, ...st.metadata}, null, 2))}</pre></details>`
+    : '';
   return `
     <div class="sub-test-item ${statusClass}">
       <span class="${iconClass}">${statusIcon}</span>
-      <span class="sub-test-name">${st.name}${st.configuration ? ` <small>${st.configuration}</small>` : ''}</span>
+      <span class="sub-test-name">${escapeHtml(st.name)}${st.configuration ? ` <small>${escapeHtml(st.configuration)}</small>` : ''}</span>
       <span class="sub-test-metrics">${metrics}</span>
+      ${evidence}
     </div>
   `;
 }

@@ -1,0 +1,1004 @@
+{
+  "version": 3,
+  "name": "kokoro_first_albert_layer_generated",
+  "family": "bounded_graph",
+  "contract": {
+    "runtime_invariants": {
+      "inference_only": true,
+      "production_kernel_heap_allocation": false
+    }
+  },
+  "checked_native_entry": true,
+  "activation_buffers": {
+    "word_ids": {
+      "shape": [
+        36
+      ]
+    },
+    "type_ids": {
+      "shape": [
+        36
+      ]
+    },
+    "embedding_output": {
+      "shape": [
+        36,
+        128
+      ]
+    },
+    "projection_output": {
+      "shape": [
+        36,
+        768
+      ]
+    },
+    "query_output": {
+      "shape": [
+        36,
+        768
+      ]
+    },
+    "key_output": {
+      "shape": [
+        36,
+        768
+      ]
+    },
+    "value_output": {
+      "shape": [
+        36,
+        768
+      ]
+    },
+    "attention_context_output": {
+      "shape": [
+        36,
+        768
+      ]
+    },
+    "attention_projection_output": {
+      "shape": [
+        36,
+        768
+      ]
+    },
+    "attention_residual_output": {
+      "shape": [
+        36,
+        768
+      ]
+    },
+    "attention_norm_output": {
+      "shape": [
+        36,
+        768
+      ]
+    },
+    "ffn_linear_output": {
+      "shape": [
+        36,
+        2048
+      ]
+    },
+    "ffn_gelu_output": {
+      "shape": [
+        36,
+        2048
+      ]
+    },
+    "ffn_projection_output": {
+      "shape": [
+        36,
+        768
+      ]
+    },
+    "layer_residual_output": {
+      "shape": [
+        36,
+        768
+      ]
+    },
+    "albert_layer_output": {
+      "shape": [
+        36,
+        768
+      ]
+    }
+  },
+  "activation_bindings": {
+    "word_ids": "word_ids",
+    "type_ids": "type_ids",
+    "embedding_output": "embedding_output",
+    "projection_output": "projection_output",
+    "query_output": "query_output",
+    "key_output": "key_output",
+    "value_output": "value_output",
+    "attention_context_output": "attention_context_output",
+    "attention_projection_output": "attention_projection_output",
+    "attention_residual_output": "attention_residual_output",
+    "attention_norm_output": "attention_norm_output",
+    "ffn_linear_output": "ffn_linear_output",
+    "ffn_gelu_output": "ffn_gelu_output",
+    "ffn_projection_output": "ffn_projection_output",
+    "layer_residual_output": "layer_residual_output",
+    "albert_layer_output": "albert_layer_output"
+  },
+  "native_entry": {
+    "function": "ck_kokoro_first_albert_layer",
+    "params": [
+      {
+        "c_type": "uint8_t *",
+        "name": "arena"
+      },
+      {
+        "c_type": "size_t",
+        "name": "arena_bytes"
+      }
+    ],
+    "arena": {
+      "pointer": "arena",
+      "bytes": "arena_bytes"
+    }
+  },
+  "runtime_constants": {
+    "id_elements": 36,
+    "word_elements": 22784,
+    "vocab_size": 178,
+    "position_elements": 65536,
+    "position_count": 512,
+    "type_elements": 256,
+    "type_count": 2,
+    "norm_elements": 128,
+    "output_elements": 4608,
+    "tokens": 36,
+    "channels": 128,
+    "weight_stride": 128,
+    "output_stride": 128
+  },
+  "sequence": [
+    "phoneme_encoder"
+  ],
+  "block_types": {
+    "phoneme_encoder": {
+      "sequence": [
+        "header",
+        "body",
+        "footer"
+      ],
+      "header": [
+        {
+          "id": "albert_embeddings",
+          "op": "embedding_three_table_layer_norm",
+          "kernel": "embedding_three_table_layer_norm_f32",
+          "returns_status": true,
+          "weight_refs": {
+            "word": "phoneme_encoder.embeddings.word_embeddings.weight",
+            "position": "phoneme_encoder.embeddings.position_embeddings.weight",
+            "token_type": "phoneme_encoder.embeddings.token_type_embeddings.weight",
+            "gamma": "phoneme_encoder.embeddings.LayerNorm.weight",
+            "beta": "phoneme_encoder.embeddings.LayerNorm.bias"
+          },
+          "graph_slots": {
+            "inputs": {
+              "word_ids": "external:word_ids",
+              "type_ids": "external:type_ids"
+            },
+            "outputs": {
+              "output": "embedding_output"
+            }
+          }
+        }
+      ],
+      "body": {
+        "type": "dense",
+        "ops": [
+          {
+            "id": "albert_input_projection",
+            "op": "linear_rows_checked",
+            "kernel": "linear_rows_checked_f32",
+            "returns_status": true,
+            "weight_refs": {
+              "weight": "phoneme_encoder.encoder.embedding_hidden_mapping_in.weight",
+              "bias": "phoneme_encoder.encoder.embedding_hidden_mapping_in.bias"
+            },
+            "graph_slots": {
+              "inputs": {
+                "input": "embedding_output"
+              },
+              "outputs": {
+                "output": "projection_output"
+              }
+            },
+            "params": {
+              "M": 36,
+              "N": 768,
+              "K": 128,
+              "call_constants": {
+                "linear_input_elements": 4608,
+                "linear_input_stride": 128,
+                "linear_weight_elements": 98304,
+                "linear_weight_stride": 128,
+                "linear_bias_elements": 768,
+                "linear_output_elements": 27648,
+                "linear_output_stride": 768,
+                "linear_rows": 36,
+                "linear_input_channels": 128,
+                "linear_output_channels": 768
+              }
+            }
+          },
+          {
+            "id": "albert_query_projection",
+            "op": "linear_rows_checked",
+            "kernel": "linear_rows_checked_f32",
+            "returns_status": true,
+            "weight_refs": {
+              "weight": "phoneme_encoder.encoder.albert_layer_groups.0.albert_layers.0.attention.query.weight",
+              "bias": "phoneme_encoder.encoder.albert_layer_groups.0.albert_layers.0.attention.query.bias"
+            },
+            "graph_slots": {
+              "inputs": {
+                "input": "projection_output"
+              },
+              "outputs": {
+                "output": "query_output"
+              }
+            },
+            "params": {
+              "M": 36,
+              "N": 768,
+              "K": 768,
+              "call_constants": {
+                "linear_input_elements": 27648,
+                "linear_input_stride": 768,
+                "linear_weight_elements": 589824,
+                "linear_weight_stride": 768,
+                "linear_bias_elements": 768,
+                "linear_output_elements": 27648,
+                "linear_output_stride": 768,
+                "linear_rows": 36,
+                "linear_input_channels": 768,
+                "linear_output_channels": 768
+              }
+            }
+          },
+          {
+            "id": "albert_key_projection",
+            "op": "linear_rows_checked",
+            "kernel": "linear_rows_checked_f32",
+            "returns_status": true,
+            "weight_refs": {
+              "weight": "phoneme_encoder.encoder.albert_layer_groups.0.albert_layers.0.attention.key.weight",
+              "bias": "phoneme_encoder.encoder.albert_layer_groups.0.albert_layers.0.attention.key.bias"
+            },
+            "graph_slots": {
+              "inputs": {
+                "input": "projection_output"
+              },
+              "outputs": {
+                "output": "key_output"
+              }
+            },
+            "params": {
+              "M": 36,
+              "N": 768,
+              "K": 768,
+              "call_constants": {
+                "linear_input_elements": 27648,
+                "linear_input_stride": 768,
+                "linear_weight_elements": 589824,
+                "linear_weight_stride": 768,
+                "linear_bias_elements": 768,
+                "linear_output_elements": 27648,
+                "linear_output_stride": 768,
+                "linear_rows": 36,
+                "linear_input_channels": 768,
+                "linear_output_channels": 768
+              }
+            }
+          },
+          {
+            "id": "albert_value_projection",
+            "op": "linear_rows_checked",
+            "kernel": "linear_rows_checked_f32",
+            "returns_status": true,
+            "weight_refs": {
+              "weight": "phoneme_encoder.encoder.albert_layer_groups.0.albert_layers.0.attention.value.weight",
+              "bias": "phoneme_encoder.encoder.albert_layer_groups.0.albert_layers.0.attention.value.bias"
+            },
+            "graph_slots": {
+              "inputs": {
+                "input": "projection_output"
+              },
+              "outputs": {
+                "output": "value_output"
+              }
+            },
+            "params": {
+              "M": 36,
+              "N": 768,
+              "K": 768,
+              "call_constants": {
+                "linear_input_elements": 27648,
+                "linear_input_stride": 768,
+                "linear_weight_elements": 589824,
+                "linear_weight_stride": 768,
+                "linear_bias_elements": 768,
+                "linear_output_elements": 27648,
+                "linear_output_stride": 768,
+                "linear_rows": 36,
+                "linear_input_channels": 768,
+                "linear_output_channels": 768
+              }
+            }
+          },
+          {
+            "id": "albert_attention_context",
+            "op": "attention_full_token_major_checked",
+            "kernel": "attention_full_token_major_f32_checked",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "query": "query_output",
+                "key": "key_output",
+                "value": "value_output"
+              },
+              "outputs": {
+                "output": "attention_context_output"
+              }
+            },
+            "params": {
+              "T": 36,
+              "H": 12,
+              "D": 64,
+              "call_constants": {
+                "attention_query_elements": 27648,
+                "attention_key_elements": 27648,
+                "attention_value_elements": 27648,
+                "attention_output_elements": 27648,
+                "attention_tokens": 36,
+                "attention_heads": 12,
+                "attention_head_dim": 64
+              }
+            }
+          },
+          {
+            "id": "albert_attention_projection",
+            "op": "linear_rows_checked",
+            "kernel": "linear_rows_checked_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "input": "attention_context_output"
+              },
+              "outputs": {
+                "output": "attention_projection_output"
+              }
+            },
+            "params": {
+              "M": 36,
+              "K": 768,
+              "N": 768,
+              "call_constants": {
+                "linear_input_elements": 27648,
+                "linear_input_stride": 768,
+                "linear_weight_elements": 589824,
+                "linear_weight_stride": 768,
+                "linear_bias_elements": 768,
+                "linear_output_elements": 27648,
+                "linear_output_stride": 768,
+                "linear_rows": 36,
+                "linear_input_channels": 768,
+                "linear_output_channels": 768
+              }
+            },
+            "weight_refs": {
+              "weight": "phoneme_encoder.encoder.albert_layer_groups.0.albert_layers.0.attention.dense.weight",
+              "bias": "phoneme_encoder.encoder.albert_layer_groups.0.albert_layers.0.attention.dense.bias"
+            }
+          },
+          {
+            "id": "albert_attention_residual",
+            "op": "audio_scaled_residual_add",
+            "kernel": "audio_scaled_residual_add_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "residual": "projection_output",
+                "branch": "attention_projection_output"
+              },
+              "outputs": {
+                "output": "attention_residual_output"
+              }
+            },
+            "params": {
+              "N": 27648,
+              "elements": 27648,
+              "scale": 1.0
+            }
+          },
+          {
+            "id": "albert_attention_norm",
+            "op": "layernorm",
+            "kernel": "layernorm_rows_checked_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "input": "attention_residual_output"
+              },
+              "outputs": {
+                "output": "attention_norm_output"
+              }
+            },
+            "params": {
+              "M": 36,
+              "C": 768,
+              "Q": 27720,
+              "call_constants": {
+                "norm_input_elements": 27648,
+                "norm_input_stride": 768,
+                "norm_gamma_elements": 768,
+                "norm_beta_elements": 768,
+                "norm_output_elements": 27648,
+                "norm_output_stride": 768,
+                "norm_scratch_elements": 27720,
+                "norm_rows": 36,
+                "norm_channels": 768
+              }
+            },
+            "weight_refs": {
+              "gamma": "phoneme_encoder.encoder.albert_layer_groups.0.albert_layers.0.attention.LayerNorm.weight",
+              "beta": "phoneme_encoder.encoder.albert_layer_groups.0.albert_layers.0.attention.LayerNorm.bias"
+            }
+          },
+          {
+            "id": "albert_ffn_linear",
+            "op": "linear_rows_checked",
+            "kernel": "linear_rows_checked_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "input": "attention_norm_output"
+              },
+              "outputs": {
+                "output": "ffn_linear_output"
+              }
+            },
+            "params": {
+              "M": 36,
+              "K": 768,
+              "N": 2048,
+              "call_constants": {
+                "linear_input_elements": 27648,
+                "linear_input_stride": 768,
+                "linear_weight_elements": 1572864,
+                "linear_weight_stride": 768,
+                "linear_bias_elements": 2048,
+                "linear_output_elements": 73728,
+                "linear_output_stride": 2048,
+                "linear_rows": 36,
+                "linear_input_channels": 768,
+                "linear_output_channels": 2048
+              }
+            },
+            "weight_refs": {
+              "weight": "phoneme_encoder.encoder.albert_layer_groups.0.albert_layers.0.ffn.weight",
+              "bias": "phoneme_encoder.encoder.albert_layer_groups.0.albert_layers.0.ffn.bias"
+            }
+          },
+          {
+            "id": "albert_ffn_gelu",
+            "op": "gelu",
+            "kernel": "gelu_rows_tanh_checked_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "input": "ffn_linear_output"
+              },
+              "outputs": {
+                "output": "ffn_gelu_output"
+              }
+            },
+            "params": {
+              "M": 36,
+              "C": 2048,
+              "Q": 73728,
+              "call_constants": {
+                "gelu_input_elements": 73728,
+                "gelu_input_stride": 2048,
+                "gelu_output_elements": 73728,
+                "gelu_output_stride": 2048,
+                "gelu_scratch_elements": 73728,
+                "gelu_rows": 36,
+                "gelu_channels": 2048
+              }
+            }
+          },
+          {
+            "id": "albert_ffn_projection",
+            "op": "linear_rows_checked",
+            "kernel": "linear_rows_checked_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "input": "ffn_gelu_output"
+              },
+              "outputs": {
+                "output": "ffn_projection_output"
+              }
+            },
+            "params": {
+              "M": 36,
+              "K": 2048,
+              "N": 768,
+              "call_constants": {
+                "linear_input_elements": 73728,
+                "linear_input_stride": 2048,
+                "linear_weight_elements": 1572864,
+                "linear_weight_stride": 2048,
+                "linear_bias_elements": 768,
+                "linear_output_elements": 27648,
+                "linear_output_stride": 768,
+                "linear_rows": 36,
+                "linear_input_channels": 2048,
+                "linear_output_channels": 768
+              }
+            },
+            "weight_refs": {
+              "weight": "phoneme_encoder.encoder.albert_layer_groups.0.albert_layers.0.ffn_output.weight",
+              "bias": "phoneme_encoder.encoder.albert_layer_groups.0.albert_layers.0.ffn_output.bias"
+            }
+          },
+          {
+            "id": "albert_ffn_residual",
+            "op": "audio_scaled_residual_add",
+            "kernel": "audio_scaled_residual_add_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "residual": "attention_norm_output",
+                "branch": "ffn_projection_output"
+              },
+              "outputs": {
+                "output": "layer_residual_output"
+              }
+            },
+            "params": {
+              "N": 27648,
+              "elements": 27648,
+              "scale": 1.0
+            }
+          }
+        ]
+      },
+      "footer": [
+        {
+          "id": "albert_layer_norm",
+          "op": "layernorm",
+          "kernel": "layernorm_rows_checked_f32",
+          "returns_status": true,
+          "graph_slots": {
+            "inputs": {
+              "input": "layer_residual_output"
+            },
+            "outputs": {
+              "output": "albert_layer_output"
+            }
+          },
+          "params": {
+            "M": 36,
+            "C": 768,
+            "Q": 27720,
+            "call_constants": {
+              "norm_input_elements": 27648,
+              "norm_input_stride": 768,
+              "norm_gamma_elements": 768,
+              "norm_beta_elements": 768,
+              "norm_output_elements": 27648,
+              "norm_output_stride": 768,
+              "norm_scratch_elements": 27720,
+              "norm_rows": 36,
+              "norm_channels": 768
+            }
+          },
+          "weight_refs": {
+            "gamma": "phoneme_encoder.encoder.albert_layer_groups.0.albert_layers.0.full_layer_layer_norm.weight",
+            "beta": "phoneme_encoder.encoder.albert_layer_groups.0.albert_layers.0.full_layer_layer_norm.bias"
+          }
+        }
+      ]
+    }
+  },
+  "semantic_checkpoints": {
+    "schema": "cke.semantic_checkpoint_contract",
+    "schema_version": 1,
+    "exports": {
+      "albert_embeddings": {
+        "section": "header",
+        "template_op_id": "albert_embeddings",
+        "op": "embedding_three_table_layer_norm",
+        "checkpoints": [
+          {
+            "id": "kokoro.phoneme_encoder.embeddings",
+            "producer": "albert_embeddings",
+            "tensor": "embedding_output",
+            "logical_layout": "token_major",
+            "axis_names": [
+              "token",
+              "channel"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "albert_input_projection": {
+        "section": "body",
+        "template_op_id": "albert_input_projection",
+        "op": "linear_rows_checked",
+        "checkpoints": [
+          {
+            "id": "kokoro.phoneme_encoder.input_projection",
+            "producer": "albert_input_projection",
+            "tensor": "projection_output",
+            "logical_layout": "token_major",
+            "axis_names": [
+              "token",
+              "channel"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "albert_query_projection": {
+        "section": "body",
+        "template_op_id": "albert_query_projection",
+        "op": "linear_rows_checked",
+        "checkpoints": [
+          {
+            "id": "kokoro.phoneme_encoder.albert0.query",
+            "producer": "albert_query_projection",
+            "tensor": "query_output",
+            "logical_layout": "token_major",
+            "axis_names": [
+              "token",
+              "channel"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "albert_key_projection": {
+        "section": "body",
+        "template_op_id": "albert_key_projection",
+        "op": "linear_rows_checked",
+        "checkpoints": [
+          {
+            "id": "kokoro.phoneme_encoder.albert0.key",
+            "producer": "albert_key_projection",
+            "tensor": "key_output",
+            "logical_layout": "token_major",
+            "axis_names": [
+              "token",
+              "channel"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "albert_value_projection": {
+        "section": "body",
+        "template_op_id": "albert_value_projection",
+        "op": "linear_rows_checked",
+        "checkpoints": [
+          {
+            "id": "kokoro.phoneme_encoder.albert0.value",
+            "producer": "albert_value_projection",
+            "tensor": "value_output",
+            "logical_layout": "token_major",
+            "axis_names": [
+              "token",
+              "channel"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "albert_attention_context": {
+        "section": "body",
+        "template_op_id": "albert_attention_context",
+        "op": "attention_full_token_major_checked",
+        "checkpoints": [
+          {
+            "id": "kokoro.phoneme_encoder.albert0.attention_context",
+            "producer": "albert_attention_context",
+            "tensor": "attention_context_output",
+            "logical_layout": "token_major",
+            "axis_names": [
+              "token",
+              "channel"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "albert_attention_projection": {
+        "section": "body",
+        "template_op_id": "albert_attention_projection",
+        "op": "linear_rows_checked",
+        "checkpoints": [
+          {
+            "id": "kokoro.phoneme_encoder.albert0.attention_projection",
+            "producer": "albert_attention_projection",
+            "tensor": "attention_projection_output",
+            "logical_layout": "token_major",
+            "axis_names": [
+              "token",
+              "channel"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "albert_attention_residual": {
+        "section": "body",
+        "template_op_id": "albert_attention_residual",
+        "op": "audio_scaled_residual_add",
+        "checkpoints": [
+          {
+            "id": "kokoro.phoneme_encoder.albert0.attention_residual",
+            "producer": "albert_attention_residual",
+            "tensor": "attention_residual_output",
+            "logical_layout": "token_major",
+            "axis_names": [
+              "token",
+              "channel"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "albert_attention_norm": {
+        "section": "body",
+        "template_op_id": "albert_attention_norm",
+        "op": "layernorm",
+        "checkpoints": [
+          {
+            "id": "kokoro.phoneme_encoder.albert0.attention_norm",
+            "producer": "albert_attention_norm",
+            "tensor": "attention_norm_output",
+            "logical_layout": "token_major",
+            "axis_names": [
+              "token",
+              "channel"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "albert_ffn_linear": {
+        "section": "body",
+        "template_op_id": "albert_ffn_linear",
+        "op": "linear_rows_checked",
+        "checkpoints": [
+          {
+            "id": "kokoro.phoneme_encoder.albert0.ffn_linear",
+            "producer": "albert_ffn_linear",
+            "tensor": "ffn_linear_output",
+            "logical_layout": "token_major",
+            "axis_names": [
+              "token",
+              "channel"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "albert_ffn_gelu": {
+        "section": "body",
+        "template_op_id": "albert_ffn_gelu",
+        "op": "gelu",
+        "checkpoints": [
+          {
+            "id": "kokoro.phoneme_encoder.albert0.ffn_gelu",
+            "producer": "albert_ffn_gelu",
+            "tensor": "ffn_gelu_output",
+            "logical_layout": "token_major",
+            "axis_names": [
+              "token",
+              "channel"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "albert_ffn_projection": {
+        "section": "body",
+        "template_op_id": "albert_ffn_projection",
+        "op": "linear_rows_checked",
+        "checkpoints": [
+          {
+            "id": "kokoro.phoneme_encoder.albert0.ffn_projection",
+            "producer": "albert_ffn_projection",
+            "tensor": "ffn_projection_output",
+            "logical_layout": "token_major",
+            "axis_names": [
+              "token",
+              "channel"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "albert_ffn_residual": {
+        "section": "body",
+        "template_op_id": "albert_ffn_residual",
+        "op": "audio_scaled_residual_add",
+        "checkpoints": [
+          {
+            "id": "kokoro.phoneme_encoder.albert0.layer_residual",
+            "producer": "albert_ffn_residual",
+            "tensor": "layer_residual_output",
+            "logical_layout": "token_major",
+            "axis_names": [
+              "token",
+              "channel"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "albert_layer_norm": {
+        "section": "footer",
+        "template_op_id": "albert_layer_norm",
+        "op": "layernorm",
+        "checkpoints": [
+          {
+            "id": "kokoro.phoneme_encoder.albert0.layer",
+            "producer": "albert_layer_norm",
+            "tensor": "albert_layer_output",
+            "logical_layout": "token_major",
+            "axis_names": [
+              "token",
+              "channel"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      }
+    }
+  },
+  "required_numerical_contracts": {
+    "embedding_three_table_layer_norm": {
+      "op": "embedding_three_table_layer_norm",
+      "template_ops": [
+        "embedding_three_table_layer_norm"
+      ],
+      "phases": {
+        "prefill": {
+          "contract_id": "embedding_three_table_layer_norm_fp32_reference",
+          "validation": "validated",
+          "evidence": "tests/test_v8_kokoro_generated_albert_layer.py"
+        }
+      },
+      "checkpoint": {
+        "id": "kokoro.phoneme_encoder.embeddings",
+        "producer": "albert_embeddings",
+        "logical_layout": "token_major",
+        "axis_names": [
+          "token",
+          "channel"
+        ]
+      }
+    },
+    "linear_rows_checked": {
+      "op": "linear_rows_checked",
+      "template_ops": [
+        "linear_rows_checked"
+      ],
+      "phases": {
+        "prefill": {
+          "contract_id": "linear_rows_checked_f32_scalar_fp64_accumulation",
+          "validation": "validated",
+          "evidence": "tests/test_v8_kokoro_generated_albert_layer.py"
+        }
+      },
+      "checkpoint": {
+        "id": "kokoro.phoneme_encoder.input_projection",
+        "producer": "albert_input_projection",
+        "logical_layout": "token_major",
+        "axis_names": [
+          "token",
+          "channel"
+        ]
+      }
+    },
+    "attention_full_token_major_checked": {
+      "op": "attention_full_token_major_checked",
+      "template_ops": [
+        "attention_full_token_major_checked"
+      ],
+      "phases": {
+        "prefill": {
+          "contract_id": "attention_full_token_major_scalar_fp64_dot_fp32_scores_fp64_softmax",
+          "validation": "validated",
+          "evidence": "tests/test_v8_kokoro_generated_albert_layer.py"
+        }
+      },
+      "checkpoint": {
+        "id": "kokoro.phoneme_encoder.albert0.attention_context",
+        "producer": "albert_attention_context",
+        "logical_layout": "token_major",
+        "axis_names": [
+          "token",
+          "channel"
+        ]
+      }
+    },
+    "audio_scaled_residual_add": {
+      "op": "audio_scaled_residual_add",
+      "template_ops": [
+        "audio_scaled_residual_add"
+      ],
+      "phases": {
+        "prefill": {
+          "contract_id": "audio_scaled_residual_add_separate_fp32",
+          "validation": "validated",
+          "evidence": "tests/test_v8_kokoro_generated_albert_layer.py"
+        }
+      },
+      "checkpoint": {
+        "id": "kokoro.phoneme_encoder.albert0.attention_residual",
+        "producer": "albert_attention_residual",
+        "logical_layout": "token_major",
+        "axis_names": [
+          "token",
+          "channel"
+        ]
+      }
+    },
+    "layernorm": {
+      "op": "layernorm",
+      "template_ops": [
+        "layernorm"
+      ],
+      "phases": {
+        "prefill": {
+          "contract_id": "layernorm_rows_checked_fp32_ggml_chunked_contracted",
+          "validation": "validated",
+          "evidence": "tests/test_v8_kokoro_generated_albert_layer.py"
+        }
+      },
+      "checkpoint": {
+        "id": "kokoro.phoneme_encoder.albert0.attention_norm",
+        "producer": "albert_attention_norm",
+        "logical_layout": "token_major",
+        "axis_names": [
+          "token",
+          "channel"
+        ]
+      }
+    },
+    "gelu": {
+      "op": "gelu",
+      "template_ops": [
+        "gelu"
+      ],
+      "phases": {
+        "prefill": {
+          "contract_id": "gelu_tanh_legacy_scalar_fp32_checked",
+          "validation": "validated",
+          "evidence": "tests/test_v8_kokoro_generated_albert_layer.py"
+        }
+      },
+      "checkpoint": {
+        "id": "kokoro.phoneme_encoder.albert0.ffn_gelu",
+        "producer": "albert_ffn_gelu",
+        "logical_layout": "token_major",
+        "axis_names": [
+          "token",
+          "channel"
+        ]
+      }
+    }
+  }
+}
