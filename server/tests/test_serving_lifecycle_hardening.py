@@ -1,5 +1,6 @@
 """Execution ownership and unsupported-input regressions for every text model."""
 import asyncio
+import concurrent.futures
 import hashlib
 import json
 import threading
@@ -33,6 +34,85 @@ class Session:
 
     def cancel(self):
         self.cancel_calls += 1
+
+
+@pytest.mark.parametrize('stream', [False, True])
+def test_native_failure_releases_slot_and_followup_succeeds(stream):
+    class FailOnceSession:
+        def __init__(self):
+            self.calls = 0
+
+        def generate(self, *args, on_token, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError('injected native failure')
+            on_token(0, 'recovered')
+            return {'prompt_tokens': 1, 'generated_tokens': 1, 'stop_reason': 1}
+
+        def cancel(self):
+            pass
+
+    session = FailOnceSession()
+    app = create_app(session, model='test', chat_template=TEMPLATE)
+    client = TestClient(app)
+    first = client.post('/v1/responses', json={'model': 'test', 'input': 'first', 'stream': stream})
+    assert first.status_code == 200
+    if stream:
+        assert 'response.failed' in first.text
+    else:
+        assert first.json()['status'] == 'failed'
+    assert not app.state.flight_lock.locked()
+    second = client.post('/v1/responses', json={'model': 'test', 'input': 'second'})
+    assert second.status_code == 200
+    assert second.json()['output_text'] == 'recovered'
+
+
+def test_cancel_timeout_retains_native_owner_until_worker_finishes(monkeypatch):
+    class SlowCancelSession:
+        def __init__(self):
+            self.started = threading.Event()
+            self.release = threading.Event()
+            self.cancel_calls = 0
+            self.calls = 0
+
+        def generate(self, *args, on_token, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                self.started.set()
+                assert self.release.wait(5)
+            on_token(0, 'finished')
+            return {'prompt_tokens': 1, 'generated_tokens': 1, 'stop_reason': 1}
+
+        def cancel(self):
+            self.cancel_calls += 1
+
+    monkeypatch.setattr(live, '_FLIGHT_WAIT_SECONDS', .01)
+    session = SlowCancelSession()
+    app = create_app(session, model='test', chat_template=TEMPLATE, cancel_wait_seconds=.01)
+    client = TestClient(app)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(client.post, '/v1/responses', json={
+            'model': 'test', 'input': 'first', 'stream': True,
+        })
+        assert session.started.wait(5)
+        with app.state.active_streams_lock:
+            response_id = next(iter(app.state.active_streams))
+        try:
+            cancelled = client.post(f'/v1/responses/{response_id}/cancel')
+            assert cancelled.status_code == 504
+            assert session.cancel_calls == 1
+            assert app.state.flight_lock.locked()
+            busy = client.post('/v1/responses', json={'model': 'test', 'input': 'second'})
+            assert busy.status_code == 429
+            assert busy.headers['retry-after'] == '1'
+            assert session.calls == 1
+        finally:
+            session.release.set()
+        assert first.result(timeout=5).status_code == 200
+    assert not app.state.flight_lock.locked()
+    followup = client.post('/v1/responses', json={'model': 'test', 'input': 'third'})
+    assert followup.status_code == 200
+    assert followup.json()['output_text'] == 'finished'
 
 
 def test_native_completion_releases_slot_without_consuming_terminal_event():

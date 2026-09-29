@@ -106,8 +106,11 @@ def _harness_error(
     ``{"error": {...}, "detail": message}`` so harnesses can parse ``error``
     while existing ``detail`` readers keep working.
     """
+    # Fractional admission waits must not become Retry-After: 0.  A harness
+    # treating that as an immediate retry can recreate the busy-request storm.
     headers = (
-        {"Retry-After": str(int(retry_after))} if retry_after is not None else None
+        {"Retry-After": str(max(1, math.ceil(retry_after)))}
+        if retry_after is not None else None
     )
     return HTTPException(
         status_code=status_code,

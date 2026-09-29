@@ -11,6 +11,7 @@ import json
 import socket
 import threading
 import time
+import urllib.request
 
 from fastapi.testclient import TestClient
 import uvicorn
@@ -105,6 +106,81 @@ def test_nonstream_socket_disconnect_releases_session():
             time.sleep(0.02)
         assert not app.state.flight_lock.locked()
     finally:
+        server.should_exit = True
+        thread.join(timeout=3)
+        listener.close()
+
+
+def test_unread_socket_stream_does_not_hold_completed_native_session():
+    class ControlledSession:
+        def __init__(self):
+            self.started = threading.Event()
+            self.release = threading.Event()
+            self.calls = 0
+            self.cancel_calls = 0
+
+        def generate(self, system, user, *, on_token, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                self.started.set()
+                assert self.release.wait(5)
+            on_token(0, "done")
+            return {"prompt_tokens": 1, "generated_tokens": 1, "stop_reason": 1}
+
+        def cancel(self):
+            self.cancel_calls += 1
+
+    session = ControlledSession()
+    app = _create_app(session, model="m", chat_template="{{ messages[0].content }}")
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    port = listener.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
+    thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
+    thread.start()
+    connection = None
+    try:
+        for _ in range(100):
+            if server.started:
+                break
+            time.sleep(.02)
+        assert server.started
+        payload = json.dumps({"model": "m", "input": "first", "stream": True}).encode()
+        connection = socket.create_connection(("127.0.0.1", port), timeout=3)
+        connection.sendall(
+            b"POST /v1/responses HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+            b"Content-Type: application/json\r\nContent-Length: "
+            + str(len(payload)).encode() + b"\r\n\r\n" + payload
+        )
+        assert session.started.wait(3)
+        headers = b""
+        while b"\r\n\r\n" not in headers:
+            chunk = connection.recv(4096)
+            assert chunk, "stream socket closed before HTTP headers"
+            headers += chunk
+        assert b"200 OK" in headers.split(b"\r\n", 1)[0]
+        assert app.state.flight_lock.locked()
+        # Leave the first socket open without consuming its terminal SSE data.
+        session.release.set()
+        for _ in range(100):
+            if not app.state.flight_lock.locked():
+                break
+            time.sleep(.01)
+        assert not app.state.flight_lock.locked()
+        second = json.dumps({"model": "m", "input": "second"}).encode()
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/v1/responses", data=second,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=3) as response:
+            assert json.load(response)["output_text"] == "done"
+        assert session.calls == 2
+        assert session.cancel_calls == 0
+    finally:
+        session.release.set()
+        if connection is not None:
+            connection.close()
         server.should_exit = True
         thread.join(timeout=3)
         listener.close()
@@ -218,7 +294,7 @@ def test_429_carries_retry_after_and_envelope(monkeypatch):
     finally:
         app.state.flight_lock.release()
     assert resp.status_code == 429
-    assert resp.headers["retry-after"] == "0"
+    assert resp.headers["retry-after"] == "1"
     body = resp.json()
     assert body["error"]["code"] == "rate_limit_exceeded"
     assert body["error"]["type"] == "rate_limit_error"
