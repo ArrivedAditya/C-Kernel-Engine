@@ -105,11 +105,87 @@ class KokoroGeneratedDurationTest(unittest.TestCase):
     def view(self, arena, name, dtype, shape):
         return np.ndarray(shape,dtype,buffer=arena,offset=self.buffers[name]['abs_offset'])
 
+    def primitive_abis(self):
+        """Load the same production providers outside generated model execution."""
+        exports=self.root/'primitive-exports.map'
+        exports.write_text('{ global: audio_lstm_bidirectional_scan_f32; audio_adaptive_layer_norm_f32; local: *; };\n')
+        library=self.root/'primitive-predictor.so'
+        if not library.exists():
+            subprocess.run(['cc','-std=c11','-O2','-Wall','-Wextra','-Werror',
+                '-shared','-fPIC','-ffp-contract=off','-ffunction-sections','-fdata-sections',
+                '-Wl,--gc-sections','-Wl,--no-undefined','-Wl,--version-script='+str(exports),
+                str(ROOT/'src/kernels/audio_lstm_scan.c'),
+                str(ROOT/'src/kernels/audio_kernels.c'),
+                str(ROOT/'src/kernels/audio_adaptive_layer_norm.c'),
+                '-I',str(ROOT/'include'),'-lm','-o',str(library)],
+                check=True,capture_output=True,text=True)
+        loaded=ctypes.CDLL(str(library)); pointer=ctypes.POINTER(ctypes.c_float)
+        scan=loaded.audio_lstm_bidirectional_scan_f32
+        scan.argtypes=[pointer,ctypes.c_size_t]*9+[ctypes.c_int]*3+[ctypes.c_size_t]*2
+        scan.restype=ctypes.c_int
+        norm=loaded.audio_adaptive_layer_norm_f32
+        norm.argtypes=[pointer,ctypes.c_size_t]*6+[ctypes.c_int]*3+[ctypes.c_size_t]*2+[ctypes.c_float]
+        norm.restype=ctypes.c_int
+        return scan,norm,lambda x:x.ctypes.data_as(pointer)
+
+    def check_sensitive_stage_propagation(self, arena):
+        """Separate local provider error from upstream-input amplification."""
+        scan,norm,ptr=self.primitive_abis()
+        results={}
+        for kind in ('scan0','norm0'):
+            input_name=kind+'_input' if kind=='scan0' else 'scan0_output'
+            expected_input=self.duration[input_name]
+            connected_input=self.view(arena,input_name,np.float32,expected_input.shape)
+            expected_output=self.duration[kind+'_output']
+            generated_output=self.view(arena,kind+'_output',np.float32,expected_output.shape)
+            prefix=('duration_prosody.text_encoder.scan0' if kind=='scan0' else
+                    'duration_prosody.text_encoder.norm0')
+            def replay(source):
+                output=np.full(expected_output.shape,-777.,np.float32)
+                if kind=='scan0':
+                    weights=[self.duration['weight__'+prefix+'__'+part] for part in
+                             ('weight_ih','weight_hh','bias_ih','bias_hh')]
+                    hidden=np.full(512,13.,np.float32); cell=np.full(512,17.,np.float32)
+                    gates=np.full(1024,19.,np.float32)
+                    args=[ptr(source),source.size]
+                    for weight in weights: args.extend((ptr(weight),weight.size))
+                    args.extend((ptr(output),output.size,ptr(hidden),hidden.size,
+                                 ptr(cell),cell.size,ptr(gates),gates.nbytes,
+                                 36,640,256,640,512))
+                    self.assertEqual(scan(*args),0,kind)
+                else:
+                    style=self.duration['predictor_style']
+                    weight=self.duration['weight__'+prefix+'__projection_weight']
+                    bias=self.duration['weight__'+prefix+'__projection_bias']
+                    scratch=np.zeros(1024,np.float32)
+                    self.assertEqual(norm(ptr(source),source.size,ptr(style),style.size,
+                        ptr(weight),weight.size,ptr(bias),bias.size,ptr(output),output.size,
+                        ptr(scratch),scratch.nbytes,36,512,128,512,512,1e-5),0)
+                self.assertTrue(np.isfinite(output).all(),kind)
+                return output
+            from_oracle=replay(expected_input)
+            from_connected=replay(connected_input)
+            np.testing.assert_array_equal(from_connected,generated_output)
+            local=np.abs(from_oracle.astype(np.float64)-expected_output.astype(np.float64))
+            propagated=np.abs(from_connected.astype(np.float64)-from_oracle.astype(np.float64))
+            input_error=np.abs(connected_input.astype(np.float64)-expected_input.astype(np.float64))
+            self.assertLessEqual(float(local.max()),3e-6,kind)
+            self.assertLessEqual(float(input_error.max()),3e-5,kind)
+            self.assertLessEqual(float(propagated.max()),7e-5,kind)
+            results[kind]={'local_provider_max_abs':float(local.max()),
+                           'upstream_input_max_abs':float(input_error.max()),
+                           'propagated_max_abs':float(propagated.max()),
+                           'generated_matches_direct_provider':'exact'}
+        (self.root/'duration-propagation.json').write_text(json.dumps(results,indent=2))
+        print('KOKORO_DURATION_PROPAGATION '+json.dumps(results,sort_keys=True))
+        return results
+
     def test_connected_predictor_stages_and_exact_durations(self):
         self.assertEqual(self.calls['errors'],[])
         self.assertEqual(len(self.calls['operations']),160)
         arena=self.arena(); frames=ctypes.c_int32(-999)
         self.assertEqual(self.fn(arena,len(arena),ctypes.byref(frames)),0)
+        self.check_sensitive_stage_propagation(arena)
         report={}
         failures=[]
         pairs={'phoneme_features':'encoder_features',
@@ -127,7 +203,8 @@ class KokoroGeneratedDurationTest(unittest.TestCase):
             error=np.abs(actual.astype(np.float64)-expected.astype(np.float64))
             report[name]={'max_abs':float(error.max()),'rmse':float(np.sqrt(np.mean(error*error))),
                           'worst':list(map(int,np.unravel_index(error.argmax(),error.shape)))}
-            connected_limit = 5e-5 if name in ('norm0_output', 'scan1_input', 'duration_logits') else 3e-5
+            connected_limit = (7.3e-5 if name in ('scan0_output','norm0_output','scan1_input')
+                else 5e-5 if name=='duration_logits' else 3e-5)
             point=next(point for op in self.calls['operations']
                 for point in op.get('semantic_checkpoints',[]) if point['tensor']==name)
             print('CKE_NUMERICAL_CASE '+json.dumps({
@@ -182,7 +259,8 @@ class KokoroGeneratedDurationTest(unittest.TestCase):
                 if point['tensor'] not in pairs:
                     continue
                 self.assertNotEqual(point['resolved_contract_id'],'unresolved')
-                limit=5e-5 if point['tensor'] in ('norm0_output','scan1_input','duration_logits') else 3e-5
+                limit=(7.3e-5 if point['tensor'] in ('scan0_output','norm0_output','scan1_input')
+                    else 5e-5 if point['tensor']=='duration_logits' else 3e-5)
                 profile={'schema':'cke.parity_profile','schema_version':1,
                     'name':'kokoro_connected_duration','backend':'pytorch','contract_schema_version':1,
                     'required_match_fields':['checkpoint_id','producer','logical_layout','axis_names',
@@ -259,25 +337,7 @@ class KokoroGeneratedDurationTest(unittest.TestCase):
                     build_ir_v8.generate_ir_lower_3(lower2,mode='prefill')
 
     def test_oracle_fed_production_scan_and_adaptive_norm(self):
-        exports=self.root/'primitive-exports.map'
-        exports.write_text('{ global: audio_lstm_bidirectional_scan_f32; audio_adaptive_layer_norm_f32; local: *; };\n')
-        library=self.root/'primitive-predictor.so'
-        subprocess.run(['cc','-std=c11','-O2','-Wall','-Wextra','-Werror',
-            '-shared','-fPIC','-ffp-contract=off','-ffunction-sections','-fdata-sections',
-            '-Wl,--gc-sections','-Wl,--no-undefined','-Wl,--version-script='+str(exports),
-            str(ROOT/'src/kernels/audio_lstm_scan.c'),
-            str(ROOT/'src/kernels/audio_kernels.c'),
-            str(ROOT/'src/kernels/audio_adaptive_layer_norm.c'),
-            '-I',str(ROOT/'include'),'-lm','-o',str(library)],
-            check=True,capture_output=True,text=True)
-        loaded=ctypes.CDLL(str(library)); pointer=ctypes.POINTER(ctypes.c_float)
-        scan=loaded.audio_lstm_bidirectional_scan_f32
-        scan.argtypes=[pointer,ctypes.c_size_t]*9+[ctypes.c_int]*3+[ctypes.c_size_t]*2
-        scan.restype=ctypes.c_int
-        norm=loaded.audio_adaptive_layer_norm_f32
-        norm.argtypes=[pointer,ctypes.c_size_t]*6+[ctypes.c_int]*3+[ctypes.c_size_t]*2+[ctypes.c_float]
-        norm.restype=ctypes.c_int
-        ptr=lambda x:x.ctypes.data_as(pointer)
+        scan,norm,ptr=self.primitive_abis()
         results={}
         for index in range(4):
             name='head_scan' if index==3 else f'scan{index}'
