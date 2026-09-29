@@ -378,20 +378,20 @@ Functions</h2></td></tr>
 <div class="line"><span class="lineno">   78</span>    fclose(f);</div>
 <div class="line"><span class="lineno">   79</span> </div>
 <div class="line"><span class="lineno">   80</span>    <span class="comment">/* Count entries */</span></div>
-<div class="line"><span class="lineno">   81</span>    <span class="keywordtype">int</span> count = 0;</div>
+<div class="line"><span class="lineno">   81</span>    <span class="keywordtype">int</span> <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a> = 0;</div>
 <div class="line"><span class="lineno">   82</span>    <span class="keywordtype">char</span> *p = content;</div>
 <div class="line"><span class="lineno">   83</span>    <span class="keywordflow">while</span> ((p = strstr(p, <span class="stringliteral">&quot;\&quot;name\&quot;:&quot;</span>)) != NULL) {</div>
-<div class="line"><span class="lineno">   84</span>        count++;</div>
+<div class="line"><span class="lineno">   84</span>        <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>++;</div>
 <div class="line"><span class="lineno">   85</span>        p += 7;</div>
 <div class="line"><span class="lineno">   86</span>    }</div>
 <div class="line"><span class="lineno">   87</span> </div>
-<div class="line"><span class="lineno">   88</span>    *entries = malloc(count * <span class="keyword">sizeof</span>(ManifestEntry));</div>
-<div class="line"><span class="lineno">   89</span>    *num_entries = count;</div>
+<div class="line"><span class="lineno">   88</span>    *entries = malloc(<a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a> * <span class="keyword">sizeof</span>(ManifestEntry));</div>
+<div class="line"><span class="lineno">   89</span>    *num_entries = <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>;</div>
 <div class="line"><span class="lineno">   90</span> </div>
 <div class="line"><span class="lineno">   91</span>    <span class="comment">/* Parse entries (simplified) */</span></div>
 <div class="line"><span class="lineno">   92</span>    p = content;</div>
 <div class="line"><span class="lineno">   93</span>    <span class="keywordtype">int</span> idx = 0;</div>
-<div class="line"><span class="lineno">   94</span>    <span class="keywordflow">while</span> ((p = strstr(p, <span class="stringliteral">&quot;\&quot;name\&quot;:&quot;</span>)) != NULL &amp;&amp; idx &lt; count) {</div>
+<div class="line"><span class="lineno">   94</span>    <span class="keywordflow">while</span> ((p = strstr(p, <span class="stringliteral">&quot;\&quot;name\&quot;:&quot;</span>)) != NULL &amp;&amp; idx &lt; <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>) {</div>
 <div class="line"><span class="lineno">   95</span>        <span class="keywordtype">char</span> *<a class="code hl_variable" href="utf8_8c.html#a61eb63d26b2fa6c2971603ceccffb14b">start</a> = strchr(p, <span class="charliteral">&#39;&quot;&#39;</span>) + 1;</div>
 <div class="line"><span class="lineno">   96</span>        <span class="keywordtype">char</span> *<a class="code hl_variable" href="utf8_8c.html#a204a3f4fa39b9c007f9784d3e4af4667">end</a> = strchr(<a class="code hl_variable" href="utf8_8c.html#a61eb63d26b2fa6c2971603ceccffb14b">start</a>, <span class="charliteral">&#39;&quot;&#39;</span>);</div>
 <div class="line"><span class="lineno">   97</span>        <span class="keywordtype">size_t</span> len = <a class="code hl_variable" href="utf8_8c.html#a204a3f4fa39b9c007f9784d3e4af4667">end</a> - <a class="code hl_variable" href="utf8_8c.html#a61eb63d26b2fa6c2971603ceccffb14b">start</a>;</div>
@@ -435,10 +435,11 @@ Functions</h2></td></tr>
 <div class="line"><span class="lineno">  135</span>    free(content);</div>
 <div class="line"><span class="lineno">  136</span>    <span class="keywordflow">return</span> 0;</div>
 <div class="line"><span class="lineno">  137</span>}</div>
+<div class="ttc" id="atrue__bpe_8h_html_ac7f5fd4f55df36920bf0583c3516e72f"><div class="ttname"><a href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a></div><div class="ttdeci">const uint8_t size_t count</div><div class="ttdef"><b>Definition</b> <a href="true__bpe_8h_source.html#l00205">true_bpe.h:205</a></div></div>
 <div class="ttc" id="autf8_8c_html_a204a3f4fa39b9c007f9784d3e4af4667"><div class="ttname"><a href="utf8_8c.html#a204a3f4fa39b9c007f9784d3e4af4667">end</a></div><div class="ttdeci">uint32_t end</div><div class="ttdef"><b>Definition</b> <a href="utf8_8c_source.html#l00215">utf8.c:215</a></div></div>
 <div class="ttc" id="autf8_8c_html_a61eb63d26b2fa6c2971603ceccffb14b"><div class="ttname"><a href="utf8_8c.html#a61eb63d26b2fa6c2971603ceccffb14b">start</a></div><div class="ttdeci">uint32_t start</div><div class="ttdef"><b>Definition</b> <a href="utf8_8c_source.html#l00214">utf8.c:214</a></div></div>
 </div><!-- fragment -->
-<p class="reference">References <a class="el" href="utf8_8c_source.html#l00215">end</a>, and <a class="el" href="utf8_8c_source.html#l00214">start</a>.</p>
+<p class="reference">References <a class="el" href="true__bpe_8h_source.html#l00205">count</a>, <a class="el" href="utf8_8c_source.html#l00215">end</a>, and <a class="el" href="utf8_8c_source.html#l00214">start</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="v6__inference_8c_source.html#l00140">load_weights()</a>.</p>
 

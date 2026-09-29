@@ -1,5 +1,8 @@
 var NAVTREEINDEX26 =
 {
+"v6_86_2test__generated_2qwen2__int8_8c.html#a60b3387c59248bf20e45fbd40326cd46":[2,0,1,7,1,4,6],
+"v6_86_2test__generated_2qwen2__int8_8c.html#a62c991f1de005eb3a77f01fc08e6417f":[2,0,1,7,1,4,4],
+"v6_86_2test__generated_2qwen2__int8_8c.html#a6c2eaf257e03badbd3a20de75a3abcf9":[2,0,1,7,1,4,30],
 "v6_86_2test__generated_2qwen2__int8_8c.html#a72ca7233113b8ab2acbadc710514f3cc":[2,0,1,7,1,4,49],
 "v6_86_2test__generated_2qwen2__int8_8c.html#a76b07dd39597b6760b3d5307f53aa453":[2,0,1,7,1,4,11],
 "v6_86_2test__generated_2qwen2__int8_8c.html#a7c592ce07fe74de77383c9a3483ab57a":[2,0,1,7,1,4,34],

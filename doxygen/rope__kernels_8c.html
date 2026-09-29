@@ -186,7 +186,7 @@ Typedefs</h2></td></tr>
 </table><table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="func-members" name="func-members"></a>
 Functions</h2></td></tr>
-<tr class="memitem:a2ea9b3ec0ca316b45e793d085ce0e64e" id="r_a2ea9b3ec0ca316b45e793d085ce0e64e"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="rope__kernels_8c.html#a2ea9b3ec0ca316b45e793d085ce0e64e">ck_mrope_round_storage</a> (float *data, size_t count, int storage_kind)</td></tr>
+<tr class="memitem:a2ea9b3ec0ca316b45e793d085ce0e64e" id="r_a2ea9b3ec0ca316b45e793d085ce0e64e"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="rope__kernels_8c.html#a2ea9b3ec0ca316b45e793d085ce0e64e">ck_mrope_round_storage</a> (float *data, size_t <a class="el" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>, int storage_kind)</td></tr>
 <tr class="separator:a2ea9b3ec0ca316b45e793d085ce0e64e"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:abd6ab9084229d028a570a77712000c46" id="r_abd6ab9084229d028a570a77712000c46"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="rope__kernels_8c.html#abd6ab9084229d028a570a77712000c46">ck_multimodal_mrope_positions_2d</a> (int32_t *positions, int total_tokens, int prefix_start, int position_base, int prefix_tokens, int grid_x, int grid_y, int text_pos)</td></tr>
 <tr class="separator:abd6ab9084229d028a570a77712000c46"><td class="memSeparator" colspan="2">&#160;</td></tr>
@@ -682,7 +682,7 @@ CK-ENGINE KERNEL RULES:</h1>
 <p class="definition">Definition at line <a class="el" href="rope__kernels_8c_source.html#l02688">2688</a> of file <a class="el" href="rope__kernels_8c_source.html">rope_kernels.c</a>.</p>
 <div class="fragment"><div class="line"><span class="lineno"> 2689</span>{</div>
 <div class="line"><span class="lineno"> 2690</span>    <span class="keywordflow">if</span> (!data) <span class="keywordflow">return</span>;</div>
-<div class="line"><span class="lineno"> 2691</span>    <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> i = 0; i &lt; count; ++i) {</div>
+<div class="line"><span class="lineno"> 2691</span>    <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> i = 0; i &lt; <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; ++i) {</div>
 <div class="line"><span class="lineno"> 2692</span>        <span class="keywordflow">if</span> (storage_kind == 1) {</div>
 <div class="line"><span class="lineno"> 2693</span>            data[i] = <a class="code hl_function" href="bf16__utils_8h.html#a314c3970fd5e2770d19b1bb49aefcf94">bf16_to_float</a>(<a class="code hl_function" href="bf16__utils_8h.html#a174b16a92b3a5972230d7519fc0c5aa3">float_to_bf16</a>(data[i]));</div>
 <div class="line"><span class="lineno"> 2694</span>        } <span class="keywordflow">else</span> <span class="keywordflow">if</span> (storage_kind == 2) {</div>
@@ -694,8 +694,9 @@ CK-ENGINE KERNEL RULES:</h1>
 <div class="ttc" id="abf16__utils_8h_html_a314c3970fd5e2770d19b1bb49aefcf94"><div class="ttname"><a href="bf16__utils_8h.html#a314c3970fd5e2770d19b1bb49aefcf94">bf16_to_float</a></div><div class="ttdeci">static float bf16_to_float(uint16_t v)</div><div class="ttdef"><b>Definition</b> <a href="bf16__utils_8h_source.html#l00038">bf16_utils.h:38</a></div></div>
 <div class="ttc" id="ackernel__quant_8h_html_aa18d3f14b90d1f8a16ea4c1f811f2a6e"><div class="ttname"><a href="ckernel__quant_8h.html#aa18d3f14b90d1f8a16ea4c1f811f2a6e">ck_fp32_to_fp16</a></div><div class="ttdeci">static ck_half ck_fp32_to_fp16(float f)</div><div class="ttdef"><b>Definition</b> <a href="ckernel__quant_8h_source.html#l00431">ckernel_quant.h:431</a></div></div>
 <div class="ttc" id="ackernel__quant_8h_html_ac14fcad36b93665d0bc01dfca3d9e6d9"><div class="ttname"><a href="ckernel__quant_8h.html#ac14fcad36b93665d0bc01dfca3d9e6d9">ck_fp16_to_fp32</a></div><div class="ttdeci">static float ck_fp16_to_fp32(ck_half h)</div><div class="ttdef"><b>Definition</b> <a href="ckernel__quant_8h_source.html#l00423">ckernel_quant.h:423</a></div></div>
+<div class="ttc" id="atrue__bpe_8h_html_ac7f5fd4f55df36920bf0583c3516e72f"><div class="ttname"><a href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a></div><div class="ttdeci">const uint8_t size_t count</div><div class="ttdef"><b>Definition</b> <a href="true__bpe_8h_source.html#l00205">true_bpe.h:205</a></div></div>
 </div><!-- fragment -->
-<p class="reference">References <a class="el" href="bf16__utils_8h_source.html#l00038">bf16_to_float()</a>, <a class="el" href="ckernel__quant_8h_source.html#l00423">ck_fp16_to_fp32()</a>, <a class="el" href="ckernel__quant_8h_source.html#l00431">ck_fp32_to_fp16()</a>, and <a class="el" href="bf16__utils_8h_source.html#l00090">float_to_bf16()</a>.</p>
+<p class="reference">References <a class="el" href="bf16__utils_8h_source.html#l00038">bf16_to_float()</a>, <a class="el" href="ckernel__quant_8h_source.html#l00423">ck_fp16_to_fp32()</a>, <a class="el" href="ckernel__quant_8h_source.html#l00431">ck_fp32_to_fp16()</a>, <a class="el" href="true__bpe_8h_source.html#l00205">count</a>, and <a class="el" href="bf16__utils_8h_source.html#l00090">float_to_bf16()</a>.</p>
 
 </div>
 </div>

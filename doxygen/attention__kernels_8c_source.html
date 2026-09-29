@@ -468,10 +468,10 @@ $(document).ready(function(){initNavTree('attention__kernels_8c_source.html','')
 <div class="line"><a id="l00319" name="l00319"></a><span class="lineno">  319</span> </div>
 <div class="line"><a id="l00320" name="l00320"></a><span class="lineno">  320</span><span class="comment">/* Convert BF16 tensor to FP32 using caller-provided buffer (no malloc!) */</span></div>
 <div class="foldopen" id="foldopen00321" data-start="{" data-end="}">
-<div class="line"><a id="l00321" name="l00321"></a><span class="lineno"><a class="line" href="attention__kernels_8c.html#af50caaef2599654770e914a92ff21667">  321</a></span><span class="keyword">static</span> <span class="keywordtype">void</span> <a class="code hl_function" href="attention__kernels_8c.html#af50caaef2599654770e914a92ff21667">convert_bf16_tensor_to_buf</a>(<span class="keyword">const</span> uint16_t *src, <span class="keywordtype">float</span> *dst, <span class="keywordtype">size_t</span> count)</div>
+<div class="line"><a id="l00321" name="l00321"></a><span class="lineno"><a class="line" href="attention__kernels_8c.html#af50caaef2599654770e914a92ff21667">  321</a></span><span class="keyword">static</span> <span class="keywordtype">void</span> <a class="code hl_function" href="attention__kernels_8c.html#af50caaef2599654770e914a92ff21667">convert_bf16_tensor_to_buf</a>(<span class="keyword">const</span> uint16_t *src, <span class="keywordtype">float</span> *dst, <span class="keywordtype">size_t</span> <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>)</div>
 <div class="line"><a id="l00322" name="l00322"></a><span class="lineno">  322</span>{</div>
 <div class="line"><a id="l00323" name="l00323"></a><span class="lineno">  323</span>    <span class="keywordflow">if</span> (!dst || !src) <span class="keywordflow">return</span>;</div>
-<div class="line"><a id="l00324" name="l00324"></a><span class="lineno">  324</span>    <a class="code hl_function" href="bf16__utils_8h.html#a94c0b1e3b43eb46dcce37900ed5c1333">bf16_tensor_to_float</a>(src, dst, count);</div>
+<div class="line"><a id="l00324" name="l00324"></a><span class="lineno">  324</span>    <a class="code hl_function" href="bf16__utils_8h.html#a94c0b1e3b43eb46dcce37900ed5c1333">bf16_tensor_to_float</a>(src, dst, <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>);</div>
 <div class="line"><a id="l00325" name="l00325"></a><span class="lineno">  325</span>}</div>
 </div>
 <div class="line"><a id="l00326" name="l00326"></a><span class="lineno">  326</span> </div>
@@ -511,18 +511,18 @@ $(document).ready(function(){initNavTree('attention__kernels_8c_source.html','')
 </div>
 <div class="line"><a id="l00355" name="l00355"></a><span class="lineno">  355</span> </div>
 <div class="foldopen" id="foldopen00356" data-start="{" data-end="}">
-<div class="line"><a id="l00356" name="l00356"></a><span class="lineno"><a class="line" href="attention__kernels_8c.html#a643edbfcea466ae909717441999a5076">  356</a></span><span class="keyword">static</span> <span class="keywordtype">void</span> <a class="code hl_function" href="attention__kernels_8c.html#a643edbfcea466ae909717441999a5076">ck_round_fp16_buffer</a>(<span class="keyword">const</span> <span class="keywordtype">float</span> *src, <span class="keywordtype">float</span> *dst, <span class="keywordtype">size_t</span> count)</div>
+<div class="line"><a id="l00356" name="l00356"></a><span class="lineno"><a class="line" href="attention__kernels_8c.html#a643edbfcea466ae909717441999a5076">  356</a></span><span class="keyword">static</span> <span class="keywordtype">void</span> <a class="code hl_function" href="attention__kernels_8c.html#a643edbfcea466ae909717441999a5076">ck_round_fp16_buffer</a>(<span class="keyword">const</span> <span class="keywordtype">float</span> *src, <span class="keywordtype">float</span> *dst, <span class="keywordtype">size_t</span> <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>)</div>
 <div class="line"><a id="l00357" name="l00357"></a><span class="lineno">  357</span>{</div>
 <div class="line"><a id="l00358" name="l00358"></a><span class="lineno">  358</span>    <span class="keywordtype">size_t</span> i = 0;</div>
 <div class="line"><a id="l00359" name="l00359"></a><span class="lineno">  359</span><span class="preprocessor">#if defined(__AVX2__) &amp;&amp; defined(__F16C__)</span></div>
-<div class="line"><a id="l00360" name="l00360"></a><span class="lineno">  360</span>    <span class="keywordflow">for</span> (; i + 8 &lt;= count; i += 8) {</div>
+<div class="line"><a id="l00360" name="l00360"></a><span class="lineno">  360</span>    <span class="keywordflow">for</span> (; i + 8 &lt;= <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; i += 8) {</div>
 <div class="line"><a id="l00361" name="l00361"></a><span class="lineno">  361</span>        <span class="keyword">const</span> __m256 value = _mm256_loadu_ps(src + i);</div>
 <div class="line"><a id="l00362" name="l00362"></a><span class="lineno">  362</span>        <span class="keyword">const</span> __m128i half = _mm256_cvtps_ph(</div>
 <div class="line"><a id="l00363" name="l00363"></a><span class="lineno">  363</span>            value, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);</div>
 <div class="line"><a id="l00364" name="l00364"></a><span class="lineno">  364</span>        _mm256_storeu_ps(dst + i, _mm256_cvtph_ps(half));</div>
 <div class="line"><a id="l00365" name="l00365"></a><span class="lineno">  365</span>    }</div>
 <div class="line"><a id="l00366" name="l00366"></a><span class="lineno">  366</span><span class="preprocessor">#endif</span></div>
-<div class="line"><a id="l00367" name="l00367"></a><span class="lineno">  367</span>    <span class="keywordflow">for</span> (; i &lt; count; ++i) {</div>
+<div class="line"><a id="l00367" name="l00367"></a><span class="lineno">  367</span>    <span class="keywordflow">for</span> (; i &lt; <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; ++i) {</div>
 <div class="line"><a id="l00368" name="l00368"></a><span class="lineno">  368</span>        dst[i] = <a class="code hl_function" href="attention__kernels_8c.html#a7370e06b912ac95b7db664d269adfb90">ck_round_fp16_scalar</a>(src[i]);</div>
 <div class="line"><a id="l00369" name="l00369"></a><span class="lineno">  369</span>    }</div>
 <div class="line"><a id="l00370" name="l00370"></a><span class="lineno">  370</span>}</div>
@@ -4835,18 +4835,18 @@ $(document).ready(function(){initNavTree('attention__kernels_8c_source.html','')
 <div class="line"><a id="l04562" name="l04562"></a><span class="lineno"> 4562</span> </div>
 <div class="line"><a id="l04563" name="l04563"></a><span class="lineno"> 4563</span> </div>
 <div class="foldopen" id="foldopen04564" data-start="{" data-end="}">
-<div class="line"><a id="l04564" name="l04564"></a><span class="lineno"><a class="line" href="attention__kernels_8c.html#af0a575d057e45868f4f22a8d06b9287d"> 4564</a></span><span class="keyword">static</span> <span class="keywordtype">float</span> <a class="code hl_function" href="attention__kernels_8c.html#af0a575d057e45868f4f22a8d06b9287d">ck_bf16_dot_contract</a>(<span class="keyword">const</span> <span class="keywordtype">float</span> *a, <span class="keyword">const</span> <span class="keywordtype">float</span> *b, <span class="keywordtype">int</span> count)</div>
+<div class="line"><a id="l04564" name="l04564"></a><span class="lineno"><a class="line" href="attention__kernels_8c.html#af0a575d057e45868f4f22a8d06b9287d"> 4564</a></span><span class="keyword">static</span> <span class="keywordtype">float</span> <a class="code hl_function" href="attention__kernels_8c.html#af0a575d057e45868f4f22a8d06b9287d">ck_bf16_dot_contract</a>(<span class="keyword">const</span> <span class="keywordtype">float</span> *a, <span class="keyword">const</span> <span class="keywordtype">float</span> *b, <span class="keywordtype">int</span> <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>)</div>
 <div class="line"><a id="l04565" name="l04565"></a><span class="lineno"> 4565</span>{</div>
 <div class="line"><a id="l04566" name="l04566"></a><span class="lineno"> 4566</span><span class="preprocessor">#if defined(__AVX512BF16__)</span></div>
 <div class="line"><a id="l04567" name="l04567"></a><span class="lineno"> 4567</span>    __m512 acc = _mm512_setzero_ps();</div>
 <div class="line"><a id="l04568" name="l04568"></a><span class="lineno"> 4568</span>    <span class="keywordtype">int</span> i = 0;</div>
-<div class="line"><a id="l04569" name="l04569"></a><span class="lineno"> 4569</span>    <span class="keywordflow">for</span> (; i + 32 &lt;= count; i += 32) {</div>
+<div class="line"><a id="l04569" name="l04569"></a><span class="lineno"> 4569</span>    <span class="keywordflow">for</span> (; i + 32 &lt;= <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; i += 32) {</div>
 <div class="line"><a id="l04570" name="l04570"></a><span class="lineno"> 4570</span>        <span class="keyword">const</span> __m512bh av = _mm512_cvtne2ps_pbh(_mm512_loadu_ps(a + i + 16), _mm512_loadu_ps(a + i));</div>
 <div class="line"><a id="l04571" name="l04571"></a><span class="lineno"> 4571</span>        <span class="keyword">const</span> __m512bh bv = _mm512_cvtne2ps_pbh(_mm512_loadu_ps(b + i + 16), _mm512_loadu_ps(b + i));</div>
 <div class="line"><a id="l04572" name="l04572"></a><span class="lineno"> 4572</span>        acc = _mm512_dpbf16_ps(acc, av, bv);</div>
 <div class="line"><a id="l04573" name="l04573"></a><span class="lineno"> 4573</span>    }</div>
 <div class="line"><a id="l04574" name="l04574"></a><span class="lineno"> 4574</span>    <span class="keywordtype">float</span> sum = _mm512_reduce_add_ps(acc);</div>
-<div class="line"><a id="l04575" name="l04575"></a><span class="lineno"> 4575</span>    <span class="keywordflow">for</span> (; i &lt; count; ++i) {</div>
+<div class="line"><a id="l04575" name="l04575"></a><span class="lineno"> 4575</span>    <span class="keywordflow">for</span> (; i &lt; <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; ++i) {</div>
 <div class="line"><a id="l04576" name="l04576"></a><span class="lineno"> 4576</span>        <span class="keyword">const</span> <span class="keywordtype">float</span> av = <a class="code hl_function" href="bf16__utils_8h.html#a314c3970fd5e2770d19b1bb49aefcf94">bf16_to_float</a>(<a class="code hl_function" href="bf16__utils_8h.html#a174b16a92b3a5972230d7519fc0c5aa3">float_to_bf16</a>(a[i]));</div>
 <div class="line"><a id="l04577" name="l04577"></a><span class="lineno"> 4577</span>        <span class="keyword">const</span> <span class="keywordtype">float</span> bv = <a class="code hl_function" href="bf16__utils_8h.html#a314c3970fd5e2770d19b1bb49aefcf94">bf16_to_float</a>(<a class="code hl_function" href="bf16__utils_8h.html#a174b16a92b3a5972230d7519fc0c5aa3">float_to_bf16</a>(b[i]));</div>
 <div class="line"><a id="l04578" name="l04578"></a><span class="lineno"> 4578</span>        sum += av * bv;</div>
@@ -4854,7 +4854,7 @@ $(document).ready(function(){initNavTree('attention__kernels_8c_source.html','')
 <div class="line"><a id="l04580" name="l04580"></a><span class="lineno"> 4580</span>    <span class="keywordflow">return</span> sum;</div>
 <div class="line"><a id="l04581" name="l04581"></a><span class="lineno"> 4581</span><span class="preprocessor">#else</span></div>
 <div class="line"><a id="l04582" name="l04582"></a><span class="lineno"> 4582</span>    <span class="keywordtype">float</span> sum = 0.0f;</div>
-<div class="line"><a id="l04583" name="l04583"></a><span class="lineno"> 4583</span>    <span class="keywordflow">for</span> (<span class="keywordtype">int</span> i = 0; i &lt; count; ++i) {</div>
+<div class="line"><a id="l04583" name="l04583"></a><span class="lineno"> 4583</span>    <span class="keywordflow">for</span> (<span class="keywordtype">int</span> i = 0; i &lt; <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; ++i) {</div>
 <div class="line"><a id="l04584" name="l04584"></a><span class="lineno"> 4584</span>        <span class="keyword">const</span> <span class="keywordtype">float</span> av = <a class="code hl_function" href="bf16__utils_8h.html#a314c3970fd5e2770d19b1bb49aefcf94">bf16_to_float</a>(<a class="code hl_function" href="bf16__utils_8h.html#a174b16a92b3a5972230d7519fc0c5aa3">float_to_bf16</a>(a[i]));</div>
 <div class="line"><a id="l04585" name="l04585"></a><span class="lineno"> 4585</span>        <span class="keyword">const</span> <span class="keywordtype">float</span> bv = <a class="code hl_function" href="bf16__utils_8h.html#a314c3970fd5e2770d19b1bb49aefcf94">bf16_to_float</a>(<a class="code hl_function" href="bf16__utils_8h.html#a174b16a92b3a5972230d7519fc0c5aa3">float_to_bf16</a>(b[i]));</div>
 <div class="line"><a id="l04586" name="l04586"></a><span class="lineno"> 4586</span>        sum += av * bv;</div>
@@ -4933,11 +4933,11 @@ $(document).ready(function(){initNavTree('attention__kernels_8c_source.html','')
 <div class="line"><a id="l04656" name="l04656"></a><span class="lineno"> 4656</span>    <span class="keywordflow">return</span> _mm512_mul_ps(_mm512_mul_ps(result, scale), two);</div>
 <div class="line"><a id="l04657" name="l04657"></a><span class="lineno"> 4657</span>}</div>
 <div class="line"><a id="l04658" name="l04658"></a><span class="lineno"> 4658</span> </div>
-<div class="line"><a id="l04659" name="l04659"></a><span class="lineno"> 4659</span><span class="keyword">static</span> <span class="keywordtype">float</span> ck_bf16_sdpa_scale_max_avx512(<span class="keywordtype">float</span> *row, <span class="keywordtype">int</span> count, <span class="keywordtype">float</span> scale)</div>
+<div class="line"><a id="l04659" name="l04659"></a><span class="lineno"> 4659</span><span class="keyword">static</span> <span class="keywordtype">float</span> ck_bf16_sdpa_scale_max_avx512(<span class="keywordtype">float</span> *row, <span class="keywordtype">int</span> <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>, <span class="keywordtype">float</span> scale)</div>
 <div class="line"><a id="l04660" name="l04660"></a><span class="lineno"> 4660</span>{</div>
 <div class="line"><a id="l04661" name="l04661"></a><span class="lineno"> 4661</span>    __m512 lane_max = _mm512_set1_ps(-INFINITY);</div>
 <div class="line"><a id="l04662" name="l04662"></a><span class="lineno"> 4662</span>    <span class="keyword">const</span> __m512 scale_v = _mm512_set1_ps(scale);</div>
-<div class="line"><a id="l04663" name="l04663"></a><span class="lineno"> 4663</span>    <span class="keywordflow">for</span> (<span class="keywordtype">int</span> i = 0; i &lt; count; i += 16) {</div>
+<div class="line"><a id="l04663" name="l04663"></a><span class="lineno"> 4663</span>    <span class="keywordflow">for</span> (<span class="keywordtype">int</span> i = 0; i &lt; <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; i += 16) {</div>
 <div class="line"><a id="l04664" name="l04664"></a><span class="lineno"> 4664</span>        <span class="keyword">const</span> __m512 value = _mm512_mul_ps(_mm512_loadu_ps(row + i), scale_v);</div>
 <div class="line"><a id="l04665" name="l04665"></a><span class="lineno"> 4665</span>        lane_max = _mm512_max_ps(lane_max, value);</div>
 <div class="line"><a id="l04666" name="l04666"></a><span class="lineno"> 4666</span>        _mm512_storeu_ps(row + i, value);</div>
@@ -4946,11 +4946,11 @@ $(document).ready(function(){initNavTree('attention__kernels_8c_source.html','')
 <div class="line"><a id="l04669" name="l04669"></a><span class="lineno"> 4669</span>}</div>
 <div class="line"><a id="l04670" name="l04670"></a><span class="lineno"> 4670</span> </div>
 <div class="line"><a id="l04671" name="l04671"></a><span class="lineno"> 4671</span><span class="keyword">static</span> <span class="keywordtype">float</span> ck_bf16_sdpa_exp_sum_avx512(</div>
-<div class="line"><a id="l04672" name="l04672"></a><span class="lineno"> 4672</span>    <span class="keyword">const</span> <span class="keywordtype">float</span> *scores, uint16_t *probabilities, <span class="keywordtype">int</span> count, <span class="keywordtype">float</span> maximum)</div>
+<div class="line"><a id="l04672" name="l04672"></a><span class="lineno"> 4672</span>    <span class="keyword">const</span> <span class="keywordtype">float</span> *scores, uint16_t *probabilities, <span class="keywordtype">int</span> <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>, <span class="keywordtype">float</span> maximum)</div>
 <div class="line"><a id="l04673" name="l04673"></a><span class="lineno"> 4673</span>{</div>
 <div class="line"><a id="l04674" name="l04674"></a><span class="lineno"> 4674</span>    __m512 lane_sum = _mm512_setzero_ps();</div>
 <div class="line"><a id="l04675" name="l04675"></a><span class="lineno"> 4675</span>    <span class="keyword">const</span> __m512 maximum_v = _mm512_set1_ps(maximum);</div>
-<div class="line"><a id="l04676" name="l04676"></a><span class="lineno"> 4676</span>    <span class="keywordflow">for</span> (<span class="keywordtype">int</span> i = 0; i &lt; count; i += 16) {</div>
+<div class="line"><a id="l04676" name="l04676"></a><span class="lineno"> 4676</span>    <span class="keywordflow">for</span> (<span class="keywordtype">int</span> i = 0; i &lt; <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; i += 16) {</div>
 <div class="line"><a id="l04677" name="l04677"></a><span class="lineno"> 4677</span>        <span class="keyword">const</span> __m512 exponent = ck_bf16_sdpa_exp_u20_avx512(</div>
 <div class="line"><a id="l04678" name="l04678"></a><span class="lineno"> 4678</span>            _mm512_sub_ps(_mm512_loadu_ps(scores + i), maximum_v));</div>
 <div class="line"><a id="l04679" name="l04679"></a><span class="lineno"> 4679</span>        lane_sum = _mm512_add_ps(lane_sum, exponent);</div>
@@ -5302,9 +5302,9 @@ $(document).ready(function(){initNavTree('attention__kernels_8c_source.html','')
 <div class="line"><a id="l05012" name="l05012"></a><span class="lineno"> 5012</span>        <span class="comment">/*output_token_major=*/</span>0,</div>
 <div class="line"><a id="l05013" name="l05013"></a><span class="lineno"> 5013</span>        1.0f / sqrtf((<span class="keywordtype">float</span>)head_dim)</div>
 <div class="line"><a id="l05014" name="l05014"></a><span class="lineno"> 5014</span>    );</div>
-<div class="line"><a id="l05015" name="l05015"></a><span class="lineno"> 5015</span>    <span class="keyword">const</span> <span class="keywordtype">size_t</span> count = (size_t)num_heads * (<span class="keywordtype">size_t</span>)num_tokens</div>
+<div class="line"><a id="l05015" name="l05015"></a><span class="lineno"> 5015</span>    <span class="keyword">const</span> <span class="keywordtype">size_t</span> <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a> = (size_t)num_heads * (<span class="keywordtype">size_t</span>)num_tokens</div>
 <div class="line"><a id="l05016" name="l05016"></a><span class="lineno"> 5016</span>                       * (size_t)aligned_head_dim;</div>
-<div class="line"><a id="l05017" name="l05017"></a><span class="lineno"> 5017</span>    <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> i = 0; i &lt; count; ++i) {</div>
+<div class="line"><a id="l05017" name="l05017"></a><span class="lineno"> 5017</span>    <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> i = 0; i &lt; <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; ++i) {</div>
 <div class="line"><a id="l05018" name="l05018"></a><span class="lineno"> 5018</span>        output[i] = <a class="code hl_function" href="bf16__utils_8h.html#a314c3970fd5e2770d19b1bb49aefcf94">bf16_to_float</a>(<a class="code hl_function" href="bf16__utils_8h.html#a174b16a92b3a5972230d7519fc0c5aa3">float_to_bf16</a>(output[i]));</div>
 <div class="line"><a id="l05019" name="l05019"></a><span class="lineno"> 5019</span>    }</div>
 <div class="line"><a id="l05020" name="l05020"></a><span class="lineno"> 5020</span>}</div>
@@ -5326,9 +5326,9 @@ $(document).ready(function(){initNavTree('attention__kernels_8c_source.html','')
 <div class="line"><a id="l05034" name="l05034"></a><span class="lineno"> 5034</span>    <span class="keywordflow">if</span> (<a class="code hl_function" href="attention__kernels_8c.html#a85bfd225df17c6a100fae44ab266b081">ck_attention_full_bf16_sdpa_tiled</a>(</div>
 <div class="line"><a id="l05035" name="l05035"></a><span class="lineno"> 5035</span>            q, k, v, output, num_heads, num_kv_heads, num_tokens,</div>
 <div class="line"><a id="l05036" name="l05036"></a><span class="lineno"> 5036</span>            head_dim, aligned_head_dim, kv_stride_tokens)) {</div>
-<div class="line"><a id="l05037" name="l05037"></a><span class="lineno"> 5037</span>        <span class="keyword">const</span> <span class="keywordtype">size_t</span> count = (size_t)num_heads * (<span class="keywordtype">size_t</span>)num_tokens</div>
+<div class="line"><a id="l05037" name="l05037"></a><span class="lineno"> 5037</span>        <span class="keyword">const</span> <span class="keywordtype">size_t</span> <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a> = (size_t)num_heads * (<span class="keywordtype">size_t</span>)num_tokens</div>
 <div class="line"><a id="l05038" name="l05038"></a><span class="lineno"> 5038</span>                           * (size_t)aligned_head_dim;</div>
-<div class="line"><a id="l05039" name="l05039"></a><span class="lineno"> 5039</span>        <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> i = 0; i &lt; count; ++i) {</div>
+<div class="line"><a id="l05039" name="l05039"></a><span class="lineno"> 5039</span>        <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> i = 0; i &lt; <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; ++i) {</div>
 <div class="line"><a id="l05040" name="l05040"></a><span class="lineno"> 5040</span>            output[i] = <a class="code hl_function" href="bf16__utils_8h.html#a314c3970fd5e2770d19b1bb49aefcf94">bf16_to_float</a>(<a class="code hl_function" href="bf16__utils_8h.html#a174b16a92b3a5972230d7519fc0c5aa3">float_to_bf16</a>(output[i]));</div>
 <div class="line"><a id="l05041" name="l05041"></a><span class="lineno"> 5041</span>        }</div>
 <div class="line"><a id="l05042" name="l05042"></a><span class="lineno"> 5042</span>        <span class="keywordflow">return</span>;</div>
@@ -6141,7 +6141,7 @@ $(document).ready(function(){initNavTree('attention__kernels_8c_source.html','')
 <div class="line"><a id="l05814" name="l05814"></a><span class="lineno"> 5814</span><span class="preprocessor">#endif</span></div>
 <div class="line"><a id="l05815" name="l05815"></a><span class="lineno"> 5815</span> </div>
 <div class="foldopen" id="foldopen05816" data-start="{" data-end="}">
-<div class="line"><a id="l05816" name="l05816"></a><span class="lineno"><a class="line" href="attention__kernels_8c.html#aa695eb09451351d18929b33a59acb333"> 5816</a></span><span class="keyword">static</span> <span class="keyword">inline</span> <span class="keywordtype">float</span> <a class="code hl_function" href="attention__kernels_8c.html#aa695eb09451351d18929b33a59acb333">ck_llama_regular_dot_f16</a>(<span class="keyword">const</span> <span class="keywordtype">float</span> *a, <span class="keyword">const</span> <span class="keywordtype">float</span> *b, <span class="keywordtype">int</span> count)</div>
+<div class="line"><a id="l05816" name="l05816"></a><span class="lineno"><a class="line" href="attention__kernels_8c.html#aa695eb09451351d18929b33a59acb333"> 5816</a></span><span class="keyword">static</span> <span class="keyword">inline</span> <span class="keywordtype">float</span> <a class="code hl_function" href="attention__kernels_8c.html#aa695eb09451351d18929b33a59acb333">ck_llama_regular_dot_f16</a>(<span class="keyword">const</span> <span class="keywordtype">float</span> *a, <span class="keyword">const</span> <span class="keywordtype">float</span> *b, <span class="keywordtype">int</span> <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>)</div>
 <div class="line"><a id="l05817" name="l05817"></a><span class="lineno"> 5817</span>{</div>
 <div class="line"><a id="l05818" name="l05818"></a><span class="lineno"> 5818</span>    <span class="keywordtype">int</span> i = 0;</div>
 <div class="line"><a id="l05819" name="l05819"></a><span class="lineno"> 5819</span><span class="preprocessor">#if defined(__AVX512F__)</span></div>
@@ -6149,7 +6149,7 @@ $(document).ready(function(){initNavTree('attention__kernels_8c_source.html','')
 <div class="line"><a id="l05821" name="l05821"></a><span class="lineno"> 5821</span>        _mm512_setzero_ps(), _mm512_setzero_ps(),</div>
 <div class="line"><a id="l05822" name="l05822"></a><span class="lineno"> 5822</span>        _mm512_setzero_ps(), _mm512_setzero_ps()</div>
 <div class="line"><a id="l05823" name="l05823"></a><span class="lineno"> 5823</span>    };</div>
-<div class="line"><a id="l05824" name="l05824"></a><span class="lineno"> 5824</span>    <span class="keywordflow">for</span> (; i + 64 &lt;= count; i += 64) {</div>
+<div class="line"><a id="l05824" name="l05824"></a><span class="lineno"> 5824</span>    <span class="keywordflow">for</span> (; i + 64 &lt;= <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; i += 64) {</div>
 <div class="line"><a id="l05825" name="l05825"></a><span class="lineno"> 5825</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> lane = 0; lane &lt; 4; ++lane) {</div>
 <div class="line"><a id="l05826" name="l05826"></a><span class="lineno"> 5826</span>            acc[lane] = _mm512_fmadd_ps(</div>
 <div class="line"><a id="l05827" name="l05827"></a><span class="lineno"> 5827</span>                ck_llama_regular_round_f16x16(_mm512_loadu_ps(a + i + lane * 16)),</div>
@@ -6165,7 +6165,7 @@ $(document).ready(function(){initNavTree('attention__kernels_8c_source.html','')
 <div class="line"><a id="l05837" name="l05837"></a><span class="lineno"> 5837</span>        _mm256_setzero_ps(), _mm256_setzero_ps(),</div>
 <div class="line"><a id="l05838" name="l05838"></a><span class="lineno"> 5838</span>        _mm256_setzero_ps(), _mm256_setzero_ps()</div>
 <div class="line"><a id="l05839" name="l05839"></a><span class="lineno"> 5839</span>    };</div>
-<div class="line"><a id="l05840" name="l05840"></a><span class="lineno"> 5840</span>    <span class="keywordflow">for</span> (; i + 32 &lt;= count; i += 32) {</div>
+<div class="line"><a id="l05840" name="l05840"></a><span class="lineno"> 5840</span>    <span class="keywordflow">for</span> (; i + 32 &lt;= <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; i += 32) {</div>
 <div class="line"><a id="l05841" name="l05841"></a><span class="lineno"> 5841</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> lane = 0; lane &lt; 4; ++lane) {</div>
 <div class="line"><a id="l05842" name="l05842"></a><span class="lineno"> 5842</span><span class="preprocessor">#if defined(__FMA__)</span></div>
 <div class="line"><a id="l05843" name="l05843"></a><span class="lineno"> 5843</span>            acc[lane] = _mm256_fmadd_ps(</div>
@@ -6193,7 +6193,7 @@ $(document).ready(function(){initNavTree('attention__kernels_8c_source.html','')
 <div class="line"><a id="l05865" name="l05865"></a><span class="lineno"> 5865</span>    <span class="keywordtype">float</span> sum = _mm_cvtss_f32(halves);</div>
 <div class="line"><a id="l05866" name="l05866"></a><span class="lineno"> 5866</span><span class="preprocessor">#else</span></div>
 <div class="line"><a id="l05867" name="l05867"></a><span class="lineno"> 5867</span>    <span class="keywordtype">float</span> sums[4] = {0.0f, 0.0f, 0.0f, 0.0f};</div>
-<div class="line"><a id="l05868" name="l05868"></a><span class="lineno"> 5868</span>    <span class="keywordflow">for</span> (; i + 4 &lt;= count; i += 4) {</div>
+<div class="line"><a id="l05868" name="l05868"></a><span class="lineno"> 5868</span>    <span class="keywordflow">for</span> (; i + 4 &lt;= <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; i += 4) {</div>
 <div class="line"><a id="l05869" name="l05869"></a><span class="lineno"> 5869</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> lane = 0; lane &lt; 4; ++lane) {</div>
 <div class="line"><a id="l05870" name="l05870"></a><span class="lineno"> 5870</span>            <span class="keyword">const</span> <span class="keywordtype">float</span> av = <a class="code hl_define" href="ckernel__quant_8h.html#a7edd411b02255eed928c775b91396c2a">CK_FP16_TO_FP32</a>(<a class="code hl_define" href="ckernel__quant_8h.html#aa217c07d43400999fb76ccfcdda2a47d">CK_FP32_TO_FP16</a>(a[i + lane]));</div>
 <div class="line"><a id="l05871" name="l05871"></a><span class="lineno"> 5871</span>            <span class="keyword">const</span> <span class="keywordtype">float</span> bv = <a class="code hl_define" href="ckernel__quant_8h.html#a7edd411b02255eed928c775b91396c2a">CK_FP16_TO_FP32</a>(<a class="code hl_define" href="ckernel__quant_8h.html#aa217c07d43400999fb76ccfcdda2a47d">CK_FP32_TO_FP16</a>(b[i + lane]));</div>
@@ -6202,7 +6202,7 @@ $(document).ready(function(){initNavTree('attention__kernels_8c_source.html','')
 <div class="line"><a id="l05874" name="l05874"></a><span class="lineno"> 5874</span>    }</div>
 <div class="line"><a id="l05875" name="l05875"></a><span class="lineno"> 5875</span>    <span class="keywordtype">float</span> sum = (sums[0] + sums[2]) + (sums[1] + sums[3]);</div>
 <div class="line"><a id="l05876" name="l05876"></a><span class="lineno"> 5876</span><span class="preprocessor">#endif</span></div>
-<div class="line"><a id="l05877" name="l05877"></a><span class="lineno"> 5877</span>    <span class="keywordflow">for</span> (; i &lt; count; ++i) {</div>
+<div class="line"><a id="l05877" name="l05877"></a><span class="lineno"> 5877</span>    <span class="keywordflow">for</span> (; i &lt; <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; ++i) {</div>
 <div class="line"><a id="l05878" name="l05878"></a><span class="lineno"> 5878</span>        <span class="keyword">const</span> <span class="keywordtype">float</span> av = <a class="code hl_define" href="ckernel__quant_8h.html#a7edd411b02255eed928c775b91396c2a">CK_FP16_TO_FP32</a>(<a class="code hl_define" href="ckernel__quant_8h.html#aa217c07d43400999fb76ccfcdda2a47d">CK_FP32_TO_FP16</a>(a[i]));</div>
 <div class="line"><a id="l05879" name="l05879"></a><span class="lineno"> 5879</span>        <span class="keyword">const</span> <span class="keywordtype">float</span> bv = <a class="code hl_define" href="ckernel__quant_8h.html#a7edd411b02255eed928c775b91396c2a">CK_FP16_TO_FP32</a>(<a class="code hl_define" href="ckernel__quant_8h.html#aa217c07d43400999fb76ccfcdda2a47d">CK_FP32_TO_FP16</a>(b[i]));</div>
 <div class="line"><a id="l05880" name="l05880"></a><span class="lineno"> 5880</span>        sum = fmaf(av, bv, sum);</div>
@@ -6213,12 +6213,12 @@ $(document).ready(function(){initNavTree('attention__kernels_8c_source.html','')
 <div class="line"><a id="l05884" name="l05884"></a><span class="lineno"> 5884</span> </div>
 <div class="foldopen" id="foldopen05885" data-start="{" data-end="}">
 <div class="line"><a id="l05885" name="l05885"></a><span class="lineno"><a class="line" href="attention__kernels_8c.html#a1c1f48d0fa92a6b126cf7bb82b5bbf10"> 5885</a></span><span class="keyword">static</span> <span class="keyword">inline</span> <span class="keywordtype">float</span> <a class="code hl_function" href="attention__kernels_8c.html#a1c1f48d0fa92a6b126cf7bb82b5bbf10">ck_llama_regular_gemm_f16</a>(</div>
-<div class="line"><a id="l05886" name="l05886"></a><span class="lineno"> 5886</span>    <span class="keyword">const</span> <span class="keywordtype">float</span> *probability, <span class="keyword">const</span> <span class="keywordtype">float</span> *value_column, <span class="keywordtype">int</span> count)</div>
+<div class="line"><a id="l05886" name="l05886"></a><span class="lineno"> 5886</span>    <span class="keyword">const</span> <span class="keywordtype">float</span> *probability, <span class="keyword">const</span> <span class="keywordtype">float</span> *value_column, <span class="keywordtype">int</span> <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>)</div>
 <div class="line"><a id="l05887" name="l05887"></a><span class="lineno"> 5887</span>{</div>
 <div class="line"><a id="l05888" name="l05888"></a><span class="lineno"> 5888</span>    <span class="keywordtype">int</span> i = 0;</div>
 <div class="line"><a id="l05889" name="l05889"></a><span class="lineno"> 5889</span><span class="preprocessor">#if defined(__AVX512F__)</span></div>
 <div class="line"><a id="l05890" name="l05890"></a><span class="lineno"> 5890</span>    __m512 acc = _mm512_setzero_ps();</div>
-<div class="line"><a id="l05891" name="l05891"></a><span class="lineno"> 5891</span>    <span class="keywordflow">for</span> (; i + 16 &lt;= count; i += 16) {</div>
+<div class="line"><a id="l05891" name="l05891"></a><span class="lineno"> 5891</span>    <span class="keywordflow">for</span> (; i + 16 &lt;= <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; i += 16) {</div>
 <div class="line"><a id="l05892" name="l05892"></a><span class="lineno"> 5892</span>        acc = _mm512_fmadd_ps(</div>
 <div class="line"><a id="l05893" name="l05893"></a><span class="lineno"> 5893</span>            ck_llama_regular_round_f16x16(_mm512_loadu_ps(value_column + i)),</div>
 <div class="line"><a id="l05894" name="l05894"></a><span class="lineno"> 5894</span>            ck_llama_regular_round_f16x16(_mm512_loadu_ps(probability + i)), acc);</div>
@@ -6226,7 +6226,7 @@ $(document).ready(function(){initNavTree('attention__kernels_8c_source.html','')
 <div class="line"><a id="l05896" name="l05896"></a><span class="lineno"> 5896</span>    <span class="keywordtype">float</span> sum = _mm512_reduce_add_ps(acc);</div>
 <div class="line"><a id="l05897" name="l05897"></a><span class="lineno"> 5897</span><span class="preprocessor">#elif defined(__AVX__)</span></div>
 <div class="line"><a id="l05898" name="l05898"></a><span class="lineno"> 5898</span>    __m256 acc = _mm256_setzero_ps();</div>
-<div class="line"><a id="l05899" name="l05899"></a><span class="lineno"> 5899</span>    <span class="keywordflow">for</span> (; i + 8 &lt;= count; i += 8) {</div>
+<div class="line"><a id="l05899" name="l05899"></a><span class="lineno"> 5899</span>    <span class="keywordflow">for</span> (; i + 8 &lt;= <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; i += 8) {</div>
 <div class="line"><a id="l05900" name="l05900"></a><span class="lineno"> 5900</span><span class="preprocessor">#if defined(__FMA__)</span></div>
 <div class="line"><a id="l05901" name="l05901"></a><span class="lineno"> 5901</span>        acc = _mm256_fmadd_ps(</div>
 <div class="line"><a id="l05902" name="l05902"></a><span class="lineno"> 5902</span>            _mm256_cvtph_ps(_mm256_cvtps_ph(</div>
@@ -6249,7 +6249,7 @@ $(document).ready(function(){initNavTree('attention__kernels_8c_source.html','')
 <div class="line"><a id="l05919" name="l05919"></a><span class="lineno"> 5919</span><span class="preprocessor">#else</span></div>
 <div class="line"><a id="l05920" name="l05920"></a><span class="lineno"> 5920</span>    <span class="keywordtype">float</span> sum = 0.0f;</div>
 <div class="line"><a id="l05921" name="l05921"></a><span class="lineno"> 5921</span><span class="preprocessor">#endif</span></div>
-<div class="line"><a id="l05922" name="l05922"></a><span class="lineno"> 5922</span>    <span class="keywordflow">for</span> (; i &lt; count; ++i) {</div>
+<div class="line"><a id="l05922" name="l05922"></a><span class="lineno"> 5922</span>    <span class="keywordflow">for</span> (; i &lt; <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; ++i) {</div>
 <div class="line"><a id="l05923" name="l05923"></a><span class="lineno"> 5923</span>        <span class="keyword">const</span> <span class="keywordtype">float</span> value = <a class="code hl_define" href="ckernel__quant_8h.html#a7edd411b02255eed928c775b91396c2a">CK_FP16_TO_FP32</a>(<a class="code hl_define" href="ckernel__quant_8h.html#aa217c07d43400999fb76ccfcdda2a47d">CK_FP32_TO_FP16</a>(value_column[i]));</div>
 <div class="line"><a id="l05924" name="l05924"></a><span class="lineno"> 5924</span>        <span class="keyword">const</span> <span class="keywordtype">float</span> probability_value = <a class="code hl_define" href="ckernel__quant_8h.html#a7edd411b02255eed928c775b91396c2a">CK_FP16_TO_FP32</a>(<a class="code hl_define" href="ckernel__quant_8h.html#aa217c07d43400999fb76ccfcdda2a47d">CK_FP32_TO_FP16</a>(probability[i]));</div>
 <div class="line"><a id="l05925" name="l05925"></a><span class="lineno"> 5925</span>        sum = fmaf(value, probability_value, sum);</div>
@@ -8524,18 +8524,18 @@ $(document).ready(function(){initNavTree('attention__kernels_8c_source.html','')
 <div class="line"><a id="l08115" name="l08115"></a><span class="lineno"> 8115</span>    }</div>
 <div class="line"><a id="l08116" name="l08116"></a><span class="lineno"> 8116</span>}</div>
 <div class="line"><a id="l08117" name="l08117"></a><span class="lineno"> 8117</span> </div>
-<div class="line"><a id="l08118" name="l08118"></a><span class="lineno"> 8118</span><span class="keyword">static</span> <span class="keywordtype">float</span> ck_pytorch_scale_max_f32(<span class="keywordtype">float</span> *scores, <span class="keywordtype">int</span> count, <span class="keywordtype">float</span> scale)</div>
+<div class="line"><a id="l08118" name="l08118"></a><span class="lineno"> 8118</span><span class="keyword">static</span> <span class="keywordtype">float</span> ck_pytorch_scale_max_f32(<span class="keywordtype">float</span> *scores, <span class="keywordtype">int</span> <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>, <span class="keywordtype">float</span> scale)</div>
 <div class="line"><a id="l08119" name="l08119"></a><span class="lineno"> 8119</span>{</div>
 <div class="line"><a id="l08120" name="l08120"></a><span class="lineno"> 8120</span>    <span class="keyword">const</span> __m512 scale_v = _mm512_set1_ps(scale);</div>
 <div class="line"><a id="l08121" name="l08121"></a><span class="lineno"> 8121</span>    __m512 maximum_v = _mm512_set1_ps(-INFINITY);</div>
 <div class="line"><a id="l08122" name="l08122"></a><span class="lineno"> 8122</span>    <span class="keywordtype">int</span> i = 0;</div>
-<div class="line"><a id="l08123" name="l08123"></a><span class="lineno"> 8123</span>    <span class="keywordflow">for</span> (; i + 16 &lt;= count; i += 16) {</div>
+<div class="line"><a id="l08123" name="l08123"></a><span class="lineno"> 8123</span>    <span class="keywordflow">for</span> (; i + 16 &lt;= <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; i += 16) {</div>
 <div class="line"><a id="l08124" name="l08124"></a><span class="lineno"> 8124</span>        __m512 values = _mm512_mul_ps(_mm512_loadu_ps(scores + i), scale_v);</div>
 <div class="line"><a id="l08125" name="l08125"></a><span class="lineno"> 8125</span>        maximum_v = _mm512_max_ps(maximum_v, values);</div>
 <div class="line"><a id="l08126" name="l08126"></a><span class="lineno"> 8126</span>        _mm512_storeu_ps(scores + i, values);</div>
 <div class="line"><a id="l08127" name="l08127"></a><span class="lineno"> 8127</span>    }</div>
 <div class="line"><a id="l08128" name="l08128"></a><span class="lineno"> 8128</span>    <span class="keywordtype">float</span> maximum = _mm512_reduce_max_ps(maximum_v);</div>
-<div class="line"><a id="l08129" name="l08129"></a><span class="lineno"> 8129</span>    <span class="keywordflow">for</span> (; i &lt; count; ++i) {</div>
+<div class="line"><a id="l08129" name="l08129"></a><span class="lineno"> 8129</span>    <span class="keywordflow">for</span> (; i &lt; <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; ++i) {</div>
 <div class="line"><a id="l08130" name="l08130"></a><span class="lineno"> 8130</span>        scores[i] *= scale;</div>
 <div class="line"><a id="l08131" name="l08131"></a><span class="lineno"> 8131</span>        maximum = fmaxf(maximum, scores[i]);</div>
 <div class="line"><a id="l08132" name="l08132"></a><span class="lineno"> 8132</span>    }</div>
@@ -8589,14 +8589,14 @@ $(document).ready(function(){initNavTree('attention__kernels_8c_source.html','')
 <div class="line"><a id="l08180" name="l08180"></a><span class="lineno"> 8180</span>}</div>
 <div class="line"><a id="l08181" name="l08181"></a><span class="lineno"> 8181</span> </div>
 <div class="line"><a id="l08182" name="l08182"></a><span class="lineno"> 8182</span><span class="keyword">static</span> <span class="keywordtype">float</span> ck_pytorch_exp_sum_bf16(</div>
-<div class="line"><a id="l08183" name="l08183"></a><span class="lineno"> 8183</span>    <span class="keywordtype">float</span> *scores, uint16_t *probabilities, <span class="keywordtype">int</span> count, <span class="keywordtype">float</span> maximum)</div>
+<div class="line"><a id="l08183" name="l08183"></a><span class="lineno"> 8183</span>    <span class="keywordtype">float</span> *scores, uint16_t *probabilities, <span class="keywordtype">int</span> <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>, <span class="keywordtype">float</span> maximum)</div>
 <div class="line"><a id="l08184" name="l08184"></a><span class="lineno"> 8184</span>{</div>
 <div class="line"><a id="l08185" name="l08185"></a><span class="lineno"> 8185</span>    <span class="keyword">const</span> __m512 maximum_v = _mm512_set1_ps(maximum);</div>
 <div class="line"><a id="l08186" name="l08186"></a><span class="lineno"> 8186</span>    __m512 sum_lo_v = _mm512_setzero_ps();</div>
 <div class="line"><a id="l08187" name="l08187"></a><span class="lineno"> 8187</span>    __m512 sum_hi_v = _mm512_setzero_ps();</div>
 <div class="line"><a id="l08188" name="l08188"></a><span class="lineno"> 8188</span>    __m512 sum_tail_v = _mm512_setzero_ps();</div>
 <div class="line"><a id="l08189" name="l08189"></a><span class="lineno"> 8189</span>    <span class="keywordtype">int</span> i = 0;</div>
-<div class="line"><a id="l08190" name="l08190"></a><span class="lineno"> 8190</span>    <span class="keywordflow">for</span> (; i + 32 &lt;= count; i += 32) {</div>
+<div class="line"><a id="l08190" name="l08190"></a><span class="lineno"> 8190</span>    <span class="keywordflow">for</span> (; i + 32 &lt;= <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; i += 32) {</div>
 <div class="line"><a id="l08191" name="l08191"></a><span class="lineno"> 8191</span>        __m512 values_lo = _mm512_sub_ps(</div>
 <div class="line"><a id="l08192" name="l08192"></a><span class="lineno"> 8192</span>            _mm512_loadu_ps(scores + i), maximum_v);</div>
 <div class="line"><a id="l08193" name="l08193"></a><span class="lineno"> 8193</span>        __m512 values_hi = _mm512_sub_ps(</div>
@@ -8615,7 +8615,7 @@ $(document).ready(function(){initNavTree('attention__kernels_8c_source.html','')
 <div class="line"><a id="l08206" name="l08206"></a><span class="lineno"> 8206</span>            probabilities[i + 16 + lane] = <a class="code hl_function" href="bf16__utils_8h.html#a174b16a92b3a5972230d7519fc0c5aa3">float_to_bf16</a>(lanes[lane]);</div>
 <div class="line"><a id="l08207" name="l08207"></a><span class="lineno"> 8207</span>        }</div>
 <div class="line"><a id="l08208" name="l08208"></a><span class="lineno"> 8208</span>    }</div>
-<div class="line"><a id="l08209" name="l08209"></a><span class="lineno"> 8209</span>    <span class="keywordflow">for</span> (; i + 16 &lt;= count; i += 16) {</div>
+<div class="line"><a id="l08209" name="l08209"></a><span class="lineno"> 8209</span>    <span class="keywordflow">for</span> (; i + 16 &lt;= <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; i += 16) {</div>
 <div class="line"><a id="l08210" name="l08210"></a><span class="lineno"> 8210</span>        __m512 values = _mm512_sub_ps(_mm512_loadu_ps(scores + i), maximum_v);</div>
 <div class="line"><a id="l08211" name="l08211"></a><span class="lineno"> 8211</span>        values = ck_pytorch_flash_fexp_u20_f32x16(values);</div>
 <div class="line"><a id="l08212" name="l08212"></a><span class="lineno"> 8212</span>        sum_tail_v = _mm512_add_ps(sum_tail_v, values);</div>
@@ -8628,7 +8628,7 @@ $(document).ready(function(){initNavTree('attention__kernels_8c_source.html','')
 <div class="line"><a id="l08219" name="l08219"></a><span class="lineno"> 8219</span>    sum_lo_v = _mm512_add_ps(sum_lo_v, sum_tail_v);</div>
 <div class="line"><a id="l08220" name="l08220"></a><span class="lineno"> 8220</span>    <span class="keywordtype">float</span> sum = ck_pytorch_reduce_add_f32x16(</div>
 <div class="line"><a id="l08221" name="l08221"></a><span class="lineno"> 8221</span>        _mm512_add_ps(sum_lo_v, sum_hi_v));</div>
-<div class="line"><a id="l08222" name="l08222"></a><span class="lineno"> 8222</span>    <span class="keywordflow">for</span> (; i &lt; count; ++i) {</div>
+<div class="line"><a id="l08222" name="l08222"></a><span class="lineno"> 8222</span>    <span class="keywordflow">for</span> (; i &lt; <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; ++i) {</div>
 <div class="line"><a id="l08223" name="l08223"></a><span class="lineno"> 8223</span>        <span class="keyword">const</span> <span class="keywordtype">float</span> value = expf(scores[i] - maximum);</div>
 <div class="line"><a id="l08224" name="l08224"></a><span class="lineno"> 8224</span>        sum += value;</div>
 <div class="line"><a id="l08225" name="l08225"></a><span class="lineno"> 8225</span>        probabilities[i] = <a class="code hl_function" href="bf16__utils_8h.html#a174b16a92b3a5972230d7519fc0c5aa3">float_to_bf16</a>(value);</div>
@@ -8662,23 +8662,23 @@ $(document).ready(function(){initNavTree('attention__kernels_8c_source.html','')
 <div class="line"><a id="l08253" name="l08253"></a><span class="lineno"> 8253</span>    <span class="keywordflow">return</span> _mm512_cvtss_f32(value);</div>
 <div class="line"><a id="l08254" name="l08254"></a><span class="lineno"> 8254</span>}</div>
 <div class="line"><a id="l08255" name="l08255"></a><span class="lineno"> 8255</span> </div>
-<div class="line"><a id="l08256" name="l08256"></a><span class="lineno"> 8256</span><span class="keyword">static</span> <span class="keywordtype">float</span> ck_pytorch_softmax_f32(<span class="keywordtype">float</span> *scores, <span class="keywordtype">int</span> count)</div>
+<div class="line"><a id="l08256" name="l08256"></a><span class="lineno"> 8256</span><span class="keyword">static</span> <span class="keywordtype">float</span> ck_pytorch_softmax_f32(<span class="keywordtype">float</span> *scores, <span class="keywordtype">int</span> <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>)</div>
 <div class="line"><a id="l08257" name="l08257"></a><span class="lineno"> 8257</span>{</div>
 <div class="line"><a id="l08258" name="l08258"></a><span class="lineno"> 8258</span>    <span class="comment">/* Match the observed ATen CPU dispatch: sub-vector rows use scalar</span></div>
 <div class="line"><a id="l08259" name="l08259"></a><span class="lineno"> 8259</span><span class="comment">     * exp/reduction, while larger rows use the AVX-512 accumulator and fold</span></div>
 <div class="line"><a id="l08260" name="l08260"></a><span class="lineno"> 8260</span><span class="comment">     * a masked tail into its reduction tree. */</span></div>
-<div class="line"><a id="l08261" name="l08261"></a><span class="lineno"> 8261</span>    <span class="keywordflow">if</span> (count &lt; 16) {</div>
+<div class="line"><a id="l08261" name="l08261"></a><span class="lineno"> 8261</span>    <span class="keywordflow">if</span> (<a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a> &lt; 16) {</div>
 <div class="line"><a id="l08262" name="l08262"></a><span class="lineno"> 8262</span>        <span class="keywordtype">float</span> maximum = scores[0];</div>
-<div class="line"><a id="l08263" name="l08263"></a><span class="lineno"> 8263</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> i = 1; i &lt; count; ++i) {</div>
+<div class="line"><a id="l08263" name="l08263"></a><span class="lineno"> 8263</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> i = 1; i &lt; <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; ++i) {</div>
 <div class="line"><a id="l08264" name="l08264"></a><span class="lineno"> 8264</span>            maximum = fmaxf(maximum, scores[i]);</div>
 <div class="line"><a id="l08265" name="l08265"></a><span class="lineno"> 8265</span>        }</div>
 <div class="line"><a id="l08266" name="l08266"></a><span class="lineno"> 8266</span>        <span class="keywordtype">float</span> sum = 0.0f;</div>
-<div class="line"><a id="l08267" name="l08267"></a><span class="lineno"> 8267</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> i = 0; i &lt; count; ++i) {</div>
+<div class="line"><a id="l08267" name="l08267"></a><span class="lineno"> 8267</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> i = 0; i &lt; <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; ++i) {</div>
 <div class="line"><a id="l08268" name="l08268"></a><span class="lineno"> 8268</span>            scores[i] = expf(scores[i] - maximum);</div>
 <div class="line"><a id="l08269" name="l08269"></a><span class="lineno"> 8269</span>            sum += scores[i];</div>
 <div class="line"><a id="l08270" name="l08270"></a><span class="lineno"> 8270</span>        }</div>
 <div class="line"><a id="l08271" name="l08271"></a><span class="lineno"> 8271</span>        <span class="keyword">const</span> <span class="keywordtype">float</span> reciprocal = 1.0f / sum;</div>
-<div class="line"><a id="l08272" name="l08272"></a><span class="lineno"> 8272</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> i = 0; i &lt; count; ++i) {</div>
+<div class="line"><a id="l08272" name="l08272"></a><span class="lineno"> 8272</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> i = 0; i &lt; <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; ++i) {</div>
 <div class="line"><a id="l08273" name="l08273"></a><span class="lineno"> 8273</span>            scores[i] *= reciprocal;</div>
 <div class="line"><a id="l08274" name="l08274"></a><span class="lineno"> 8274</span>        }</div>
 <div class="line"><a id="l08275" name="l08275"></a><span class="lineno"> 8275</span>        <span class="keywordflow">return</span> sum;</div>
@@ -8686,11 +8686,11 @@ $(document).ready(function(){initNavTree('attention__kernels_8c_source.html','')
 <div class="line"><a id="l08277" name="l08277"></a><span class="lineno"> 8277</span> </div>
 <div class="line"><a id="l08278" name="l08278"></a><span class="lineno"> 8278</span>    __m512 maximum_v = _mm512_set1_ps(-INFINITY);</div>
 <div class="line"><a id="l08279" name="l08279"></a><span class="lineno"> 8279</span>    <span class="keywordtype">int</span> i = 0;</div>
-<div class="line"><a id="l08280" name="l08280"></a><span class="lineno"> 8280</span>    <span class="keywordflow">for</span> (; i + 16 &lt;= count; i += 16) {</div>
+<div class="line"><a id="l08280" name="l08280"></a><span class="lineno"> 8280</span>    <span class="keywordflow">for</span> (; i + 16 &lt;= <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; i += 16) {</div>
 <div class="line"><a id="l08281" name="l08281"></a><span class="lineno"> 8281</span>        maximum_v = _mm512_max_ps(maximum_v, _mm512_loadu_ps(scores + i));</div>
 <div class="line"><a id="l08282" name="l08282"></a><span class="lineno"> 8282</span>    }</div>
-<div class="line"><a id="l08283" name="l08283"></a><span class="lineno"> 8283</span>    <span class="keywordflow">if</span> (i &lt; count) {</div>
-<div class="line"><a id="l08284" name="l08284"></a><span class="lineno"> 8284</span>        <span class="keyword">const</span> __mmask16 tail_mask = (__mmask16)((1u &lt;&lt; (count - i)) - 1u);</div>
+<div class="line"><a id="l08283" name="l08283"></a><span class="lineno"> 8283</span>    <span class="keywordflow">if</span> (i &lt; <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>) {</div>
+<div class="line"><a id="l08284" name="l08284"></a><span class="lineno"> 8284</span>        <span class="keyword">const</span> __mmask16 tail_mask = (__mmask16)((1u &lt;&lt; (<a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a> - i)) - 1u);</div>
 <div class="line"><a id="l08285" name="l08285"></a><span class="lineno"> 8285</span>        maximum_v = _mm512_max_ps(</div>
 <div class="line"><a id="l08286" name="l08286"></a><span class="lineno"> 8286</span>            maximum_v,</div>
 <div class="line"><a id="l08287" name="l08287"></a><span class="lineno"> 8287</span>            _mm512_mask_loadu_ps(_mm512_set1_ps(-INFINITY), tail_mask, scores + i));</div>
@@ -8700,14 +8700,14 @@ $(document).ready(function(){initNavTree('attention__kernels_8c_source.html','')
 <div class="line"><a id="l08291" name="l08291"></a><span class="lineno"> 8291</span>    <span class="keyword">const</span> __m512 maximum_broadcast = _mm512_set1_ps(maximum);</div>
 <div class="line"><a id="l08292" name="l08292"></a><span class="lineno"> 8292</span>    __m512 sum_v = _mm512_setzero_ps();</div>
 <div class="line"><a id="l08293" name="l08293"></a><span class="lineno"> 8293</span>    i = 0;</div>
-<div class="line"><a id="l08294" name="l08294"></a><span class="lineno"> 8294</span>    <span class="keywordflow">for</span> (; i + 16 &lt;= count; i += 16) {</div>
+<div class="line"><a id="l08294" name="l08294"></a><span class="lineno"> 8294</span>    <span class="keywordflow">for</span> (; i + 16 &lt;= <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; i += 16) {</div>
 <div class="line"><a id="l08295" name="l08295"></a><span class="lineno"> 8295</span>        __m512 values = _mm512_sub_ps(_mm512_loadu_ps(scores + i), maximum_broadcast);</div>
 <div class="line"><a id="l08296" name="l08296"></a><span class="lineno"> 8296</span>        values = ck_pytorch_attention_expf16(values);</div>
 <div class="line"><a id="l08297" name="l08297"></a><span class="lineno"> 8297</span>        _mm512_storeu_ps(scores + i, values);</div>
 <div class="line"><a id="l08298" name="l08298"></a><span class="lineno"> 8298</span>        sum_v = _mm512_add_ps(sum_v, values);</div>
 <div class="line"><a id="l08299" name="l08299"></a><span class="lineno"> 8299</span>    }</div>
-<div class="line"><a id="l08300" name="l08300"></a><span class="lineno"> 8300</span>    <span class="keywordflow">if</span> (i &lt; count) {</div>
-<div class="line"><a id="l08301" name="l08301"></a><span class="lineno"> 8301</span>        <span class="keyword">const</span> __mmask16 tail_mask = (__mmask16)((1u &lt;&lt; (count - i)) - 1u);</div>
+<div class="line"><a id="l08300" name="l08300"></a><span class="lineno"> 8300</span>    <span class="keywordflow">if</span> (i &lt; <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>) {</div>
+<div class="line"><a id="l08301" name="l08301"></a><span class="lineno"> 8301</span>        <span class="keyword">const</span> __mmask16 tail_mask = (__mmask16)((1u &lt;&lt; (<a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a> - i)) - 1u);</div>
 <div class="line"><a id="l08302" name="l08302"></a><span class="lineno"> 8302</span>        __m512 values = _mm512_mask_loadu_ps(</div>
 <div class="line"><a id="l08303" name="l08303"></a><span class="lineno"> 8303</span>            _mm512_set1_ps(-INFINITY), tail_mask, scores + i);</div>
 <div class="line"><a id="l08304" name="l08304"></a><span class="lineno"> 8304</span>        values = ck_pytorch_attention_expf16(</div>
@@ -8721,14 +8721,14 @@ $(document).ready(function(){initNavTree('attention__kernels_8c_source.html','')
 <div class="line"><a id="l08312" name="l08312"></a><span class="lineno"> 8312</span>    <span class="keyword">const</span> <span class="keywordtype">float</span> reciprocal = 1.0f / sum;</div>
 <div class="line"><a id="l08313" name="l08313"></a><span class="lineno"> 8313</span>    <span class="keyword">const</span> __m512 reciprocal_broadcast = _mm512_set1_ps(reciprocal);</div>
 <div class="line"><a id="l08314" name="l08314"></a><span class="lineno"> 8314</span>    i = 0;</div>
-<div class="line"><a id="l08315" name="l08315"></a><span class="lineno"> 8315</span>    <span class="keywordflow">for</span> (; i + 16 &lt;= count; i += 16) {</div>
+<div class="line"><a id="l08315" name="l08315"></a><span class="lineno"> 8315</span>    <span class="keywordflow">for</span> (; i + 16 &lt;= <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; i += 16) {</div>
 <div class="line"><a id="l08316" name="l08316"></a><span class="lineno"> 8316</span>        _mm512_storeu_ps(</div>
 <div class="line"><a id="l08317" name="l08317"></a><span class="lineno"> 8317</span>            scores + i,</div>
 <div class="line"><a id="l08318" name="l08318"></a><span class="lineno"> 8318</span>            _mm512_mul_ps(</div>
 <div class="line"><a id="l08319" name="l08319"></a><span class="lineno"> 8319</span>                _mm512_loadu_ps(scores + i), reciprocal_broadcast));</div>
 <div class="line"><a id="l08320" name="l08320"></a><span class="lineno"> 8320</span>    }</div>
-<div class="line"><a id="l08321" name="l08321"></a><span class="lineno"> 8321</span>    <span class="keywordflow">if</span> (i &lt; count) {</div>
-<div class="line"><a id="l08322" name="l08322"></a><span class="lineno"> 8322</span>        <span class="keyword">const</span> __mmask16 tail_mask = (__mmask16)((1u &lt;&lt; (count - i)) - 1u);</div>
+<div class="line"><a id="l08321" name="l08321"></a><span class="lineno"> 8321</span>    <span class="keywordflow">if</span> (i &lt; <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>) {</div>
+<div class="line"><a id="l08322" name="l08322"></a><span class="lineno"> 8322</span>        <span class="keyword">const</span> __mmask16 tail_mask = (__mmask16)((1u &lt;&lt; (<a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a> - i)) - 1u);</div>
 <div class="line"><a id="l08323" name="l08323"></a><span class="lineno"> 8323</span>        <span class="keyword">const</span> __m512 values = _mm512_maskz_loadu_ps(tail_mask, scores + i);</div>
 <div class="line"><a id="l08324" name="l08324"></a><span class="lineno"> 8324</span>        _mm512_mask_storeu_ps(</div>
 <div class="line"><a id="l08325" name="l08325"></a><span class="lineno"> 8325</span>            scores + i, tail_mask,</div>
@@ -9655,8 +9655,8 @@ $(document).ready(function(){initNavTree('attention__kernels_8c_source.html','')
 <div class="line"><a id="l09225" name="l09225"></a><span class="lineno"> 9225</span>        } <span class="keywordflow">else</span> {</div>
 <div class="line"><a id="l09226" name="l09226"></a><span class="lineno"> 9226</span>            <a class="code hl_function" href="attention__kernels_8c.html#a95111f3edc6b141fcd92dfcdf44f23d3">ck_attention_f16_prefill_qtile64_work</a>(0, 1, &amp;args);</div>
 <div class="line"><a id="l09227" name="l09227"></a><span class="lineno"> 9227</span>        }</div>
-<div class="line"><a id="l09228" name="l09228"></a><span class="lineno"> 9228</span>        <span class="keyword">const</span> <span class="keywordtype">size_t</span> count = (size_t)num_heads * (<span class="keywordtype">size_t</span>)q_tokens * (size_t)aligned_head_dim;</div>
-<div class="line"><a id="l09229" name="l09229"></a><span class="lineno"> 9229</span>        <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> i = 0; i &lt; count; ++i) {</div>
+<div class="line"><a id="l09228" name="l09228"></a><span class="lineno"> 9228</span>        <span class="keyword">const</span> <span class="keywordtype">size_t</span> <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a> = (size_t)num_heads * (<span class="keywordtype">size_t</span>)q_tokens * (size_t)aligned_head_dim;</div>
+<div class="line"><a id="l09229" name="l09229"></a><span class="lineno"> 9229</span>        <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> i = 0; i &lt; <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; ++i) {</div>
 <div class="line"><a id="l09230" name="l09230"></a><span class="lineno"> 9230</span>            output[i] = <a class="code hl_function" href="bf16__utils_8h.html#a314c3970fd5e2770d19b1bb49aefcf94">bf16_to_float</a>(<a class="code hl_function" href="bf16__utils_8h.html#a174b16a92b3a5972230d7519fc0c5aa3">float_to_bf16</a>(output[i]));</div>
 <div class="line"><a id="l09231" name="l09231"></a><span class="lineno"> 9231</span>        }</div>
 <div class="line"><a id="l09232" name="l09232"></a><span class="lineno"> 9232</span>        <span class="keywordflow">return</span> <a class="code hl_enumvalue" href="ckernel__engine_8h.html#adcb33ce8a8fd7acd821411605a3baf67abea27a79c4c94ac03dfe2ab71fb2cdf1">CK_ATTENTION_STATUS_OK</a>;</div>
@@ -10468,6 +10468,7 @@ $(document).ready(function(){initNavTree('attention__kernels_8c_source.html','')
 <div class="ttc" id="atokenizer_8h_html_a7d3edfa508be401819bb24057b3c1be6"><div class="ttname"><a href="tokenizer_8h.html#a7d3edfa508be401819bb24057b3c1be6">token</a></div><div class="ttdeci">const char * token</div><div class="ttdef"><b>Definition</b> <a href="tokenizer_8h_source.html#l00307">tokenizer.h:307</a></div></div>
 <div class="ttc" id="atokenizer_8h_html_a86dbad16ac00b8aa3c450398e4f8b741"><div class="ttname"><a href="tokenizer_8h.html#a86dbad16ac00b8aa3c450398e4f8b741">score</a></div><div class="ttdeci">int32_t float * score</div><div class="ttdef"><b>Definition</b> <a href="tokenizer_8h_source.html#l00328">tokenizer.h:328</a></div></div>
 <div class="ttc" id="atrue__bpe_8h_html_abf33d3f8e74eb48d5a4394c67ac4f1cd"><div class="ttname"><a href="true__bpe_8h.html#abf33d3f8e74eb48d5a4394c67ac4f1cd">left</a></div><div class="ttdeci">const char * left</div><div class="ttdef"><b>Definition</b> <a href="true__bpe_8h_source.html#l00138">true_bpe.h:138</a></div></div>
+<div class="ttc" id="atrue__bpe_8h_html_ac7f5fd4f55df36920bf0583c3516e72f"><div class="ttname"><a href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a></div><div class="ttdeci">const uint8_t size_t count</div><div class="ttdef"><b>Definition</b> <a href="true__bpe_8h_source.html#l00205">true_bpe.h:205</a></div></div>
 <div class="ttc" id="atrue__bpe_8h_html_afb60251d57a9ee3324fbc011e4be71e9"><div class="ttname"><a href="true__bpe_8h.html#afb60251d57a9ee3324fbc011e4be71e9">right</a></div><div class="ttdeci">const char const char * right</div><div class="ttdef"><b>Definition</b> <a href="true__bpe_8h_source.html#l00139">true_bpe.h:139</a></div></div>
 <div class="ttc" id="autf8_8c_html_a204a3f4fa39b9c007f9784d3e4af4667"><div class="ttname"><a href="utf8_8c.html#a204a3f4fa39b9c007f9784d3e4af4667">end</a></div><div class="ttdeci">uint32_t end</div><div class="ttdef"><b>Definition</b> <a href="utf8_8c_source.html#l00215">utf8.c:215</a></div></div>
 <div class="ttc" id="autf8_8c_html_a61eb63d26b2fa6c2971603ceccffb14b"><div class="ttname"><a href="utf8_8c.html#a61eb63d26b2fa6c2971603ceccffb14b">start</a></div><div class="ttdeci">uint32_t start</div><div class="ttdef"><b>Definition</b> <a href="utf8_8c_source.html#l00214">utf8.c:214</a></div></div>

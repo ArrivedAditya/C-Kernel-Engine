@@ -904,17 +904,17 @@ $(document).ready(function(){initNavTree('ckernel__ir__v6_8c_source.html',''); i
 <div class="line"><a id="l00738" name="l00738"></a><span class="lineno">  738</span>        <span class="keywordflow">return</span> -1;</div>
 <div class="line"><a id="l00739" name="l00739"></a><span class="lineno">  739</span>    }</div>
 <div class="line"><a id="l00740" name="l00740"></a><span class="lineno">  740</span>    <span class="keywordtype">char</span> *p = nodes_begin;</div>
-<div class="line"><a id="l00741" name="l00741"></a><span class="lineno">  741</span>    <span class="keywordtype">int</span> count = 0;</div>
+<div class="line"><a id="l00741" name="l00741"></a><span class="lineno">  741</span>    <span class="keywordtype">int</span> <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a> = 0;</div>
 <div class="line"><a id="l00742" name="l00742"></a><span class="lineno">  742</span>    <span class="keywordflow">while</span> ((p = strstr(p, <span class="stringliteral">&quot;\&quot;layer\&quot;&quot;</span>)) != NULL) {</div>
-<div class="line"><a id="l00743" name="l00743"></a><span class="lineno">  743</span>        count++;</div>
+<div class="line"><a id="l00743" name="l00743"></a><span class="lineno">  743</span>        <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>++;</div>
 <div class="line"><a id="l00744" name="l00744"></a><span class="lineno">  744</span>        p += 7;</div>
 <div class="line"><a id="l00745" name="l00745"></a><span class="lineno">  745</span>    }</div>
-<div class="line"><a id="l00746" name="l00746"></a><span class="lineno">  746</span>    <span class="keywordflow">if</span> (count &lt;= 0) {</div>
+<div class="line"><a id="l00746" name="l00746"></a><span class="lineno">  746</span>    <span class="keywordflow">if</span> (<a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a> &lt;= 0) {</div>
 <div class="line"><a id="l00747" name="l00747"></a><span class="lineno">  747</span>        free(buf);</div>
 <div class="line"><a id="l00748" name="l00748"></a><span class="lineno">  748</span>        <span class="keywordflow">return</span> -1;</div>
 <div class="line"><a id="l00749" name="l00749"></a><span class="lineno">  749</span>    }</div>
 <div class="line"><a id="l00750" name="l00750"></a><span class="lineno">  750</span> </div>
-<div class="line"><a id="l00751" name="l00751"></a><span class="lineno">  751</span>    <a class="code hl_struct" href="structCKIRNode.html">CKIRNode</a> *nodes = (<a class="code hl_struct" href="structCKIRNode.html">CKIRNode</a> *)calloc((<span class="keywordtype">size_t</span>)count, <span class="keyword">sizeof</span>(<a class="code hl_struct" href="structCKIRNode.html">CKIRNode</a>));</div>
+<div class="line"><a id="l00751" name="l00751"></a><span class="lineno">  751</span>    <a class="code hl_struct" href="structCKIRNode.html">CKIRNode</a> *nodes = (<a class="code hl_struct" href="structCKIRNode.html">CKIRNode</a> *)calloc((<span class="keywordtype">size_t</span>)<a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>, <span class="keyword">sizeof</span>(<a class="code hl_struct" href="structCKIRNode.html">CKIRNode</a>));</div>
 <div class="line"><a id="l00752" name="l00752"></a><span class="lineno">  752</span>    <span class="keywordflow">if</span> (!nodes) {</div>
 <div class="line"><a id="l00753" name="l00753"></a><span class="lineno">  753</span>        free(buf);</div>
 <div class="line"><a id="l00754" name="l00754"></a><span class="lineno">  754</span>        <span class="keywordflow">return</span> -1;</div>
@@ -922,7 +922,7 @@ $(document).ready(function(){initNavTree('ckernel__ir__v6_8c_source.html',''); i
 <div class="line"><a id="l00756" name="l00756"></a><span class="lineno">  756</span> </div>
 <div class="line"><a id="l00757" name="l00757"></a><span class="lineno">  757</span>    <span class="comment">// Parse each node sequentially.</span></div>
 <div class="line"><a id="l00758" name="l00758"></a><span class="lineno">  758</span>    p = nodes_begin;</div>
-<div class="line"><a id="l00759" name="l00759"></a><span class="lineno">  759</span>    <span class="keywordflow">for</span> (<span class="keywordtype">int</span> i = 0; i &lt; count; ++i) {</div>
+<div class="line"><a id="l00759" name="l00759"></a><span class="lineno">  759</span>    <span class="keywordflow">for</span> (<span class="keywordtype">int</span> i = 0; i &lt; <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; ++i) {</div>
 <div class="line"><a id="l00760" name="l00760"></a><span class="lineno">  760</span>        <span class="comment">// layer</span></div>
 <div class="line"><a id="l00761" name="l00761"></a><span class="lineno">  761</span>        <span class="keywordtype">char</span> *pl = strstr(p, <span class="stringliteral">&quot;\&quot;layer\&quot;&quot;</span>);</div>
 <div class="line"><a id="l00762" name="l00762"></a><span class="lineno">  762</span>        <span class="keywordflow">if</span> (!pl) { free(nodes); free(buf); <span class="keywordflow">return</span> -1; }</div>
@@ -1011,7 +1011,7 @@ $(document).ready(function(){initNavTree('ckernel__ir__v6_8c_source.html',''); i
 <div class="line"><a id="l00845" name="l00845"></a><span class="lineno">  845</span> </div>
 <div class="line"><a id="l00846" name="l00846"></a><span class="lineno">  846</span>    free(buf);</div>
 <div class="line"><a id="l00847" name="l00847"></a><span class="lineno">  847</span>    graph-&gt;<a class="code hl_variable" href="structCKIRGraph.html#af12e4b320dee98416c63539b743801f2">config</a>    = tmp.<a class="code hl_variable" href="structCKIRGraph.html#af12e4b320dee98416c63539b743801f2">config</a>;</div>
-<div class="line"><a id="l00848" name="l00848"></a><span class="lineno">  848</span>    graph-&gt;<a class="code hl_variable" href="structCKIRGraph.html#ac761026b9b84254516bce9995dd04465">num_nodes</a> = count;</div>
+<div class="line"><a id="l00848" name="l00848"></a><span class="lineno">  848</span>    graph-&gt;<a class="code hl_variable" href="structCKIRGraph.html#ac761026b9b84254516bce9995dd04465">num_nodes</a> = <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>;</div>
 <div class="line"><a id="l00849" name="l00849"></a><span class="lineno">  849</span>    graph-&gt;<a class="code hl_variable" href="structCKIRGraph.html#aab28fe3564ea6a66b72b4226d05ffb2f">nodes</a>     = nodes;</div>
 <div class="line"><a id="l00850" name="l00850"></a><span class="lineno">  850</span>    <span class="keywordflow">return</span> 0;</div>
 <div class="line"><a id="l00851" name="l00851"></a><span class="lineno">  851</span>}</div>
@@ -1074,6 +1074,7 @@ $(document).ready(function(){initNavTree('ckernel__ir__v6_8c_source.html',''); i
 <div class="ttc" id="astructCKModelConfig_html_ae7ab37061b5249887af28ef7eb481377"><div class="ttname"><a href="structCKModelConfig.html#ae7ab37061b5249887af28ef7eb481377">CKModelConfig::rope_theta</a></div><div class="ttdeci">float rope_theta</div><div class="ttdef"><b>Definition</b> <a href="ckernel__ir_8h_source.html#l00032">ckernel_ir.h:32</a></div></div>
 <div class="ttc" id="astructCKModelConfig_html_afd04ffe4db48600b90f32904c49d73af"><div class="ttname"><a href="structCKModelConfig.html#afd04ffe4db48600b90f32904c49d73af">CKModelConfig::hidden_size</a></div><div class="ttdeci">int hidden_size</div><div class="ttdef"><b>Definition</b> <a href="ckernel__ir_8h_source.html#l00025">ckernel_ir.h:25</a></div></div>
 <div class="ttc" id="atokenizer_8h_html_afcd8f560b02b3c7a2bc2b3effa325fcf"><div class="ttname"><a href="tokenizer_8h.html#afcd8f560b02b3c7a2bc2b3effa325fcf">out_len</a></div><div class="ttdeci">const int32_t int int * out_len</div><div class="ttdef"><b>Definition</b> <a href="tokenizer_8h_source.html#l00446">tokenizer.h:446</a></div></div>
+<div class="ttc" id="atrue__bpe_8h_html_ac7f5fd4f55df36920bf0583c3516e72f"><div class="ttname"><a href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a></div><div class="ttdeci">const uint8_t size_t count</div><div class="ttdef"><b>Definition</b> <a href="true__bpe_8h_source.html#l00205">true_bpe.h:205</a></div></div>
 <div class="ttc" id="autf8_8c_html_a204a3f4fa39b9c007f9784d3e4af4667"><div class="ttname"><a href="utf8_8c.html#a204a3f4fa39b9c007f9784d3e4af4667">end</a></div><div class="ttdeci">uint32_t end</div><div class="ttdef"><b>Definition</b> <a href="utf8_8c_source.html#l00215">utf8.c:215</a></div></div>
 <div class="ttc" id="autf8_8c_html_a61eb63d26b2fa6c2971603ceccffb14b"><div class="ttname"><a href="utf8_8c.html#a61eb63d26b2fa6c2971603ceccffb14b">start</a></div><div class="ttdeci">uint32_t start</div><div class="ttdef"><b>Definition</b> <a href="utf8_8c_source.html#l00214">utf8.c:214</a></div></div>
 </div><!-- fragment --></div><!-- contents -->

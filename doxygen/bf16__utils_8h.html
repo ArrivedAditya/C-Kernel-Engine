@@ -137,11 +137,11 @@ $(document).ready(function(){initNavTree('bf16__utils_8h.html',''); initResizabl
 <table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="func-members" name="func-members"></a>
 Functions</h2></td></tr>
-<tr class="memitem:a94c0b1e3b43eb46dcce37900ed5c1333" id="r_a94c0b1e3b43eb46dcce37900ed5c1333"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="bf16__utils_8h.html#a94c0b1e3b43eb46dcce37900ed5c1333">bf16_tensor_to_float</a> (const uint16_t *src, float *dst, size_t count)</td></tr>
+<tr class="memitem:a94c0b1e3b43eb46dcce37900ed5c1333" id="r_a94c0b1e3b43eb46dcce37900ed5c1333"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="bf16__utils_8h.html#a94c0b1e3b43eb46dcce37900ed5c1333">bf16_tensor_to_float</a> (const uint16_t *src, float *dst, size_t <a class="el" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>)</td></tr>
 <tr class="separator:a94c0b1e3b43eb46dcce37900ed5c1333"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a314c3970fd5e2770d19b1bb49aefcf94" id="r_a314c3970fd5e2770d19b1bb49aefcf94"><td class="memItemLeft" align="right" valign="top">static float&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="bf16__utils_8h.html#a314c3970fd5e2770d19b1bb49aefcf94">bf16_to_float</a> (uint16_t v)</td></tr>
 <tr class="separator:a314c3970fd5e2770d19b1bb49aefcf94"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a027b5c4dd4c6ce7f656e922fc694e52a" id="r_a027b5c4dd4c6ce7f656e922fc694e52a"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="bf16__utils_8h.html#a027b5c4dd4c6ce7f656e922fc694e52a">float_tensor_to_bf16</a> (const float *src, uint16_t *dst, size_t count)</td></tr>
+<tr class="memitem:a027b5c4dd4c6ce7f656e922fc694e52a" id="r_a027b5c4dd4c6ce7f656e922fc694e52a"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="bf16__utils_8h.html#a027b5c4dd4c6ce7f656e922fc694e52a">float_tensor_to_bf16</a> (const float *src, uint16_t *dst, size_t <a class="el" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>)</td></tr>
 <tr class="separator:a027b5c4dd4c6ce7f656e922fc694e52a"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a174b16a92b3a5972230d7519fc0c5aa3" id="r_a174b16a92b3a5972230d7519fc0c5aa3"><td class="memItemLeft" align="right" valign="top">static uint16_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="bf16__utils_8h.html#a174b16a92b3a5972230d7519fc0c5aa3">float_to_bf16</a> (float f)</td></tr>
 <tr class="separator:a174b16a92b3a5972230d7519fc0c5aa3"><td class="memSeparator" colspan="2">&#160;</td></tr>
@@ -191,22 +191,23 @@ Functions</h2></td></tr>
 <div class="fragment"><div class="line"><span class="lineno">  251</span>{</div>
 <div class="line"><span class="lineno">  252</span><span class="preprocessor">#if defined(__AVX512F__)</span></div>
 <div class="line"><span class="lineno">  253</span>    <span class="keywordtype">size_t</span> i = 0;</div>
-<div class="line"><span class="lineno">  254</span>    <span class="keywordflow">for</span> (; i + 16 &lt;= count; i += 16) {</div>
+<div class="line"><span class="lineno">  254</span>    <span class="keywordflow">for</span> (; i + 16 &lt;= <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; i += 16) {</div>
 <div class="line"><span class="lineno">  255</span>        __m512 fp32_vec = bf16_loadu_cvt_fp32(&amp;src[i]);</div>
 <div class="line"><span class="lineno">  256</span>        _mm512_storeu_ps(&amp;dst[i], fp32_vec);</div>
 <div class="line"><span class="lineno">  257</span>    }</div>
-<div class="line"><span class="lineno">  258</span>    <span class="keywordflow">for</span> (; i &lt; count; ++i) {</div>
+<div class="line"><span class="lineno">  258</span>    <span class="keywordflow">for</span> (; i &lt; <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; ++i) {</div>
 <div class="line"><span class="lineno">  259</span>        dst[i] = <a class="code hl_function" href="bf16__utils_8h.html#a314c3970fd5e2770d19b1bb49aefcf94">bf16_to_float</a>(src[i]);</div>
 <div class="line"><span class="lineno">  260</span>    }</div>
 <div class="line"><span class="lineno">  261</span><span class="preprocessor">#else</span></div>
-<div class="line"><span class="lineno">  262</span>    <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> i = 0; i &lt; count; ++i) {</div>
+<div class="line"><span class="lineno">  262</span>    <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> i = 0; i &lt; <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; ++i) {</div>
 <div class="line"><span class="lineno">  263</span>        dst[i] = <a class="code hl_function" href="bf16__utils_8h.html#a314c3970fd5e2770d19b1bb49aefcf94">bf16_to_float</a>(src[i]);</div>
 <div class="line"><span class="lineno">  264</span>    }</div>
 <div class="line"><span class="lineno">  265</span><span class="preprocessor">#endif</span></div>
 <div class="line"><span class="lineno">  266</span>}</div>
 <div class="ttc" id="abf16__utils_8h_html_a314c3970fd5e2770d19b1bb49aefcf94"><div class="ttname"><a href="bf16__utils_8h.html#a314c3970fd5e2770d19b1bb49aefcf94">bf16_to_float</a></div><div class="ttdeci">static float bf16_to_float(uint16_t v)</div><div class="ttdef"><b>Definition</b> <a href="bf16__utils_8h_source.html#l00038">bf16_utils.h:38</a></div></div>
+<div class="ttc" id="atrue__bpe_8h_html_ac7f5fd4f55df36920bf0583c3516e72f"><div class="ttname"><a href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a></div><div class="ttdeci">const uint8_t size_t count</div><div class="ttdef"><b>Definition</b> <a href="true__bpe_8h_source.html#l00205">true_bpe.h:205</a></div></div>
 </div><!-- fragment -->
-<p class="reference">References <a class="el" href="bf16__utils_8h_source.html#l00038">bf16_to_float()</a>.</p>
+<p class="reference">References <a class="el" href="bf16__utils_8h_source.html#l00038">bf16_to_float()</a>, and <a class="el" href="true__bpe_8h_source.html#l00205">count</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="softmax__kernels__bf16_8c_source.html#l00053">backward_causal_softmax_head_major_bf16()</a>, <a class="el" href="softmax__kernels__bf16_8c_source.html#l00031">causal_softmax_head_major_bf16()</a>, <a class="el" href="attention__kernels_8c_source.html#l00321">convert_bf16_tensor_to_buf()</a>, <a class="el" href="geglu__kernels_8c_source.html#l00083">geglu_forward_bf16()</a>, <a class="el" href="gelu__kernels__bf16_8c_source.html#l00046">gelu_backward_exact_bf16()</a>, <a class="el" href="gelu__kernels__bf16_8c_source.html#l00069">gelu_backward_fast_bf16()</a>, <a class="el" href="gelu__kernels__bf16_8c_source.html#l00031">gelu_fast_inplace_bf16()</a>, <a class="el" href="layernorm__kernels__bf16_8c_source.html#l00084">layernorm_backward_kernel_bf16()</a>, <a class="el" href="layernorm__kernels__bf16_8c_source.html#l00030">layernorm_forward_rolled_slice_bf16()</a>, <a class="el" href="layernorm__kernels__bf16_8c_source.html#l00057">layernorm_forward_unrolled_slice_bf16()</a>, <a class="el" href="mlp__kernels__bf16_8c_source.html#l00199">mlp_token_parallel_bf16_fp32act()</a>, <a class="el" href="rope__kernels__bf16_8c_source.html#l00067">rope_backward_bf16()</a>, <a class="el" href="rope__kernels__bf16_8c_source.html#l00042">rope_forward_bf16_with_rotary_dim()</a>, <a class="el" href="sigmoid__kernels__bf16_8c_source.html#l00045">sigmoid_backward_bf16()</a>, <a class="el" href="sigmoid__kernels__bf16_8c_source.html#l00027">sigmoid_forward_bf16()</a>, and <a class="el" href="loss__kernels__bf16_8c_source.html#l00025">softmax_cross_entropy_loss_bf16()</a>.</p>
 
@@ -294,22 +295,22 @@ Functions</h2></td></tr>
 <div class="fragment"><div class="line"><span class="lineno">  272</span>{</div>
 <div class="line"><span class="lineno">  273</span><span class="preprocessor">#if defined(__AVX512F__)</span></div>
 <div class="line"><span class="lineno">  274</span>    <span class="keywordtype">size_t</span> i = 0;</div>
-<div class="line"><span class="lineno">  275</span>    <span class="keywordflow">for</span> (; i + 16 &lt;= count; i += 16) {</div>
+<div class="line"><span class="lineno">  275</span>    <span class="keywordflow">for</span> (; i + 16 &lt;= <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; i += 16) {</div>
 <div class="line"><span class="lineno">  276</span>        __m512 fp32_vec = _mm512_loadu_ps(&amp;src[i]);</div>
 <div class="line"><span class="lineno">  277</span>        fp32_cvt_storeu_bf16(&amp;dst[i], fp32_vec);</div>
 <div class="line"><span class="lineno">  278</span>    }</div>
-<div class="line"><span class="lineno">  279</span>    <span class="keywordflow">for</span> (; i &lt; count; ++i) {</div>
+<div class="line"><span class="lineno">  279</span>    <span class="keywordflow">for</span> (; i &lt; <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; ++i) {</div>
 <div class="line"><span class="lineno">  280</span>        dst[i] = <a class="code hl_function" href="bf16__utils_8h.html#a174b16a92b3a5972230d7519fc0c5aa3">float_to_bf16</a>(src[i]);</div>
 <div class="line"><span class="lineno">  281</span>    }</div>
 <div class="line"><span class="lineno">  282</span><span class="preprocessor">#else</span></div>
-<div class="line"><span class="lineno">  283</span>    <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> i = 0; i &lt; count; ++i) {</div>
+<div class="line"><span class="lineno">  283</span>    <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> i = 0; i &lt; <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; ++i) {</div>
 <div class="line"><span class="lineno">  284</span>        dst[i] = <a class="code hl_function" href="bf16__utils_8h.html#a174b16a92b3a5972230d7519fc0c5aa3">float_to_bf16</a>(src[i]);</div>
 <div class="line"><span class="lineno">  285</span>    }</div>
 <div class="line"><span class="lineno">  286</span><span class="preprocessor">#endif</span></div>
 <div class="line"><span class="lineno">  287</span>}</div>
 <div class="ttc" id="abf16__utils_8h_html_a174b16a92b3a5972230d7519fc0c5aa3"><div class="ttname"><a href="bf16__utils_8h.html#a174b16a92b3a5972230d7519fc0c5aa3">float_to_bf16</a></div><div class="ttdeci">static uint16_t float_to_bf16(float f)</div><div class="ttdef"><b>Definition</b> <a href="bf16__utils_8h_source.html#l00090">bf16_utils.h:90</a></div></div>
 </div><!-- fragment -->
-<p class="reference">References <a class="el" href="bf16__utils_8h_source.html#l00090">float_to_bf16()</a>.</p>
+<p class="reference">References <a class="el" href="true__bpe_8h_source.html#l00205">count</a>, and <a class="el" href="bf16__utils_8h_source.html#l00090">float_to_bf16()</a>.</p>
 
 <p class="reference">Referenced by <a class="el" href="softmax__kernels__bf16_8c_source.html#l00053">backward_causal_softmax_head_major_bf16()</a>, <a class="el" href="softmax__kernels__bf16_8c_source.html#l00031">causal_softmax_head_major_bf16()</a>, <a class="el" href="geglu__kernels_8c_source.html#l00083">geglu_forward_bf16()</a>, <a class="el" href="gelu__kernels__bf16_8c_source.html#l00046">gelu_backward_exact_bf16()</a>, <a class="el" href="gelu__kernels__bf16_8c_source.html#l00069">gelu_backward_fast_bf16()</a>, <a class="el" href="gelu__kernels__bf16_8c_source.html#l00031">gelu_fast_inplace_bf16()</a>, <a class="el" href="layernorm__kernels__bf16_8c_source.html#l00084">layernorm_backward_kernel_bf16()</a>, <a class="el" href="layernorm__kernels__bf16_8c_source.html#l00030">layernorm_forward_rolled_slice_bf16()</a>, <a class="el" href="layernorm__kernels__bf16_8c_source.html#l00057">layernorm_forward_unrolled_slice_bf16()</a>, <a class="el" href="mlp__kernels__bf16_8c_source.html#l00199">mlp_token_parallel_bf16_fp32act()</a>, <a class="el" href="rope__kernels__bf16_8c_source.html#l00067">rope_backward_bf16()</a>, <a class="el" href="rope__kernels__bf16_8c_source.html#l00042">rope_forward_bf16_with_rotary_dim()</a>, <a class="el" href="sigmoid__kernels__bf16_8c_source.html#l00045">sigmoid_backward_bf16()</a>, <a class="el" href="sigmoid__kernels__bf16_8c_source.html#l00027">sigmoid_forward_bf16()</a>, and <a class="el" href="loss__kernels__bf16_8c_source.html#l00025">softmax_cross_entropy_loss_bf16()</a>.</p>
 

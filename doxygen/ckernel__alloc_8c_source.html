@@ -393,19 +393,19 @@ $(document).ready(function(){initNavTree('ckernel__alloc_8c_source.html',''); in
 <div class="line"><a id="l00244" name="l00244"></a><span class="lineno">  244</span>            ? alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#ab1f7de12a27705ebfc6390028d494a4b">weights_file_size</a> - weights_file_len : 0;</div>
 <div class="line"><a id="l00245" name="l00245"></a><span class="lineno">  245</span>        <span class="keywordtype">size_t</span> copy_len = available &lt; boundary_len ? available : boundary_len;</div>
 <div class="line"><a id="l00246" name="l00246"></a><span class="lineno">  246</span>        <span class="keywordflow">while</span> (copied &lt; copy_len) {</div>
-<div class="line"><a id="l00247" name="l00247"></a><span class="lineno">  247</span>            ssize_t count = pread(fd, boundary + copied, copy_len - copied,</div>
+<div class="line"><a id="l00247" name="l00247"></a><span class="lineno">  247</span>            ssize_t <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a> = pread(fd, boundary + copied, copy_len - copied,</div>
 <div class="line"><a id="l00248" name="l00248"></a><span class="lineno">  248</span>                                  (off_t)(weights_file_len + copied));</div>
-<div class="line"><a id="l00249" name="l00249"></a><span class="lineno">  249</span>            <span class="keywordflow">if</span> (count &lt; 0 &amp;&amp; errno == EINTR) {</div>
+<div class="line"><a id="l00249" name="l00249"></a><span class="lineno">  249</span>            <span class="keywordflow">if</span> (<a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a> &lt; 0 &amp;&amp; errno == EINTR) {</div>
 <div class="line"><a id="l00250" name="l00250"></a><span class="lineno">  250</span>                <span class="keywordflow">continue</span>;</div>
 <div class="line"><a id="l00251" name="l00251"></a><span class="lineno">  251</span>            }</div>
-<div class="line"><a id="l00252" name="l00252"></a><span class="lineno">  252</span>            <span class="keywordflow">if</span> (count &lt;= 0) {</div>
+<div class="line"><a id="l00252" name="l00252"></a><span class="lineno">  252</span>            <span class="keywordflow">if</span> (<a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a> &lt;= 0) {</div>
 <div class="line"><a id="l00253" name="l00253"></a><span class="lineno">  253</span>                fprintf(stderr, <span class="stringliteral">&quot;ck_bump_alloc_init: boundary read failed: %s\n&quot;</span>,</div>
-<div class="line"><a id="l00254" name="l00254"></a><span class="lineno">  254</span>                        count &lt; 0 ? strerror(errno) : <span class="stringliteral">&quot;unexpected EOF&quot;</span>);</div>
+<div class="line"><a id="l00254" name="l00254"></a><span class="lineno">  254</span>                        <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a> &lt; 0 ? strerror(errno) : <span class="stringliteral">&quot;unexpected EOF&quot;</span>);</div>
 <div class="line"><a id="l00255" name="l00255"></a><span class="lineno">  255</span>                munmap(base, mapped_len);</div>
 <div class="line"><a id="l00256" name="l00256"></a><span class="lineno">  256</span>                close(fd);</div>
 <div class="line"><a id="l00257" name="l00257"></a><span class="lineno">  257</span>                <span class="keywordflow">return</span> -1;</div>
 <div class="line"><a id="l00258" name="l00258"></a><span class="lineno">  258</span>            }</div>
-<div class="line"><a id="l00259" name="l00259"></a><span class="lineno">  259</span>            copied += (size_t)count;</div>
+<div class="line"><a id="l00259" name="l00259"></a><span class="lineno">  259</span>            copied += (size_t)<a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>;</div>
 <div class="line"><a id="l00260" name="l00260"></a><span class="lineno">  260</span>        }</div>
 <div class="line"><a id="l00261" name="l00261"></a><span class="lineno">  261</span>    }</div>
 <div class="line"><a id="l00262" name="l00262"></a><span class="lineno">  262</span> </div>
@@ -545,6 +545,7 @@ $(document).ready(function(){initNavTree('ckernel__alloc_8c_source.html',''); in
 <div class="ttc" id="astructck__bump__alloc__t_html_ab1f7de12a27705ebfc6390028d494a4b"><div class="ttname"><a href="structck__bump__alloc__t.html#ab1f7de12a27705ebfc6390028d494a4b">ck_bump_alloc_t::weights_file_size</a></div><div class="ttdeci">size_t weights_file_size</div><div class="ttdef"><b>Definition</b> <a href="ckernel__alloc_8h_source.html#l00038">ckernel_alloc.h:38</a></div></div>
 <div class="ttc" id="astructck__bump__alloc__t_html_ac6dedb478c486e2b22066b7bef49676d"><div class="ttname"><a href="structck__bump__alloc__t.html#ac6dedb478c486e2b22066b7bef49676d">ck_bump_alloc_t::total_size</a></div><div class="ttdeci">size_t total_size</div><div class="ttdef"><b>Definition</b> <a href="ckernel__alloc_8h_source.html#l00034">ckernel_alloc.h:34</a></div></div>
 <div class="ttc" id="astructck__bump__alloc__t_html_ac9f12cd3ed6cd33ea08e2bcabe752d9c"><div class="ttname"><a href="structck__bump__alloc__t.html#ac9f12cd3ed6cd33ea08e2bcabe752d9c">ck_bump_alloc_t::mode</a></div><div class="ttdeci">ck_bump_mode_t mode</div><div class="ttdef"><b>Definition</b> <a href="ckernel__alloc_8h_source.html#l00039">ckernel_alloc.h:39</a></div></div>
+<div class="ttc" id="atrue__bpe_8h_html_ac7f5fd4f55df36920bf0583c3516e72f"><div class="ttname"><a href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a></div><div class="ttdeci">const uint8_t size_t count</div><div class="ttdef"><b>Definition</b> <a href="true__bpe_8h_source.html#l00205">true_bpe.h:205</a></div></div>
 </div><!-- fragment --></div><!-- contents -->
 </div><!-- doc-content -->
 <!-- start footer part -->

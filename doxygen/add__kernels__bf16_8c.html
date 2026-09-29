@@ -806,15 +806,16 @@ CK-ENGINE KERNEL RULES:</h1>
 
 <p class="definition">Definition at line <a class="el" href="add__kernels__bf16_8c_source.html#l00067">67</a> of file <a class="el" href="add__kernels__bf16_8c_source.html">add_kernels_bf16.c</a>.</p>
 <div class="fragment"><div class="line"><span class="lineno">   72</span>{</div>
-<div class="line"><span class="lineno">   73</span>    <span class="keyword">const</span> <span class="keywordtype">size_t</span> count = (size_t)tokens * (<span class="keywordtype">size_t</span>)aligned_embed_dim;</div>
-<div class="line"><span class="lineno">   74</span>    <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> i = 0; i &lt; count; ++i) {</div>
+<div class="line"><span class="lineno">   73</span>    <span class="keyword">const</span> <span class="keywordtype">size_t</span> <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a> = (size_t)tokens * (<span class="keywordtype">size_t</span>)aligned_embed_dim;</div>
+<div class="line"><span class="lineno">   74</span>    <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> i = 0; i &lt; <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; ++i) {</div>
 <div class="line"><span class="lineno">   75</span>        <span class="keyword">const</span> <span class="keywordtype">float</span> av = <a class="code hl_function" href="bf16__utils_8h.html#a314c3970fd5e2770d19b1bb49aefcf94">bf16_to_float</a>(<a class="code hl_function" href="bf16__utils_8h.html#a174b16a92b3a5972230d7519fc0c5aa3">float_to_bf16</a>(a[i]));</div>
 <div class="line"><span class="lineno">   76</span>        <span class="keyword">const</span> <span class="keywordtype">float</span> bv = <a class="code hl_function" href="bf16__utils_8h.html#a314c3970fd5e2770d19b1bb49aefcf94">bf16_to_float</a>(<a class="code hl_function" href="bf16__utils_8h.html#a174b16a92b3a5972230d7519fc0c5aa3">float_to_bf16</a>(b[i]));</div>
 <div class="line"><span class="lineno">   77</span>        out[i] = <a class="code hl_function" href="bf16__utils_8h.html#a314c3970fd5e2770d19b1bb49aefcf94">bf16_to_float</a>(<a class="code hl_function" href="bf16__utils_8h.html#a174b16a92b3a5972230d7519fc0c5aa3">float_to_bf16</a>(av + bv));</div>
 <div class="line"><span class="lineno">   78</span>    }</div>
 <div class="line"><span class="lineno">   79</span>}</div>
+<div class="ttc" id="atrue__bpe_8h_html_ac7f5fd4f55df36920bf0583c3516e72f"><div class="ttname"><a href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a></div><div class="ttdeci">const uint8_t size_t count</div><div class="ttdef"><b>Definition</b> <a href="true__bpe_8h_source.html#l00205">true_bpe.h:205</a></div></div>
 </div><!-- fragment -->
-<p class="reference">References <a class="el" href="bf16__utils_8h_source.html#l00038">bf16_to_float()</a>, and <a class="el" href="bf16__utils_8h_source.html#l00090">float_to_bf16()</a>.</p>
+<p class="reference">References <a class="el" href="bf16__utils_8h_source.html#l00038">bf16_to_float()</a>, <a class="el" href="true__bpe_8h_source.html#l00205">count</a>, and <a class="el" href="bf16__utils_8h_source.html#l00090">float_to_bf16()</a>.</p>
 
 </div>
 </div>

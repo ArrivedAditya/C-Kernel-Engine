@@ -1100,24 +1100,24 @@ $(document).ready(function(){initNavTree('ckernel__ir__v2_8c_source.html',''); i
 <div class="line"><a id="l00892" name="l00892"></a><span class="lineno">  892</span>        <span class="keywordflow">return</span> -1;</div>
 <div class="line"><a id="l00893" name="l00893"></a><span class="lineno">  893</span>    }</div>
 <div class="line"><a id="l00894" name="l00894"></a><span class="lineno">  894</span> </div>
-<div class="line"><a id="l00895" name="l00895"></a><span class="lineno">  895</span>    <span class="keywordtype">int</span> count = 0;</div>
+<div class="line"><a id="l00895" name="l00895"></a><span class="lineno">  895</span>    <span class="keywordtype">int</span> <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a> = 0;</div>
 <div class="line"><a id="l00896" name="l00896"></a><span class="lineno">  896</span>    <span class="keyword">const</span> <span class="keywordtype">char</span> *cur = open;</div>
 <div class="line"><a id="l00897" name="l00897"></a><span class="lineno">  897</span>    <span class="keyword">const</span> <span class="keywordtype">char</span> *obj_start = NULL;</div>
 <div class="line"><a id="l00898" name="l00898"></a><span class="lineno">  898</span>    <span class="keyword">const</span> <span class="keywordtype">char</span> *obj_end = NULL;</div>
 <div class="line"><a id="l00899" name="l00899"></a><span class="lineno">  899</span>    <span class="keywordflow">while</span> ((cur = <a class="code hl_function" href="ckernel__ir__v2_8c.html#a31471c2aa04bad8e0bfdf39fd52b99ab">ck_ir_v2_next_object</a>(cur, close, &amp;obj_start, &amp;obj_end)) != NULL) {</div>
-<div class="line"><a id="l00900" name="l00900"></a><span class="lineno">  900</span>        count++;</div>
+<div class="line"><a id="l00900" name="l00900"></a><span class="lineno">  900</span>        <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>++;</div>
 <div class="line"><a id="l00901" name="l00901"></a><span class="lineno">  901</span>    }</div>
-<div class="line"><a id="l00902" name="l00902"></a><span class="lineno">  902</span>    <span class="keywordflow">if</span> (count &lt;= 0) {</div>
+<div class="line"><a id="l00902" name="l00902"></a><span class="lineno">  902</span>    <span class="keywordflow">if</span> (<a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a> &lt;= 0) {</div>
 <div class="line"><a id="l00903" name="l00903"></a><span class="lineno">  903</span>        <span class="keywordflow">return</span> -1;</div>
 <div class="line"><a id="l00904" name="l00904"></a><span class="lineno">  904</span>    }</div>
 <div class="line"><a id="l00905" name="l00905"></a><span class="lineno">  905</span> </div>
-<div class="line"><a id="l00906" name="l00906"></a><span class="lineno">  906</span>    <a class="code hl_struct" href="structCKIRV2Buffer.html">CKIRV2Buffer</a> *buffers = (<a class="code hl_struct" href="structCKIRV2Buffer.html">CKIRV2Buffer</a> *)calloc((<span class="keywordtype">size_t</span>)count, <span class="keyword">sizeof</span>(<a class="code hl_struct" href="structCKIRV2Buffer.html">CKIRV2Buffer</a>));</div>
+<div class="line"><a id="l00906" name="l00906"></a><span class="lineno">  906</span>    <a class="code hl_struct" href="structCKIRV2Buffer.html">CKIRV2Buffer</a> *buffers = (<a class="code hl_struct" href="structCKIRV2Buffer.html">CKIRV2Buffer</a> *)calloc((<span class="keywordtype">size_t</span>)<a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>, <span class="keyword">sizeof</span>(<a class="code hl_struct" href="structCKIRV2Buffer.html">CKIRV2Buffer</a>));</div>
 <div class="line"><a id="l00907" name="l00907"></a><span class="lineno">  907</span>    <span class="keywordflow">if</span> (!buffers) {</div>
 <div class="line"><a id="l00908" name="l00908"></a><span class="lineno">  908</span>        <span class="keywordflow">return</span> -1;</div>
 <div class="line"><a id="l00909" name="l00909"></a><span class="lineno">  909</span>    }</div>
 <div class="line"><a id="l00910" name="l00910"></a><span class="lineno">  910</span>    <span class="keywordtype">int</span> idx = 0;</div>
 <div class="line"><a id="l00911" name="l00911"></a><span class="lineno">  911</span>    cur = open;</div>
-<div class="line"><a id="l00912" name="l00912"></a><span class="lineno">  912</span>    <span class="keywordflow">while</span> (idx &lt; count &amp;&amp;</div>
+<div class="line"><a id="l00912" name="l00912"></a><span class="lineno">  912</span>    <span class="keywordflow">while</span> (idx &lt; <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a> &amp;&amp;</div>
 <div class="line"><a id="l00913" name="l00913"></a><span class="lineno">  913</span>           (cur = <a class="code hl_function" href="ckernel__ir__v2_8c.html#a31471c2aa04bad8e0bfdf39fd52b99ab">ck_ir_v2_next_object</a>(cur, close, &amp;obj_start, &amp;obj_end)) != NULL) {</div>
 <div class="line"><a id="l00914" name="l00914"></a><span class="lineno">  914</span> </div>
 <div class="line"><a id="l00915" name="l00915"></a><span class="lineno">  915</span>        <a class="code hl_struct" href="structCKIRV2Buffer.html">CKIRV2Buffer</a> buf = {0};</div>
@@ -1228,24 +1228,24 @@ $(document).ready(function(){initNavTree('ckernel__ir__v2_8c_source.html',''); i
 <div class="line"><a id="l01016" name="l01016"></a><span class="lineno"> 1016</span>        <span class="keywordflow">return</span> -1;</div>
 <div class="line"><a id="l01017" name="l01017"></a><span class="lineno"> 1017</span>    }</div>
 <div class="line"><a id="l01018" name="l01018"></a><span class="lineno"> 1018</span> </div>
-<div class="line"><a id="l01019" name="l01019"></a><span class="lineno"> 1019</span>    <span class="keywordtype">int</span> count = 0;</div>
+<div class="line"><a id="l01019" name="l01019"></a><span class="lineno"> 1019</span>    <span class="keywordtype">int</span> <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a> = 0;</div>
 <div class="line"><a id="l01020" name="l01020"></a><span class="lineno"> 1020</span>    <span class="keyword">const</span> <span class="keywordtype">char</span> *cur = open;</div>
 <div class="line"><a id="l01021" name="l01021"></a><span class="lineno"> 1021</span>    <span class="keyword">const</span> <span class="keywordtype">char</span> *obj_start = NULL;</div>
 <div class="line"><a id="l01022" name="l01022"></a><span class="lineno"> 1022</span>    <span class="keyword">const</span> <span class="keywordtype">char</span> *obj_end = NULL;</div>
 <div class="line"><a id="l01023" name="l01023"></a><span class="lineno"> 1023</span>    <span class="keywordflow">while</span> ((cur = <a class="code hl_function" href="ckernel__ir__v2_8c.html#a31471c2aa04bad8e0bfdf39fd52b99ab">ck_ir_v2_next_object</a>(cur, close, &amp;obj_start, &amp;obj_end)) != NULL) {</div>
-<div class="line"><a id="l01024" name="l01024"></a><span class="lineno"> 1024</span>        count++;</div>
+<div class="line"><a id="l01024" name="l01024"></a><span class="lineno"> 1024</span>        <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>++;</div>
 <div class="line"><a id="l01025" name="l01025"></a><span class="lineno"> 1025</span>    }</div>
-<div class="line"><a id="l01026" name="l01026"></a><span class="lineno"> 1026</span>    <span class="keywordflow">if</span> (count &lt;= 0) {</div>
+<div class="line"><a id="l01026" name="l01026"></a><span class="lineno"> 1026</span>    <span class="keywordflow">if</span> (<a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a> &lt;= 0) {</div>
 <div class="line"><a id="l01027" name="l01027"></a><span class="lineno"> 1027</span>        <span class="keywordflow">return</span> -1;</div>
 <div class="line"><a id="l01028" name="l01028"></a><span class="lineno"> 1028</span>    }</div>
 <div class="line"><a id="l01029" name="l01029"></a><span class="lineno"> 1029</span> </div>
-<div class="line"><a id="l01030" name="l01030"></a><span class="lineno"> 1030</span>    <a class="code hl_struct" href="structCKIRV2Node.html">CKIRV2Node</a> *nodes = (<a class="code hl_struct" href="structCKIRV2Node.html">CKIRV2Node</a> *)calloc((<span class="keywordtype">size_t</span>)count, <span class="keyword">sizeof</span>(<a class="code hl_struct" href="structCKIRV2Node.html">CKIRV2Node</a>));</div>
+<div class="line"><a id="l01030" name="l01030"></a><span class="lineno"> 1030</span>    <a class="code hl_struct" href="structCKIRV2Node.html">CKIRV2Node</a> *nodes = (<a class="code hl_struct" href="structCKIRV2Node.html">CKIRV2Node</a> *)calloc((<span class="keywordtype">size_t</span>)<a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>, <span class="keyword">sizeof</span>(<a class="code hl_struct" href="structCKIRV2Node.html">CKIRV2Node</a>));</div>
 <div class="line"><a id="l01031" name="l01031"></a><span class="lineno"> 1031</span>    <span class="keywordflow">if</span> (!nodes) {</div>
 <div class="line"><a id="l01032" name="l01032"></a><span class="lineno"> 1032</span>        <span class="keywordflow">return</span> -1;</div>
 <div class="line"><a id="l01033" name="l01033"></a><span class="lineno"> 1033</span>    }</div>
 <div class="line"><a id="l01034" name="l01034"></a><span class="lineno"> 1034</span>    <span class="keywordtype">int</span> idx = 0;</div>
 <div class="line"><a id="l01035" name="l01035"></a><span class="lineno"> 1035</span>    cur = open;</div>
-<div class="line"><a id="l01036" name="l01036"></a><span class="lineno"> 1036</span>    <span class="keywordflow">while</span> (idx &lt; count &amp;&amp;</div>
+<div class="line"><a id="l01036" name="l01036"></a><span class="lineno"> 1036</span>    <span class="keywordflow">while</span> (idx &lt; <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a> &amp;&amp;</div>
 <div class="line"><a id="l01037" name="l01037"></a><span class="lineno"> 1037</span>           (cur = <a class="code hl_function" href="ckernel__ir__v2_8c.html#a31471c2aa04bad8e0bfdf39fd52b99ab">ck_ir_v2_next_object</a>(cur, close, &amp;obj_start, &amp;obj_end)) != NULL) {</div>
 <div class="line"><a id="l01038" name="l01038"></a><span class="lineno"> 1038</span> </div>
 <div class="line"><a id="l01039" name="l01039"></a><span class="lineno"> 1039</span>        <a class="code hl_struct" href="structCKIRV2Node.html">CKIRV2Node</a> node = {0};</div>
@@ -1528,6 +1528,7 @@ $(document).ready(function(){initNavTree('ckernel__ir__v2_8c_source.html',''); i
 <div class="ttc" id="astructCKModelConfig_html_ad2b6c5944307859fe26f4d915d089027"><div class="ttname"><a href="structCKModelConfig.html#ad2b6c5944307859fe26f4d915d089027">CKModelConfig::vocab_size</a></div><div class="ttdeci">int vocab_size</div><div class="ttdef"><b>Definition</b> <a href="ck__model__api_8h_source.html#l00039">ck_model_api.h:39</a></div></div>
 <div class="ttc" id="astructCKModelConfig_html_ae7ab37061b5249887af28ef7eb481377"><div class="ttname"><a href="structCKModelConfig.html#ae7ab37061b5249887af28ef7eb481377">CKModelConfig::rope_theta</a></div><div class="ttdeci">float rope_theta</div><div class="ttdef"><b>Definition</b> <a href="ckernel__ir_8h_source.html#l00032">ckernel_ir.h:32</a></div></div>
 <div class="ttc" id="astructCKModelConfig_html_afd04ffe4db48600b90f32904c49d73af"><div class="ttname"><a href="structCKModelConfig.html#afd04ffe4db48600b90f32904c49d73af">CKModelConfig::hidden_size</a></div><div class="ttdeci">int hidden_size</div><div class="ttdef"><b>Definition</b> <a href="ckernel__ir_8h_source.html#l00025">ckernel_ir.h:25</a></div></div>
+<div class="ttc" id="atrue__bpe_8h_html_ac7f5fd4f55df36920bf0583c3516e72f"><div class="ttname"><a href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a></div><div class="ttdeci">const uint8_t size_t count</div><div class="ttdef"><b>Definition</b> <a href="true__bpe_8h_source.html#l00205">true_bpe.h:205</a></div></div>
 <div class="ttc" id="autf8_8c_html_a204a3f4fa39b9c007f9784d3e4af4667"><div class="ttname"><a href="utf8_8c.html#a204a3f4fa39b9c007f9784d3e4af4667">end</a></div><div class="ttdeci">uint32_t end</div><div class="ttdef"><b>Definition</b> <a href="utf8_8c_source.html#l00215">utf8.c:215</a></div></div>
 <div class="ttc" id="autf8_8c_html_a61eb63d26b2fa6c2971603ceccffb14b"><div class="ttname"><a href="utf8_8c.html#a61eb63d26b2fa6c2971603ceccffb14b">start</a></div><div class="ttdeci">uint32_t start</div><div class="ttdef"><b>Definition</b> <a href="utf8_8c_source.html#l00214">utf8.c:214</a></div></div>
 </div><!-- fragment --></div><!-- contents -->

@@ -141,16 +141,16 @@ $(document).ready(function(){initNavTree('ckernel__model__load_8c_source.html','
 <div class="line"><a id="l00006" name="l00006"></a><span class="lineno">    6</span><span class="preprocessor">#include &lt;string.h&gt;</span></div>
 <div class="line"><a id="l00007" name="l00007"></a><span class="lineno">    7</span> </div>
 <div class="foldopen" id="foldopen00008" data-start="{" data-end="}">
-<div class="line"><a id="l00008" name="l00008"></a><span class="lineno"><a class="line" href="ckernel__model__load_8c.html#a691b1787a9c074fee7219cad5b2f22a4">    8</a></span><span class="keyword">static</span> <span class="keywordtype">int</span> <a class="code hl_function" href="ckernel__model__load_8c.html#a691b1787a9c074fee7219cad5b2f22a4">read_floats</a>(FILE *f, <span class="keywordtype">float</span> *dst, <span class="keywordtype">size_t</span> count)</div>
+<div class="line"><a id="l00008" name="l00008"></a><span class="lineno"><a class="line" href="ckernel__model__load_8c.html#a691b1787a9c074fee7219cad5b2f22a4">    8</a></span><span class="keyword">static</span> <span class="keywordtype">int</span> <a class="code hl_function" href="ckernel__model__load_8c.html#a691b1787a9c074fee7219cad5b2f22a4">read_floats</a>(FILE *f, <span class="keywordtype">float</span> *dst, <span class="keywordtype">size_t</span> <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>)</div>
 <div class="line"><a id="l00009" name="l00009"></a><span class="lineno">    9</span>{</div>
-<div class="line"><a id="l00010" name="l00010"></a><span class="lineno">   10</span>    <span class="keywordtype">size_t</span> n = fread(dst, <span class="keyword">sizeof</span>(<span class="keywordtype">float</span>), count, f);</div>
-<div class="line"><a id="l00011" name="l00011"></a><span class="lineno">   11</span>    <span class="keywordflow">if</span> (n != count) {</div>
+<div class="line"><a id="l00010" name="l00010"></a><span class="lineno">   10</span>    <span class="keywordtype">size_t</span> n = fread(dst, <span class="keyword">sizeof</span>(<span class="keywordtype">float</span>), <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>, f);</div>
+<div class="line"><a id="l00011" name="l00011"></a><span class="lineno">   11</span>    <span class="keywordflow">if</span> (n != <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>) {</div>
 <div class="line"><a id="l00012" name="l00012"></a><span class="lineno">   12</span>        <span class="keywordflow">if</span> (ferror(f)) {</div>
 <div class="line"><a id="l00013" name="l00013"></a><span class="lineno">   13</span>            fprintf(stderr, <span class="stringliteral">&quot;ck_model_load_weights_flat: fread error: %s\n&quot;</span>,</div>
 <div class="line"><a id="l00014" name="l00014"></a><span class="lineno">   14</span>                    strerror(errno));</div>
 <div class="line"><a id="l00015" name="l00015"></a><span class="lineno">   15</span>        } <span class="keywordflow">else</span> {</div>
 <div class="line"><a id="l00016" name="l00016"></a><span class="lineno">   16</span>            fprintf(stderr, <span class="stringliteral">&quot;ck_model_load_weights_flat: unexpected EOF (wanted %zu floats, got %zu)\n&quot;</span>,</div>
-<div class="line"><a id="l00017" name="l00017"></a><span class="lineno">   17</span>                    count, n);</div>
+<div class="line"><a id="l00017" name="l00017"></a><span class="lineno">   17</span>                    <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>, n);</div>
 <div class="line"><a id="l00018" name="l00018"></a><span class="lineno">   18</span>        }</div>
 <div class="line"><a id="l00019" name="l00019"></a><span class="lineno">   19</span>        <span class="keywordflow">return</span> -1;</div>
 <div class="line"><a id="l00020" name="l00020"></a><span class="lineno">   20</span>    }</div>
@@ -351,6 +351,7 @@ $(document).ready(function(){initNavTree('ckernel__model__load_8c_source.html','
 <div class="ttc" id="astructTransformerModel_html_a955d1efe9f4e9e8bedca00a5a85a5d18"><div class="ttname"><a href="structTransformerModel.html#a955d1efe9f4e9e8bedca00a5a85a5d18">TransformerModel::memory_base</a></div><div class="ttdeci">uint8_t * memory_base</div><div class="ttdef"><b>Definition</b> <a href="ckernel__model_8h_source.html#l00042">ckernel_model.h:42</a></div></div>
 <div class="ttc" id="astructTransformerModel_html_aac7b4631a17af2e961d211f4bcccb134"><div class="ttname"><a href="structTransformerModel.html#aac7b4631a17af2e961d211f4bcccb134">TransformerModel::layers</a></div><div class="ttdeci">CKLayerLayout * layers</div><div class="ttdef"><b>Definition</b> <a href="ckernel__model_8h_source.html#l00061">ckernel_model.h:61</a></div></div>
 <div class="ttc" id="astructTransformerModel_html_af6538865812c32df1cbd785b2d40e370"><div class="ttname"><a href="structTransformerModel.html#af6538865812c32df1cbd785b2d40e370">TransformerModel::cfg</a></div><div class="ttdeci">CKModelConfig cfg</div><div class="ttdef"><b>Definition</b> <a href="ckernel__model_8h_source.html#l00039">ckernel_model.h:39</a></div></div>
+<div class="ttc" id="atrue__bpe_8h_html_ac7f5fd4f55df36920bf0583c3516e72f"><div class="ttname"><a href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a></div><div class="ttdeci">const uint8_t size_t count</div><div class="ttdef"><b>Definition</b> <a href="true__bpe_8h_source.html#l00205">true_bpe.h:205</a></div></div>
 </div><!-- fragment --></div><!-- contents -->
 </div><!-- doc-content -->
 <!-- start footer part -->

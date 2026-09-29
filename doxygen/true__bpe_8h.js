@@ -15,6 +15,7 @@ var true__bpe_8h =
     [ "__attribute__", "true__bpe_8h.html#ac33d61fabbeba23ba208eec1f7a14cb2", null ],
     [ "bos", "true__bpe_8h.html#afbcf72e6f3f003096f1fb9ce31a13736", null ],
     [ "config", "true__bpe_8h.html#a07efc1bc43abbb792d810a797747ae6f", null ],
+    [ "count", "true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f", null ],
     [ "eos", "true__bpe_8h.html#ae2ac59d55593a1262747f8e0c4b575d9", null ],
     [ "id", "true__bpe_8h.html#a2708c0bbb6f926149707c2c61fe43c3e", null ],
     [ "ids", "true__bpe_8h.html#a565e8e39ec6c411166ddc3b89eb781e4", null ],
@@ -36,6 +37,7 @@ var true__bpe_8h =
     [ "text", "true__bpe_8h.html#a66c43cd207a5a3d05689fa20dd19ef66", null ],
     [ "text_len", "true__bpe_8h.html#a888f9023ee38c1b409b124b34c084f55", null ],
     [ "token", "true__bpe_8h.html#a1b07b985c8c5b1d267df858fb9d378e1", null ],
+    [ "types", "true__bpe_8h.html#a7ae0f0acd2aa21012fd52ea4ba2f67d4", null ],
     [ "unk", "true__bpe_8h.html#a9b857f7ce4dd3bca5a537e67f77a2b44", null ],
     [ "vocab_size", "true__bpe_8h.html#aa47c8f70dd1f7e8ed4d6c282015f9697", null ]
 ];

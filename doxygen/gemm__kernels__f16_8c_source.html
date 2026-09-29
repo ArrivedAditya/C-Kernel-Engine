@@ -1232,10 +1232,10 @@ $(document).ready(function(){initNavTree('gemm__kernels__f16_8c_source.html','')
 <div class="line"><a id="l01045" name="l01045"></a><span class="lineno"> 1045</span><span class="comment"> * @brief Convert FP16 tensor to FP32</span></div>
 <div class="line"><a id="l01046" name="l01046"></a><span class="lineno"> 1046</span><span class="comment"> */</span></div>
 <div class="foldopen" id="foldopen01047" data-start="{" data-end="}">
-<div class="line"><a id="l01047" name="l01047"></a><span class="lineno"><a class="line" href="gemm__kernels__f16_8c.html#a530e76bf949403310759bd4af57f7472"> 1047</a></span><span class="keywordtype">void</span> <a class="code hl_function" href="gemm__kernels__f16_8c.html#a530e76bf949403310759bd4af57f7472">convert_f16_to_f32</a>(<span class="keywordtype">float</span> *dst, <span class="keyword">const</span> uint16_t *src, <span class="keywordtype">size_t</span> count)</div>
+<div class="line"><a id="l01047" name="l01047"></a><span class="lineno"><a class="line" href="gemm__kernels__f16_8c.html#a530e76bf949403310759bd4af57f7472"> 1047</a></span><span class="keywordtype">void</span> <a class="code hl_function" href="gemm__kernels__f16_8c.html#a530e76bf949403310759bd4af57f7472">convert_f16_to_f32</a>(<span class="keywordtype">float</span> *dst, <span class="keyword">const</span> uint16_t *src, <span class="keywordtype">size_t</span> <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>)</div>
 <div class="line"><a id="l01048" name="l01048"></a><span class="lineno"> 1048</span>{</div>
 <div class="line"><a id="l01049" name="l01049"></a><span class="lineno"> 1049</span><span class="preprocessor">#ifdef __AVX512F__</span></div>
-<div class="line"><a id="l01050" name="l01050"></a><span class="lineno"> 1050</span>    <span class="keyword">const</span> <span class="keywordtype">size_t</span> count16 = count / 16 * 16;</div>
+<div class="line"><a id="l01050" name="l01050"></a><span class="lineno"> 1050</span>    <span class="keyword">const</span> <span class="keywordtype">size_t</span> count16 = <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a> / 16 * 16;</div>
 <div class="line"><a id="l01051" name="l01051"></a><span class="lineno"> 1051</span> </div>
 <div class="line"><a id="l01052" name="l01052"></a><span class="lineno"> 1052</span>    <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> i = 0; i &lt; count16; i += 16) {</div>
 <div class="line"><a id="l01053" name="l01053"></a><span class="lineno"> 1053</span>        __m256i f16 = _mm256_loadu_si256((<span class="keyword">const</span> __m256i *)&amp;src[i]);</div>
@@ -1243,11 +1243,11 @@ $(document).ready(function(){initNavTree('gemm__kernels__f16_8c_source.html','')
 <div class="line"><a id="l01055" name="l01055"></a><span class="lineno"> 1055</span>        _mm512_storeu_ps(&amp;dst[i], f32);</div>
 <div class="line"><a id="l01056" name="l01056"></a><span class="lineno"> 1056</span>    }</div>
 <div class="line"><a id="l01057" name="l01057"></a><span class="lineno"> 1057</span> </div>
-<div class="line"><a id="l01058" name="l01058"></a><span class="lineno"> 1058</span>    <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> i = count16; i &lt; count; i++) {</div>
+<div class="line"><a id="l01058" name="l01058"></a><span class="lineno"> 1058</span>    <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> i = count16; i &lt; <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; i++) {</div>
 <div class="line"><a id="l01059" name="l01059"></a><span class="lineno"> 1059</span>        dst[i] = <a class="code hl_define" href="gemm__kernels__f16_8c.html#a5f379940f9b0147bf4f339d732f3341d">fp16_to_fp32</a>(src[i]);</div>
 <div class="line"><a id="l01060" name="l01060"></a><span class="lineno"> 1060</span>    }</div>
 <div class="line"><a id="l01061" name="l01061"></a><span class="lineno"> 1061</span><span class="preprocessor">#else</span></div>
-<div class="line"><a id="l01062" name="l01062"></a><span class="lineno"> 1062</span>    <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> i = 0; i &lt; count; i++) {</div>
+<div class="line"><a id="l01062" name="l01062"></a><span class="lineno"> 1062</span>    <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> i = 0; i &lt; <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; i++) {</div>
 <div class="line"><a id="l01063" name="l01063"></a><span class="lineno"> 1063</span>        dst[i] = <a class="code hl_define" href="gemm__kernels__f16_8c.html#a5f379940f9b0147bf4f339d732f3341d">fp16_to_fp32</a>(src[i]);</div>
 <div class="line"><a id="l01064" name="l01064"></a><span class="lineno"> 1064</span>    }</div>
 <div class="line"><a id="l01065" name="l01065"></a><span class="lineno"> 1065</span><span class="preprocessor">#endif</span></div>
@@ -1258,10 +1258,10 @@ $(document).ready(function(){initNavTree('gemm__kernels__f16_8c_source.html','')
 <div class="line"><a id="l01069" name="l01069"></a><span class="lineno"> 1069</span><span class="comment"> * @brief Convert FP32 tensor to FP16</span></div>
 <div class="line"><a id="l01070" name="l01070"></a><span class="lineno"> 1070</span><span class="comment"> */</span></div>
 <div class="foldopen" id="foldopen01071" data-start="{" data-end="}">
-<div class="line"><a id="l01071" name="l01071"></a><span class="lineno"><a class="line" href="gemm__kernels__f16_8c.html#a7687c3ecdb1194e9bcbd60d1f1dc6e1c"> 1071</a></span><span class="keywordtype">void</span> <a class="code hl_function" href="gemm__kernels__f16_8c.html#a7687c3ecdb1194e9bcbd60d1f1dc6e1c">convert_f32_to_f16</a>(uint16_t *dst, <span class="keyword">const</span> <span class="keywordtype">float</span> *src, <span class="keywordtype">size_t</span> count)</div>
+<div class="line"><a id="l01071" name="l01071"></a><span class="lineno"><a class="line" href="gemm__kernels__f16_8c.html#a7687c3ecdb1194e9bcbd60d1f1dc6e1c"> 1071</a></span><span class="keywordtype">void</span> <a class="code hl_function" href="gemm__kernels__f16_8c.html#a7687c3ecdb1194e9bcbd60d1f1dc6e1c">convert_f32_to_f16</a>(uint16_t *dst, <span class="keyword">const</span> <span class="keywordtype">float</span> *src, <span class="keywordtype">size_t</span> <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>)</div>
 <div class="line"><a id="l01072" name="l01072"></a><span class="lineno"> 1072</span>{</div>
 <div class="line"><a id="l01073" name="l01073"></a><span class="lineno"> 1073</span><span class="preprocessor">#ifdef __AVX512F__</span></div>
-<div class="line"><a id="l01074" name="l01074"></a><span class="lineno"> 1074</span>    <span class="keyword">const</span> <span class="keywordtype">size_t</span> count16 = count / 16 * 16;</div>
+<div class="line"><a id="l01074" name="l01074"></a><span class="lineno"> 1074</span>    <span class="keyword">const</span> <span class="keywordtype">size_t</span> count16 = <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a> / 16 * 16;</div>
 <div class="line"><a id="l01075" name="l01075"></a><span class="lineno"> 1075</span> </div>
 <div class="line"><a id="l01076" name="l01076"></a><span class="lineno"> 1076</span>    <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> i = 0; i &lt; count16; i += 16) {</div>
 <div class="line"><a id="l01077" name="l01077"></a><span class="lineno"> 1077</span>        __m512 f32 = _mm512_loadu_ps(&amp;src[i]);</div>
@@ -1269,11 +1269,11 @@ $(document).ready(function(){initNavTree('gemm__kernels__f16_8c_source.html','')
 <div class="line"><a id="l01079" name="l01079"></a><span class="lineno"> 1079</span>        _mm256_storeu_si256((__m256i *)&amp;dst[i], f16);</div>
 <div class="line"><a id="l01080" name="l01080"></a><span class="lineno"> 1080</span>    }</div>
 <div class="line"><a id="l01081" name="l01081"></a><span class="lineno"> 1081</span> </div>
-<div class="line"><a id="l01082" name="l01082"></a><span class="lineno"> 1082</span>    <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> i = count16; i &lt; count; i++) {</div>
+<div class="line"><a id="l01082" name="l01082"></a><span class="lineno"> 1082</span>    <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> i = count16; i &lt; <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; i++) {</div>
 <div class="line"><a id="l01083" name="l01083"></a><span class="lineno"> 1083</span>        dst[i] = <a class="code hl_define" href="gemm__kernels__f16_8c.html#ae9f44b9540b2b8d83760c1941ce8ccd2">fp32_to_fp16</a>(src[i]);</div>
 <div class="line"><a id="l01084" name="l01084"></a><span class="lineno"> 1084</span>    }</div>
 <div class="line"><a id="l01085" name="l01085"></a><span class="lineno"> 1085</span><span class="preprocessor">#else</span></div>
-<div class="line"><a id="l01086" name="l01086"></a><span class="lineno"> 1086</span>    <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> i = 0; i &lt; count; i++) {</div>
+<div class="line"><a id="l01086" name="l01086"></a><span class="lineno"> 1086</span>    <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> i = 0; i &lt; <a class="code hl_variable" href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a>; i++) {</div>
 <div class="line"><a id="l01087" name="l01087"></a><span class="lineno"> 1087</span>        dst[i] = <a class="code hl_define" href="gemm__kernels__f16_8c.html#ae9f44b9540b2b8d83760c1941ce8ccd2">fp32_to_fp16</a>(src[i]);</div>
 <div class="line"><a id="l01088" name="l01088"></a><span class="lineno"> 1088</span>    }</div>
 <div class="line"><a id="l01089" name="l01089"></a><span class="lineno"> 1089</span><span class="preprocessor">#endif</span></div>
@@ -1471,6 +1471,7 @@ $(document).ready(function(){initNavTree('gemm__kernels__f16_8c_source.html','')
 <div class="ttc" id="ashow__config_8c_html_a3d5cffd490a70d568b820514b5a0f937"><div class="ttname"><a href="show__config_8c.html#a3d5cffd490a70d568b820514b5a0f937">C</a></div><div class="ttdeci">#define C(color)</div><div class="ttdef"><b>Definition</b> <a href="show__config_8c_source.html#l00039">show_config.c:39</a></div></div>
 <div class="ttc" id="astructggml__init__params_html"><div class="ttname"><a href="structggml__init__params.html">ggml_init_params</a></div><div class="ttdef"><b>Definition</b> <a href="ggml__runtime__compat_8h_source.html#l00014">ggml_runtime_compat.h:14</a></div></div>
 <div class="ttc" id="astructggml__init__params_html_a5ede508e399874a98eeca731d71a7e0b"><div class="ttname"><a href="structggml__init__params.html#a5ede508e399874a98eeca731d71a7e0b">ggml_init_params::mem_size</a></div><div class="ttdeci">size_t mem_size</div><div class="ttdef"><b>Definition</b> <a href="ggml__runtime__compat_8h_source.html#l00015">ggml_runtime_compat.h:15</a></div></div>
+<div class="ttc" id="atrue__bpe_8h_html_ac7f5fd4f55df36920bf0583c3516e72f"><div class="ttname"><a href="true__bpe_8h.html#ac7f5fd4f55df36920bf0583c3516e72f">count</a></div><div class="ttdeci">const uint8_t size_t count</div><div class="ttdef"><b>Definition</b> <a href="true__bpe_8h_source.html#l00205">true_bpe.h:205</a></div></div>
 </div><!-- fragment --></div><!-- contents -->
 </div><!-- doc-content -->
 <!-- start footer part -->
