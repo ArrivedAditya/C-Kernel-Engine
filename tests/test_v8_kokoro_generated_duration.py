@@ -111,6 +111,7 @@ class KokoroGeneratedDurationTest(unittest.TestCase):
         arena=self.arena(); frames=ctypes.c_int32(-999)
         self.assertEqual(self.fn(arena,len(arena),ctypes.byref(frames)),0)
         report={}
+        failures=[]
         pairs={'phoneme_features':'encoder_features',
                'head_scan_output':'head_scan_output',
                'duration_logits':'duration_logits'}
@@ -139,11 +140,11 @@ class KokoroGeneratedDurationTest(unittest.TestCase):
                 'rmse':report[name]['rmse'],
                 'status':'pass' if np.all(error <= connected_limit) else 'fail',
                 'reproduction_command':'python3 -m unittest '+self.id()},sort_keys=True))
-            self.assertTrue(np.all(error <= connected_limit),
-                            (name, report[name], connected_limit))
-            self.assertLessEqual(report[name]['rmse'], 1e-5, name)
+            if not np.all(error <= connected_limit) or report[name]['rmse'] > 1e-5:
+                failures.append((name,report[name],connected_limit))
         (self.root/'duration-errors.json').write_text(json.dumps(report,indent=2))
         print('KOKORO_DURATION_STAGE_ERRORS '+json.dumps(report,sort_keys=True))
+        self.assertEqual(failures, [], failures)
         self.verify_xray(arena, pairs)
         np.testing.assert_array_equal(self.view(arena,'runtime_values',np.int32,(36,)),
                                       self.duration['durations'])
