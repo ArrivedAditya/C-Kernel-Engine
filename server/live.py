@@ -285,20 +285,78 @@ def _message_has_vision(message: dict[str, Any]) -> bool:
     )
 
 
+def _select_template(
+    chat_template: str | None,
+    chat_templates: dict[str, str] | None,
+    *,
+    has_tools: bool,
+) -> str | None:
+    """Return the template the renderer will use (single source of truth).
+
+    Mirrors ``_render_with_chat_templates`` selection: the ``tool_use`` /
+    ``tools`` / ``default`` variant when tools are attached, else the base
+    template. Capability gates must check this template, not the union.
+    """
+    if has_tools and isinstance(chat_templates, dict):
+        for key in ("tool_use", "tools", "default"):
+            candidate = chat_templates.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate
+    if isinstance(chat_template, str) and chat_template.strip():
+        return chat_template
+    return None
+
+
+#: Placeholder emission: the template renders vision slots into the prompt.
+_VISION_HANDLING_MARKERS = (
+    "vision_start",
+    "vision_end",
+    "image_pad",
+    "video_pad",
+    "image_token",
+    "<image>",
+    "<vision>",
+)
+
+#: Jinja image-branch evidence: the template dispatches on image parts.
+_VISION_BRANCH_MARKERS = (
+    "'image' in",
+    '"image" in',
+    "'image_url' in",
+    '"image_url" in',
+    "== 'image'",
+    '== "image"',
+)
+
+
+def _template_text_supports_vision(tmpl_str: str | None) -> bool:
+    """Whether one template handles image parts (documented heuristic).
+
+    Requires placeholder emission or an image dispatch branch. Plain
+    prose mentioning image URLs does not qualify; render-time
+    ``raise_exception`` remains the final fail-closed backstop.
+    """
+    if not isinstance(tmpl_str, str) or not tmpl_str.strip():
+        return False
+    lowered = tmpl_str.lower()
+    if any(m in lowered for m in _VISION_HANDLING_MARKERS):
+        return True
+    return any(m in lowered for m in _VISION_BRANCH_MARKERS)
+
+
 def _template_supports_vision(
     chat_template: str | None, chat_templates: dict[str, str] | None
 ) -> bool:
-    texts: list[str] = []
-    if isinstance(chat_template, str) and chat_template.strip():
-        texts.append(chat_template.lower())
-    if isinstance(chat_templates, dict):
-        for value in chat_templates.values():
-            if isinstance(value, str) and value.strip():
-                texts.append(value.lower())
-    if not texts:
-        return False
-    markers = ("vision_start", "image_pad", "vision_end", "image_url", "render_content")
-    return any(m in t for t in texts for m in markers)
+    """Whether a render path handles image parts.
+
+    Checks the templates the renderer can actually select (tool variant
+    and base), not the union of every loaded sidecar.
+    """
+    return _template_text_supports_vision(
+        _select_template(chat_template, chat_templates, has_tools=True)
+    ) or _template_text_supports_vision(
+        _select_template(chat_template, chat_templates, has_tools=False)
+    )
 
 
 def _input_chat_messages(value: Any) -> list[dict[str, Any]]:
@@ -767,19 +825,11 @@ def _render_with_chat_templates(
     chat_contract: dict[str, Any] | None = None,
     effective_thinking: str = "suppressed",
 ) -> str | None:
-    tmpl_str: str | None = None
-    if (
-        body is not None
-        and getattr(body, "tools", None)
-        and isinstance(chat_templates, dict)
-    ):
-        for key in ("tool_use", "tools", "default"):
-            candidate = chat_templates.get(key)
-            if isinstance(candidate, str) and candidate.strip():
-                tmpl_str = candidate
-                break
-    if tmpl_str is None and isinstance(chat_template, str) and chat_template.strip():
-        tmpl_str = chat_template
+    tmpl_str = _select_template(
+        chat_template,
+        chat_templates,
+        has_tools=bool(body is not None and getattr(body, "tools", None)),
+    )
     if not tmpl_str:
         return None
     digest = hashlib.sha256(tmpl_str.encode("utf-8")).hexdigest()
@@ -1154,6 +1204,15 @@ def create_app(
     declared_tool_protocol = tool_protocol or (chat_contract or {}).get("tool_protocol")
     tool_syntax = _tool_syntax_for_protocol(declared_tool_protocol)
 
+    # Templates are app-fixed: resolve vision support per render path once
+    # instead of lowercasing full templates on every vision request.
+    _vision_when_tools = _template_text_supports_vision(
+        _select_template(chat_template, chat_templates, has_tools=True)
+    )
+    _vision_when_plain = _template_text_supports_vision(
+        _select_template(chat_template, chat_templates, has_tools=False)
+    )
+
     def _conversation_echo(body) -> dict[str, Any] | None:
         conv = body.conversation
         if isinstance(conv, str):
@@ -1267,22 +1326,24 @@ def create_app(
                 err_type="invalid_request_error",
                 code="invalid_image",
             )
-        if any(_message_has_vision(m) for m in messages) and not _template_supports_vision(
-            chat_template, chat_templates
-        ):
-            raise _harness_error(
-                422,
-                "vision input requires a chat template with vision support",
-                err_type="invalid_request_error",
-                code="invalid_image",
+        if any(_message_has_vision(m) for m in messages):
+            selected_supports_vision = (
+                _vision_when_tools if getattr(body, "tools", None) else _vision_when_plain
             )
-        if any(_message_has_vision(m) for m in messages) and not vision_capability:
-            raise _harness_error(
-                422,
-                "loaded model has no vision encoder; vision input is rejected",
-                err_type="invalid_request_error",
-                code="invalid_image",
-            )
+            if not selected_supports_vision:
+                raise _harness_error(
+                    422,
+                    "vision input requires a chat template with vision support",
+                    err_type="invalid_request_error",
+                    code="invalid_image",
+                )
+            if not vision_capability:
+                raise _harness_error(
+                    422,
+                    "loaded model has no vision encoder; vision input is rejected",
+                    err_type="invalid_request_error",
+                    code="invalid_image",
+                )
         prompt = _extract_prompt(body)
         tok_limit = (
             body.max_output_tokens if body.max_output_tokens is not None else max_tokens

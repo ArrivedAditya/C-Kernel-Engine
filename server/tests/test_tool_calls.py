@@ -1320,3 +1320,78 @@ def test_parallel_tool_calls_all_emitted_qwen_xml():
     done = [p for ev, p in events if ev == "response.completed"]
     out = done[0]["response"]["output"]
     assert [i["name"] for i in out if i["type"] == "function_call"] == ["a", "b"]
+
+
+TEXT_ONLY_TEMPLATE = "{% for m in messages %}{{ m.role }}: {{ m.content }}\n{% endfor %}"
+
+
+def test_select_template_mirrors_render_priority():
+    from server.live import _select_template
+
+    variants = {"tool_use": "tool-variant", "default": "default-variant"}
+    assert _select_template("base", variants, has_tools=True) == "tool-variant"
+    assert _select_template("base", variants, has_tools=False) == "base"
+    assert _select_template("base", {"other": "x"}, has_tools=True) == "base"
+    assert _select_template("base", None, has_tools=True) == "base"
+    assert _select_template(None, None, has_tools=True) is None
+    assert _select_template("  ", None, has_tools=False) is None
+
+
+def test_template_text_vision_markers():
+    from server.live import _template_text_supports_vision
+
+    assert _template_text_supports_vision(_load_template("Qwen3.5-4B.jinja"))
+    assert not _template_text_supports_vision(TEXT_ONLY_TEMPLATE)
+    assert not _template_text_supports_vision(
+        "To pass image_url, see the docs. {{ messages }}"
+    )
+    assert not _template_text_supports_vision(None)
+    assert not _template_text_supports_vision("   ")
+
+
+def test_vision_gate_uses_selected_template():
+    qwen35 = _load_template("Qwen3.5-4B.jinja")
+    vision_input = [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "hi"},
+                {"type": "input_image", "image_url": "http://x/i.png"},
+            ],
+        }
+    ]
+    tools = [{"type": "function", "name": "a", "parameters": {}}]
+
+    session = FakeSession(chunks=("seen",))
+    with_tools = TestClient(
+        create_app(
+            session,
+            model="fake-model",
+            chat_template=TEXT_ONLY_TEMPLATE,
+            chat_templates={"tool_use": qwen35},
+            tool_protocol="qwen_xml",
+            vision_capability=True,
+        )
+    )
+    resp = with_tools.post(
+        "/v1/responses",
+        json={"model": "fake-model", "input": vision_input, "tools": tools},
+    )
+    assert resp.status_code == 200
+
+    session2 = FakeSession(chunks=("seen",))
+    without_tools = TestClient(
+        create_app(
+            session2,
+            model="fake-model",
+            chat_template=TEXT_ONLY_TEMPLATE,
+            chat_templates={"tool_use": qwen35},
+            tool_protocol="qwen_xml",
+            vision_capability=True,
+        )
+    )
+    resp = without_tools.post(
+        "/v1/responses", json={"model": "fake-model", "input": vision_input}
+    )
+    assert resp.status_code == 422
