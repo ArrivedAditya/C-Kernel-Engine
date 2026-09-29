@@ -38,6 +38,7 @@ from vision_bridge_runtime_v8 import (  # type: ignore  # noqa: E402
 )
 from run_multimodal_bridge_v8 import (  # type: ignore  # noqa: E402
     _load_image_file as _load_bridge_image_file,
+    _read_ppm_rgb8,
     _qwen3vl_geometry_overrides,
 )
 
@@ -392,6 +393,8 @@ def _compile_mtmd_shim(output_dir: Path) -> Path:
     uses_value_api = uses_object_api and "clip_image_f32_ptr" not in (
         clip_header + clip_impl_header
     )
+    image_preproc_header = LLAMA_CPP_ROOT / "tools" / "mtmd" / "mtmd-image.h"
+    supports_image_preproc = uses_value_api and image_preproc_header.is_file()
     llama_commit = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         cwd=str(LLAMA_CPP_ROOT),
@@ -406,9 +409,14 @@ def _compile_mtmd_shim(output_dir: Path) -> Path:
         "shim_sha256": hashlib.sha256(shim_src.read_bytes()).hexdigest(),
         "clip_header_sha256": hashlib.sha256(clip_header.encode()).hexdigest(),
         "clip_impl_header_sha256": hashlib.sha256(clip_impl_header.encode()).hexdigest(),
+        "image_preproc_header_sha256": (
+            hashlib.sha256(image_preproc_header.read_bytes()).hexdigest()
+            if supports_image_preproc else None
+        ),
         "libmtmd_sha256": hashlib.sha256(libmtmd.read_bytes()).hexdigest(),
         "object_api": uses_object_api,
         "value_api": uses_value_api,
+        "image_preproc_api": supports_image_preproc,
     }
     if shim_so.is_file() and stamp_path.is_file():
         try:
@@ -425,6 +433,7 @@ def _compile_mtmd_shim(output_dir: Path) -> Path:
         "-std=c++17",
         *(["-DCK_MTMD_CLIP_OBJECT_API=1"] if uses_object_api else []),
         *(["-DCK_MTMD_CLIP_VALUE_API=1"] if uses_value_api else []),
+        *(["-DCK_MTMD_IMAGE_PREPROC_API=1"] if supports_image_preproc else []),
         f"-I{LLAMA_CPP_ROOT / 'tools' / 'mtmd'}",
         f"-I{LLAMA_CPP_ROOT / 'ggml' / 'include'}",
         f"-I{LLAMA_CPP_ROOT / 'include'}",
@@ -514,7 +523,19 @@ def _load_image_file(image_path: Path, height: int, width: int, config: dict[str
         width,
         image_mean=config.get("image_mean"),
         image_std=config.get("image_std"),
+        resize_algorithm=str(config.get("image_resize_algorithm", "bilinear")),
+        resize_padding=str(config.get("image_resize_padding", "none")),
     )
+
+
+def _decode_source_rgb8(image_path: Path) -> tuple[int, int, bytes]:
+    if image_path.suffix.lower() == ".ppm":
+        return _read_ppm_rgb8(image_path)
+    from PIL import Image
+
+    with Image.open(image_path) as source:
+        rgb = source.convert("RGB")
+        return rgb.width, rgb.height, rgb.tobytes()
 
 
 def _resolve_generated_engine(model_so: Path) -> Path:
@@ -600,7 +621,61 @@ def _load_mtmd_shim(shim_so: Path) -> ctypes.CDLL:
         ctypes.POINTER(ctypes.c_float),
     ]
     lib.ck_mtmd_clip_encode_float_image.restype = ctypes.c_int
+    lib.ck_mtmd_clip_preprocess_rgb8.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_uint8),
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_float),
+        ctypes.c_size_t,
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.POINTER(ctypes.c_int),
+    ]
+    lib.ck_mtmd_clip_preprocess_rgb8.restype = ctypes.c_int64
     return lib
+
+
+def _run_llamacpp_preprocess(
+    shim_so: Path,
+    gguf_path: Path,
+    rgb: bytes,
+    width: int,
+    height: int,
+    image_min_tokens: int | None,
+    image_max_tokens: int | None,
+) -> tuple[array, int, int]:
+    if width <= 0 or height <= 0 or len(rgb) != width * height * 3:
+        raise RuntimeError("invalid decoded RGB input for llama.cpp preprocessing")
+    lib = _load_mtmd_shim(shim_so)
+    ctx = lib.ck_mtmd_clip_init(
+        str(gguf_path).encode(), 0, 0, int(image_min_tokens or 0), int(image_max_tokens or 0), 0,
+    )
+    if not ctx:
+        raise RuntimeError("ck_mtmd_clip_init returned null for preprocessing")
+    try:
+        source = (ctypes.c_uint8 * len(rgb)).from_buffer_copy(rgb)
+        out_width = ctypes.c_int()
+        out_height = ctypes.c_int()
+        count = int(lib.ck_mtmd_clip_preprocess_rgb8(
+            ctx, source, width, height, None, 0,
+            ctypes.byref(out_width), ctypes.byref(out_height),
+        ))
+        if count == -2:
+            raise RuntimeError("pinned llama.cpp build lacks the independent preprocessing diagnostic API")
+        if count <= 0 or out_width.value <= 0 or out_height.value <= 0:
+            raise RuntimeError("llama.cpp image preprocessing failed")
+        if count != out_width.value * out_height.value * 3:
+            raise RuntimeError("llama.cpp preprocessor returned inconsistent RGB geometry")
+        output = (ctypes.c_float * count)()
+        copied = int(lib.ck_mtmd_clip_preprocess_rgb8(
+            ctx, source, width, height, output, count,
+            ctypes.byref(out_width), ctypes.byref(out_height),
+        ))
+        if copied != count:
+            raise RuntimeError("llama.cpp image preprocessing changed extent between calls")
+        return array("f", output), out_width.value, out_height.value
+    finally:
+        lib.ck_mtmd_clip_free(ctx)
 
 
 def _parse_named_dump_selector(selector: str) -> tuple[str, int | None]:
@@ -1070,6 +1145,10 @@ def _metrics(ref: array, got: array) -> dict[str, float]:
     }
 
 
+def _preprocess_parity_pass(metrics: dict[str, float]) -> bool:
+    return all(math.isfinite(value) for value in metrics.values()) and metrics["max_abs"] <= 1.0e-6
+
+
 def _sample_diffs(ref: array, got: array, count: int = 8) -> list[dict[str, float]]:
     heap: list[tuple[float, int, float, float]] = []
     for idx, (a, b) in enumerate(zip(ref, got)):
@@ -1297,6 +1376,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--output-dir", type=Path, default=Path("/tmp/qwen3vl_mmproj_v8_numeric"), help="Workspace for generated artifacts")
     ap.add_argument("--image-mode", choices=("gradient", "gray", "checker"), default="gradient")
     ap.add_argument("--image-path", type=Path, default=None, help="Optional real image path; overrides --image-mode")
+    ap.add_argument("--independent-preprocess", action="store_true", help="Preprocess the decoded RGB input independently with CKE and llama.cpp")
     ap.add_argument("--image-min-tokens", type=int, default=None, help="Override minimum merged visual tokens for dynamic-resolution Qwen3-VL images")
     ap.add_argument("--image-max-tokens", type=int, default=None, help="Override maximum merged visual tokens for dynamic-resolution Qwen3-VL images")
     ap.add_argument("--threads", type=int, default=1)
@@ -1332,6 +1412,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--dump-ck-f32", type=Path, default=None, help="Optional raw decoder-facing CK output tensor")
     ap.add_argument("--dump-llama-f32", type=Path, default=None, help="Optional raw decoder-facing llama.cpp output tensor")
     args = ap.parse_args(argv)
+    if args.independent_preprocess and args.image_path is None:
+        ap.error("--independent-preprocess requires --image-path")
 
     ck_threads = int(args.ck_threads or args.threads)
     activation_preferences = _parse_activation_preference_overrides(args.activation_pref)
@@ -1380,6 +1462,44 @@ def main(argv: list[str] | None = None) -> int:
             "source_image_size": [width, height],
             "preprocess": "synthetic_generator",
         }
+    llama_interleaved = interleaved
+    llama_height = height
+    llama_width = width
+    preprocess_evidence: dict[str, Any] | None = None
+    if args.independent_preprocess:
+        source_width, source_height, source_rgb = _decode_source_rgb8(args.image_path.resolve())
+        if [source_width, source_height] != image_report["source_image_size"]:
+            raise RuntimeError("decoded RGB dimensions changed between CKE and llama.cpp preprocessing")
+        llama_interleaved, llama_width, llama_height = _run_llamacpp_preprocess(
+            shim_so, args.gguf, source_rgb, source_width, source_height,
+            args.image_min_tokens, args.image_max_tokens,
+        )
+        same_geometry = (llama_width, llama_height) == (width, height)
+        preprocess_evidence = {
+            "shared_boundary": "decoded_rgb8",
+            "decoded_rgb8_sha256": hashlib.sha256(source_rgb).hexdigest(),
+            "source_size": [source_width, source_height],
+            "ck_size": [width, height],
+            "llama_size": [llama_width, llama_height],
+            "geometry_matches": same_geometry,
+            "ck_f32_sha256": hashlib.sha256(array("f", interleaved).tobytes()).hexdigest(),
+            "llama_f32_sha256": hashlib.sha256(llama_interleaved.tobytes()).hexdigest(),
+            "pixel_metrics": _metrics(llama_interleaved, array("f", interleaved)) if same_geometry else None,
+        }
+        preprocess_evidence["verdict"] = (
+            "pass" if same_geometry and _preprocess_parity_pass(preprocess_evidence["pixel_metrics"]) else "fail"
+        )
+        if not same_geometry:
+            mismatch = {
+                "status": "alignment_unresolved",
+                "input_provenance": "independently_preprocessed_from_shared_decoded_rgb8",
+                "preprocess_evidence": preprocess_evidence,
+                "note": "Encoder numerical parity was not attempted because prepared image geometry differs.",
+            }
+            if args.report is not None:
+                args.report.write_text(json.dumps(mismatch, indent=2) + "\n", encoding="utf-8")
+            print(json.dumps(mismatch, indent=2))
+            return 2
     t_image = time.perf_counter()
 
     ck_out = _run_generated_encoder(
@@ -1398,9 +1518,9 @@ def main(argv: list[str] | None = None) -> int:
     llama_out = _run_llamacpp_encoder(
         shim_so=shim_so,
         gguf_path=args.gguf,
-        interleaved_image=interleaved,
-        height=height,
-        width=width,
+        interleaved_image=llama_interleaved,
+        height=llama_height,
+        width=llama_width,
         n_threads=args.threads,
         named_dump_output=llama_reference_output,
         image_min_tokens=args.image_min_tokens,
@@ -1489,10 +1609,11 @@ def main(argv: list[str] | None = None) -> int:
     lowering = report.get("lowering", {}) if isinstance(report, dict) else {}
     if args.image_path is not None and hashlib.sha256(args.image_path.read_bytes()).hexdigest() != source_image_sha256:
         raise RuntimeError("source image changed during encoder parity execution")
-    notes = [
-        "llama.cpp reference uses clip_encode_float_image from libmtmd via a local C shim.",
-        "Both encoders receive the same prepared tensor; this does not certify independent image preprocessing.",
-    ]
+    notes = ["llama.cpp reference uses clip_encode_float_image from libmtmd via a local C shim."]
+    if args.independent_preprocess:
+        notes.append("Each runtime independently preprocesses shared decoded RGB8 bytes; image decoding and text generation are not certified by this run.")
+    else:
+        notes.append("Both encoders receive the same prepared tensor; this does not certify independent image preprocessing.")
     if _normalize_output_name(args.ck_output_name) == "auto":
         notes.append(
             "CK output is read from the resolved full vision bridge activation so Qwen3-VL compares the stitched decoder-facing prefix tensor."
@@ -1516,7 +1637,11 @@ def main(argv: list[str] | None = None) -> int:
         "prepared_input_f32_byteorder": sys.byteorder,
         "source_image_size": image_report.get("source_image_size"),
         "preprocess": str(image_report["preprocess"]),
-        "input_provenance": "shared_processed_tensor",
+        "input_provenance": (
+            "independently_preprocessed_from_shared_decoded_rgb8"
+            if args.independent_preprocess else "shared_processed_tensor"
+        ),
+        "preprocess_evidence": preprocess_evidence,
         "height": height,
         "width": width,
         "image_min_tokens": args.image_min_tokens,
@@ -1565,7 +1690,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.report is not None:
         args.report.write_text(json.dumps(result, indent=2), encoding="utf-8")
     print(json.dumps(result, indent=2))
-    return 0
+    return 1 if preprocess_evidence is not None and preprocess_evidence["verdict"] != "pass" else 0
 
 
 if __name__ == "__main__":

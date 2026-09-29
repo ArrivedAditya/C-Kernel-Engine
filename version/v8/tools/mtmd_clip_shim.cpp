@@ -1,5 +1,8 @@
 #include "clip.h"
 #include "clip-impl.h"
+#ifdef CK_MTMD_IMAGE_PREPROC_API
+#include "mtmd-image.h"
+#endif
 
 #include "ggml-backend.h"
 #include "ggml.h"
@@ -11,6 +14,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <unordered_set>
@@ -419,6 +423,58 @@ int ck_mtmd_clip_encode_float_image(void *handle_ptr, int n_threads, float *img,
     return 1;
 #else
     return clip_encode_float_image(ctx, n_threads, img, h, w, vec) ? 1 : 0;
+#endif
+}
+
+int64_t ck_mtmd_clip_preprocess_rgb8(
+    void *handle_ptr,
+    const uint8_t *rgb,
+    int width,
+    int height,
+    float *out,
+    size_t capacity,
+    int *out_width,
+    int *out_height) {
+#ifdef CK_MTMD_IMAGE_PREPROC_API
+    clip_ctx *ctx = unwrap_ctx(handle_ptr);
+    if (!ctx || !rgb || width <= 0 || height <= 0 || !out_width || !out_height ||
+        (size_t) width > SIZE_MAX / ((size_t) height * 3)) {
+        return -1;
+    }
+    try {
+        const size_t rgb_size = (size_t) width * (size_t) height * 3;
+        clip_image_u8 image;
+        image.set_size({width, height}, false);
+        image.cpy_buf(std::vector<uint8_t>(rgb, rgb + rgb_size));
+        mtmd_image_preprocessor_dyn_size preprocessor(ctx);
+        mtmd_image_preproc_out processed = preprocessor.preprocess(image);
+        if (processed.entries.size() != 1) {
+            return -1;
+        }
+        const clip_image_f32 &entry = processed.entries.front();
+        const std::vector<float> &values = entry.get_ro_buf();
+        if (values.size() > (size_t) std::numeric_limits<int64_t>::max()) {
+            return -1;
+        }
+        *out_width = entry.nx();
+        *out_height = entry.ny();
+        if (out && capacity >= values.size()) {
+            std::memcpy(out, values.data(), values.size() * sizeof(float));
+        }
+        return (int64_t) values.size();
+    } catch (...) {
+        return -1;
+    }
+#else
+    (void) handle_ptr;
+    (void) rgb;
+    (void) width;
+    (void) height;
+    (void) out;
+    (void) capacity;
+    (void) out_width;
+    (void) out_height;
+    return -2;
 #endif
 }
 

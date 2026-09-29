@@ -2062,6 +2062,8 @@ def _qwen3vl_geometry_overrides(
         "image_max_pixels": int(max_pixels),
         "image_min_tokens": int(min_pixels // patch_area),
         "image_max_tokens": int(max_pixels // patch_area),
+        "image_resize_algorithm": "bicubic",
+        "image_resize_padding": "center_ceil",
     }
 
 
@@ -2375,6 +2377,8 @@ def _load_image_file(
     *,
     image_mean: list[float] | None = None,
     image_std: list[float] | None = None,
+    resize_algorithm: str = "bilinear",
+    resize_padding: str = "none",
 ) -> dict[str, Any]:
     if not image_path.exists():
         raise FileNotFoundError(f"image file not found: {image_path}")
@@ -2384,8 +2388,6 @@ def _load_image_file(
     suffix = image_path.suffix.lower()
     if suffix == ".ppm":
         source_width, source_height, src_rgb = _read_ppm_rgb8(image_path)
-        pixels = _resize_rgb8_bilinear(src_rgb, source_width, source_height, width, height)
-        preprocess_prefix = "ppm_rgb_bilinear_resize"
     else:
         if Image is None:
             raise RuntimeError("Pillow is required for non-PPM --image-path support")
@@ -2393,8 +2395,24 @@ def _load_image_file(
             source_width, source_height = src.size
             rgb = src.convert("RGB")
             src_rgb = rgb.tobytes()
-            pixels = _resize_rgb8_bilinear(src_rgb, source_width, source_height, width, height)
-        preprocess_prefix = "rgb_bilinear_resize"
+    if resize_algorithm == "bilinear" and resize_padding == "none":
+        pixels = _resize_rgb8_bilinear(src_rgb, source_width, source_height, width, height)
+    elif resize_algorithm == "bicubic" and resize_padding == "center_ceil":
+        if Image is None:
+            raise RuntimeError("Pillow is required for bicubic image preprocessing")
+        scale = min(width / source_width, height / source_height)
+        resized_width = min(math.ceil(source_width * scale), width)
+        resized_height = min(math.ceil(source_height * scale), height)
+        resized = Image.frombytes("RGB", (source_width, source_height), src_rgb).resize(
+            (resized_width, resized_height), Image.Resampling.BICUBIC
+        )
+        padded = Image.new("RGB", (width, height), (0, 0, 0))
+        padded.paste(resized, ((width - resized_width) // 2, (height - resized_height) // 2))
+        padded_rgb = padded.tobytes()
+        pixels = [tuple(padded_rgb[idx:idx + 3]) for idx in range(0, len(padded_rgb), 3)]
+    else:
+        raise RuntimeError(f"unsupported image resize contract: {resize_algorithm}/{resize_padding}")
+    preprocess_prefix = f"{suffix.removeprefix('.')}_rgb_{resize_algorithm}_{resize_padding}_resize"
 
     interleaved = [0.0] * (height * width * 3)
     planar = [0.0] * (height * width * 3)
@@ -3353,6 +3371,8 @@ def _run_encoder(
                 image_width,
                 image_mean=image_mean,
                 image_std=image_std,
+                resize_algorithm=str(layout_cfg.get("image_resize_algorithm", "bilinear")),
+                resize_padding=str(layout_cfg.get("image_resize_padding", "none")),
             )
             # The native encoder consumes planar input only.  Retaining the
             # interleaved list used to keep millions of boxed Python floats

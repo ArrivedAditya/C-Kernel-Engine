@@ -711,6 +711,8 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
             self.assertEqual(out["merged_grid_x"], 16)
             self.assertEqual(out["merged_grid_y"], 8)
             self.assertEqual(out["vision_merged_tokens"], 128)
+            self.assertEqual(out["image_resize_algorithm"], "bicubic")
+            self.assertEqual(out["image_resize_padding"], "center_ceil")
 
     def test_qwen3vl_decoder_declares_bridge_generation_contract(self) -> None:
         doc = build_ir_v8._load_builtin_template_doc("qwen3vl")
