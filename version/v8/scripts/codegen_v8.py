@@ -1994,13 +1994,16 @@ def _inject_decode_runtime_multimodal_fallback(
     )
     embed_tokens_repl = """CK_EXPORT int ck_model_embed_tokens(const int32_t *tokens, int count) {
     if (!g_model || !tokens || count <= 0) return -1;
+    if (ck_model_cancel_requested()) return -2;
 
     /* Decode-layout runtimes append prefill support, but their activations are
      * still sized for a single-token decode step. Preserve correctness by
      * replaying prompt tokens through the one-token decode path. */
     for (int i = 0; i < count; i++) {
+        if (ck_model_cancel_requested()) return -2;
         ck_decode(g_model, tokens[i]);
     }
+    if (ck_model_cancel_requested()) return -2;
     return 0;
 }
 

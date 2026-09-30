@@ -1727,7 +1727,7 @@ def emit_prefill_function(ops: List[Dict], config: Dict, profile: bool = False, 
  * PREFILL - Batched processing from IR Lower (prefill mode)
  * ============================================================================ */
 static void ck_prefill_range(CKModel *model, const int32_t *tokens, int num_tokens, int prefill_start_pos) {
-    if (!model || !tokens || num_tokens <= 0) return;
+    if (!model || !tokens || num_tokens <= 0 || ck_model_cancel_requested()) return;
     if (prefill_start_pos < 0 || prefill_start_pos >= MAX_SEQ_LEN) return;
 
     /* Clamp this chunk to the persistent context capacity. */
@@ -1883,6 +1883,7 @@ static void ck_prefill_range(CKModel *model, const int32_t *tokens, int num_toke
                         + "\n".join("    " + line if line else line for line in op_code.splitlines())
                         + "\n    }"
                     )
+        lines.append("    if (ck_model_cancel_requested()) return;")
         lines.append(op_code)
         lines.append(f"    if (stop_seq == {seq_idx}) return;")
         if (scale_embeddings_sqrt_dim
@@ -1912,6 +1913,7 @@ static void ck_prefill_range(CKModel *model, const int32_t *tokens, int num_toke
 
     if terminal_rows:
         lines.append("    num_tokens = prefill_original_num_tokens;")
+    lines.append("    if (ck_model_cancel_requested()) return;")
     lines.append("    model->pos = prefill_start_pos + num_tokens;")
     lines.append("    model->rope_pos = prefill_start_pos + num_tokens;")
     if bool(config.get("_template_uses_persistent_cross_kv_cache", False)):
@@ -1925,12 +1927,14 @@ static void ck_prefill_range(CKModel *model, const int32_t *tokens, int num_toke
     lines.append("    if (start_pos < 0 || start_pos >= MAX_SEQ_LEN) return;")
     lines.append("    if (num_tokens > MAX_SEQ_LEN - start_pos) num_tokens = MAX_SEQ_LEN - start_pos;")
     lines.append("    while (consumed < num_tokens) {")
+    lines.append("        if (ck_model_cancel_requested()) return;")
     lines.append(f"        int chunk = num_tokens - consumed > {prefill_chunk_length} ? {prefill_chunk_length} : num_tokens - consumed;")
     lines.append("        if (chunk == 1 && consumed > 0) {")
     lines.append("            ck_decode(model, tokens[consumed]);")
     lines.append("        } else {")
     lines.append("            ck_prefill_range(model, tokens + consumed, chunk, start_pos + consumed);")
     lines.append("        }")
+    lines.append("        if (ck_model_cancel_requested()) return;")
     lines.append("        consumed += chunk;")
     lines.append("    }")
     lines.append("}")
