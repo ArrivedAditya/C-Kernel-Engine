@@ -89,6 +89,7 @@
             "audio_duration_expand",
             "audio_duration_logits_to_frames",
             "embedding_three_table_layer_norm",
+            "embedding",
             "linear_rows_checked",
             "feature_concat_broadcast_rows",
             "runtime_extent_sum",

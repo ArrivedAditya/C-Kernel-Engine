@@ -1839,6 +1839,10 @@ OP_DATAFLOW = {
         "inputs": {"word_ids": "external:word_ids", "type_ids": "external:type_ids"},
         "outputs": {"output": {"slot": "embedding_output", "dtype": "fp32"}},
     },
+    "embedding_lookup_checked": {
+        "inputs": {"ids": "external:ids"},
+        "outputs": {"output": {"slot": "embedding_output", "dtype": "fp32"}},
+    },
     "audio_duration_logits_to_frames": {
         "inputs": {"logits": "external:audio_duration_logits"},
         "outputs": {
@@ -4429,6 +4433,7 @@ TEMPLATE_TO_KERNEL_OP = {
     "attention_full_token_major_checked": "attention_full_token_major_checked",
     "linear_rows_checked": "linear_rows_checked",
     "embedding_three_table_layer_norm": "embedding_three_table_layer_norm",
+    "embedding_lookup_checked": "embedding_lookup_checked",
     "audio_duration_logits_to_frames": "audio_duration_logits_to_frames",
     "runtime_extent_sum": "runtime_extent_sum",
     "audio_duration_expand": "audio_duration_expand",

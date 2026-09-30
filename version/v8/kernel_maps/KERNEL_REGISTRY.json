@@ -5,7 +5,7 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "version/v8/kernel_maps",
     "counts": {
-      "total": 395,
+      "total": 396,
       "by_op": {
         "add_backward": 1,
         "add_stream": 2,
@@ -50,6 +50,7 @@
         "copy_last_logits": 1,
         "embedding": 7,
         "embedding_backward": 1,
+        "embedding_lookup_checked": 1,
         "embedding_three_table_layer_norm": 1,
         "farskip_routed_shared_combine": 1,
         "feature_concat": 1,
@@ -19326,6 +19327,236 @@
       },
       "name": "audio_stft_precompute_tables_f32",
       "_source_file": "audio_stft_precompute_tables_f32.json"
+    },
+    {
+      "id": "audio_text_embedding_channel_major_f32",
+      "op": "embedding_lookup_checked",
+      "operation_interface": "embedding.checked_channel_major.fp32.v1",
+      "variant": "checked_i32_ids_fp32_table_channel_major",
+      "selection": {
+        "status": "candidate",
+        "priority": 100,
+        "equivalence_group": "embedding_channel_major_fp32",
+        "phases": [
+          "prefill"
+        ]
+      },
+      "quant": {
+        "weight": "fp32",
+        "activation": "i32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "ids",
+          "dtype": "i32",
+          "shape": [
+            "T"
+          ],
+          "layout": "token_contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "weights": [
+        {
+          "name": "table",
+          "dtype": "fp32",
+          "shape": [
+            "V",
+            "C"
+          ],
+          "layout": "row_major_table_stride",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "weight",
+          "consumption": "required"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "C",
+            "T_capacity"
+          ],
+          "layout": "channel_major_output_stride",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "id_elements",
+        "table_elements",
+        "vocabulary",
+        "channels",
+        "table_stride",
+        "output_elements",
+        "tokens",
+        "output_stride"
+      ],
+      "impl": {
+        "function": "audio_text_embedding_channel_major_f32",
+        "c_declaration": "int audio_text_embedding_channel_major_f32(const int32_t *ids, size_t id_elements, const float *table, size_t table_elements, size_t vocabulary, size_t channels, size_t table_stride, float *output, size_t output_elements, size_t tokens, size_t output_stride);",
+        "sources": [
+          "src/kernels/audio_text_embedding.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "audio_text_embedding_exact_channel_major_fp32",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "audio_text_embedding_channel_major_f32",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "none",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "ids",
+            "source": "activation:ids",
+            "cast": "const int32_t*",
+            "ports": [
+              "input:ids"
+            ]
+          },
+          {
+            "name": "id_elements",
+            "source": "runtime:id_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "table",
+            "source": "weight:table",
+            "cast": "const float*",
+            "ports": [
+              "weight:table"
+            ]
+          },
+          {
+            "name": "table_elements",
+            "source": "runtime:table_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "vocabulary",
+            "source": "runtime:vocabulary",
+            "value_type": "size_t"
+          },
+          {
+            "name": "channels",
+            "source": "runtime:channels",
+            "value_type": "size_t"
+          },
+          {
+            "name": "table_stride",
+            "source": "runtime:table_stride",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output",
+            "source": "output:output",
+            "cast": "float*",
+            "ports": [
+              "output:output"
+            ]
+          },
+          {
+            "name": "output_elements",
+            "source": "runtime:output_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "tokens",
+            "source": "runtime:tokens",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output_stride",
+            "source": "runtime:output_stride",
+            "value_type": "size_t"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "tests/test_v8_audio_text_embedding_oracle.py",
+          "tests/test_v8_audio_text_embedding_generated.py",
+          "tests/test_v8_kokoro_generated_text_embedding.py"
+        ],
+        "oracle": "Pinned Kokoro/PyTorch 2.8 embedding capture and optional live PyTorch embedding"
+      },
+      "notes": "Checked exact FP32 table lookup. Caller owns nonoverlapping ID, table and output buffers; physical strides and capacities are explicit. Output is untouched on rejection. No scratch, heap, reduction, or backward support.",
+      "call_constant_contract": {
+        "shape_symbols": {
+          "T": "tokens",
+          "V": "vocabulary",
+          "C": "channels"
+        },
+        "buffer_spans": [
+          {
+            "pointer": "ids",
+            "elements": "id_elements",
+            "rows": 1,
+            "width": "tokens",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "table",
+            "elements": "table_elements",
+            "stride": "table_stride",
+            "rows": "vocabulary",
+            "width": "channels",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "output",
+            "elements": "output_elements",
+            "stride": "output_stride",
+            "physical_row_stride": true,
+            "rows": "channels",
+            "width": "tokens",
+            "element_bytes": 4
+          }
+        ]
+      },
+      "name": "audio_text_embedding_channel_major_f32",
+      "_source_file": "audio_text_embedding_channel_major_f32.json"
     },
     {
       "id": "audio_transpose_channel_to_token_f32",

@@ -1,0 +1,43 @@
+{
+  "schema": "cke.kokoro.text_embedding_fixture.v1",
+  "scope": "text encoder embedding only; no convolution or waveform",
+  "model_pin": {
+    "repository": "hexgrad/Kokoro-82M",
+    "revision": "e8a90b41091c3c5b70375c47cc959799920fa4d6",
+    "files": [
+      "config.json",
+      "kokoro-v1_0.pth",
+      "voices/af_heart.pt"
+    ],
+    "license": "Apache-2.0"
+  },
+  "reference_code": {
+    "kokoro": "dfb907a02bba8152ca444717ca5d78747ccb4bec",
+    "misaki": "fba1236595f2d2bf21d414ba6e57d25256afada3"
+  },
+  "torch": "2.8.0+cpu",
+  "oracle_packages": {
+    "kokoro": "0.9.4",
+    "misaki": "0.9.4",
+    "torch": "2.8.0+cpu"
+  },
+  "oracle_source_sha256": {
+    "kokoro.model": "301c55350a068c4ed3b4cbd1209d2afb848bebca72db5657405e47e9dfb604db",
+    "kokoro.modules": "6e14dadc706efc9a8d90e8b4919d45d57342555b242c642cd26f26c65eedc085"
+  },
+  "package_source_commit_match": "NOT_TESTED",
+  "tokens": 36,
+  "source_fixture_sha256": "b1193994d91a36b1ee5ca675a3d5edafd33f8889dbdba2ec2e112d3a7787eb31",
+  "asset_sha256": {
+    "config.json": "5abb01e2403b072bf03d04fde160443e209d7a0dad49a423be15196b9b43c17f",
+    "kokoro-v1_0.pth": "496dba118d1a58f5f3db2efc88dbdc216e0483fc89fe6e47ee1f2c53f18ad1e4",
+    "voices/af_heart.pt": "0ab5709b8ffab19bfd849cd11d98f75b60af7733253ad0d67b12382a102cb4ff"
+  },
+  "arrays_sha256": {
+    "ids": "62a6bf6baeeb1b60027d97bb36fa04ab7f820f1acf72640e11f551a969eb9b18",
+    "table": "19c0793ad52be5ec7a8b5fcc054184233cd8befff6a4218439d37948d96f6b98",
+    "expected": "1d94e668d7019ea9d6bbd25254d26801e3a8ad08180491a61e6ca1cbf2003800"
+  },
+  "oracle": "model.text_encoder.embedding(ids).T contiguous",
+  "fixture_sha256": "52312f41e53b5a06ab187ae13607727deb81babc0f0a8795a25f00474c84964e"
+}
