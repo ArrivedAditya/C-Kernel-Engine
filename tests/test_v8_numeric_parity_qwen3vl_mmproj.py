@@ -432,7 +432,7 @@ class NumericParityQwen3VLMmprojV8Tests(unittest.TestCase):
             self.assertEqual(public["selected_count"], 1)
             self.assertEqual(public["passing_count"], 0)
             self.assertEqual(public["failure_count"], 1)
-            self.assertEqual(public["bridge_reported_artifact_sha256"]["ck_model_library"], "a" * 64)
+            self.assertEqual(public["bridge_reported_artifact_sha256"]["ck_model_library"], ["a" * 64])
 
             broken = dict(private, status="pass", passing_count=1)
             with self.assertRaisesRegex(ValueError, "inconsistent overall verdict"):
@@ -472,8 +472,29 @@ class NumericParityQwen3VLMmprojV8Tests(unittest.TestCase):
         self.assertEqual(public["selected_count"], 2)
         self.assertEqual(public["completed_count"], 1)
         self.assertEqual(public["status"], "incomplete")
+        self.assertEqual(public["bridge_reported_artifact_sha256"]["decoder"], ["d" * 64])
         localized = dict(private, certification_scope="localization")
         self.assertEqual(public_summary.build_public_summary(localized, "ocr40-v1")["lane"], "localization")
+
+    def test_public_encoder_summary_allows_shape_specific_generated_artifacts(self) -> None:
+        common = {role: {"sha256": "a" * 64} for role in public_summary.ARTIFACT_ROLES}
+        varied = {role: dict(value) for role, value in common.items()}
+        varied["ck_generated_source"]["sha256"] = "b" * 64
+        varied["ck_model_library"]["sha256"] = "c" * 64
+        private = {
+            "status": "pass", "selected_count": 2, "completed_count": 2,
+            "passing_count": 2, "llama_commit": "d" * 40,
+            "independent_preprocess": True, "failures": [],
+            "aggregate": {"min_cosine": 0.99, "max_rmse": 0.01, "max_abs": 0.2},
+            "samples": [
+                {"suite_elapsed_sec": 1.0, "artifact_identity": common, "status": "complete"},
+                {"suite_elapsed_sec": 2.0, "artifact_identity": varied, "status": "complete"},
+            ],
+        }
+        public = public_summary.build_public_summary(private, "ocr40-v1")
+        self.assertEqual(public["bridge_reported_artifact_sha256"]["ck_generated_source"], ["a" * 64, "b" * 64])
+        self.assertEqual(public["bridge_reported_artifact_sha256"]["ck_model_library"], ["a" * 64, "c" * 64])
+        self.assertEqual(public["bridge_reported_artifact_sha256"]["ck_engine_library"], ["a" * 64])
 
     def test_encoder_prefix_suite_thresholds_shape_and_metrics(self) -> None:
         values = 36 * 28 * 16384

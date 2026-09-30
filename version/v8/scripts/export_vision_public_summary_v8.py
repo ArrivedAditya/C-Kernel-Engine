@@ -37,23 +37,19 @@ def _number(value: Any, label: str) -> float:
     return float(value)
 
 
-def _artifact_hashes(samples: list[dict[str, Any]]) -> dict[str, str]:
-    identities: list[dict[str, str]] = []
+def _artifact_hashes(samples: list[dict[str, Any]]) -> dict[str, list[str]]:
+    observed: dict[str, set[str]] = {role: set() for role in ARTIFACT_ROLES}
     for sample in samples:
         report = sample.get("artifact_identity")
         if not isinstance(report, dict):
             raise ValueError("missing artifact identity")
-        selected: dict[str, str] = {}
         for role in ARTIFACT_ROLES:
             item = report.get(role)
             digest = item.get("sha256") if isinstance(item, dict) else None
             if not isinstance(digest, str) or not SHA256_RE.fullmatch(digest):
                 raise ValueError(f"missing {role} hash")
-            selected[role] = digest
-        identities.append(selected)
-    if not identities or any(item != identities[0] for item in identities[1:]):
-        raise ValueError("artifact identities differ across samples")
-    return identities[0]
+            observed[role].add(digest)
+    return {role: sorted(hashes) for role, hashes in observed.items()}
 
 
 def _build_encoder_public_summary(private: dict[str, Any], corpus_alias: str) -> dict[str, Any]:
@@ -127,17 +123,13 @@ def _build_decoder_public_summary(private: dict[str, Any], corpus_alias: str) ->
     if any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{40}", value)
            for value in (oracle_commit, cke_commit)):
         raise ValueError("missing decoder source revision")
-    identities = []
+    identities: dict[str, set[str]] = {"decoder": set(), "engine": set()}
     for row in rows:
-        selected_hashes = {}
         for role, key in (("decoder", "decoder_sha256"), ("engine", "engine_sha256")):
             digest = row.get(key)
             if not isinstance(digest, str) or not SHA256_RE.fullmatch(digest):
                 raise ValueError(f"missing {role} hash")
-            selected_hashes[role] = digest
-        identities.append(selected_hashes)
-    if any(item != identities[0] for item in identities[1:]):
-        raise ValueError("decoder artifact identities differ across rows")
+            identities[role].add(digest)
     elapsed = _number(timing.get("total_sec"), "total elapsed time")
     if elapsed < 0:
         raise ValueError("invalid total elapsed time")
@@ -153,7 +145,7 @@ def _build_decoder_public_summary(private: dict[str, Any], corpus_alias: str) ->
         "total_elapsed_sec": elapsed,
         "cke_source_commit": cke_commit,
         "oracle_source_commit": oracle_commit,
-        "bridge_reported_artifact_sha256": identities[0],
+        "bridge_reported_artifact_sha256": {role: sorted(hashes) for role, hashes in identities.items()},
     }
 
 
