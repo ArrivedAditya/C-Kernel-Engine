@@ -1599,9 +1599,12 @@ qwen --bare \
     <h4>Bounded local Qwen Code acceptance</h4>
     <p>Use the same Qwen Code client as a real contributor task in a new disposable directory.
         This command reads a small HTML file, edits one heading, runs its Python validator and
-        asks for a summary. The runner checks tool IDs and results, exact file content, the
-        final event stream and the retained Qwen Code conversation. Extra reads of the two
-        fixture files are allowed; unexpected file paths or validation commands fail.</p>
+        asks for a summary. The runner checks tool IDs, arguments and results against both
+        the event stream and retained Qwen Code conversation, requires terminal success after
+        tool completion, and checks the exact file content. Extra reads of the two
+        fixture files are allowed; unexpected file paths or validation commands fail
+        the retrospective acceptance check. These checks do not sandbox tool execution.
+        Use a restricted account or container when the harness must be isolated.</p>
     <div class="cmd-block">
         <button class="copy-btn" type="button">Copy</button>
 <pre>python3 server/qwen_harness_acceptance.py \

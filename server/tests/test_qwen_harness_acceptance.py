@@ -17,8 +17,15 @@ def _evidence():
     recording = [{'type': 'user', 'sessionId': SESSION}]
     for number, name in enumerate(('read_file', 'edit', 'run_shell_command'), 1):
         call_id = f'call_{number}'
+        arguments = (
+            {'file_path': 'index.html'} if name == 'read_file' else
+            {'file_path': 'index.html', 'old_string': '<h1>Before</h1>',
+             'new_string': '<h1>CKE tool round trip</h1>'} if name == 'edit' else
+            {'command': 'python3 test_html.py'}
+        )
         events.append({'type': 'assistant', 'session_id': SESSION, 'message': {
-            'content': [{'type': 'tool_use', 'id': call_id, 'name': name}],
+            'content': [{'type': 'tool_use', 'id': call_id, 'name': name,
+                         'input': arguments}],
         }})
         events.append({'type': 'user', 'session_id': SESSION, 'message': {
             'content': [{'type': 'tool_result', 'tool_use_id': call_id,
@@ -27,7 +34,8 @@ def _evidence():
         }})
         recording.append({'type': 'assistant', 'provenance': 'assistant_output',
                           'sessionId': SESSION, 'message': {'parts': [
-                              {'functionCall': {'id': call_id, 'name': name}}]}})
+                              {'functionCall': {'id': call_id, 'name': name,
+                                                'args': arguments.copy()}}]}})
         recording.append({'type': 'tool_result', 'sessionId': SESSION,
                           'toolCallResult': {'callId': call_id, 'status': 'success'}})
     recording.append({'type': 'assistant', 'provenance': 'assistant_output',
@@ -84,9 +92,6 @@ def test_recording_mismatch_fails_even_when_stream_claims_success():
 
 def test_optional_read_of_validator_is_allowed_but_other_paths_are_rejected():
     events, recording = _evidence()
-    events[1]['message']['content'][0]['input'] = {'file_path': 'index.html'}
-    events[3]['message']['content'][0]['input'] = {'file_path': 'index.html'}
-    events[5]['message']['content'][0]['input'] = {'command': 'python3 test_html.py'}
     events.insert(3, {'type': 'assistant', 'session_id': SESSION, 'message': {
         'content': [{'type': 'tool_use', 'id': 'call_extra', 'name': 'read_file',
                      'input': {'file_path': 'test_html.py'}}],
@@ -97,7 +102,8 @@ def test_optional_read_of_validator_is_allowed_but_other_paths_are_rejected():
     }})
     recording.insert(3, {'type': 'assistant', 'provenance': 'assistant_output',
                          'sessionId': SESSION, 'message': {'parts': [
-                             {'functionCall': {'id': 'call_extra', 'name': 'read_file'}}]}})
+                             {'functionCall': {'id': 'call_extra', 'name': 'read_file',
+                                               'args': {'file_path': 'test_html.py'}}}]}})
     recording.insert(4, {'type': 'tool_result', 'sessionId': SESSION,
                          'toolCallResult': {'callId': 'call_extra', 'status': 'success'}})
     assert _check(events, recording)['status'] == 'pass'
@@ -151,12 +157,14 @@ def test_tool_result_must_follow_its_own_call_before_next_step():
 def test_parallel_reads_finish_before_edit():
     events, recording = _evidence()
     events[1]['message']['content'].append(
-        {'type': 'tool_use', 'id': 'call_extra', 'name': 'read_file'})
+        {'type': 'tool_use', 'id': 'call_extra', 'name': 'read_file',
+         'input': {'file_path': 'index.html'}})
     events.insert(3, {'type': 'user', 'session_id': SESSION, 'message': {
         'content': [{'type': 'tool_result', 'tool_use_id': 'call_extra',
                      'is_error': False, 'content': 'validator source'}]}})
     recording[1]['message']['parts'].append(
-        {'functionCall': {'id': 'call_extra', 'name': 'read_file'}})
+        {'functionCall': {'id': 'call_extra', 'name': 'read_file',
+                          'args': {'file_path': 'index.html'}}})
     recording.insert(3, {'type': 'tool_result', 'sessionId': SESSION,
                          'toolCallResult': {'callId': 'call_extra', 'status': 'success'}})
     assert _check(events, recording)['status'] == 'pass'
@@ -165,3 +173,30 @@ def test_parallel_reads_finish_before_edit():
     early_edit[3], early_edit[4] = early_edit[4], early_edit[3]
     result = _check(early_edit, recording)
     assert 'tool_result_order_mismatch' in result['errors']
+
+
+def test_recorded_tool_argument_mismatches_fail_for_path_edit_and_command():
+    changes = (
+        (0, 'file_path', '../elsewhere.html'),
+        (1, 'new_string', '<h1>Unrelated edit</h1>'),
+        (2, 'command', 'python3 unrelated.py'),
+    )
+    for call_index, key, value in changes:
+        events, recording = _evidence()
+        recording[1 + 2 * call_index]['message']['parts'][0]['functionCall']['args'][key] = value
+        result = _check(events, recording)
+        assert result['status'] == 'fail'
+        assert 'stream_recording_tool_arguments_mismatch' in result['errors']
+
+
+def test_terminal_must_follow_all_tool_results_and_end_tool_activity():
+    events, recording = _evidence()
+    early = [events[0], events[-1], *events[1:-1]]
+    result = _check(early, recording)
+    assert result['status'] == 'fail'
+    assert 'stream_terminal_order_mismatch' in result['errors']
+    assert 'tool_activity_after_terminal' in result['errors']
+
+    events, recording = _evidence()
+    events.append(events[-1].copy())
+    assert 'stream_terminal_order_mismatch' in _check(events, recording)['errors']

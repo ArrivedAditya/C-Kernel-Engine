@@ -104,6 +104,16 @@ def _valid_tool_phases(order: list[tuple[str, str]], calls: list[dict]) -> bool:
     return phase == 2 and not outstanding
 
 
+def _tool_arguments(value: object) -> dict | None:
+    """Return the Qwen tool argument object, regardless of JSON key order."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return None
+    return value if isinstance(value, dict) else None
+
+
 def evaluate(events: list[dict], recording: list[dict], *, session_id: str,
              html: str, exit_code: int, expected_model: str,
              fixture_dir: Path | None = None) -> dict:
@@ -123,15 +133,23 @@ def evaluate(events: list[dict], recording: list[dict], *, session_id: str,
     calls: list[dict] = []
     results: dict[str, dict] = {}
     stream_order: list[tuple[str, str]] = []
-    for row in events:
+    last_tool_result_index = -1
+    tool_activity_after_terminal = False
+    terminal_indices = [i for i, row in enumerate(events) if row.get('type') == 'result']
+    first_terminal_index = terminal_indices[0] if terminal_indices else len(events)
+    for event_index, row in enumerate(events):
         message = row.get('message') or {}
         if row.get('type') == 'assistant':
             for part in message.get('content', []):
                 if part.get('type') == 'tool_use':
+                    arguments = _tool_arguments(part.get('input'))
+                    if arguments is None:
+                        errors.append('invalid_stream_tool_arguments')
                     calls.append({'id': str(part.get('id', '')),
                                   'name': str(part.get('name', '')),
-                                  'input': part.get('input') or {}})
+                                  'input': arguments or {}})
                     stream_order.append(('call', calls[-1]['id']))
+                    tool_activity_after_terminal |= event_index > first_terminal_index
         elif row.get('type') == 'user':
             for part in message.get('content', []):
                 if part.get('type') == 'tool_result':
@@ -140,6 +158,8 @@ def evaluate(events: list[dict], recording: list[dict], *, session_id: str,
                         errors.append('duplicate_tool_result')
                     results[call_id] = part
                     stream_order.append(('result', call_id))
+                    last_tool_result_index = event_index
+                    tool_activity_after_terminal |= event_index > first_terminal_index
     names = tuple(call['name'] for call in calls)
     valid_order = (len(names) in (3, 4) and names[-2:] == EXPECTED_TOOLS[-2:]
                    and all(name == 'read_file' for name in names[:-2]))
@@ -153,7 +173,7 @@ def evaluate(events: list[dict], recording: list[dict], *, session_id: str,
         errors.append('tool_result_order_mismatch')
     if any(result.get('is_error') for result in results.values()):
         errors.append('tool_error')
-    recorded_calls: list[tuple[str, str]] = []
+    recorded_calls: list[tuple[str, str, dict | None]] = []
     recorded_results: dict[str, str] = {}
     recorded_order: list[tuple[str, str]] = []
     for row in recording:
@@ -161,16 +181,22 @@ def evaluate(events: list[dict], recording: list[dict], *, session_id: str,
             for part in (row.get('message') or {}).get('parts') or []:
                 function = part.get('functionCall') if isinstance(part, dict) else None
                 if isinstance(function, dict):
+                    arguments = _tool_arguments(function.get('args'))
+                    if arguments is None:
+                        errors.append('invalid_recorded_tool_arguments')
                     recorded_calls.append((str(function.get('id', '')),
-                                           str(function.get('name', ''))))
+                                           str(function.get('name', '')), arguments))
                     recorded_order.append(('call', recorded_calls[-1][0]))
         elif row.get('type') == 'tool_result':
             result = row.get('toolCallResult') or {}
             if result.get('callId'):
                 recorded_results[str(result['callId'])] = str(result.get('status', ''))
                 recorded_order.append(('result', str(result['callId'])))
-    if recorded_calls != [(call['id'], call['name']) for call in calls]:
+    if [(call_id, name) for call_id, name, _ in recorded_calls] != [
+            (call['id'], call['name']) for call in calls]:
         errors.append('stream_recording_tool_calls_mismatch')
+    if [args for _, _, args in recorded_calls] != [call['input'] for call in calls]:
+        errors.append('stream_recording_tool_arguments_mismatch')
     if set(recorded_results) != set(results):
         errors.append('stream_recording_tool_results_mismatch')
     if not _valid_tool_phases(recorded_order, calls):
@@ -212,6 +238,10 @@ def evaluate(events: list[dict], recording: list[dict], *, session_id: str,
     stream_final = terminal[-1] if terminal else None
     if not stream_final or stream_final.get('subtype') != 'success' or stream_final.get('is_error'):
         errors.append('stream_final_missing_or_failed')
+    if len(terminal_indices) != 1 or (terminal_indices and terminal_indices[0] <= last_tool_result_index):
+        errors.append('stream_terminal_order_mismatch')
+    if tool_activity_after_terminal:
+        errors.append('tool_activity_after_terminal')
     stream_text = str((stream_final or {}).get('result') or '').strip()
     if not stream_text:
         errors.append('stream_summary_missing')
