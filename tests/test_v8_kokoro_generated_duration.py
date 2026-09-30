@@ -16,12 +16,12 @@ import numpy as np
 
 from tests.v8_checked_graph_test_support import compile_native_graph
 from tests.v8_checked_graph_test_support import build_ir_v8
-from tests.v8_kokoro_fixture_support import load_first_layer_fixtures
+from tests.v8_kokoro_duration_fixture_support import (
+    prepare_duration_fixture, populated_duration_arena)
 from tests import test_v8_kokoro_generated_albert_layer as first_layer
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'version/v8/tts'))
-import export_kokoro_bump as exporter
 import build_kokoro_duration_circuit as author
 
 
@@ -36,43 +36,10 @@ class KokoroGeneratedDurationTest(unittest.TestCase):
         else:
             cls.temp=tempfile.TemporaryDirectory()
             root=Path(cls.temp.name)
-        encoder_path = ROOT / 'tests/fixtures/tts/kokoro_encoder_pinned.npz'
-        duration_path = ROOT / 'tests/fixtures/tts/kokoro_duration_predictor_pinned.npz'
-        cls.encoder = dict(np.load(encoder_path))
-        cls.duration = dict(np.load(duration_path))
-        cls.encoder_meta = json.loads(encoder_path.with_suffix('.json').read_text())
-        cls.duration_meta = json.loads(duration_path.with_suffix('.json').read_text())
-        for path, meta in ((encoder_path,cls.encoder_meta),(duration_path,cls.duration_meta)):
-            if hashlib.sha256(path.read_bytes()).hexdigest()!=meta['fixture_sha256']:
-                raise RuntimeError(f'fixture SHA-256 mismatch: {path}')
-        if cls.duration_meta['model_pin'] != cls.encoder_meta['model_pin'] or cls.duration_meta['asset_hashes'] != cls.encoder_meta['asset_hashes']:
-            raise RuntimeError('duration and encoder oracle pins disagree')
-        tensors = load_first_layer_fixtures(cls)
-        for kind in ('weight','bias'):
-            tensors[f'phoneme_projection.{kind}'] = cls.encoder[f'weight__phoneme_projection__{kind}']
-        origins = {name: {'source_name': name, 'transform': 'identity'} for name in tensors}
-        for name, value in cls.duration.items():
-            if name.startswith('weight__'):
-                canonical = name.removeprefix('weight__').replace('__','.')
-                tensors[canonical] = value
-                origins[canonical] = cls.duration_meta['weights'][name]
-        cls.bundle = exporter.write_bundle(root, tensors, origins,
-            {'n_token':178,'hidden_dim':512,'plbert':{'intermediate_size':2048,
-             'max_position_embeddings':512,'num_attention_heads':12}},
-            {'source':'pinned independent effective-weight fixture with explicit recurrent direction stacking'})
-        exporter.verify_bundle(root)
-        cls.bump = (root/'weights.bump').read_bytes()
-        cls.entries = {entry['name']: entry for entry in cls.bundle['entries']}
         circuit = author.OUTPUT
-        template = json.loads(circuit.read_text())
-        cls.source = {'config': {'model':template['name'],'arch':template['name'],
-            'num_layers':1,'embed_dim':128,'num_heads':1,'num_kv_heads':1,
-            'head_dim':128,'intermediate_size':256,'context_length':36,
-            'max_seq_len':36,'vocab_size':178,'T':36,'C':128,
-            'epsilon':1e-12,'speed':1.0,
-            'activation_buffer_dtypes': {'word_ids':'i32','type_ids':'i32',
-                                         'runtime_values':'i32','runtime_valid_extent':'i32'}},
-            'entries':cls.bundle['entries'],'quant_summary':{},'template':template}
+        fixture = prepare_duration_fixture(root, circuit)
+        for key, value in vars(fixture).items():
+            setattr(cls, key, value)
         cls.layout,cls.calls,cls.library,cls.loaded,cls.fn = compile_native_graph(root,cls.source,circuit)
         cls.root = root
         cls.buffers = {item['name']:item for item in cls.layout['memory']['activations']['buffers']}
@@ -84,23 +51,8 @@ class KokoroGeneratedDurationTest(unittest.TestCase):
         cls.temp.cleanup()
 
     def arena(self):
-        size = self.layout['memory']['arena']['total_size']
-        raw = (ctypes.c_uint8*(size+63))()
-        arena = (ctypes.c_uint8*size).from_buffer(raw,(-ctypes.addressof(raw))&63)
-        for name, planned in self.planned_weights.items():
-            entry = self.entries[name]
-            start = entry['file_offset']; end=start+entry['size']
-            data=self.bump[start:end]
-            self.assertEqual(hashlib.sha256(data).hexdigest(),entry['sha256'])
-            arena[planned['abs_offset']:planned['abs_offset']+len(data)] = data
-        for name,item in self.buffers.items():
-            dtype=np.int32 if name in ('word_ids','type_ids','runtime_values','runtime_valid_extent') else np.float32
-            view=np.ndarray((item['size']//4,),dtype,buffer=arena,offset=item['abs_offset'])
-            view[:]= -999 if dtype==np.int32 else -777.
-        self.view(arena,'word_ids',np.int32,(36,))[:]=self.encoder['word_ids']
-        self.view(arena,'type_ids',np.int32,(36,))[:]=0
-        self.view(arena,'predictor_style',np.float32,(128,))[:]=self.duration['predictor_style']
-        return arena
+        return populated_duration_arena(self.layout, self.entries, self.bump,
+                                        self.encoder, self.duration)
 
     def view(self, arena, name, dtype, shape):
         return np.ndarray(shape,dtype,buffer=arena,offset=self.buffers[name]['abs_offset'])

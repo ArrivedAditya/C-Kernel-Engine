@@ -807,6 +807,11 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_kokoro_generated_duration.py",
         timeout_sec=180,
     ),
+    "tts_kokoro_generated_expansion": TestSuite(
+        "Kokoro Generated Duration and Two-Stream Expansion Oracle", "inference",
+        ROOT / "tests" / "test_v8_kokoro_generated_expansion.py",
+        timeout_sec=180,
+    ),
     "normalization_checked_oracle": TestSuite(
         "Checked LayerNorm and Tanh GELU Numerical Contracts", "kernels",
         ROOT / "tests" / "test_v8_normalization_checked_oracle.py",
@@ -826,6 +831,10 @@ TEST_SUITES = {
     "tts_duration_expand_oracle": TestSuite(
         "TTS Duration Expansion PyTorch Oracle", "kernels",
         ROOT / "tests" / "test_v8_audio_duration_expand_oracle.py",
+    ),
+    "tts_duration_expand_token_major_oracle": TestSuite(
+        "TTS Token-Major Duration Expansion Numerical Oracle", "kernels",
+        ROOT / "tests" / "test_v8_audio_duration_expand_token_major_oracle.py",
     ),
     "tts_duration_logits_oracle": TestSuite(
         "TTS Duration Logits Committed PyTorch Oracle", "kernels",
@@ -1507,6 +1516,7 @@ QUICK_TESTS = [
     "relu_bf16", "rmsnorm_bf16",
     "q4k_kernels", "idle_nightly_coordinator",
     "tts_kokoro_shape_bounds", "tts_istft_oracle", "tts_duration_expand_oracle",
+    "tts_duration_expand_token_major_oracle",
     "tts_lstm_scan_oracle",
     "tts_adaptive_layer_norm_oracle", "tts_adaptive_layer_norm_live",
     "tts_kokoro_bump_export", "tts_kokoro_bump_export_live",

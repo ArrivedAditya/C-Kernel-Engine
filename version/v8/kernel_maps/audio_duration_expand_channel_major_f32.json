@@ -26,6 +26,10 @@
     "sources": ["src/kernels/audio_duration_expand.c"]
   },
   "modes": {"inference": true, "training": false, "backward": false},
+  "call_constant_contract": {"shape_symbols": {"T": "phoneme_count"}, "buffer_spans": [
+    {"pointer": "features", "elements": "input_elements", "stride": "input_stride", "physical_row_stride": true, "rows": 1, "width": 1, "element_bytes": 4},
+    {"pointer": "output", "elements": "output_elements", "stride": "output_stride", "physical_row_stride": true, "rows": 1, "width": 1, "element_bytes": 4}
+  ]},
   "numerical_capabilities": [{
     "contract_id": "audio_duration_expand_checked_strided_copy_fp32",
     "status": "validated",
@@ -37,16 +41,16 @@
   }],
   "call_abi": {"version": 1, "params": [
     {"name": "features", "source": "activation:features", "cast": "const float*", "ports": ["input:features"]},
-    {"name": "input_elements", "source": "runtime:input_elements"},
+    {"name": "input_elements", "source": "runtime:input_elements", "value_type": "size_t"},
     {"name": "channels", "source": "dim:channels"},
-    {"name": "phoneme_count", "source": "runtime:phoneme_count"},
-    {"name": "input_stride", "source": "runtime:input_stride"},
+    {"name": "phoneme_count", "source": "runtime:phoneme_count", "value_type": "size_t"},
+    {"name": "input_stride", "source": "runtime:input_stride", "value_type": "size_t"},
     {"name": "durations", "source": "activation:durations", "cast": "const int32_t*", "ports": ["input:durations"]},
     {"name": "expanded_frames", "source": "runtime:expanded_frames"},
     {"name": "output", "source": "output:output", "cast": "float*", "ports": ["output:output"]},
-    {"name": "output_elements", "source": "runtime:output_elements"},
-    {"name": "output_stride", "source": "runtime:output_stride"}
+    {"name": "output_elements", "source": "runtime:output_elements", "value_type": "size_t"},
+    {"name": "output_stride", "source": "runtime:output_stride", "value_type": "size_t"}
   ]},
-  "tests": {"unit": ["tests/test_v8_kokoro_shape_bounds.py", "tests/test_v8_audio_duration_expand_oracle.py"], "oracle": "PyTorch torch.repeat_interleave FP32; committed fixture and live dependency check"},
+  "tests": {"unit": ["tests/test_v8_kokoro_shape_bounds.py", "tests/test_v8_audio_duration_expand_oracle.py", "tests/test_v8_kokoro_generated_expansion.py"], "oracle": "PyTorch torch.repeat_interleave FP32; committed fixture and live dependency check"},
   "notes": "Caller-owned buffers. Check nonpositive durations, sum, capacities and byte arithmetic before writes. Only valid A columns are written; physical row stride may be A_capacity. Unsupported backward is explicit."
 }
