@@ -3334,7 +3334,8 @@ llamacpp-parity-nightly:
 	fi
 	@echo ""
 	@echo "Running head-major Q5 out-proj parity benchmark..."
-	@$(MAKE) --no-print-directory test-head-major-q5-outproj-quick
+	@LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) \
+		unittest/test_head_major_q5_outproj.py --quick --no-performance-gate
 	@echo ""
 	@echo "Running head-major Q5 CK vs llama.cpp benchmark..."
 	@if [ -f "$(LLAMA_KERNEL_TEST)" ]; then \

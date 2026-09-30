@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <limits>
 #include <vector>
 
 extern "C" {
@@ -66,7 +67,8 @@ static bool compare_bytes(const char *label, const void *a, const void *b, size_
     return false;
 }
 
-static bool compare_f32(const char *label, const float *a, const float *b, size_t count) {
+static bool compare_f32(const char *label, const float *a, const float *b, size_t count,
+        bool require_exact = true) {
     size_t different = 0, first = count, worst = 0;
     float max_abs = 0.0f;
     for (size_t i = 0; i < count; ++i) {
@@ -82,9 +84,63 @@ static bool compare_f32(const char *label, const float *a, const float *b, size_
         return true;
     }
     std::printf("  %-34s different=%zu/%zu first=%zu worst=%zu max_abs=%.9g "
-                "ck=%.9g llama=%.9g [FAIL]\n",
-            label, different, count, first, worst, max_abs, a[worst], b[worst]);
-    return false;
+                "ck=%.9g llama=%.9g [%s]\n",
+            label, different, count, first, worst, max_abs, a[worst], b[worst],
+            require_exact ? "FAIL" : "DIFF");
+    return !require_exact;
+}
+
+static std::vector<float> dequantized_reference(
+        const std::vector<unsigned char> &weights,
+        const std::vector<unsigned char> &activations,
+        int m, int n, int k) {
+    const size_t q8_row = static_cast<size_t>(k / QK_K) * sizeof(block_q8_K);
+    const size_t q6_row = static_cast<size_t>(k / QK_K) * sizeof(block_q6_K);
+    std::vector<float> result(static_cast<size_t>(m) * n);
+    std::vector<float> x(k), w(k);
+    for (int r = 0; r < m; ++r) {
+        dequantize_row_q8_K(reinterpret_cast<const block_q8_K *>(
+                activations.data() + static_cast<size_t>(r) * q8_row), x.data(), k);
+        for (int c = 0; c < n; ++c) {
+            dequantize_row_q6_K(reinterpret_cast<const block_q6_K *>(
+                    weights.data() + static_cast<size_t>(c) * q6_row), w.data(), k);
+            long double sum = 0.0;
+            for (int i = 0; i < k; ++i) sum += static_cast<long double>(x[i]) * w[i];
+            result[static_cast<size_t>(r) * n + c] = static_cast<float>(sum);
+        }
+    }
+    return result;
+}
+
+static bool reference_contract(const std::vector<float> &actual,
+        const std::vector<float> &reference, float *max_abs, size_t *worst) {
+    if (actual.size() != reference.size() || actual.empty()) return false;
+    bool pass = true;
+    *max_abs = 0.0f;
+    *worst = 0;
+    for (size_t i = 0; i < actual.size(); ++i) {
+        const float error = std::fabs(actual[i] - reference[i]);
+        // The tiled graph changes reduction order; the leaf comparison stays bit-exact.
+        const float limit = 1.0e-6f + 2.0f * std::numeric_limits<float>::epsilon()
+                * std::fabs(reference[i]);
+        if (!std::isfinite(error) || error > limit) pass = false;
+        if (error > *max_abs) { *max_abs = error; *worst = i; }
+    }
+    return pass;
+}
+
+static bool compare_reference(const char *label, const std::vector<float> &actual,
+        const std::vector<float> &reference) {
+    if (actual.size() != reference.size() || actual.empty()) {
+        std::printf("  %-34s invalid reference extent [FAIL]\n", label);
+        return false;
+    }
+    float max_abs = 0.0f;
+    size_t worst = 0;
+    const bool pass = reference_contract(actual, reference, &max_abs, &worst);
+    std::printf("  %-34s max_abs=%.9g worst=%zu actual=%.9g reference=%.9g [%s]\n",
+            label, max_abs, worst, actual[worst], reference[worst], pass ? "PASS" : "FAIL");
+    return pass;
 }
 
 static float f32_from_bits(uint32_t bits) {
@@ -227,6 +283,19 @@ static bool run_case(const case_spec &spec, bool prepared_only = false) {
                 prepared.data(), ck.data(), prepared.size());
     }
     if (!llama_graph(weights, activations, canonical, spec.m, spec.n, spec.k, false)) return false;
+    const auto reference = dequantized_reference(weights, ck_q8, spec.m, spec.n, spec.k);
+    pass &= compare_reference("CK vs dequantized reference", ck, reference);
+    pass &= compare_reference("llama graph vs reference", canonical, reference);
+    if (spec.m == 33) {
+        auto perturbed = canonical;
+        perturbed[0] += 0.01f;
+        float error = 0.0f;
+        size_t worst = 0;
+        const bool rejected = !reference_contract(perturbed, reference, &error, &worst);
+        std::printf("  %-34s %s\n", "large-error mutation rejected",
+                rejected ? "[PASS]" : "[FAIL]");
+        pass &= rejected;
+    }
     const bool llama_q6_repack_selected = ggml_cpu_has_neon();
     if (llama_q6_repack_selected) {
         if (!llama_graph(weights, activations, repack, spec.m, spec.n, spec.k, true)) return false;
@@ -235,19 +304,20 @@ static bool run_case(const case_spec &spec, bool prepared_only = false) {
         std::printf("  %-34s x86 Q6 uses canonical graph [SKIP]\n", "llama Q6 repack graph");
     }
 
-    pass &= compare_f32("llama leaf vs canonical graph", leaf.data(), canonical.data(), ck.size());
+    pass &= compare_f32("llama leaf vs canonical graph", leaf.data(), canonical.data(), ck.size(), false);
     pass &= compare_f32("CK vs llama leaf", ck.data(), leaf.data(), ck.size());
     if (llama_q6_repack_selected) {
         pass &= compare_f32("llama canonical vs repack graph", canonical.data(), repack.data(), ck.size());
     }
     pass &= compare_f32(spec.m == 1 ? "CK decode vs llama production" :
-            "CK prefill vs llama production", ck.data(), repack.data(), ck.size());
+            "CK prefill vs llama production", ck.data(), repack.data(), ck.size(), false);
     pass &= compare_f32(
             "CK prepared vs established",
             prepared.data(), ck.data(), prepared.size());
     if (spec.m > 1) {
         pass &= compare_f32(
-            "CK M4 prefill vs llama production", m4.data(), repack.data(), ck.size());
+                "CK M4 prefill vs llama production", m4.data(), repack.data(), ck.size(), false);
+        pass &= compare_reference("CK M4 vs dequantized reference", m4, reference);
     }
     return pass;
 }

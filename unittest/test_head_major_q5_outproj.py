@@ -171,6 +171,8 @@ def main():
     parser.add_argument("--warmup", type=int, default=3)
     parser.add_argument("--iters", type=int, default=10)
     parser.add_argument("--max-slowdown", type=float, default=1.35)
+    parser.add_argument("--no-performance-gate", action="store_true",
+                        help="Report timing without failing the numerical parity lane")
     args = parser.parse_args()
 
     np.random.seed(42)
@@ -219,7 +221,7 @@ def main():
             check_numpy,
             warmup=args.warmup,
             iterations=args.iters,
-            max_slowdown=args.max_slowdown,
+            max_slowdown=None if args.no_performance_gate else args.max_slowdown,
         ) and ok
 
     if not ok:

@@ -35,7 +35,7 @@ apply_profile = _PROFILE_MODULE.apply_profile
 BRIDGE = ROOT / "version" / "v8" / "scripts" / "run_multimodal_bridge_v8.py"
 PARITY = ROOT / "version" / "v8" / "scripts" / "compare_multimodal_multitoken_logits_v8.py"
 DEFAULT_NATIVE_CLI = ROOT / "build" / "ck-cli-v8"
-PINNED_LLAMA_COMMIT = "f3e182816421c648188b5eab269853bf1531d950"
+PINNED_LLAMA_COMMIT = "19e28a27702117d8f2eb16b825b9a308111f67d9"
 DEFAULT_PROMPT = "Extract visible form fields as compact JSON."
 MODEL_PROFILES = BUILTIN_PROFILES
 
