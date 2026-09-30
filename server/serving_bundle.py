@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import hashlib
+import ctypes
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -122,3 +124,73 @@ def verify_loaded_libraries(doc: dict[str, Any], *, maps_text: str | None = None
                 raise ValueError(f"cannot identify loaded serving library: {path}") from exc
             if not matches:
                 raise ValueError(f"loaded serving library identity mismatch: {name}")
+
+
+def loaded_serving_identity(
+    doc: dict[str, Any], *, model: str, session_library: ctypes.CDLL,
+) -> dict[str, Any]:
+    """Describe a verified loaded bundle without publishing filesystem paths.
+
+    Call only after ``verify_loaded_libraries`` succeeds on the open session.
+    The session ABI library is outside the BUMP bundle, so identify its loaded
+    file separately instead of implying that the bundle pins it.
+    """
+    try:
+        symbol_address = ctypes.cast(session_library.ck_session_v8_open, ctypes.c_void_p).value
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise ValueError("cannot identify loaded native session symbol") from exc
+    if not symbol_address:
+        raise ValueError("cannot identify loaded native session symbol")
+    try:
+        maps = Path("/proc/self/maps").read_text()
+    except OSError as exc:
+        raise ValueError("cannot inspect loaded native session mapping") from exc
+    candidates = []
+    selected = []
+    for row in maps.splitlines():
+        fields = row.split(maxsplit=5)
+        if len(fields) != 6 or not fields[5].startswith("/"):
+            continue
+        path = fields[5]
+        if Path(path.removesuffix(" (deleted)")).name != "libck_session_v8.so":
+            continue
+        start, end = (int(part, 16) for part in fields[0].split("-", 1))
+        entry = (fields, path)
+        candidates.append(entry)
+        if start <= symbol_address < end and "x" in fields[1]:
+            selected.append(entry)
+    if len(selected) != 1 or not candidates:
+        raise ValueError("loaded native session symbol has no unique executable mapping")
+    fields, path = selected[0]
+    if path.endswith(" (deleted)") or any(
+        item[0][3:5] != fields[3:5] for item in candidates if item[1] == path
+    ):
+        raise ValueError("loaded native session mapping is deleted or ambiguous")
+    library = Path(path)
+    try:
+        with library.open("rb") as stream:
+            backing = os.fstat(stream.fileno())
+            device = f"{os.major(backing.st_dev):02x}:{os.minor(backing.st_dev):02x}"
+            if fields[3].lower() != device or int(fields[4]) != backing.st_ino:
+                raise ValueError("loaded native session backing file was replaced")
+            digest = hashlib.sha256()
+            for chunk in iter(lambda: stream.read(4 * 1024 * 1024), b""):
+                digest.update(chunk)
+            current = library.stat()
+            if current.st_dev != backing.st_dev or current.st_ino != backing.st_ino:
+                raise ValueError("loaded native session backing file was replaced")
+    except OSError as exc:
+        raise ValueError("cannot read loaded native session backing file") from exc
+    return {
+        "schema": "cke.loaded_serving_identity.v1",
+        "model": model,
+        "serving_identity": doc["identity"],
+        "profile_id": doc["profile_id"],
+        "variant": doc["variant"],
+        "output_protocol": doc["output_protocol"],
+        "context_capacity": doc["context_capacity"],
+        "assets_sha256": {
+            name: asset["sha256"] for name, asset in sorted(doc["assets"].items())
+        },
+        "session_library_sha256": digest.hexdigest(),
+    }

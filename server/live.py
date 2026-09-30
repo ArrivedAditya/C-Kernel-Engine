@@ -20,6 +20,7 @@ client to execute. Unsupported tool types are rejected before generation.
 from __future__ import annotations
 
 import hashlib
+import copy
 import json
 import math
 import queue
@@ -1414,6 +1415,7 @@ def create_app(
     chat_template: str | None = None,
     chat_templates: dict[str, str] | None = None,
     tool_protocol: str | None = None,
+    loaded_identity: dict[str, Any] | None = None,
     allow_untemplated: bool = False,
     cancel_wait_seconds: float = 10.0,
     viz_html: str | None = None,
@@ -1435,6 +1437,16 @@ def create_app(
             )
 
     router = APIRouter()
+    if loaded_identity is not None and loaded_identity.get("schema") != "cke.loaded_serving_identity.v1":
+        raise ValueError("invalid loaded serving identity")
+    if loaded_identity is not None and (
+        not isinstance(context_length, int) or isinstance(context_length, bool)
+        or context_length <= 0 or not isinstance(max_tokens, int)
+        or isinstance(max_tokens, bool) or max_tokens <= 0
+    ):
+        raise ValueError("loaded serving identity requires positive effective context and output limits")
+    attestation = copy.deepcopy(loaded_identity)
+    server_instance_id = uuid.uuid4().hex
     response_store: OrderedDict[str, dict[str, Any]] = OrderedDict()
     response_history_store: OrderedDict[str, list[dict[str, Any]]] = OrderedDict()
     response_store_lock = threading.Lock()
@@ -1452,6 +1464,15 @@ def create_app(
     # hardcoded tags or template-text heuristics.
     declared_tool_protocol = tool_protocol or (chat_contract or {}).get("tool_protocol")
     tool_syntax = _tool_syntax_for_protocol(declared_tool_protocol)
+    effective_serving = {
+        "schema": "cke.effective_serving.v1",
+        "configured_mode": "raw" if allow_untemplated and not chat_template else "templated",
+        "output_protocol": declared_tool_protocol if chat_template else None,
+        "active_context_limit": context_length,
+        "default_max_output_tokens": max_tokens,
+        "stop_on_text": stop_markers,
+        "stop_at_eos": stop_at_eos,
+    }
 
     def _conversation_echo(body) -> dict[str, Any] | None:
         conv = body.conversation
@@ -2862,6 +2883,13 @@ def create_app(
     def health():
         return {"status": "ok", "mode": "live", "inference": True}
 
+    @router.get("/cke/loaded-identity")
+    def get_loaded_identity():
+        if attestation is None:
+            raise HTTPException(status_code=404, detail="loaded bundle identity unavailable")
+        return {**attestation, "server_instance_id": server_instance_id,
+                "effective_serving": effective_serving}
+
     if extra_route_registrar is not None:
         extra_route_registrar(router, create_response)
 
@@ -2937,6 +2965,9 @@ def create_live_app_from_run_dir(
 ):
     """Build a live app directly from a compiled runtime directory."""
     from .runtime import load_manifest_templates, load_tool_protocol
+    from .serving_bundle import (
+        load_resolved_serving, loaded_serving_identity, verify_loaded_libraries,
+    )
 
     run_dir = Path(run_dir).expanduser().resolve()
     chat_template, chat_templates, contract = load_manifest_templates(run_dir)
@@ -2958,6 +2989,19 @@ def create_live_app_from_run_dir(
     session, capacity, _ = open_live_session(
         run_dir, context_length=context_length, num_threads=num_threads
     )
+    try:
+        resolved_serving = load_resolved_serving(run_dir)
+        loaded_identity = None
+        if resolved_serving is not None:
+            verify_loaded_libraries(resolved_serving)
+            loaded_identity = loaded_serving_identity(
+                resolved_serving,
+                model=model,
+                session_library=session.lib,
+            )
+    except Exception:
+        session.close()
+        raise
     return create_app(
         session,
         model=model,
@@ -2966,5 +3010,6 @@ def create_live_app_from_run_dir(
         chat_template=chat_template,
         chat_templates=chat_templates,
         tool_protocol=tool_protocol,
+        loaded_identity=loaded_identity,
         **kwargs,
     )
