@@ -1547,7 +1547,7 @@ version/v8/scripts/ck_serve_v8.py "$RUN_DIR" --run "$RUN_DIR" \
     <h3 style="margin-top: 0;">Qwen Code Interactive And Overnight Profiles</h3>
     <p>
         A cached Qwen Code 0.24.6 <code>read_file</code> task passed through the Responses server
-        using the dedicated Jinja tool-use bundle above. The earlier 0.21.5 pilot used the
+        using the circuit-resolved publisher Jinja bundle. The earlier 0.21.5 pilot used the
         Chat Completions compatibility route. Both use the pinned Qwen3.8 27B Q4_K_M artifact and a
         generated runtime with at least 16K context. Repository-owned settings separate short
         interactive work from large overnight artifact generation without replacing the user's
@@ -1596,17 +1596,39 @@ qwen --bare \
   &gt; /path/to/task-events.jsonl</pre>
     </div>
     <p style="margin-bottom: 0;" class="mini-note">
-        The native template's <code>qwen_xml</code> protocol matches its
-        <code>&lt;tool_call&gt;</code> form. The compatibility sidecar above instead declares
-        <code>qwen_code_xml</code> for the two XML forms observed in Qwen Code 0.24.6.
-        Other converted bundles must select their own actual protocol. A hash-bound
-        <code>tool_protocol.json</code> sidecar can carry this selection; a stale template hash
-        fails startup. Tool-bearing streams keep the connection alive and publish parsed calls
-        only after validation. The source GGUF is unnecessary for <code>--no-build</code> serving
-        when the generated bundle and sidecars are retained. The first command builds the runtime;
-        stop it, install the dedicated Jinja variant as shown above, then restart with
-        <code>--no-build</code> before giving Qwen Code a tool task.
+        The circuit-linked serving profile resolves the imported publisher Jinja, tokenizer
+        assets and declared tool-output protocol into the BUMP bundle. The server consumes
+        that resolved contract and rejects stale hashes; it does not install a repository
+        compatibility template at request time. Tool-bearing streams publish parsed calls
+        only after validation. A complete bundle can serve with <code>--no-build</code> without
+        the source GGUF or a server-owned template copy.
     </p>
+    <h4>Bounded local Qwen Code acceptance</h4>
+    <p>Use the same Qwen Code client as a real contributor task in a new disposable directory.
+        This command reads a small HTML file, edits one heading, runs its Python validator and
+        asks for a summary. The runner checks tool IDs, arguments and results against both
+        the event stream and retained Qwen Code conversation, requires terminal success after
+        tool completion, and checks the exact file content. Extra reads of the two
+        fixture files are allowed; unexpected file paths or validation commands fail
+        the retrospective acceptance check. These checks do not sandbox tool execution.
+        Use a restricted account or container when the harness must be isolated.</p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>python3 server/qwen_harness_acceptance.py \
+  --endpoint http://127.0.0.1:8080/v1 \
+  --model qwen38-27b-q4km \
+  --settings server/qwen-code/interactive.settings.json \
+  --run-dir /tmp/cke-qwen-acceptance-001</pre>
+    </div>
+    <p class="mini-note">The runner requires an empty run directory and writes
+        <code>events.jsonl</code>, <code>stderr.log</code>, the edited fixture and
+        <code>report.json</code>. A PASS proves this bounded harness task on the named
+        endpoint. The report marks loaded artifact identity as unverified because
+        <code>/v1/models</code> exposes a model ID and context capacity, not the loaded
+        library/template hashes. Bind those identities separately before promoting a
+        result as current-artifact certification. A cached <code>191335eba</code> Qwen3.8 27B Q4_K_M
+        run completed read → edit → test → summary on Ryzen at 16K compiled capacity;
+        it does not establish 256K-input execution or other model-family tool support.</p>
     <p style="margin-bottom: 0;" class="mini-note">
         Qwen Code bare mode ignores <code>--core-tools</code>, so these commands explicitly
         remove unused bare-mode tools. The interactive profile uses 16K context and a 2K output
