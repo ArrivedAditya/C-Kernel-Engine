@@ -10,6 +10,7 @@ import re
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -42,14 +43,18 @@ def _load_image_specs(summary_json: Path | None, image_paths: list[Path], limit:
     return specs
 
 
-def _metric_value(sample: dict[str, Any], name: str, default: float = 0.0) -> float:
+def _metric_value(sample: dict[str, Any], name: str) -> float | None:
     metrics = sample.get("metrics")
-    if not isinstance(metrics, dict):
-        return default
+    if not isinstance(metrics, dict) or name not in metrics:
+        return None
+    value = metrics[name]
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
     try:
-        return float(metrics.get(name, default))
-    except (TypeError, ValueError):
-        return default
+        value = float(value)
+    except (OverflowError, ValueError):
+        return None
+    return value if math.isfinite(value) else None
 
 
 def _shape_status(sample: dict[str, Any], embed_dim: int) -> tuple[bool, int | None]:
@@ -57,20 +62,14 @@ def _shape_status(sample: dict[str, Any], embed_dim: int) -> tuple[bool, int | N
     values = sample.get("num_values")
     if not isinstance(grid, list) or len(grid) != 2:
         return False, None
-    try:
-        gx = int(grid[0])
-        gy = int(grid[1])
-        got = int(values)
-    except (TypeError, ValueError):
+    if (any(type(value) is not int or value <= 0 for value in grid)
+            or type(values) is not int or values <= 0 or type(embed_dim) is not int or embed_dim <= 0):
         return False, None
+    gx, gy, got = grid[0], grid[1], values
     expected = gx * gy * int(embed_dim)
     raw = sample.get("raw_num_values")
-    raw_ok = True
-    if isinstance(raw, dict):
-        try:
-            raw_ok = int(raw.get("ck", got)) == got and int(raw.get("llama", got)) == got
-        except (TypeError, ValueError):
-            raw_ok = False
+    raw_ok = isinstance(raw, dict) and all(type(raw.get(side)) is int and raw[side] == got
+                                           for side in ("ck", "llama"))
     return got == expected and raw_ok, expected
 
 
@@ -81,8 +80,12 @@ def _sample_from_report(spec: dict[str, str], report_path: Path, embed_dim: int)
     sample = {
         "id": spec["id"],
         "image": spec["image"],
+        "reported_image": report.get("image_path"),
         "report": str(report_path),
         "status": report.get("status"),
+        "invocation_id": report.get("invocation_id"),
+        "artifact_identity": report.get("artifact_identity"),
+        "artifact_identity_kind": report.get("artifact_identity_kind"),
         "input_provenance": report.get("input_provenance"),
         "preprocess_evidence": report.get("preprocess_evidence"),
         "source_image_sha256": report.get("source_image_sha256"),
@@ -102,6 +105,55 @@ def _sample_from_report(spec: dict[str, str], report_path: Path, embed_dim: int)
     return sample
 
 
+def _verify_artifacts(sample: dict[str, Any], args: argparse.Namespace, env: dict[str, str]) -> str | None:
+    identities = sample.get("artifact_identity")
+    if sample.get("artifact_identity_kind") != "selected_file_hashes_after_execution":
+        return "artifact identity method is missing or unsupported"
+    model_library = args.runtime_dir / "libqwen3vl_mmproj_v8.so"
+    selected_engine = env.get("CK_ENGINE_SO")
+    if selected_engine is None:
+        adjacent_engine = args.runtime_dir / "libckernel_engine.so"
+        selected_engine = str(adjacent_engine if adjacent_engine.is_file() else REPO_ROOT / "build" / "libckernel_engine.so")
+    llama_bin = Path(env.get("CK_LLAMA_CPP_ROOT", str(REPO_ROOT / "llama.cpp"))) / "build" / "bin"
+    required = {
+        "mmproj_gguf": args.gguf,
+        "ck_model_library": model_library,
+        "ck_generated_source": args.runtime_dir / "qwen3_vl_mmproj_v8.c",
+        "ck_weights": args.runtime_dir / "weights.bump",
+        "ck_manifest": args.runtime_dir / "weights_manifest.map",
+        "llama_shim_library": args.runtime_dir / "libmtmd_clip_shim.so",
+        "ck_engine_library": Path(selected_engine),
+        "llama_mtmd_library": llama_bin / "libmtmd.so",
+    }
+    required.update({
+        name: llama_bin / filename
+        for name, filename in (
+            ("llama_ggml_base_library", "libggml-base.so"),
+            ("llama_ggml_library", "libggml.so"),
+            ("llama_ggml_cpu_library", "libggml-cpu.so"),
+        )
+        if (llama_bin / filename).is_file()
+    })
+    if not isinstance(identities, dict) or set(identities) != set(required):
+        return "incomplete model/oracle artifact identities"
+    for role, expected_path in required.items():
+        item = identities[role]
+        if not isinstance(item, dict) or not isinstance(item.get("path"), str):
+            return f"invalid {role} artifact identity"
+        path = Path(item["path"]).resolve()
+        if path != expected_path.resolve():
+            return f"{role} path differs from selected artifact"
+        if not path.is_file() or path.stat().st_size <= 0 or item.get("size_bytes") != path.stat().st_size:
+            return f"{role} artifact missing or changed size"
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        if item.get("sha256") != digest.hexdigest():
+            return f"{role} artifact hash mismatch"
+    return None
+
+
 def _run_one(
     *,
     spec: dict[str, str],
@@ -117,7 +169,15 @@ def _run_one(
 
     reuse = args.reuse_reports and report_path.exists()
     if not reuse:
-        previous_mtime = report_path.stat().st_mtime_ns if report_path.exists() else None
+        invocation_id = uuid.uuid4().hex
+        if report_path.exists():
+            archive = report_path.parent / "archive"
+            archive.mkdir(parents=True, exist_ok=True)
+            report_path.replace(archive / f"{sample_name}.{invocation_id}.json")
+        if log_path.exists():
+            archive = log_path.parent / "archive"
+            archive.mkdir(parents=True, exist_ok=True)
+            log_path.replace(archive / f"{sample_name}.{invocation_id}.log")
         cmd = [
             sys.executable,
             str(NUMERIC_PARITY),
@@ -133,6 +193,8 @@ def _run_one(
             str(args.ck_threads),
             "--report",
             str(report_path),
+            "--invocation-id",
+            invocation_id,
         ]
         if getattr(args, "independent_preprocess", False):
             cmd.append("--independent-preprocess")
@@ -144,13 +206,12 @@ def _run_one(
         with log_path.open("wb") as log_file:
             completed = subprocess.run(cmd, cwd=str(REPO_ROOT), env=env, stdout=log_file, stderr=subprocess.STDOUT)
         elapsed = time.perf_counter() - start
-        fresh_report = report_path.exists() and (
-            previous_mtime is None or report_path.stat().st_mtime_ns > previous_mtime
-        )
+        fresh_report = report_path.is_file()
     else:
         elapsed = 0.0
         completed = None
         fresh_report = True
+        invocation_id = None
 
     if fresh_report:
         try:
@@ -166,16 +227,27 @@ def _run_one(
             f"numeric parity process exited {completed.returncode}; retained report at {report_path}"
             if sample.get("report") else _log_failure_reason(log_path, completed.returncode)
         )
-    if getattr(args, "independent_preprocess", False):
+    if fresh_report and not sample.get("execution_error"):
+        if reuse:
+            sample["evidence_error"] = "reused report is not current execution evidence"
+        elif sample.get("invocation_id") != invocation_id:
+            sample["evidence_error"] = "report invocation ID differs from current execution"
+        else:
+            artifact_error = _verify_artifacts(sample, args, env)
+            if artifact_error:
+                sample["evidence_error"] = artifact_error
+    if fresh_report and not sample.get("execution_error"):
         try:
             expected_hash = hashlib.sha256(Path(spec["image"]).read_bytes()).hexdigest()
         except OSError as exc:
             expected_hash = None
             sample["evidence_error"] = f"cannot verify current source image: {exc}"
         if "evidence_error" not in sample:
-            if sample.get("source_image_sha256") != expected_hash:
+            if Path(str(sample.get("reported_image") or "")).resolve() != Path(spec["image"]).resolve():
+                sample["evidence_error"] = "report image path does not match the current case"
+            elif sample.get("source_image_sha256") != expected_hash:
                 sample["evidence_error"] = "source image hash does not match the current case"
-            elif sample.get("input_provenance") != "independently_preprocessed_from_shared_decoded_rgb8":
+            elif getattr(args, "independent_preprocess", False) and sample.get("input_provenance") != "independently_preprocessed_from_shared_decoded_rgb8":
                 sample["evidence_error"] = "report did not execute independent preprocessing"
             elif str(sample.get("gguf")) != str(args.gguf):
                 sample["evidence_error"] = "report used a different mmproj path"
@@ -204,19 +276,22 @@ def _evaluate_samples(samples: list[dict[str, Any]], args: argparse.Namespace) -
         for key in ("execution_error", "evidence_error"):
             if sample.get(key):
                 failures.append(f"{sid}: {sample[key]}")
+        if sample.get("status") != "complete":
+            failures.append(f"{sid}: encoder report is not a complete measurement")
         if getattr(args, "independent_preprocess", False):
             preprocessing = sample.get("preprocess_evidence")
             if not isinstance(preprocessing, dict) or preprocessing.get("verdict") != "pass":
                 failures.append(f"{sid}: independent preprocessing did not pass")
         if not sample.get("shape_ok"):
             failures.append(f"{sid}: shape mismatch, got {sample.get('num_values')} expected {sample.get('expected_values')}")
-        if not isinstance(sample.get("metrics"), dict) or not sample["metrics"]:
+        required_metrics = ("cosine", "rmse", "mean_abs", "max_abs")
+        values = {name: _metric_value(sample, name) for name in required_metrics}
+        if any(value is None for value in values.values()):
+            failures.append(f"{sid}: missing, malformed, or nonfinite encoder parity metrics")
             continue
-        cosine = _metric_value(sample, "cosine")
-        rmse = _metric_value(sample, "rmse")
-        max_abs = _metric_value(sample, "max_abs")
-        if not all(math.isfinite(value) for value in (cosine, rmse, max_abs)):
-            failures.append(f"{sid}: nonfinite encoder parity metrics")
+        cosine, rmse, mean_abs, max_abs = (values[name] for name in required_metrics)
+        if not (-1.000001 <= cosine <= 1.000001) or any(value < 0 for value in (rmse, mean_abs, max_abs)):
+            failures.append(f"{sid}: invalid encoder parity metric values")
             continue
         if cosine < float(args.min_cosine):
             failures.append(f"{sid}: cosine {cosine:.9f} < {args.min_cosine:.9f}")
@@ -228,6 +303,9 @@ def _evaluate_samples(samples: list[dict[str, Any]], args: argparse.Namespace) -
 
 
 def _write_markdown(path: Path, summary: dict[str, Any]) -> None:
+    def shown(value: Any, digits: int) -> str:
+        return f"{value:.{digits}f}" if isinstance(value, (int, float)) and math.isfinite(value) else "n/a"
+
     lines = [
         "# Qwen3-VL Encoder Prefix Parity",
         "",
@@ -235,9 +313,9 @@ def _write_markdown(path: Path, summary: dict[str, Any]) -> None:
         f"- threads: {summary['threads']}",
         f"- image_max_tokens: {summary.get('image_max_tokens')}",
         f"- input_provenance: {'independent_preprocessing' if summary.get('independent_preprocess') else 'shared_processed_tensor'}",
-        f"- min_cosine: {summary['aggregate']['min_cosine']:.9f}",
-        f"- max_rmse: {summary['aggregate']['max_rmse']:.6f}",
-        f"- max_abs: {summary['aggregate']['max_abs']:.6f}",
+        f"- min_cosine: {shown(summary['aggregate']['min_cosine'], 9)}",
+        f"- max_rmse: {shown(summary['aggregate']['max_rmse'], 6)}",
+        f"- max_abs: {shown(summary['aggregate']['max_abs'], 6)}",
         f"- failures: {len(summary['failures'])}",
         "",
         "| sample | preprocessing | grid | values | cosine | rmse | mean_abs | max_abs | ck_s | llama_s |",
@@ -247,21 +325,20 @@ def _write_markdown(path: Path, summary: dict[str, Any]) -> None:
         grid = sample.get("grid")
         if not isinstance(grid, list) or len(grid) != 2:
             grid = ["?", "?"]
-        metrics = sample.get("metrics") if isinstance(sample.get("metrics"), dict) else {}
         timings = sample.get("timings_sec") if isinstance(sample.get("timings_sec"), dict) else {}
         preprocessing = sample.get("preprocess_evidence")
         lines.append(
-            "| {sid} | {preprocess} | {gx}x{gy} | {values} | {cos:.9f} | {rmse:.6f} | {mean:.6f} | {max_abs:.6f} | {ck:.1f} | {llama:.1f} |".format(
+            "| {sid} | {preprocess} | {gx}x{gy} | {values} | {cos} | {rmse} | {mean} | {max_abs} | {ck:.1f} | {llama:.1f} |".format(
                 sid=sample.get("id"),
                 preprocess=(preprocessing.get("verdict", "missing") if isinstance(preprocessing, dict)
                             else "missing" if summary.get("independent_preprocess") else "shared"),
                 gx=grid[0],
                 gy=grid[1],
                 values=sample.get("num_values"),
-                cos=float(metrics.get("cosine", 0.0)),
-                rmse=float(metrics.get("rmse", 0.0)),
-                mean=float(metrics.get("mean_abs", 0.0)),
-                max_abs=float(metrics.get("max_abs", 0.0)),
+                cos=shown(_metric_value(sample, "cosine"), 9),
+                rmse=shown(_metric_value(sample, "rmse"), 6),
+                mean=shown(_metric_value(sample, "mean_abs"), 6),
+                max_abs=shown(_metric_value(sample, "max_abs"), 6),
                 ck=float(timings.get("ck_encode", 0.0)),
                 llama=float(timings.get("llama_encode", 0.0)),
             )
@@ -319,10 +396,12 @@ def main(argv: list[str] | None = None) -> int:
                             "execution_error": str(exc)})
 
     failures = _evaluate_samples(samples, args)
+    measured = [sample for sample in samples if all(_metric_value(sample, name) is not None
+                for name in ("cosine", "rmse", "mean_abs", "max_abs"))]
     aggregate = {
-        "min_cosine": min((_metric_value(sample, "cosine") for sample in samples), default=0.0),
-        "max_rmse": max((_metric_value(sample, "rmse") for sample in samples), default=0.0),
-        "max_abs": max((_metric_value(sample, "max_abs") for sample in samples), default=0.0),
+        "min_cosine": min((_metric_value(sample, "cosine") for sample in measured), default=None),
+        "max_rmse": max((_metric_value(sample, "rmse") for sample in measured), default=None),
+        "max_abs": max((_metric_value(sample, "max_abs") for sample in measured), default=None),
         "all_shapes_ok": all(bool(sample.get("shape_ok")) for sample in samples),
     }
     summary = {

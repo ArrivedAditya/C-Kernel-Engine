@@ -242,10 +242,11 @@ class NumericParityQwen3VLMmprojV8Tests(unittest.TestCase):
         values = 36 * 28 * 16384
         sample = {
             "id": "sample",
+            "status": "complete",
             "grid": [36, 28],
             "num_values": values,
             "raw_num_values": {"ck": values, "llama": values},
-            "metrics": {"cosine": 0.999, "rmse": 0.01, "max_abs": 1.0},
+            "metrics": {"cosine": 0.999, "rmse": 0.01, "mean_abs": 0.001, "max_abs": 1.0},
             "shape_ok": True,
             "expected_values": values,
         }
@@ -256,6 +257,111 @@ class NumericParityQwen3VLMmprojV8Tests(unittest.TestCase):
         self.assertEqual(prefix_suite._evaluate_samples([sample], args), [])
         args = SimpleNamespace(min_cosine=0.9999, max_rmse=0.03, max_abs=None)
         self.assertIn("cosine", prefix_suite._evaluate_samples([sample], args)[0])
+
+    def test_encoder_prefix_suite_rejects_incomplete_or_malformed_measurements(self) -> None:
+        args = SimpleNamespace(min_cosine=0.99, max_rmse=0.03, max_abs=None)
+        base = {
+            "id": "sample", "status": "complete", "shape_ok": True,
+            "metrics": {"cosine": 1.0, "rmse": 0.0, "mean_abs": 0.0, "max_abs": 0.0},
+        }
+        self.assertEqual(prefix_suite._evaluate_samples([base], args), [])
+        for metrics in ({}, {"cosine": 1.0}, {"cosine": 1.0, "rmse": 0.0, "mean_abs": 0.0},
+                        {"cosine": 1.0, "rmse": "0", "mean_abs": 0.0, "max_abs": 0.0},
+                        {"cosine": 1.0, "rmse": float("nan"), "mean_abs": 0.0, "max_abs": 0.0}):
+            with self.subTest(metrics=metrics):
+                failures = prefix_suite._evaluate_samples([{**base, "metrics": metrics}], args)
+                self.assertTrue(any("metrics" in failure for failure in failures))
+        failures = prefix_suite._evaluate_samples([{**base, "status": "fail"}], args)
+        self.assertTrue(any("not a complete measurement" in failure for failure in failures))
+
+    def test_encoder_prefix_suite_requires_positive_exact_geometry(self) -> None:
+        sample = {"grid": [1, 2], "num_values": 8, "raw_num_values": {"ck": 8, "llama": 8}}
+        self.assertEqual(prefix_suite._shape_status(sample, 4), (True, 8))
+        for broken in (
+            {**sample, "grid": [0, 2]},
+            {**sample, "grid": [1.5, 2]},
+            {**sample, "num_values": 8.0},
+            {**sample, "raw_num_values": {"ck": 8}},
+            {**sample, "raw_num_values": {"ck": 8, "llama": 7}},
+        ):
+            with self.subTest(broken=broken):
+                self.assertFalse(prefix_suite._shape_status(broken, 4)[0])
+
+    def test_encoder_prefix_suite_rejects_stale_invocation_and_changed_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            image = root / "image.ppm"
+            image.write_bytes(b"P6\n1 1\n255\n\x00\x00\x00")
+            gguf = root / "mmproj.gguf"
+            gguf.write_bytes(b"model")
+            runtime = root / "runtime"
+            runtime.mkdir()
+            paths = {
+                "mmproj_gguf": gguf,
+                "ck_model_library": runtime / "libqwen3vl_mmproj_v8.so",
+                "ck_generated_source": runtime / "qwen3_vl_mmproj_v8.c",
+                "ck_weights": runtime / "weights.bump",
+                "ck_manifest": runtime / "weights_manifest.map",
+                "llama_shim_library": runtime / "libmtmd_clip_shim.so",
+                "ck_engine_library": runtime / "libckernel_engine.so",
+                "llama_mtmd_library": root / "build" / "bin" / "libmtmd.so",
+            }
+            for path in paths.values():
+                if not path.exists():
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(b"valid")
+            args = SimpleNamespace(
+                gguf=gguf, output_dir=root, runtime_dir=runtime,
+                threads=1, ck_threads=1, image_min_tokens=None, image_max_tokens=8,
+                embed_dim=4, reuse_reports=False, independent_preprocess=True,
+            )
+            spec = {"id": "image", "image": str(image)}
+            report_path = root / "reports" / "01_image.json"
+
+            def write_report(cmd, **_kwargs):
+                invocation = cmd[cmd.index("--invocation-id") + 1]
+                report_path.write_text(json.dumps({
+                    "status": "complete", "invocation_id": invocation,
+                    "gguf": str(gguf), "image_path": str(image),
+                    "source_image_sha256": prefix_suite.hashlib.sha256(image.read_bytes()).hexdigest(),
+                    "input_provenance": "independently_preprocessed_from_shared_decoded_rgb8",
+                    "preprocess_evidence": {"verdict": "pass"},
+                    "merged_grid": [1, 1], "num_values": 4,
+                    "raw_num_values": {"ck": 4, "llama": 4},
+                    "metrics": {"cosine": 1.0, "rmse": 0.0, "mean_abs": 0.0, "max_abs": 0.0},
+                    "artifact_identity_kind": "selected_file_hashes_after_execution",
+                    "artifact_identity": {
+                        role: {"path": str(path.resolve()), "size_bytes": path.stat().st_size,
+                               "sha256": prefix_suite.hashlib.sha256(path.read_bytes()).hexdigest()}
+                        for role, path in paths.items()
+                    },
+                }), encoding="utf-8")
+                return SimpleNamespace(returncode=0)
+
+            env = {"CK_LLAMA_CPP_ROOT": str(root)}
+            with mock.patch.object(prefix_suite.subprocess, "run", side_effect=write_report):
+                valid = prefix_suite._run_one(spec=spec, index=1, args=args, env=env)
+            self.assertNotIn("evidence_error", valid)
+
+            def stale_report(cmd, **kwargs):
+                result = write_report(cmd, **kwargs)
+                payload = json.loads(report_path.read_text(encoding="utf-8"))
+                payload["invocation_id"] = "older-run"
+                report_path.write_text(json.dumps(payload), encoding="utf-8")
+                return result
+
+            with mock.patch.object(prefix_suite.subprocess, "run", side_effect=stale_report):
+                stale = prefix_suite._run_one(spec=spec, index=1, args=args, env=env)
+            self.assertIn("invocation ID differs", stale["evidence_error"])
+
+            def changed_artifact(cmd, **kwargs):
+                result = write_report(cmd, **kwargs)
+                paths["ck_model_library"].write_bytes(b"changed")
+                return result
+
+            with mock.patch.object(prefix_suite.subprocess, "run", side_effect=changed_artifact):
+                changed = prefix_suite._run_one(spec=spec, index=1, args=args, env=env)
+            self.assertIn("ck_model_library artifact", changed["evidence_error"])
 
     def test_encoder_prefix_suite_retains_report_after_child_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -325,8 +431,8 @@ class NumericParityQwen3VLMmprojV8Tests(unittest.TestCase):
                 {"id": "passed", "image": str(root / "passed.ppm")},
             ]
             passed = {
-                "id": "passed", "shape_ok": True,
-                "metrics": {"cosine": 1.0, "rmse": 0.0, "max_abs": 0.0},
+                "id": "passed", "status": "complete", "shape_ok": True,
+                "metrics": {"cosine": 1.0, "rmse": 0.0, "mean_abs": 0.0, "max_abs": 0.0},
             }
             failed = {"id": "failed", "shape_ok": False, "execution_error": "child failed"}
             with (
