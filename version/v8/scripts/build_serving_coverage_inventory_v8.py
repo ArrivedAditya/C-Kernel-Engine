@@ -43,6 +43,26 @@ def _profile(circuit: dict, *, v8: Path) -> tuple[dict | None, str | None]:
     return profile, _digest(path)
 
 
+def _chat_scope(circuit: dict, *, linked: bool) -> tuple[str, str]:
+    """Classify only what the circuit structure establishes, never model names."""
+    if linked:
+        return "linked_chat_declaration", "circuit references a resolved serving profile"
+    sequence = circuit.get("sequence") or []
+    operations = {
+        step if isinstance(step, str) else step.get("op")
+        for step in sequence if isinstance(step, (str, dict))
+    }
+    contract = circuit.get("contract") or {}
+    if ("audio_decoder" in contract or (operations and "decoder" not in operations)
+            or (not operations and set(contract) <= {"vision_contract", "audio_frontend"}
+                and bool(contract))):
+        return "component", "no independent text-decoder serving path declared"
+    if (operations == {"decoder"} and "tokenizer_contract" in contract
+            and "logits_contract" in contract):
+        return "text_decoder_candidate", "text decoder and token/logit contracts; serving unlinked"
+    return "unassessed", "independent chat-serving path not established by circuit metadata"
+
+
 def inventory(*, v8: Path = V8) -> dict:
     rows = []
     for path in sorted((v8 / "circuits").glob("*.json")):
@@ -53,12 +73,15 @@ def inventory(*, v8: Path = V8) -> dict:
         declaration = circuit.get("serving") or {}
         variant_name = declaration.get("default_variant")
         variant = profile["variants"][variant_name] if profile else None
+        chat_scope, scope_reason = _chat_scope(circuit, linked=profile is not None)
         rows.append({
             "circuit": circuit["name"],
             "family": circuit.get("family"),
             "circuit_path": f"version/v8/circuits/{path.name}",
             "circuit_sha256": _digest(path),
             "serving_declaration": "circuit_linked" if profile else "missing",
+            "chat_scope": chat_scope,
+            "chat_scope_reason": scope_reason,
             "profile_ref": declaration.get("profile_ref"),
             "profile_sha256": profile_hash,
             "profile_id": profile.get("id") if profile else None,
@@ -86,6 +109,9 @@ def inventory(*, v8: Path = V8) -> dict:
         "scope": "declarations_only; artifact and executed evidence are not inferred",
         "circuit_count": len(rows),
         "circuit_linked_count": sum(row["serving_declaration"] == "circuit_linked" for row in rows),
+        "chat_scope_counts": {scope: sum(row["chat_scope"] == scope for row in rows)
+                              for scope in ("linked_chat_declaration", "text_decoder_candidate",
+                                            "component", "unassessed")},
         "rows": rows,
     }
 
@@ -99,19 +125,23 @@ def page(report: dict) -> str:
         profile = row["profile_ref"] or "missing"
         body.append("<tr>" + "".join(
             f"<td><code>{html.escape(str(value))}</code></td>" for value in (
-                row["circuit"], row["family"] or "unknown", profile, template,
+                row["circuit"], row["family"] or "unknown", row["chat_scope"], profile, template,
                 protocol, ", ".join(row["input_modalities"] or []) or "unresolved",
             )) + "</tr>")
     return (f"""<h1>v8 Serving Coverage Inventory</h1>
 <p>This page is derived from {report['circuit_count']} circuit templates and their referenced
 serving profiles. {report['circuit_linked_count']} circuits declare a profile. A declaration
 does not certify a model artifact, tokenizer, protocol, generated runtime, or harness task.</p>
+<p>Chat scope is derived from circuit structure: a linked declaration, an unlinked text-decoder
+candidate, a component without an independent text-decoder path, or unassessed. Component and
+unassessed rows are not counted as chat-serving models. A text-decoder candidate still needs a
+resolved bundle and executed serving evidence.</p>
 <p>The <a href="site/serving-coverage.json">machine-readable inventory</a> records source hashes
 and separate evidence fields. Repository revision, quantization, tokenizer identity, stop policy,
 reasoning behavior, and task results remain unassessed until an exact resolved bundle and run
 report supply them. Missing declarations are visible; legacy imported sidecars may still allow
 chat but are not circuit-linked certification.</p>
-<table class="table"><thead><tr><th>Circuit</th><th>Family</th><th>Profile</th>
+<table class="table"><thead><tr><th>Circuit</th><th>Family</th><th>Chat scope</th><th>Profile</th>
 <th>Chat asset source</th><th>Declared output protocol</th><th>Input modalities</th></tr></thead>
 <tbody>
 {chr(10).join(body)}

@@ -20,7 +20,12 @@ def test_site_inventory_is_current_and_does_not_promote_declarations():
     assert any(row["circuit"] == "qwen38" and row["output_protocol"] == "qwen_xml"
                for row in report["rows"])
     assert any(row["circuit"] == "muse_glimmer_text"
-               and row["serving_declaration"] == "missing" for row in report["rows"])
+               and row["chat_scope"] == "text_decoder_candidate" for row in report["rows"])
+    assert any(row["circuit"] == "gemma4_vision"
+               and row["chat_scope"] == "component" for row in report["rows"])
+    assert any(row["circuit"] == "qwen38"
+               and row["chat_scope"] == "linked_chat_declaration" for row in report["rows"])
+    assert sum(report["chat_scope_counts"].values()) == report["circuit_count"]
     for row in report["rows"]:
         assert row["artifact"]["resolved_bundle_identity"] is None
         assert set(row["evidence"].values()) == {"not_assessed"}
