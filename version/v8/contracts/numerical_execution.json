@@ -3,6 +3,158 @@
   "schema_version": 1,
   "engine_contract_version": "8",
   "contracts": {
+    "audio_conv1d_checked_scalar_fma_fp32": {
+      "operator_family": "audio_conv1d",
+      "status": "validated",
+      "storage": {
+        "input": "fp32",
+        "weight": "fp32",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "fp32",
+        "accumulator": "fp32",
+        "contraction": "enabled",
+        "evaluation_order": "ascending_output_channel_frame_input_channel_kernel_fmaf"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "input_load",
+          "reduction_update",
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "dot_product",
+        "order": "ascending_k",
+        "partial_accumulator": "fp32",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "serial",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Checked strided FP32 channel-major Conv1D with effective weight-normalized weights supplied by importer. Caller-owned staged output; no heap, global threadpool, or output commit on rejection. Pinned PyTorch 2.8 conv0 maximum absolute difference 1.1921e-5."
+    },
+    "transpose_strided_f32_checked_exact_fp32": {
+      "operator_family": "layout_transform",
+      "status": "validated",
+      "storage": {
+        "input": "fp32",
+        "weight": "none",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "none",
+        "accumulator": "fp32",
+        "contraction": "disabled",
+        "evaluation_order": "ascending_input_row_then_column_exact_copy"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "input_load",
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "none",
+        "order": "none",
+        "partial_accumulator": "none",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "serial",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Checked FP32 transpose with explicit input/output strides and exact bitwise copied values; padding untouched."
+    },
+    "leaky_relu_strided_f32_checked_exact_fp32": {
+      "operator_family": "leaky_relu",
+      "status": "validated",
+      "storage": {
+        "input": "fp32",
+        "weight": "none",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "none",
+        "accumulator": "fp32",
+        "contraction": "disabled",
+        "evaluation_order": "ascending_row_column_branch_then_fp32_negative_multiply"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "input_load",
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "none",
+        "order": "none",
+        "partial_accumulator": "none",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "serial",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Checked FP32 LeakyReLU with explicit slope and strides; finite input/output preflight; padding untouched."
+    },
+    "layernorm_rows_checked_fp32_ggml_chunked_contracted_param_epsilon": {
+      "status": "validated",
+      "operator_family": "layernorm",
+      "storage": {
+        "input": "fp32",
+        "weight": "fp32",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "fp32",
+        "accumulator": "fp64",
+        "contraction": "enabled",
+        "evaluation_order": "ascending_channel_fp64_mean_sum_then_fp32_mean_then_fp32_centered_variance_compile_time_SSE_four_or_AVX2_eight_channel_chunks_or_scalar_then_fp64_ascending_chunk_merge_then_fp32_variance_scale_affine"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "reduction_finalize",
+          "activation_intermediate_store",
+          "reciprocal_sqrt",
+          "affine_normalization",
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "normalization",
+        "order": "contract_defined_chunks",
+        "partial_accumulator": "fp32",
+        "merge_order": "ascending_chunk"
+      },
+      "threading": {
+        "work_partition": "independent_rows",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Checked strided-row adapter for the existing layernorm_fp32_ggml_chunked_contracted arithmetic. Capacity validation and staged caller-owned scratch preserve output on rejection. Independent PyTorch contract is 1e-5 absolute; no new reduction order and no bitwise PyTorch claim. Per-operation epsilon is bound by circuit param instead of global config."
+    },
     "feature_concat_broadcast_rows_copy_fp32": {
       "operator_family": "feature_concat_broadcast_rows",
       "status": "validated",

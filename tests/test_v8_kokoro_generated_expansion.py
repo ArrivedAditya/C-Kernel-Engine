@@ -183,11 +183,12 @@ class KokoroGeneratedExpansionTest(unittest.TestCase):
             point = next(point for op in self.calls['operations']
                          for point in op.get('semantic_checkpoints', [])
                          if point['tensor'] == tensor)
-            # The two providers share one semantic op with distinct arithmetic
-            # contracts. Current circuit contract selection is keyed by op, so
-            # keep this checkpoint visibly unresolved in X-Ray until per-call
-            # selection is supported; the map contracts remain distinct.
-            self.assertEqual(point['resolved_contract_id'], 'unresolved')
+            # Selected call-site provider maps carry distinct numerical
+            # capabilities despite sharing the semantic expansion operation.
+            self.assertEqual(point['resolved_contract_id'],
+                'audio_duration_expand_token_major_checked_strided_copy_fp32'
+                if tensor == 'duration_expanded' else
+                'audio_duration_expand_checked_strided_copy_fp32')
             profile = {'schema': 'cke.parity_profile', 'schema_version': 1,
                 'name': 'kokoro_connected_expansion', 'backend': 'pytorch',
                 'contract_schema_version': 1,

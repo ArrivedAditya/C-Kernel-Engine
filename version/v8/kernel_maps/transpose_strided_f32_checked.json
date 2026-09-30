@@ -1,0 +1,188 @@
+{
+  "id": "transpose_strided_f32_checked",
+  "op": "transpose_strided_checked",
+  "operation_interface": "layout.transpose.checked.strided.fp32.v1",
+  "variant": "checked_scalar_strided",
+  "selection": {
+    "status": "candidate",
+    "priority": 100,
+    "equivalence_group": "transpose_strided_f32_checked",
+    "phases": [
+      "prefill"
+    ]
+  },
+  "quant": {
+    "weight": "none",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {
+      "name": "input",
+      "dtype": "fp32",
+      "shape": [
+        "R",
+        "C"
+      ],
+      "layout": "row_major_strided",
+      "placement": "local",
+      "access": "read",
+      "storage_class": "activation",
+      "consumption": "required"
+    }
+  ],
+  "weights": [],
+  "outputs": [
+    {
+      "name": "output",
+      "dtype": "fp32",
+      "shape": [
+        "C",
+        "R"
+      ],
+      "layout": "row_major_strided",
+      "placement": "local",
+      "access": "write",
+      "storage_class": "activation",
+      "consumption": "required"
+    }
+  ],
+  "scratch": [],
+  "dims": [
+    "input_elements",
+    "input_stride",
+    "output_elements",
+    "output_stride",
+    "rows",
+    "columns"
+  ],
+  "impl": {
+    "function": "transpose_strided_f32_checked",
+    "c_declaration": "int transpose_strided_f32_checked(const float *input, size_t input_elements, size_t input_stride, float *output, size_t output_elements, size_t output_stride, size_t rows, size_t columns);",
+    "sources": [
+      "src/kernels/strided_unary_checked.c"
+    ]
+  },
+  "modes": {
+    "inference": true,
+    "training": false,
+    "backward": false
+  },
+  "numerical_capabilities": [
+    {
+      "contract_id": "transpose_strided_f32_checked_exact_fp32",
+      "status": "validated",
+      "phases": [
+        "prefill"
+      ],
+      "function": "transpose_strided_f32_checked",
+      "explicit_selector": true,
+      "implementation": {
+        "isa_dispatch": "scalar",
+        "threading": {
+          "runtime": "serial",
+          "work_partition": [
+            "serial"
+          ],
+          "dispatch": [
+            "inline"
+          ],
+          "reduction_order_effect": "none"
+        }
+      },
+      "arithmetic": {
+        "partial_accumulator": "none",
+        "merge_order": "none",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false,
+        "split_strategy": "serial"
+      }
+    }
+  ],
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {
+        "name": "input",
+        "source": "activation:input",
+        "cast": "const float*",
+        "ports": [
+          "input:input"
+        ]
+      },
+      {
+        "name": "input_elements",
+        "source": "runtime:transpose_input_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "input_stride",
+        "source": "runtime:transpose_input_stride",
+        "value_type": "size_t"
+      },
+      {
+        "name": "output",
+        "source": "output:output",
+        "cast": "float*",
+        "ports": [
+          "output:output"
+        ]
+      },
+      {
+        "name": "output_elements",
+        "source": "runtime:transpose_output_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "output_stride",
+        "source": "runtime:transpose_output_stride",
+        "value_type": "size_t"
+      },
+      {
+        "name": "rows",
+        "source": "runtime:transpose_rows",
+        "value_type": "size_t"
+      },
+      {
+        "name": "columns",
+        "source": "runtime:transpose_columns",
+        "value_type": "size_t"
+      }
+    ]
+  },
+  "tests": {
+    "unit": [
+      "tests/test_v8_kokoro_text_primitives.py",
+      "tests/test_v8_checked_text_ops_generated.py",
+      "tests/test_v8_kokoro_generated_text_encoder.py"
+    ],
+    "oracle": "Pinned PyTorch 2.8 text encoder, independent NumPy/PyTorch primitives"
+  },
+  "notes": "Checked strided unary transform, no heap or scratch. Rejects nonfinite inputs and insufficient capacities before writes; padding remains untouched. Inference only.",
+  "call_constant_contract": {
+    "shape_symbols": {
+      "R": "transpose_rows",
+      "C": "transpose_columns"
+    },
+    "buffer_spans": [
+      {
+        "pointer": "input",
+        "elements": "transpose_input_elements",
+        "rows": "transpose_rows",
+        "width": "transpose_columns",
+        "element_bytes": 4,
+        "stride": "transpose_input_stride",
+        "physical_row_stride": true
+      },
+      {
+        "pointer": "output",
+        "elements": "transpose_output_elements",
+        "rows": "transpose_columns",
+        "width": "transpose_rows",
+        "element_bytes": 4,
+        "stride": "transpose_output_stride",
+        "physical_row_stride": true
+      }
+    ]
+  }
+}

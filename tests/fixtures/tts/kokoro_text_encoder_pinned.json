@@ -1,0 +1,194 @@
+{
+  "schema": "cke.kokoro.text_encoder_fixture.v1",
+  "scope": "all-valid 36-token acoustic text encoder and duration expansion; no prosody or waveform",
+  "model_pin": {
+    "repository": "hexgrad/Kokoro-82M",
+    "revision": "e8a90b41091c3c5b70375c47cc959799920fa4d6",
+    "files": [
+      "config.json",
+      "kokoro-v1_0.pth",
+      "voices/af_heart.pt"
+    ],
+    "license": "Apache-2.0"
+  },
+  "reference_code": {
+    "kokoro": "dfb907a02bba8152ca444717ca5d78747ccb4bec",
+    "misaki": "fba1236595f2d2bf21d414ba6e57d25256afada3"
+  },
+  "oracle_packages": {
+    "kokoro": "0.9.4",
+    "misaki": "0.9.4",
+    "torch": "2.8.0+cpu"
+  },
+  "oracle_source_sha256": {
+    "kokoro.model": "301c55350a068c4ed3b4cbd1209d2afb848bebca72db5657405e47e9dfb604db",
+    "kokoro.modules": "6e14dadc706efc9a8d90e8b4919d45d57342555b242c642cd26f26c65eedc085"
+  },
+  "package_source_commit_match": "NOT_TESTED",
+  "asset_sha256": {
+    "config.json": "5abb01e2403b072bf03d04fde160443e209d7a0dad49a423be15196b9b43c17f",
+    "kokoro-v1_0.pth": "496dba118d1a58f5f3db2efc88dbdc216e0483fc89fe6e47ee1f2c53f18ad1e4",
+    "voices/af_heart.pt": "0ab5709b8ffab19bfd849cd11d98f75b60af7733253ad0d67b12382a102cb4ff"
+  },
+  "source_ids_fixture_sha256": "b1193994d91a36b1ee5ca675a3d5edafd33f8889dbdba2ec2e112d3a7787eb31",
+  "arrays_sha256": {
+    "ids": "62a6bf6baeeb1b60027d97bb36fa04ab7f820f1acf72640e11f551a969eb9b18",
+    "embedding": "1d94e668d7019ea9d6bbd25254d26801e3a8ad08180491a61e6ca1cbf2003800",
+    "conv0_weight": "026c6ee32176b42629a90ad8b670938f81c1f059df94e32aed163bee8231410d",
+    "conv0_bias": "e918711c56d727997d0f27bba3f5f5c2a70f36648b563e750a52fe7fa98bd83b",
+    "norm0_gamma": "6e0de1f482b8dd939a1fbe482d792fa168564aebde079a4ae050f81210848217",
+    "norm0_beta": "b890b05e444a60ff8fdabb86454e9c9437238ba98cc4a36f66f0f58839914fae",
+    "conv0_output": "3bc8fbf8a78b2242f7b490dee790da82d3064b4f7f3458fc1dd5544193d9fb54",
+    "norm0_output": "e6511b7f567890cec204da140781401a1b2cf447382c012b83a78d30af46b729",
+    "act0_output": "3c652e65645eb9653f90dc0216a5a67c510e77bfef7da862a9476f348998768b",
+    "conv1_weight": "588fd7323e75f7576732ecde08517eed9fe6b24ab023ae19e44253d43bbf6237",
+    "conv1_bias": "51df655782a1784eb54f67769349a7de22f258a508ce6742fbed1ef9805c9c37",
+    "norm1_gamma": "37d8c7d7c7a08d8fa970fb464673940b9dad80543c1ac7555bbebf4c9cee99d0",
+    "norm1_beta": "e93b09409cc2bcff0d429ef389aea1458168eb59a3a161de73d590e7c652f520",
+    "conv1_output": "ea26e337033a65cd42dba5e8631b006ea248222bcebb7532432fc7ff55379014",
+    "norm1_output": "d57802c505674f5b6eabcc30eb7d57e87d728e76e8d3ef64f4591a22beba4ed0",
+    "act1_output": "55ea75cbd212bdc367f5c45f14fc2deb20973bfd561fa0acff15c3597b06a17a",
+    "conv2_weight": "a92ac4bad154c79f416d0c1efa1bf3f920733b94f913b9bdcdd2bfefab83d9ba",
+    "conv2_bias": "b6112258c14429f6ee7eb6206488db56bd2ffe4cbde421705938195b34904406",
+    "norm2_gamma": "9d9cd7f8f678602ba98ba31854d12937f5532fdb88dfa8035aadcef8e367c258",
+    "norm2_beta": "db3cdac7a4828f35b54e2a1f3186a1c57b2de0f589244985b96785eabf7f1274",
+    "conv2_output": "13d9c5447324153aed5156e8a8cd0e5219504125834c5975cdc041f3344909ba",
+    "norm2_output": "3fdb8e685cb9bf6f0a08616fdb02d91a6f85630f833ee076a29098fd3541db46",
+    "act2_output": "323740920a6d2100e2104728d39c8f9cd5b7f46ef9c2f629c2365d7380d36778",
+    "lstm_weight_ih": "a67d1b453145759e6e82b821450171d2cb255595364c3ad5897d82b2cf948879",
+    "lstm_weight_hh": "5500507bacc31d2566b6f3546f790446f0490f4f0b195ae1dd333617053cb4e6",
+    "lstm_bias_ih": "3b64c96015422b2dd1fb3922ec472cb381f4dd1e9490a169acbaa16407dc0879",
+    "lstm_bias_hh": "40c1779d0018878f1c7d1c41405b5a92f2b2f7c82fa02aace064969c7ee5b2d6",
+    "lstm_input": "4c99ff62a4331caecbe19ed429da688e33cc1675c0dcb48d1cce8866c3d9600b",
+    "lstm_output_token_major": "0dd1a310f2cee6a86c3861f9dad94bf955fe3c4df3bad65818da77060611e1d4",
+    "text_features": "1e577b3db9e1cc902ba610cef4e0e615f81f603adf6460766a745ffc8057b1f7",
+    "durations": "515688fd67b7b6291f7b7e126f0cf1cc3d817c10ec9a73f7f00ce657162aaa66",
+    "text_expanded": "febf42e48eab06040d8ceb3def1eade3e0c4027b394757b3798e7aa8959a2ace"
+  },
+  "array_shapes": {
+    "ids": [
+      36
+    ],
+    "embedding": [
+      512,
+      36
+    ],
+    "conv0_weight": [
+      512,
+      512,
+      5
+    ],
+    "conv0_bias": [
+      512
+    ],
+    "norm0_gamma": [
+      512
+    ],
+    "norm0_beta": [
+      512
+    ],
+    "conv0_output": [
+      512,
+      36
+    ],
+    "norm0_output": [
+      512,
+      36
+    ],
+    "act0_output": [
+      512,
+      36
+    ],
+    "conv1_weight": [
+      512,
+      512,
+      5
+    ],
+    "conv1_bias": [
+      512
+    ],
+    "norm1_gamma": [
+      512
+    ],
+    "norm1_beta": [
+      512
+    ],
+    "conv1_output": [
+      512,
+      36
+    ],
+    "norm1_output": [
+      512,
+      36
+    ],
+    "act1_output": [
+      512,
+      36
+    ],
+    "conv2_weight": [
+      512,
+      512,
+      5
+    ],
+    "conv2_bias": [
+      512
+    ],
+    "norm2_gamma": [
+      512
+    ],
+    "norm2_beta": [
+      512
+    ],
+    "conv2_output": [
+      512,
+      36
+    ],
+    "norm2_output": [
+      512,
+      36
+    ],
+    "act2_output": [
+      512,
+      36
+    ],
+    "lstm_weight_ih": [
+      2,
+      1024,
+      512
+    ],
+    "lstm_weight_hh": [
+      2,
+      1024,
+      256
+    ],
+    "lstm_bias_ih": [
+      2,
+      1024
+    ],
+    "lstm_bias_hh": [
+      2,
+      1024
+    ],
+    "lstm_input": [
+      36,
+      512
+    ],
+    "lstm_output_token_major": [
+      36,
+      512
+    ],
+    "text_features": [
+      512,
+      36
+    ],
+    "durations": [
+      36
+    ],
+    "text_expanded": [
+      512,
+      103
+    ]
+  },
+  "oracle": "Kokoro 0.9.4 PyTorch 2.8 effective weight-normalized Conv1D, LayerNorm, LeakyReLU(0.2), zero-state BiLSTM",
+  "fixture_sha256": "10b975e6d71afcaed2ed332375e545f65de88928736f315113a3bb90dffae600"
+}
