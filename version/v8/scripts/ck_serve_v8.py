@@ -459,6 +459,11 @@ def main(argv: list[str] | None = None) -> int:
 
     from server.serving_bundle import load_resolved_serving, resolved_templates
     resolved_serving = load_resolved_serving(run_dir)
+    if resolved_serving is not None:
+        from server.serving_bundle import resolved_renderer_tokens
+        renderer_tokens = resolved_renderer_tokens(run_dir, resolved_serving)
+    else:
+        renderer_tokens = None
     if args.no_chat_template:
         chat_template, chat_templates, chat_contract = None, None, None
         log("Using explicitly requested untemplated raw-prompt serving", C_GRAY)
@@ -553,6 +558,7 @@ def main(argv: list[str] | None = None) -> int:
         chat_templates=chat_templates,
         tool_protocol=selected_tool_protocol,
         loaded_identity=loaded_identity,
+        renderer_tokens=renderer_tokens,
         allow_untemplated=args.no_chat_template and args.allow_raw_prompt,
     )
 
