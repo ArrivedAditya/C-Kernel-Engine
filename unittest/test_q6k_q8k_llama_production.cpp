@@ -236,6 +236,7 @@ static bool run_case(const case_spec &spec, bool prepared_only = false) {
     }
 
     pass &= compare_f32("llama leaf vs canonical graph", leaf.data(), canonical.data(), ck.size());
+    pass &= compare_f32("CK vs llama leaf", ck.data(), leaf.data(), ck.size());
     if (llama_q6_repack_selected) {
         pass &= compare_f32("llama canonical vs repack graph", canonical.data(), repack.data(), ck.size());
     }

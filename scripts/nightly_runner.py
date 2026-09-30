@@ -1047,10 +1047,16 @@ MAKE_TARGETS = {
     #     "timeout_sec": 600,
     # },
     "llamacpp_parity": {
-        "name": "llama.cpp Parity (Nightly)",
+        "name": "llama.cpp Full Kernel Parity (Nightly)",
         "category": "parity",
         "target": "llamacpp-parity-nightly",
-        "timeout_sec": 600,
+        "timeout_sec": 1800,
+    },
+    "llamacpp_xray_callback": {
+        "name": "llama.cpp X-Ray Callback Neutrality",
+        "category": "parity",
+        "target": "test-llamacpp-xray-callback",
+        "timeout_sec": 300,
     },
     "flash_attention": {
         "name": "Flash Attention (50K+)",
@@ -1556,6 +1562,7 @@ NIGHTLY_PROFILES = {
         "v8_template_circuit_audit",
         "v8_architecture_contracts",
         "llamacpp_parity",
+        "llamacpp_xray_callback",
         "q4q6_production_graph_parity",
         "threadpool_parity",
         "v8_regression_fast",

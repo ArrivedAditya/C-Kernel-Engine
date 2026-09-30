@@ -28,6 +28,21 @@ jobs:
           sudo apt-get install -y build-essential cmake ninja-build python3-venv libomp-dev
           python3 -m venv .venv
           .venv/bin/pip install -r requirements.txt
+          .venv/bin/pip install -c .github/requirements-nightly-constraints.txt -r version/v8/requirements.txt
+
+      - name: Fetch pinned callback fixture
+        run: |
+          model=$(.venv/bin/python - <<'PY'
+          from huggingface_hub import hf_hub_download
+          print(hf_hub_download(
+              repo_id="Qwen/Qwen3-0.6B-GGUF",
+              filename="Qwen3-0.6B-Q8_0.gguf",
+              revision="23749fefcc72300e3a2ad315e1317431b06b590a",
+          ))
+          PY
+          )
+          printf '%s  %s\n' 9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031 "$model" | sha256sum -c -
+          echo "CK_LLAMA_ROLLING_CAPTURE_MODEL=$model" >> "$GITHUB_ENV"
 
       - name: Probe rolling llama.cpp
         id: probe
@@ -68,6 +83,9 @@ jobs:
           ]
           for patch in patch_phase.get("patches", []):
               lines.append(f"  - `{patch['path']}`: {patch['status']}")
+          for name in ("ck_build", "quick_parity", "production_graph_parity", "mtmd_adapter_build", "xray_callback"):
+              phase = data.get("phases", {}).get(name, {})
+              lines.append(f"- {name}: **{phase.get('status', 'not_tested').upper()}**")
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as stream:
               stream.write("\n".join(lines) + "\n")
           PY
@@ -81,6 +99,10 @@ jobs:
             build/llamacpp_rolling/report.json
             build/llamacpp_rolling/ck-build.log
             build/llamacpp_rolling/quick-parity.log
+            build/llamacpp_rolling/production-graph-parity.log
+            build/llamacpp_rolling/mtmd-adapter.log
+            build/llamacpp_rolling/xray-callback.log
+            build/llamacpp_rolling/xray-callback/report.json
           if-no-files-found: warn
 
       - name: Enforce rolling compatibility result
