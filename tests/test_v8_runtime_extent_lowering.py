@@ -1,6 +1,7 @@
 """Full v8 circuit -> planner -> call IR -> generated-C bounded graph fixture."""
 
 import contextlib
+import copy
 import ctypes
 import io
 import json
@@ -198,6 +199,134 @@ class RuntimeExtentLoweringTest(unittest.TestCase):
         self.assertEqual(self.call_ir["entry"], self.source["template"]["native_entry"])
         self.assertEqual(self.call_ir["runtime_extent_contract"],
                          self.source["config"]["runtime_extent_contract"])
+
+    def test_runtime_length_binds_distinct_scalar_abi_name(self):
+        fixture_path, source = manifest()
+        source = copy.deepcopy(source)
+        graph = source["template"]
+        graph["activation_buffers"]["transposed"] = {"shape": [6, 2]}
+        graph["activation_bindings"]["transposed"] = "transposed"
+        graph["block_types"]["bounded_graph"]["footer"] = []
+        graph["block_types"]["bounded_graph"]["body"]["ops"].append({
+            "id": "transpose_valid", "op": "transpose_strided_checked",
+            "kernel": "transpose_strided_f32_checked", "returns_status": True,
+            "consumes_runtime_lengths": ["expanded_frames"],
+            "runtime_scalar_bindings": {"transpose_columns": "expanded_frames"},
+            "params": {"R": 2, "C": 6, "call_constants": {
+                "transpose_input_elements": 16, "transpose_input_stride": 8,
+                "transpose_output_elements": 12, "transpose_output_stride": 2,
+                "transpose_rows": 2}},
+            "graph_slots": {"inputs": {"input": "audio_expanded"},
+                            "outputs": {"output": "transposed"}},
+        })
+        registry = build_ir_v8.load_kernel_registry()
+        def lower():
+            with contextlib.redirect_stdout(io.StringIO()):
+                ir1 = build_ir_v8.build_ir1_direct(source, fixture_path, mode="prefill")
+                low1 = build_ir_v8.generate_ir_lower_1(ir1, registry, source, "prefill")
+                layout = build_ir_v8.generate_memory_layout(
+                    low1, source, registry, mode="prefill", context_len=3)
+                low2 = build_ir_v8.generate_ir_lower_2(
+                    low1, layout, source, registry, mode="prefill")
+                calls = build_ir_v8.generate_ir_lower_3(low2, mode="prefill")
+            return layout, calls
+        for mutation in (
+            {"transpose_columns": "missing_length"},
+            {"input": "expanded_frames"},
+            {"transpose_columns": 6},
+        ):
+            op = graph["block_types"]["bounded_graph"]["body"]["ops"][-1]
+            original = op["runtime_scalar_bindings"]
+            op["runtime_scalar_bindings"] = mutation
+            with self.subTest(binding=mutation), self.assertRaisesRegex(
+                    (RuntimeError, ValueError), "RUNTIME SCALAR|runtime length"):
+                lower()
+            op["runtime_scalar_bindings"] = original
+        op = graph["block_types"]["bounded_graph"]["body"]["ops"][-1]
+        op["consumes_runtime_lengths"] = []
+        with self.assertRaisesRegex((RuntimeError, ValueError),
+                                    "RUNTIME SCALAR|runtime length"):
+            lower()
+        op["consumes_runtime_lengths"] = ["expanded_frames"]
+        op["params"]["call_constants"]["transpose_columns"] = 6
+        with self.assertRaisesRegex(RuntimeError, "RUNTIME SCALAR"):
+            lower()
+        del op["params"]["call_constants"]["transpose_columns"]
+        op["params"]["C"] = 5
+        with self.assertRaisesRegex(RuntimeError, "CALL CONSTANT FAULT"):
+            lower()
+        op["params"]["C"] = 6
+        scan_map = next(item for item in registry["kernels"]
+                        if item["id"] == "audio_lstm_bidirectional_scan_f32")
+        self.assertEqual(build_ir_v8._validated_runtime_scalar_bindings({
+            "runtime_extent_contract": {"runtime_lengths": {
+                "expanded_frames": {"capacity": 6}}},
+            "consumes_runtime_lengths": ["expanded_frames"],
+            "runtime_scalar_bindings": {"tokens": "expanded_frames"},
+        }, scan_map), {"tokens": "expanded_frames"})
+        layout, calls = lower()
+        trans = calls["operations"][-1]
+        self.assertEqual(trans["function"], "transpose_strided_f32_checked")
+        self.assertEqual(trans["runtime_scalar_bindings"],
+                         {"transpose_columns": "expanded_frames"})
+        self.assertEqual(next(arg["expr"] for arg in trans["args"]
+                              if arg["name"] == "columns"),
+                         "runtime_extents.expanded_frames")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            call_path, layout_path = root / "call.json", root / "layout.json"
+            call_path.write_text(json.dumps(calls))
+            layout_path.write_text(json.dumps(layout))
+            generated = root / "generated.c"
+            subprocess.run([sys.executable,
+                str(ROOT / "version/v8/scripts/codegen_v8.py"),
+                "--ir", str(call_path), "--layout", str(layout_path),
+                "--output", str(generated)],
+                check=True, capture_output=True, text=True)
+            library = root / "generated.so"
+            subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror",
+                "-pedantic", "-shared", "-fPIC", str(generated),
+                str(ROOT / "src/kernels/runtime_extent.c"),
+                str(ROOT / "src/kernels/audio_duration_expand.c"),
+                str(ROOT / "src/kernels/strided_unary_checked.c"),
+                "-I", str(ROOT / "include"), "-lm", "-o", str(library)],
+                check=True)
+            native = ctypes.CDLL(str(library)).ck_test_planned_graph
+            native.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t,
+                               ctypes.POINTER(ctypes.c_int32)]
+            native.restype = ctypes.c_int
+            buffers = {item["name"]: item for item in
+                       layout["memory"]["activations"]["buffers"]}
+            size = layout["memory"]["arena"]["total_size"]
+            raw = (ctypes.c_uint8 * (size + 63))()
+            arena = (ctypes.c_uint8 * size).from_buffer(
+                raw, (-ctypes.addressof(raw)) & 63)
+            def array(name, typ, count):
+                return (typ * count).from_buffer(arena, buffers[name]["abs_offset"])
+            array("audio_features", ctypes.c_float, 8)[:] = (
+                10, 20, 30, -777, 40, 50, 60, -777)
+            transposed = array("transposed", ctypes.c_float, 12)
+            frames = ctypes.c_int32(-1)
+            for durations in ((1, 2, 1), (2, 2, 2)):
+                array("runtime_values", ctypes.c_int32, 3)[:] = durations
+                transposed[:] = [-99] * 12
+                frames.value = -1
+                self.assertEqual(native(arena, size, ctypes.byref(frames)), 0)
+                self.assertEqual(frames.value, sum(durations))
+                left = [value for value, count in zip((10, 20, 30), durations)
+                        for _ in range(count)]
+                right = [value for value, count in zip((40, 50, 60), durations)
+                         for _ in range(count)]
+                expected = [item for pair in zip(left, right) for item in pair]
+                self.assertEqual(list(transposed[:2 * frames.value]), expected)
+                self.assertEqual(list(transposed[2 * frames.value:]),
+                                 [-99] * (12 - 2 * frames.value))
+            array("runtime_values", ctypes.c_int32, 3)[:] = (3, 3, 3)
+            transposed[:] = [-99] * 12
+            frames.value = -1
+            self.assertEqual(native(arena, size, ctypes.byref(frames)), -2)
+            self.assertEqual(frames.value, -1)
+            self.assertEqual(list(transposed), [-99] * 12)
 
     def _run_codegen_command(self, call_ir, *extra_args):
         with tempfile.TemporaryDirectory() as temporary:

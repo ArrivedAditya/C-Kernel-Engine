@@ -4845,7 +4845,8 @@ def _template_graph_slots(op_item: Dict[str, Any]) -> Dict[str, Any]:
 
 def _copy_template_runtime_annotations(op_item: Dict[str, Any], arranged: Dict[str, Any]) -> None:
     """Preserve model-neutral checked-length edges declared by a circuit op."""
-    for key in ("produces_runtime_lengths", "consumes_runtime_lengths", "returns_status"):
+    for key in ("produces_runtime_lengths", "consumes_runtime_lengths",
+                "runtime_scalar_bindings", "returns_status"):
         if key in op_item:
             arranged[key] = copy.deepcopy(op_item[key])
 
@@ -5338,6 +5339,44 @@ def _dtype_size_bytes(dtype: str) -> int:
     }.get(str(dtype or "").strip().lower(), 4)
 
 
+def _validated_runtime_scalar_bindings(op: Dict[str, Any], kernel_map: Dict[str, Any]) -> Dict[str, str]:
+    """Bind checked runtime lengths to compatible scalar arguments of a selected map."""
+    raw = op.get("runtime_scalar_bindings", {})
+    if not isinstance(raw, dict):
+        raise RuntimeError("HARD RUNTIME SCALAR FAULT: bindings must be an object")
+    if not raw:
+        return {}
+    lengths = (op.get("runtime_extent_contract") or {}).get("runtime_lengths", {})
+    consumed = op.get("consumes_runtime_lengths", [])
+    declaration = str((kernel_map.get("impl") or {}).get("c_declaration", ""))
+    signature = re.search(r"\((.*)\)\s*;\s*$", declaration)
+    declared_args = signature.group(1).split(",") if signature else []
+    abi_args = (kernel_map.get("call_abi") or {}).get("params", [])
+    if len(declared_args) != len(abi_args):
+        raise RuntimeError("HARD RUNTIME SCALAR FAULT: map ABI and C declaration disagree")
+    typed = {}
+    for index, arg in enumerate(abi_args):
+        source = str(arg.get("source", ""))
+        if source.startswith("runtime:"):
+            typed[source.split(":", 1)[1]] = (arg, declared_args[index].strip())
+    params = op.get("params") or {}
+    constants = params.get("call_constants", {}) if isinstance(params, dict) else None
+    if not isinstance(constants, dict):
+        raise RuntimeError("HARD RUNTIME SCALAR FAULT: call constants must be an object")
+    for name, length in raw.items():
+        arg, declared = typed.get(name, ({}, ""))
+        c_name = re.escape(str(arg.get("name", "")))
+        scalar = re.fullmatch(r"(size_t|int|int32_t)\s+" + c_name, declared)
+        if (not isinstance(name, str) or not name.isidentifier()
+                or not isinstance(length, str) or length not in lengths
+                or length not in consumed or name in constants
+                or name in lengths or scalar is None or arg.get("ports")
+                or arg.get("cast") or arg.get("value_type") not in
+                    (None, scalar.group(1))):
+            raise RuntimeError(f"HARD RUNTIME SCALAR FAULT: invalid {name!r} binding")
+    return raw
+
+
 def _validated_call_constants(op: Dict[str, Any], kernel_map: Dict[str, Any]) -> Dict[str, int]:
     """Check circuit scalar ABI bindings before memory planning consumes them."""
     params = op.get("params") or {}
@@ -5346,7 +5385,8 @@ def _validated_call_constants(op: Dict[str, Any], kernel_map: Dict[str, Any]) ->
     raw = params.get("call_constants", {})
     if not isinstance(raw, dict):
         raise RuntimeError("HARD CALL CONSTANT FAULT: params.call_constants must be an object")
-    if not raw:
+    bindings = _validated_runtime_scalar_bindings(op, kernel_map)
+    if not raw and not bindings:
         return {}
     contract = kernel_map.get("call_constant_contract")
     if not isinstance(contract, dict):
@@ -5378,6 +5418,8 @@ def _validated_call_constants(op: Dict[str, Any], kernel_map: Dict[str, Any]) ->
                 or value < 0 or value > SIZE_MAX):
             raise RuntimeError(f"HARD CALL CONSTANT FAULT: {name!r} is outside size_t")
         values[name] = value
+    for name, length in bindings.items():
+        values[name] = lengths[length]["capacity"]
     for symbol, abi_name in (contract.get("shape_symbols") or {}).items():
         declared = params.get(symbol)
         if (not isinstance(declared, int) or isinstance(declared, bool)
@@ -10809,6 +10851,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
             [{"op_id": str(op.get("template_op_id") or ""),
               "produces_runtime_lengths": op.get("produces_runtime_lengths", {}),
               "consumes_runtime_lengths": op.get("consumes_runtime_lengths", []),
+              "runtime_scalar_bindings": op.get("runtime_scalar_bindings", {}),
               "returns_status": op.get("returns_status", False)}
              for op in tagged],
         )
@@ -11523,7 +11566,8 @@ def generate_ir_lower_1(
         if isinstance(ir_op.get("graph_slots"), dict):
             lowered_op["graph_slots"] = copy.deepcopy(ir_op["graph_slots"])
         for key in ("runtime_extent_contract", "produces_runtime_lengths",
-                    "consumes_runtime_lengths", "returns_status"):
+                    "consumes_runtime_lengths", "runtime_scalar_bindings",
+                    "returns_status"):
             if key in ir_op:
                 lowered_op[key] = copy.deepcopy(ir_op[key])
         if ir_op.get("resolved_contract") is not None:
@@ -13947,7 +13991,8 @@ def generate_ir_lower_2(
         if isinstance(ir_op.get("graph_slots"), dict):
             lowered_op["graph_slots"] = copy.deepcopy(ir_op["graph_slots"])
         for key in ("runtime_extent_contract", "produces_runtime_lengths",
-                    "consumes_runtime_lengths", "returns_status"):
+                    "consumes_runtime_lengths", "runtime_scalar_bindings",
+                    "returns_status"):
             if key in ir_op:
                 lowered_op[key] = copy.deepcopy(ir_op[key])
         if ir_op.get("resolved_contract") is not None:
@@ -16790,7 +16835,11 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
                 extent_contract = op.get("runtime_extent_contract", {})
                 declared_lengths = extent_contract.get("runtime_lengths", {}) if isinstance(extent_contract, dict) else {}
                 declared_constants = extent_contract.get("runtime_constants", {}) if isinstance(extent_contract, dict) else {}
-                if key in declared_lengths:
+                scalar_bindings = _validated_runtime_scalar_bindings(
+                    op, physical_maps[kernel_id])
+                if key in scalar_bindings:
+                    expr = f"runtime_extents.{scalar_bindings[key]}"
+                elif key in declared_lengths:
                     expr = f"runtime_extents.{key}"
                 elif key in call_constants:
                     expr = str(call_constants[key])
@@ -16995,7 +17044,8 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
         if op.get("template_op_id") is not None:
             call_op["template_op_id"] = str(op["template_op_id"])
         for key in ("runtime_extent_contract", "produces_runtime_lengths",
-                    "consumes_runtime_lengths", "returns_status"):
+                    "consumes_runtime_lengths", "runtime_scalar_bindings",
+                    "returns_status"):
             if key in op:
                 call_op[key] = copy.deepcopy(op[key])
         if op.get("instance") is not None:
