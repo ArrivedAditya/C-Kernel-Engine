@@ -515,6 +515,28 @@ make test-gemma4-private-corpus-parity-auto</pre>
         satisfy their declared numerical and corpus gates.
     </p>
     <p class="v8-note">
+        Keep private manifests, images, raw reports, hashes, prompts, token IDs,
+        and tensor captures outside the checkout and nightly upload paths.
+        Redacted console output is not a publishable report. The independent
+        Qwen3-VL encoder suite redacts image paths and IDs by default; use
+        <code>--show-private-details</code> only in a trusted local terminal.
+        The 40-image targets require 40 selected, distinct image hashes.
+    </p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>python version/v8/scripts/export_vision_public_summary_v8.py \
+  --private-summary /data/cke/vision-certification/RUN/summary.json \
+  --public-summary /data/cke/vision-certification/RUN/public-summary.json \
+  --corpus-alias ocr40-v1</pre>
+    </div>
+    <p class="v8-note">
+        Publish only the exported file, never its containing private run directory.
+        Its allowlist contains selected/completed/passing counts, aggregate
+        errors or timings, source revisions, and bridge-reported artifact hashes.
+        It excludes per-image rows and image hashes. Bridge-reported hashes do
+        not independently attest which libraries were loaded.
+    </p>
+    <p class="v8-note">
         At source commit <code>352108874</code>, the Qwen3-VL profile passed all
         40 corpus images across P3 AVX2 and Ryzen AVX-512: 640/640 generated
         full-vocabulary decoder rows were bit-exact to llama.cpp, with 40

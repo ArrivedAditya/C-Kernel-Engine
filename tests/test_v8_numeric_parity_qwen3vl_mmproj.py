@@ -1,8 +1,10 @@
 import hashlib
+import io
 import json
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -17,6 +19,7 @@ if str(SCRIPT_DIR) not in sys.path:
 
 import numeric_parity_qwen3vl_mmproj_v8 as npv8  # type: ignore  # noqa: E402
 import qwen3vl_encoder_prefix_parity_suite_v8 as prefix_suite  # type: ignore  # noqa: E402
+import export_vision_public_summary_v8 as public_summary  # type: ignore  # noqa: E402
 
 
 class NumericParityQwen3VLMmprojV8Tests(unittest.TestCase):
@@ -347,6 +350,130 @@ class NumericParityQwen3VLMmprojV8Tests(unittest.TestCase):
                 ])
             self.assertEqual(caught.exception.code, 2)
             run_one.assert_not_called()
+
+    def test_private_image_name_stays_out_of_default_console_failure(self) -> None:
+        sentinel = "PRIVATE_DOCUMENT_FILENAME_76"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps({"samples": [
+                {"id": sentinel, "inputs": [{"path": f"{sentinel}.jpg"}]},
+            ]}), encoding="utf-8")
+            stderr = io.StringIO()
+            with redirect_stderr(stderr), self.assertRaises(SystemExit) as caught:
+                prefix_suite.main([
+                    "--gguf", "fixture.gguf", "--manifest", str(manifest),
+                    "--output-dir", str(root / "out"),
+                ])
+            self.assertEqual(caught.exception.code, 2)
+            self.assertNotIn(sentinel, stderr.getvalue())
+            self.assertIn(sentinel, (root / "out" / "input_error.log").read_text(encoding="utf-8"))
+
+    def test_private_image_name_stays_out_of_default_console_success(self) -> None:
+        sentinel = "PRIVATE_DOCUMENT_FILENAME_77"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            image = root / f"{sentinel}.jpg"
+            image.write_bytes(b"image")
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps({"samples": [
+                {"id": sentinel, "inputs": [{"path": image.name}]},
+            ]}), encoding="utf-8")
+            sample = {
+                "id": sentinel, "status": "complete", "shape_ok": True,
+                "metrics": {"cosine": 1.0, "rmse": 0.0, "mean_abs": 0.0, "max_abs": 0.0},
+            }
+            stdout = io.StringIO()
+            with (mock.patch.object(prefix_suite, "_run_one", return_value=sample),
+                  mock.patch.object(prefix_suite, "_oracle_commit", return_value="pin"),
+                  redirect_stdout(stdout)):
+                self.assertEqual(prefix_suite.main([
+                    "--gguf", "fixture.gguf", "--manifest", str(manifest),
+                    "--expected-llama-commit", "pin", "--output-dir", str(root / "out"),
+                ]), 0)
+            self.assertNotIn(sentinel, stdout.getvalue())
+            self.assertIn(sentinel, (root / "out" / "summary.json").read_text(encoding="utf-8"))
+
+    def test_public_encoder_summary_allowlist_excludes_private_sentinels(self) -> None:
+        sentinel = "PRIVATE_OCR_SENTINEL_81"
+        artifacts = {
+            role: {"sha256": "a" * 64, "path": f"/private/{sentinel}/{role}"}
+            for role in public_summary.ARTIFACT_ROLES
+        }
+        private = {
+            "status": "fail", "selected_count": 1, "completed_count": 1,
+            "passing_count": 0, "failure_count": 1,
+            "llama_commit": "b" * 40, "independent_preprocess": True,
+            "aggregate": {"min_cosine": 0.98, "max_rmse": 0.04, "max_abs": 1.0},
+            "failures": [f"{sentinel}: OCR output mismatch"],
+            "samples": [{
+                "id": sentinel, "image": f"/private/{sentinel}.jpg",
+                "source_image_sha256": sentinel, "ocr_text": sentinel,
+                "prompt": sentinel, "token_ids": [123], "tensor_capture": sentinel,
+                "suite_elapsed_sec": 1.25, "artifact_identity": artifacts,
+            }],
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            input_path = root / f"{sentinel}.json"
+            output_path = root / "public.json"
+            input_path.write_text(json.dumps(private), encoding="utf-8")
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                self.assertEqual(public_summary.main([
+                    "--private-summary", str(input_path),
+                    "--public-summary", str(output_path),
+                    "--corpus-alias", "ocr40-v1",
+                ]), 0)
+            public_text = output_path.read_text(encoding="utf-8")
+            self.assertNotIn(sentinel, public_text + stdout.getvalue())
+            self.assertNotIn("/private/", public_text)
+            public = json.loads(public_text)
+            self.assertEqual(public["selected_count"], 1)
+            self.assertEqual(public["passing_count"], 0)
+            self.assertEqual(public["failure_count"], 1)
+            self.assertEqual(public["bridge_reported_artifact_sha256"]["ck_model_library"], "a" * 64)
+
+            broken = dict(private, status="pass", passing_count=1)
+            with self.assertRaisesRegex(ValueError, "inconsistent overall verdict"):
+                public_summary.build_public_summary(broken, "ocr40-v1")
+
+            input_path.write_text("{" + sentinel, encoding="utf-8")
+            stderr = io.StringIO()
+            with redirect_stderr(stderr), self.assertRaises(SystemExit) as caught:
+                public_summary.main([
+                    "--private-summary", str(input_path),
+                    "--public-summary", str(output_path),
+                    "--corpus-alias", "ocr40-v1",
+                ])
+            self.assertEqual(caught.exception.code, 2)
+            self.assertNotIn(sentinel, stderr.getvalue())
+            self.assertFalse(output_path.exists())
+
+    def test_public_decoder_summary_excludes_per_image_hashes_and_text(self) -> None:
+        sentinel = "PRIVATE_DECODER_DOCUMENT_89"
+        private = {
+            "status": "incomplete", "certification_scope": "shared_prefix_decoder",
+            "requested": 2, "completed": 1, "passed": 1, "failed": 0,
+            "provenance": {"llama_commit": "b" * 40, "cke_commit": "c" * 40,
+                           "manifest_sha256": sentinel},
+            "timing": {"total_sec": 2.5},
+            "rows": [{
+                "status": "pass", "image_index": 1, "image_sha256": sentinel,
+                "prompt": sentinel, "ocr_text": sentinel, "token_ids": [89],
+                "decoder_sha256": "d" * 64, "engine_sha256": "e" * 64,
+            }],
+        }
+        public = public_summary.build_public_summary(private, "ocr40-v1")
+        rendered = json.dumps(public)
+        self.assertNotIn(sentinel, rendered)
+        self.assertNotIn("image_sha256", rendered)
+        self.assertEqual(public["lane"], "shared_prefix_decoder")
+        self.assertEqual(public["selected_count"], 2)
+        self.assertEqual(public["completed_count"], 1)
+        self.assertEqual(public["status"], "incomplete")
+        localized = dict(private, certification_scope="localization")
+        self.assertEqual(public_summary.build_public_summary(localized, "ocr40-v1")["lane"], "localization")
 
     def test_encoder_prefix_suite_thresholds_shape_and_metrics(self) -> None:
         values = 36 * 28 * 16384

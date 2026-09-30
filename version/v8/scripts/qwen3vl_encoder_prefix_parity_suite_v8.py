@@ -446,7 +446,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--reuse-reports", action="store_true", help="Reuse existing per-image reports instead of recomputing")
     parser.add_argument("--independent-preprocess", action="store_true", help="Require independent CKE/llama.cpp RGB preprocessing for each image")
     parser.add_argument("--no-fail", action="store_true", help="Write reports but return success even when thresholds fail")
+    parser.add_argument("--show-private-details", action="store_true", help="Print image IDs, paths, and failure details to the console")
     args = parser.parse_args(argv)
+    os.umask(0o077)
     if args.independent_preprocess and (args.reuse_reports or args.no_fail):
         parser.error("independent preprocessing cannot use --reuse-reports or --no-fail")
     if args.manifest is not None and (args.summary_json is not None or args.image):
@@ -461,11 +463,16 @@ def main(argv: list[str] | None = None) -> int:
     args.ck_threads = int(args.ck_threads or args.threads)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     args.runtime_dir.mkdir(parents=True, exist_ok=True)
+    args.output_dir.chmod(0o700)
 
-    manifest_sha256 = _sha256_file(args.manifest) if args.manifest else None
     limit = args.limit if args.limit is not None else (None if args.manifest else 10)
-    specs = (_load_manifest_specs(args.manifest, limit) if args.manifest is not None
-             else _load_image_specs(args.summary_json, args.image, limit))
+    try:
+        manifest_sha256 = _sha256_file(args.manifest) if args.manifest else None
+        specs = (_load_manifest_specs(args.manifest, limit) if args.manifest is not None
+                 else _load_image_specs(args.summary_json, args.image, limit))
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        (args.output_dir / "input_error.log").write_text(str(exc) + "\n", encoding="utf-8")
+        parser.error(str(exc) if args.show_private_details else "image input validation failed; see private input_error.log")
     if not specs:
         raise SystemExit("no images selected; pass --summary-json or --image")
     if args.require_images is not None and len(specs) < args.require_images:
@@ -489,7 +496,8 @@ def main(argv: list[str] | None = None) -> int:
 
     samples: list[dict[str, Any]] = []
     for index, spec in enumerate(specs, 1):
-        print(f"[{index}/{len(specs)}] encoder parity {spec['id']} -> {spec['image']}", flush=True)
+        detail = f" {spec['id']} -> {spec['image']}" if args.show_private_details else ""
+        print(f"[{index}/{len(specs)}] encoder parity{detail}", flush=True)
         try:
             samples.append(_run_one(spec=spec, index=index, args=args, env=env))
         except (OSError, ValueError, TypeError) as exc:
@@ -550,15 +558,16 @@ def main(argv: list[str] | None = None) -> int:
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     _write_markdown(report_path, summary)
 
-    print(json.dumps({
+    console_summary = {
         "selected_count": summary["selected_count"],
         "completed_count": summary["completed_count"],
         "passing_count": summary["passing_count"],
         "aggregate": aggregate,
-        "failures": failures,
-        "summary": str(summary_path),
-        "report": str(report_path),
-    }, indent=2))
+        "failure_count": len(failures),
+    }
+    if args.show_private_details:
+        console_summary.update({"failures": failures, "summary": str(summary_path), "report": str(report_path)})
+    print(json.dumps(console_summary, indent=2))
     return 0 if (not failures or args.no_fail) else 1
 
 
