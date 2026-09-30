@@ -1,7 +1,14 @@
 """The local Qwen task must agree across tool events, artifact and recording."""
 
+import argparse
+import io
+import json
+import subprocess
 from pathlib import Path
 
+import pytest
+
+from server import qwen_harness_acceptance as acceptance
 from server.qwen_harness_acceptance import EXPECTED_HTML, evaluate
 
 
@@ -200,3 +207,137 @@ def test_terminal_must_follow_all_tool_results_and_end_tool_activity():
     events, recording = _evidence()
     events.append(events[-1].copy())
     assert 'stream_terminal_order_mismatch' in _check(events, recording)['errors']
+
+
+def _loaded_identity(*, digest='a' * 64, instance='b' * 32):
+    return {
+        'schema': acceptance.LOADED_IDENTITY_SCHEMA,
+        'model': MODEL,
+        'serving_identity': digest,
+        'session_library_sha256': 'c' * 64,
+        'server_instance_id': instance,
+        'assets_sha256': {name: 'd' * 64 for name in (
+            'libmodel.so', 'libckernel_engine.so', 'libckernel_tokenizer.so')},
+    }
+
+
+def test_loaded_identity_verdict_requires_expected_bundle_and_stable_server():
+    observed = _loaded_identity()
+    identity, certification = acceptance._identity_verdict(
+        observed, observed.copy(), expected='a' * 64, expected_session='c' * 64,
+        model=MODEL, task_passed=True)
+    assert identity['level'] == 'expected_loaded_bundle'
+    assert certification['status'] == 'pass'
+    for after, reason in ((None, 'loaded_artifact_identity_changed'),
+                          (_loaded_identity(instance='e' * 32), 'loaded_artifact_identity_changed')):
+        _, certification = acceptance._identity_verdict(
+            observed, after, expected='a' * 64, expected_session='c' * 64,
+            model=MODEL, task_passed=True)
+        assert certification == {'status': 'fail', 'reason': reason}
+    _, certification = acceptance._identity_verdict(
+        observed, observed, expected=None, expected_session=None,
+        model=MODEL, task_passed=True)
+    assert certification['status'] == 'incomplete'
+    _, certification = acceptance._identity_verdict(
+        observed, observed, expected='a' * 64, expected_session='c' * 64,
+        model=MODEL, task_passed=False)
+    assert certification['status'] == 'fail'
+    _, certification = acceptance._identity_verdict(
+        observed, observed, expected='a' * 64, expected_session=None,
+        model=MODEL, task_passed=True)
+    assert certification['reason'] == 'expected_session_library_identity_not_supplied'
+
+
+@pytest.mark.parametrize('expected,expected_session,status,reason', [
+    (None, None, 'incomplete', 'expected_serving_identity_not_supplied'),
+    ('a' * 64, None, 'incomplete', 'expected_session_library_identity_not_supplied'),
+    (None, 'c' * 64, 'incomplete', 'expected_serving_identity_not_supplied'),
+    ('a' * 64, 'c' * 64, 'pass', None),
+    ('e' * 64, None, 'fail', 'loaded_artifact_identity_mismatch'),
+    (None, 'e' * 64, 'fail', 'loaded_session_library_identity_mismatch'),
+    ('e' * 64, 'c' * 64, 'fail', 'loaded_artifact_identity_mismatch'),
+    ('a' * 64, 'e' * 64, 'fail', 'loaded_session_library_identity_mismatch'),
+])
+def test_identity_expectations_are_independent(expected, expected_session, status, reason):
+    observed = _loaded_identity()
+    assert acceptance._identity_expectation_failure(
+        observed, expected=expected, expected_session=expected_session, model=MODEL
+    ) == (reason if status == 'fail' else None)
+    _, certification = acceptance._identity_verdict(
+        observed, observed, expected=expected, expected_session=expected_session,
+        model=MODEL, task_passed=True)
+    assert certification == {'status': status, 'reason': reason}
+
+
+@pytest.mark.parametrize('expected,expected_session', [
+    ('a' * 64, None), (None, 'c' * 64), ('a' * 64, 'c' * 64),
+])
+def test_expected_identity_requires_endpoint(expected, expected_session):
+    _, certification = acceptance._identity_verdict(
+        None, None, expected=expected, expected_session=expected_session,
+        model=MODEL, task_passed=True)
+    assert certification == {'status': 'fail', 'reason': 'loaded_artifact_identity_unavailable'}
+
+
+def test_loaded_identity_probe_rejects_malformed_or_incomplete_assets(monkeypatch):
+    document = _loaded_identity()
+    document['assets_sha256'] = {}
+    monkeypatch.setattr(acceptance, 'urlopen',
+                        lambda *_args, **_kwargs: io.BytesIO(json.dumps(document).encode()))
+    with pytest.raises(ValueError, match='malformed loaded serving identity'):
+        acceptance._read_loaded_identity('http://example.test/v1')
+
+
+@pytest.mark.parametrize('malformed', [False, True])
+def test_bad_identity_does_not_start_harness(monkeypatch, tmp_path, malformed):
+    observed = _loaded_identity(digest='e' * 64)
+    if malformed:
+        observed['assets_sha256'] = {}
+
+    def fake_urlopen(url, **_kwargs):
+        payload = ({'data': [{'id': MODEL}]} if url.endswith('/models') else observed)
+        return io.BytesIO(json.dumps(payload).encode())
+
+    monkeypatch.setattr(acceptance, 'urlopen', fake_urlopen)
+    monkeypatch.setattr(acceptance.subprocess, 'run',
+                        lambda *_args, **_kwargs: subprocess.CompletedProcess([], 0, '0.24.6\n'))
+    monkeypatch.setattr(acceptance.subprocess, 'Popen',
+                        lambda *_args, **_kwargs: pytest.fail('harness started on stale bundle'))
+    args = argparse.Namespace(timeout=10, max_output_tokens=16, qwen_bin='qwen',
+                              expected_qwen_version='0.24.6', run_dir=tmp_path / 'task',
+                              endpoint='http://example.test/v1', model=MODEL,
+                              expected_serving_identity='a' * 64,
+                              expected_session_library_sha256='c' * 64)
+    report = acceptance.run(args)
+    assert report['result']['status'] == 'not_run'
+    assert report['certification']['reason'] == (
+        'loaded_identity_preflight_probe_failed' if malformed
+        else 'loaded_artifact_identity_mismatch')
+    assert json.loads((tmp_path / 'task/report.json').read_text()) == report
+
+
+@pytest.mark.parametrize('expected,expected_session,reason', [
+    ('e' * 64, None, 'loaded_artifact_identity_mismatch'),
+    (None, 'e' * 64, 'loaded_session_library_identity_mismatch'),
+    ('e' * 64, 'c' * 64, 'loaded_artifact_identity_mismatch'),
+    ('a' * 64, 'e' * 64, 'loaded_session_library_identity_mismatch'),
+])
+def test_individual_identity_mismatch_prevents_client_launch(
+        monkeypatch, tmp_path, expected, expected_session, reason):
+    def fake_urlopen(url, **_kwargs):
+        payload = {'data': [{'id': MODEL}]} if url.endswith('/models') else _loaded_identity()
+        return io.BytesIO(json.dumps(payload).encode())
+
+    monkeypatch.setattr(acceptance, 'urlopen', fake_urlopen)
+    monkeypatch.setattr(acceptance.subprocess, 'run',
+                        lambda *_args, **_kwargs: subprocess.CompletedProcess([], 0, '0.24.6\n'))
+    monkeypatch.setattr(acceptance.subprocess, 'Popen',
+                        lambda *_args, **_kwargs: pytest.fail('harness started on mismatched identity'))
+    args = argparse.Namespace(timeout=10, max_output_tokens=16, qwen_bin='qwen',
+                              expected_qwen_version='0.24.6', run_dir=tmp_path / 'task',
+                              endpoint='http://example.test/v1', model=MODEL,
+                              expected_serving_identity=expected,
+                              expected_session_library_sha256=expected_session)
+    report = acceptance.run(args)
+    assert report['result']['status'] == 'not_run'
+    assert report['certification'] == {'status': 'fail', 'reason': reason, 'detail': None}

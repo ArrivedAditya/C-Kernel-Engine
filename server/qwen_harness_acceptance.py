@@ -18,6 +18,7 @@ import subprocess
 import sys
 import time
 import uuid
+from urllib.error import HTTPError
 from urllib.request import urlopen
 
 
@@ -34,10 +35,89 @@ TASK_PROMPT = ('Read index.html. Change only its h1 text from Before to CKE tool
                'using edit. Run python3 test_html.py with run_shell_command. Summarize the '
                'test result. Do not edit test_html.py or files outside this directory.')
 EXPECTED_TOOLS = ('read_file', 'edit', 'run_shell_command')
+LOADED_IDENTITY_SCHEMA = 'cke.loaded_serving_identity.v1'
 
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _valid_sha256(value: object) -> bool:
+    return isinstance(value, str) and len(value) == 64 and all(
+        char in '0123456789abcdef' for char in value)
+
+
+def _read_loaded_identity(endpoint: str) -> dict | None:
+    try:
+        with urlopen(endpoint + '/cke/loaded-identity', timeout=10) as response:
+            document = json.load(response)
+    except HTTPError as exc:
+        if exc.code == 404:  # Older or deliberately unassessed serving path.
+            return None
+        raise
+    if (not isinstance(document, dict)
+            or document.get('schema') != LOADED_IDENTITY_SCHEMA
+            or not _valid_sha256(document.get('serving_identity'))
+            or not _valid_sha256(document.get('session_library_sha256'))
+            or not isinstance(document.get('model'), str)
+            or not document['model']
+            or not isinstance(document.get('server_instance_id'), str)
+            or len(document['server_instance_id']) != 32
+            or any(char not in '0123456789abcdef'
+                   for char in document['server_instance_id'])
+            or not isinstance(document.get('assets_sha256'), dict)
+            or not {'libmodel.so', 'libckernel_engine.so', 'libckernel_tokenizer.so'}
+                   <= document['assets_sha256'].keys()
+            or not all(_valid_sha256(value) for value in document['assets_sha256'].values())):
+        raise ValueError('malformed loaded serving identity response')
+    return document
+
+
+def _identity_verdict(before: dict | None, after: dict | None, *,
+                      expected: str | None, expected_session: str | None,
+                      model: str, task_passed: bool) -> tuple[dict, dict]:
+    if before is None and after is None:
+        identity = {'level': 'endpoint_model_id_only', 'before': None, 'after': None}
+        mismatch = _identity_expectation_failure(before, expected=expected,
+                                                 expected_session=expected_session, model=model)
+        if mismatch is not None:
+            return identity, {'status': 'fail', 'reason': mismatch}
+        reason = 'loaded_artifact_identity_unavailable'
+    elif before is None or after is None or before != after:
+        identity = {'level': 'changed_or_missing', 'before': before, 'after': after}
+        return identity, {'status': 'fail', 'reason': 'loaded_artifact_identity_changed'}
+    else:
+        identity = {'level': 'observed_loaded_bundle', 'before': before, 'after': after}
+        mismatch = _identity_expectation_failure(before, expected=expected,
+                                                 expected_session=expected_session, model=model)
+        if mismatch is not None:
+            return identity, {'status': 'fail', 'reason': mismatch}
+        if expected is None:
+            reason = 'expected_serving_identity_not_supplied'
+        elif expected_session is None:
+            reason = 'expected_session_library_identity_not_supplied'
+        else:
+            identity['level'] = 'expected_loaded_bundle'
+            return identity, {'status': 'pass' if task_passed else 'fail',
+                              'reason': None if task_passed else 'harness_task_failed'}
+    return identity, {'status': 'incomplete' if task_passed else 'fail',
+                      'reason': reason if task_passed else 'harness_task_failed'}
+
+
+def _identity_expectation_failure(identity: dict | None, *, expected: str | None,
+                                  expected_session: str | None, model: str) -> str | None:
+    """Reject supplied mismatches before interpreting absent expectations."""
+    if identity is None:
+        return ('loaded_artifact_identity_unavailable'
+                if expected is not None or expected_session is not None else None)
+    if identity['model'] != model:
+        return 'loaded_artifact_model_mismatch'
+    if expected is not None and identity['serving_identity'] != expected:
+        return 'loaded_artifact_identity_mismatch'
+    if (expected_session is not None
+            and identity['session_library_sha256'] != expected_session):
+        return 'loaded_session_library_identity_mismatch'
+    return None
 
 
 def _read_jsonl(path: Path) -> list[dict]:
@@ -304,6 +384,38 @@ def run(args: argparse.Namespace) -> dict:
                        if row.get('id') == args.model), None)
     if advertised is None:
         raise ValueError(f'model {args.model!r} is not advertised by endpoint')
+    expected_identity = args.expected_serving_identity
+    expected_session = args.expected_session_library_sha256
+    if expected_identity is not None and not _valid_sha256(expected_identity):
+        raise ValueError('expected-serving-identity must be a lowercase SHA-256 hex digest')
+    if expected_session is not None and not _valid_sha256(expected_session):
+        raise ValueError('expected-session-library-sha256 must be a lowercase SHA-256 hex digest')
+    try:
+        identity_before = _read_loaded_identity(endpoint)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        identity_before = None
+        identity_probe_error = str(exc)
+    else:
+        identity_probe_error = None
+    mismatch = _identity_expectation_failure(
+        identity_before, expected=expected_identity,
+        expected_session=expected_session, model=args.model)
+    if identity_probe_error is not None or mismatch is not None:
+        reason = 'loaded_identity_preflight_probe_failed' if identity_probe_error is not None else mismatch
+        report = {
+            'schema': 'cke.serving_harness_acceptance.v1',
+            'run_id': run_dir.name, 'session_id': session_id,
+            'model': args.model, 'endpoint': endpoint,
+            'expected_serving_identity': expected_identity,
+            'expected_session_library_sha256': expected_session,
+            'started_at_unix': started,
+            'result': {'status': 'not_run', 'errors': ['loaded_identity_preflight_failed']},
+            'identity': {'level': 'preflight_rejected', 'before': identity_before, 'after': None},
+            'certification': {'status': 'fail', 'reason': reason,
+                              'detail': identity_probe_error},
+        }
+        (run_dir / 'report.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
+        return report
     cmd = [args.qwen_bin, '--bare', '--auth-type', 'openai-responses',
            '--model', args.model, '--session-id', session_id,
            '--chat-recording', '--allowed-tools', 'read_file', 'edit',
@@ -352,12 +464,28 @@ def run(args: argparse.Namespace) -> dict:
         verdict['errors'].append('event_stream_unavailable: ' + event_error)
     if verdict['errors']:
         verdict['status'] = 'fail'
+    try:
+        identity_after = _read_loaded_identity(endpoint)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        identity_after = None
+        identity_probe_error = str(exc)
+    else:
+        identity_probe_error = None
+    identity, certification = _identity_verdict(
+        identity_before, identity_after, expected=expected_identity,
+        expected_session=expected_session,
+        model=args.model, task_passed=verdict['status'] == 'pass')
+    if identity_probe_error:
+        certification = {'status': 'fail', 'reason': 'loaded_identity_followup_probe_failed',
+                         'detail': identity_probe_error}
     report = {
         'schema': 'cke.serving_harness_acceptance.v1',
         'run_id': run_dir.name,
         'session_id': session_id,
         'model': args.model,
         'endpoint': endpoint,
+        'expected_serving_identity': expected_identity,
+        'expected_session_library_sha256': expected_session,
         'started_at_unix': started,
         'elapsed_seconds': time.time() - started,
         'qwen_code_version': version,
@@ -369,10 +497,8 @@ def run(args: argparse.Namespace) -> dict:
         'session_sha256': _sha256(run_dir / 'session.jsonl')
             if (run_dir / 'session.jsonl').is_file() else None,
         'result': verdict,
-        'identity': {'level': 'endpoint_model_id_only',
-                     'note': 'Loaded model/library/template hashes require a separate attestation.'},
-        'certification': {'status': 'incomplete',
-                          'reason': 'loaded_artifact_identity_unverified'},
+        'identity': identity,
+        'certification': certification,
     }
     (run_dir / 'report.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
     return report
@@ -389,6 +515,10 @@ def main() -> int:
     parser.add_argument('--api-key', default='cke-local-only')
     parser.add_argument('--timeout', type=int, default=1800)
     parser.add_argument('--max-output-tokens', type=int, default=768)
+    parser.add_argument('--expected-serving-identity',
+                        help='SHA-256 identity from the intended resolved serving.json bundle')
+    parser.add_argument('--expected-session-library-sha256',
+                        help='SHA-256 of the intended libck_session_v8.so runtime ABI')
     args = parser.parse_args()
     try:
         report = run(args)
@@ -397,8 +527,11 @@ def main() -> int:
         return 2
     print(json.dumps({'report': str(Path(args.run_dir).resolve() / 'report.json'),
                       'status': report['result']['status'],
+                      'certification_status': report['certification']['status'],
+                      'certification_reason': report['certification']['reason'],
                       'errors': report['result']['errors']}))
-    return 0 if report['result']['status'] == 'pass' else 1
+    return 0 if (report['result']['status'] == 'pass'
+                 and report['certification']['status'] != 'fail') else 1
 
 
 if __name__ == '__main__':

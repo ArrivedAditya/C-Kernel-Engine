@@ -516,10 +516,16 @@ def main(argv: list[str] | None = None) -> int:
         run_dir,
         context_length=runtime_context_length,
     )
+    loaded_identity = None
     if resolved_serving is not None:
-        from server.serving_bundle import verify_loaded_libraries
+        from server.serving_bundle import loaded_serving_identity, verify_loaded_libraries
         try:
             verify_loaded_libraries(resolved_serving)
+            loaded_identity = loaded_serving_identity(
+                resolved_serving,
+                model=args.model_name,
+                session_library=session.lib,
+            )
         except Exception:
             session.close()
             raise
@@ -546,6 +552,7 @@ def main(argv: list[str] | None = None) -> int:
         chat_template=chat_template,
         chat_templates=chat_templates,
         tool_protocol=selected_tool_protocol,
+        loaded_identity=loaded_identity,
         allow_untemplated=args.no_chat_template and args.allow_raw_prompt,
     )
 

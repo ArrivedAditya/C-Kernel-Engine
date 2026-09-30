@@ -1,9 +1,12 @@
 """Circuit ownership, resolution, and offline serving of immutable assets."""
 import hashlib
+import ctypes
 import importlib.util
 import json
+import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 
 import pytest
@@ -11,7 +14,9 @@ from fastapi.testclient import TestClient
 
 from server.live import create_app
 from server.runtime import load_manifest_templates, load_tool_protocol
-from server.serving_bundle import load_resolved_serving, verify_loaded_libraries
+from server.serving_bundle import (
+    load_resolved_serving, loaded_serving_identity, verify_loaded_libraries,
+)
 from server.tests.test_native_qwen_jinja_contract import RecordingSession
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -19,6 +24,13 @@ sys.path.insert(0, str(ROOT / "version/v8/scripts"))
 spec = importlib.util.spec_from_file_location("resolve_serving_bundle_v8", ROOT / "version/v8/scripts/resolve_serving_bundle_v8.py")
 resolver = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(resolver)
+
+
+def _session_library(path: Path, *, marker: int = 1):
+    source = path.with_suffix(".c")
+    source.write_text(f"int ck_session_v8_open(void) {{ return {marker}; }}\n")
+    subprocess.run(["cc", "-shared", "-fPIC", "-o", str(path), str(source)], check=True)
+    return ctypes.CDLL(str(path))
 
 
 @pytest.fixture
@@ -214,6 +226,52 @@ def test_loaded_library_identity_rejects_alternate_engine(setup):
         verify_loaded_libraries(doc, maps_text="")
 
 
+def test_loaded_identity_endpoint_reports_only_verified_bundle_hashes(setup):
+    doc = resolve(setup)
+    names = ("libmodel.so", "libckernel_engine.so", "libckernel_tokenizer.so")
+    maps = "\n".join(f"1000-2000 r-xp 00000000 00:01 1 {setup[0] / name}" for name in names)
+    verify_loaded_libraries(doc, maps_text=maps)
+    session_library = setup[0] / "libck_session_v8.so"
+    loaded = _session_library(session_library)
+    identity = loaded_serving_identity(
+        doc, model="test", session_library=loaded,
+    )
+    chat, variants, _ = load_manifest_templates(setup[0])
+    client = TestClient(create_app(
+        RecordingSession(["ok"]), model="test", chat_template=chat,
+        chat_templates=variants, loaded_identity=identity,
+    ))
+    first = client.get("/v1/cke/loaded-identity")
+    second = client.get("/v1/cke/loaded-identity")
+    assert first.status_code == 200
+    assert first.json() == second.json()
+    assert first.json()["serving_identity"] == doc["identity"]
+    assert first.json()["assets_sha256"]["libmodel.so"] == doc["assets"]["libmodel.so"]["sha256"]
+    assert first.json()["session_library_sha256"] == hashlib.sha256(session_library.read_bytes()).hexdigest()
+    assert str(setup[0]) not in first.text  # No local bundle paths in HTTP evidence.
+    assert client.get("/v1/models").json()["data"][0]["id"] == "test"
+    legacy = TestClient(create_app(RecordingSession(["ok"]), model="test", chat_template=chat))
+    assert legacy.get("/v1/cke/loaded-identity").status_code == 404
+
+
+def test_loaded_session_library_replacement_cannot_certify_new_path(setup):
+    doc = resolve(setup)
+    original_path = setup[0] / "libck_session_v8.so"
+    loaded = _session_library(original_path, marker=1)
+    original_digest = hashlib.sha256(original_path.read_bytes()).hexdigest()
+    assert loaded_serving_identity(doc, model="test", session_library=loaded)[
+        "session_library_sha256"] == original_digest
+    replacement_dir = setup[0] / "replacement"
+    replacement_dir.mkdir()
+    replacement_path = replacement_dir / "libck_session_v8.so"
+    _session_library(replacement_path, marker=2)
+    replacement_digest = hashlib.sha256(replacement_path.read_bytes()).hexdigest()
+    assert replacement_digest != original_digest
+    os.replace(replacement_path, original_path)
+    with pytest.raises(ValueError, match="deleted or ambiguous|replaced"):
+        loaded_serving_identity(doc, model="test", session_library=loaded)
+
+
 @pytest.mark.parametrize("allow_serving_update", [False, True])
 def test_same_name_computational_change_rejected(setup, allow_serving_update):
     original = resolve(setup)
@@ -259,6 +317,34 @@ def test_chat_and_raw_cli_validate_artifact_integrity(setup, monkeypatch, raw, l
         monkeypatch.setattr(ck_serve_v8.SessionV8, "open", lambda *a, **k: pytest.fail("opened stale session"))
         with pytest.raises(ValueError, match="stale serving asset"):
             ck_serve_v8.main(argv)
+
+
+def test_cli_exposes_loaded_identity_after_runtime_verification(setup, monkeypatch):
+    import ck_serve_v8
+    import server.serving_bundle as bundle
+    import uvicorn
+
+    doc = resolve(setup)
+    library = setup[0] / "libck_session_v8.so"
+    loaded = _session_library(library)
+    closed = []
+    class Session:
+        lib = loaded
+        def close(self):
+            closed.append(True)
+    monkeypatch.setattr(ck_serve_v8, "_ensure_native_session_lib", lambda: None)
+    monkeypatch.setattr(ck_serve_v8, "_resolve_run_dir", lambda *_: setup[0])
+    monkeypatch.setattr(ck_serve_v8.SessionV8, "open", lambda *a, **k: Session())
+    monkeypatch.setattr(bundle, "verify_loaded_libraries", lambda *_: None)
+    served = []
+    monkeypatch.setattr(uvicorn, "run", lambda app, **_kwargs: served.append(app))
+
+    assert ck_serve_v8.main([str(setup[0]), "--no-build", "--no-viz", "--model-name", "test-model"]) == 0
+    assert closed == [True]
+    response = TestClient(served[0]).get("/v1/cke/loaded-identity")
+    assert response.status_code == 200
+    assert response.json()["serving_identity"] == doc["identity"]
+    assert response.json()["model"] == "test-model"
 
 
 def test_raw_build_without_chat_assets_and_normal_chat_rejection(setup, monkeypatch):
