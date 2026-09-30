@@ -2394,6 +2394,13 @@ make test-native-session-v8</pre>
 
 <div class="card card-green">
     <h3 style="margin-top: 0;">Localhost Serve E2E</h3>
+    <p>The <code>Server Protocol and Lifecycle</code> nightly row runs the
+        model-free <code>make test-server-schema</code> suite. It includes real
+        localhost socket checks for disconnects and an unread stream, plus
+        deterministic native-failure and cancellation-timeout recovery tests.
+        A busy response uses a positive <code>Retry-After</code>; a cancellation
+        timeout means native execution may still own the session. These checks
+        establish request ownership, not completed Qwen Code tasks.</p>
     <p>
         Bounded localhost integration for <code>ck_serve_v8.py</code> serves Qwen3-0.6B with Q8_0 quantizations 
         on context length of 1024 on an ephemeral <code>127.0.0.1</code> port, waits for
