@@ -23,6 +23,14 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'version/v8/tts'))
 import build_kokoro_text_encoder_circuit as author
 
+CHECKPOINT_ATOL={
+    'text_conv0':1.3e-5,'text_norm0':8e-6,'text_act0':8e-6,
+    'text_conv1':5e-6,'text_norm1':7e-6,'text_act1':7e-6,
+    'text_conv2':9e-6,'text_norm2':6e-6,'text_act2':6e-6,
+    'text_encoder_features':3e-6,'text_expanded':3e-6,
+    'duration_expanded':3e-5,
+}
+
 
 class KokoroGeneratedTextEncoderTest(unittest.TestCase):
     @classmethod
@@ -70,7 +78,8 @@ class KokoroGeneratedTextEncoderTest(unittest.TestCase):
     def arena(self):
         arena=populated_duration_arena(self.layout,self.entries,self.bump,
                                        self.encoder,self.duration)
-        for name in ('text_features','text_expanded','text_encoder_features'):
+        for name in ('text_features','text_expanded','text_encoder_features',
+                     'duration_expanded'):
             self.view(arena,name)[:]=-91.
         return arena
 
@@ -90,7 +99,8 @@ class KokoroGeneratedTextEncoderTest(unittest.TestCase):
                 expected=self.text[key] if name.startswith('text_conv') else self.text[key].T
                 diff=np.abs(actual[:,:limit]-expected)
                 self.assertTrue(np.isfinite(actual[:,:limit]).all(),name)
-                self.assertLessEqual(float(diff.max()),1.3e-5,(name,float(diff.max())))
+                self.assertLessEqual(float(diff.max()),CHECKPOINT_ATOL[name],
+                                     (name,float(diff.max())))
         features=self.view(arena,'text_encoder_features').reshape(36,512)
         np.testing.assert_allclose(features,self.text['lstm_output_token_major'],
             rtol=0,atol=3e-6)
@@ -98,6 +108,16 @@ class KokoroGeneratedTextEncoderTest(unittest.TestCase):
         np.testing.assert_allclose(expanded[:,:103],self.text['text_expanded'],
             rtol=0,atol=3e-6)
         self.assertTrue(np.all(expanded[:,103:]==-91.))
+        durations=self.view(arena,'runtime_values',np.int32)[:36]
+        np.testing.assert_array_equal(durations,self.duration['durations'])
+        self.assertEqual(int(durations.sum()),frames.value)
+        duration_expanded=self.view(arena,'duration_expanded').reshape(640,128)
+        expected_duration=np.repeat(self.duration['predictor_output'].T,
+                                    durations,axis=1)
+        np.testing.assert_allclose(duration_expanded[:,:frames.value],
+                                   expected_duration,rtol=0,
+                                   atol=CHECKPOINT_ATOL['duration_expanded'])
+        self.assertTrue(np.all(duration_expanded[:,frames.value:]==-91.))
         print('CKE_NUMERICAL_CASE '+json.dumps({'case_id':'kokoro.text-encoder.generated-v1',
             'name':'generated complete acoustic text encoder and expansion',
             'provider':'generated_text_encoder','dtype':'fp32','direction':'inference',
@@ -130,6 +150,22 @@ class KokoroGeneratedTextEncoderTest(unittest.TestCase):
         self.assertNotEqual(self.fn(arena,len(arena),ctypes.byref(frames)),0)
         self.assertEqual(frames.value,-999)
         self.assertTrue(np.all(self.view(arena,'text_encoder_features')==-91.))
+        self.assertTrue(np.all(self.view(arena,'text_expanded')==-91.))
+
+    def test_excess_duration_rejects_before_either_expansion(self):
+        arena=self.arena()
+        for name,value in (('duration_prosody.duration_head.weight',0.),
+                           ('duration_prosody.duration_head.bias',1.)):
+            weight=next(item for item in self.layout['memory']['weights']['entries']
+                        if item['name']==name)
+            np.ndarray((weight['size']//4,),np.float32,buffer=arena,
+                       offset=weight['abs_offset'])[:]=value
+        self.view(arena,'duration_expanded')[:]=-97.
+        frames=ctypes.c_int32(-999)
+        self.assertNotEqual(self.fn(arena,len(arena),ctypes.byref(frames)),0)
+        self.assertEqual(frames.value,-999)
+        self.assertEqual(int(self.view(arena,'runtime_valid_extent',np.int32)[0]),-999)
+        self.assertTrue(np.all(self.view(arena,'duration_expanded')==-97.))
         self.assertTrue(np.all(self.view(arena,'text_expanded')==-91.))
 
     def test_selected_contracts_and_bound_dimensions(self):
@@ -174,7 +210,8 @@ class KokoroGeneratedTextEncoderTest(unittest.TestCase):
         self.assertEqual(self.fn(arena,len(arena),ctypes.byref(frames)),0)
         self.assertEqual(frames.value,103)
         expected={
-            'text_conv0':(self.text['conv0_output'],(512,36),(512,40),1.3e-5),
+            'text_conv0':(self.text['conv0_output'],(512,36),(512,40),
+                          CHECKPOINT_ATOL['text_conv0']),
             'text_encoder_features':(self.text['lstm_output_token_major'],
                                      (36,512),(36,512),3e-6),
             'text_expanded':(self.text['text_expanded'],

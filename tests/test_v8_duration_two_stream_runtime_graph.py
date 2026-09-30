@@ -198,8 +198,18 @@ class DurationTwoStreamGraphTest(unittest.TestCase):
                                              checkpoint_order=order)
         self.assertEqual(comparison["status"], "pass", comparison)
         self.assertEqual(len(comparison["comparisons"]), 2)
-        self.assertEqual(comparison["unresolved_contract_checkpoints"], order)
-        for row in comparison["comparisons"]:
+        self.assertEqual(comparison["unresolved_contract_checkpoints"], [])
+        expected_contract = "audio_duration_expand_checked_strided_copy_fp32"
+        for checkpoint, row in zip(order, comparison["comparisons"]):
+            self.assertEqual(row["checkpoint_id"], checkpoint)
+            for manifest in (candidate, oracle):
+                point = next(item for item in manifest["checkpoints"]
+                             if item["checkpoint_id"] == checkpoint)
+                self.assertEqual(point["resolved_contract_id"], expected_contract)
+                self.assertEqual(point["kernel_id"],
+                                 "audio_duration_expand_channel_major_f32")
+                self.assertEqual(point["function"],
+                                 "audio_duration_expand_channel_major_f32")
             self.assertEqual(row["metrics"]["max_abs"], 0.0)
         self.assertEqual(candidate["run"]["runtime_library"]["path"],
                          str(self.library.resolve()))
@@ -214,7 +224,7 @@ class DurationTwoStreamGraphTest(unittest.TestCase):
                                  for row in comparison["comparisons"]),
             "runtime_symbol": runtime["symbol"],
             "runtime_library_sha256": runtime["sha256"],
-            "unresolved_contracts": comparison["unresolved_contract_checkpoints"],
+            "resolved_contract": expected_contract,
             "reproduce": "python3 -m unittest tests.test_v8_duration_two_stream_runtime_graph",
         }, sort_keys=True))
 
@@ -270,6 +280,28 @@ class DurationTwoStreamGraphTest(unittest.TestCase):
                                           self.reference[old][:, 36:103])
         np.testing.assert_array_equal(self._matrix(arena, "runtime_valid_copy")[:, :36],
                                       self.reference["duration_features"][:, :36])
+
+    def test_one_frame_above_minimum_uses_shared_extent(self):
+        logits = np.full((36, 50), -100, dtype=np.float32)
+        logits[:, :2] = 0
+        logits[0, :4] = 0
+        arena = self._arena(logits.ravel())
+        frames = ctypes.c_int32(-1)
+        self.assertEqual(self.function(arena, len(arena), ctypes.byref(frames)), 0)
+        self.assertEqual(frames.value, 37)
+        durations = [2] + [1] * 35
+        np.testing.assert_array_equal(self._vector(arena, "runtime_values", np.int32, 36),
+                                      durations)
+        for name, source, channels, marker in (
+            ("duration_expanded", "duration_features", 640, -99),
+            ("text_expanded", "text_features", 512, -98),
+        ):
+            actual = self._matrix(arena, name)
+            np.testing.assert_array_equal(
+                actual[:channels, :frames.value],
+                np.repeat(self.reference[source][:channels, :36], durations, axis=1))
+            self.assertTrue(np.all(actual[:channels, frames.value:] == marker))
+            self.assertTrue(np.all(actual[channels:] == marker))
 
     def test_undersized_arena_rejected_before_any_write(self):
         arena = self._arena()
