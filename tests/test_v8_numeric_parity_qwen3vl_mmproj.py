@@ -1,3 +1,4 @@
+import hashlib
 import json
 import sys
 import tempfile
@@ -237,6 +238,115 @@ class NumericParityQwen3VLMmprojV8Tests(unittest.TestCase):
             {"id": "Fake 1", "image": "/tmp/Fake_1.ppm"},
         ])
         self.assertEqual(prefix_suite._sanitize_id("1 81"), "1_81")
+
+    def test_encoder_prefix_suite_manifest_selects_all_images_and_checks_hashes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            samples = []
+            for index in range(12):
+                image = root / f"image-{index}.jpg"
+                image.write_bytes(f"image-{index}".encode())
+                samples.append({
+                    "id": f"case-{index}",
+                    "inputs": [{
+                        "path": image.name,
+                        "sha256": hashlib.sha256(image.read_bytes()).hexdigest(),
+                    }],
+                })
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps({"samples": samples}), encoding="utf-8")
+            specs = prefix_suite._load_manifest_specs(manifest, None)
+            self.assertEqual(len(specs), 12)
+            self.assertEqual(len(prefix_suite._load_manifest_specs(manifest, 3)), 3)
+            self.assertEqual(specs[0]["image"], str((root / "image-0.jpg").resolve()))
+            samples[0]["inputs"][0]["sha256"] = "0" * 64
+            manifest.write_text(json.dumps({"samples": samples}), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "SHA-256 differs"):
+                prefix_suite._load_manifest_specs(manifest, None)
+
+    def test_encoder_prefix_suite_manifest_rejects_duplicate_image_content(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            first = root / "first.jpg"
+            second = root / "second.jpg"
+            first.write_bytes(b"same-image")
+            second.write_bytes(b"same-image")
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps({"samples": [
+                {"id": "one", "inputs": [{"path": first.name}]},
+                {"id": "two", "inputs": [{"path": second.name}]},
+            ]}), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "duplicates image content"):
+                prefix_suite._load_manifest_specs(manifest, None)
+
+    def test_encoder_prefix_suite_manifest_rejects_partial_corpus(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            image = root / "image.jpg"
+            image.write_bytes(b"image")
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps({"samples": [
+                {"id": "one", "inputs": [{"path": image.name}]},
+            ]}), encoding="utf-8")
+            with self.assertRaises(SystemExit) as caught:
+                prefix_suite.main([
+                    "--gguf", "fixture.gguf", "--manifest", str(manifest),
+                    "--require-images", "40", "--output-dir", str(root / "out"),
+                ])
+            self.assertEqual(caught.exception.code, 2)
+
+    def test_encoder_prefix_suite_rejects_manifest_changed_during_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            image = root / "image.jpg"
+            image.write_bytes(b"image")
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps({"samples": [
+                {"id": "one", "inputs": [{"path": image.name}]},
+            ]}), encoding="utf-8")
+
+            def changed_manifest(**_kwargs):
+                manifest.write_text(json.dumps({"samples": [
+                    {"id": "one", "inputs": [{"path": image.name}], "note": "changed"},
+                ]}), encoding="utf-8")
+                return {
+                    "id": "one", "status": "complete", "shape_ok": True,
+                    "metrics": {"cosine": 1.0, "rmse": 0.0, "mean_abs": 0.0, "max_abs": 0.0},
+                }
+
+            with (mock.patch.object(prefix_suite, "_run_one", side_effect=changed_manifest),
+                  mock.patch.object(prefix_suite, "_oracle_commit", return_value="pin")):
+                code = prefix_suite.main([
+                    "--gguf", "fixture.gguf", "--manifest", str(manifest),
+                    "--expected-llama-commit", "pin",
+                    "--require-images", "1", "--output-dir", str(root / "out"),
+                ])
+            summary = json.loads((root / "out" / "summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(code, 1)
+            self.assertEqual(summary["status"], "fail")
+            self.assertEqual(summary["selected_count"], 1)
+            self.assertEqual(summary["completed_count"], 1)
+            self.assertEqual(summary["passing_count"], 1)
+            self.assertIn("manifest changed", summary["failures"][0])
+
+    def test_encoder_prefix_suite_rejects_wrong_llama_commit_before_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            image = root / "image.jpg"
+            image.write_bytes(b"image")
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps({"samples": [
+                {"id": "one", "inputs": [{"path": image.name}]},
+            ]}), encoding="utf-8")
+            with (mock.patch.object(prefix_suite, "_oracle_commit", return_value="old"),
+                  mock.patch.object(prefix_suite, "_run_one") as run_one,
+                  self.assertRaises(SystemExit) as caught):
+                prefix_suite.main([
+                    "--gguf", "fixture.gguf", "--manifest", str(manifest),
+                    "--expected-llama-commit", "new", "--output-dir", str(root / "out"),
+                ])
+            self.assertEqual(caught.exception.code, 2)
+            run_one.assert_not_called()
 
     def test_encoder_prefix_suite_thresholds_shape_and_metrics(self) -> None:
         values = 36 * 28 * 16384

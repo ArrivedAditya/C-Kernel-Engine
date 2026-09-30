@@ -2954,6 +2954,7 @@ test-qwen3vl-private-corpus-parity-auto:
 			--llama-root "$(QWEN3VL_PRIVATE_CORPUS_LLAMA_ROOT)" \
 			--output-dir "$(QWEN3VL_PRIVATE_CORPUS_OUTPUT)" \
 			--require-images "$(QWEN3VL_PRIVATE_CORPUS_REQUIRED_IMAGES)" \
+			--require-selected-images "$(QWEN3VL_PRIVATE_CORPUS_REQUIRED_IMAGES)" \
 			$(if $(filter 1,$(QWEN3VL_PRIVATE_CORPUS_PRETTY)),--show-private-details,) \
 			$(if $(filter 0,$(QWEN3VL_PRIVATE_CORPUS_PRETTY)),--redacted-console,) \
 			$(if $(filter 1,$(QWEN3VL_PRIVATE_CORPUS_FORCE_RERUN)),--force-rerun,) \
@@ -2983,6 +2984,7 @@ test-qwen36vl-private-corpus-parity-auto:
 			--context-len "$(QWEN36VL_PRIVATE_CORPUS_CONTEXT)" \
 			--max-new-tokens "$(QWEN36VL_PRIVATE_CORPUS_MAX_NEW_TOKENS)" \
 			--require-images "$(QWEN36VL_PRIVATE_CORPUS_REQUIRED_IMAGES)" \
+			--require-selected-images "$(QWEN36VL_PRIVATE_CORPUS_REQUIRED_IMAGES)" \
 			--compiler "$(QWEN36VL_PRIVATE_CORPUS_COMPILER)" \
 			$(if $(filter 1,$(QWEN36VL_PRIVATE_CORPUS_PRETTY)),--show-private-details,) \
 			$(if $(filter 0,$(QWEN36VL_PRIVATE_CORPUS_PRETTY)),--redacted-console,) \
@@ -3016,6 +3018,7 @@ test-gemma4-private-corpus-parity-auto:
 			--context-len "$(GEMMA4_PRIVATE_CORPUS_CONTEXT)" \
 			--max-new-tokens "$(GEMMA4_PRIVATE_CORPUS_MAX_NEW_TOKENS)" \
 			--require-images "$(GEMMA4_PRIVATE_CORPUS_REQUIRED_IMAGES)" \
+			--require-selected-images "$(GEMMA4_PRIVATE_CORPUS_REQUIRED_IMAGES)" \
 			--compiler "$(GEMMA4_PRIVATE_CORPUS_COMPILER)" \
 			--llama-required-isa "$(GEMMA4_PRIVATE_CORPUS_LLAMA_REQUIRED_ISA)" \
 			$(if $(GEMMA4_PRIVATE_CORPUS_EXPECTED_LLAMA_COMMIT),--expected-llama-commit "$(GEMMA4_PRIVATE_CORPUS_EXPECTED_LLAMA_COMMIT)",) \

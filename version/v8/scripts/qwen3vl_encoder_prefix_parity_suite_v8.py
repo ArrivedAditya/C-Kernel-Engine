@@ -20,6 +20,38 @@ REPO_ROOT = SCRIPT_DIR.parents[2]
 NUMERIC_PARITY = SCRIPT_DIR / "numeric_parity_qwen3vl_mmproj_v8.py"
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _git_output(*command: str) -> str | None:
+    completed = subprocess.run(command, capture_output=True, text=True, check=False)
+    return completed.stdout.strip() if completed.returncode == 0 else None
+
+
+def _checked_in_llama_commit() -> str | None:
+    tree = _git_output("git", "-C", str(REPO_ROOT), "ls-tree", "HEAD", "llama.cpp")
+    if not tree:
+        return None
+    fields = tree.split()
+    return fields[2] if len(fields) == 4 and fields[:2] == ["160000", "commit"] else None
+
+
+def _oracle_commit(root: Path) -> str:
+    root = root.resolve()
+    if not (root / "ggml" / "include" / "ggml.h").is_file():
+        raise ValueError(f"llama.cpp source is missing under {root}")
+    toplevel = _git_output("git", "-C", str(root), "rev-parse", "--show-toplevel")
+    commit = _git_output("git", "-C", str(root), "rev-parse", "HEAD")
+    if toplevel is None or Path(toplevel).resolve() != root or not commit:
+        raise ValueError(f"llama.cpp source revision is unresolved under {root}")
+    return commit
+
+
 def _sanitize_id(value: str) -> str:
     text = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value).strip())
     text = text.strip("._-")
@@ -40,6 +72,49 @@ def _load_image_specs(summary_json: Path | None, image_paths: list[Path], limit:
         specs.append({"id": image.stem, "image": str(image)})
     if limit is not None and limit > 0:
         specs = specs[:limit]
+    return specs
+
+
+def _load_manifest_specs(manifest_path: Path, limit: int | None) -> list[dict[str, str]]:
+    manifest_path = manifest_path.resolve()
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    samples = payload.get("samples") if isinstance(payload, dict) else None
+    if not isinstance(samples, list) or not samples:
+        raise ValueError("image manifest must contain a non-empty samples list")
+    specs: list[dict[str, str]] = []
+    seen_ids: set[str] = set()
+    seen_hashes: dict[str, str] = {}
+    for index, sample in enumerate(samples, 1):
+        if not isinstance(sample, dict):
+            raise ValueError(f"sample {index} must be an object")
+        inputs = sample.get("inputs")
+        if not isinstance(inputs, list) or len(inputs) != 1 or not isinstance(inputs[0], dict):
+            raise ValueError(f"sample {index} must contain exactly one image input")
+        raw_path = inputs[0].get("path")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            raise ValueError(f"sample {index} has no image path")
+        sample_id = str(sample.get("id") or f"case-{index:03d}")
+        if sample_id in seen_ids:
+            raise ValueError(f"duplicate image sample ID: {sample_id}")
+        seen_ids.add(sample_id)
+        image = Path(raw_path).expanduser()
+        if not image.is_absolute():
+            image = manifest_path.parent / image
+        image = image.resolve()
+        if not image.is_file():
+            raise FileNotFoundError(f"sample {index} image is missing: {image}")
+        image_sha256 = _sha256_file(image)
+        pinned_sha256 = inputs[0].get("sha256")
+        if pinned_sha256 is not None and pinned_sha256 != image_sha256:
+            raise ValueError(f"sample {index} image SHA-256 differs from manifest")
+        if image_sha256 in seen_hashes:
+            raise ValueError(
+                f"sample {index} duplicates image content from {seen_hashes[image_sha256]}"
+            )
+        seen_hashes[image_sha256] = sample_id
+        specs.append({"id": sample_id, "image": str(image), "image_sha256": image_sha256})
+        if limit is not None and len(specs) >= limit:
+            break
     return specs
 
 
@@ -145,11 +220,7 @@ def _verify_artifacts(sample: dict[str, Any], args: argparse.Namespace, env: dic
             return f"{role} path differs from selected artifact"
         if not path.is_file() or path.stat().st_size <= 0 or item.get("size_bytes") != path.stat().st_size:
             return f"{role} artifact missing or changed size"
-        digest = hashlib.sha256()
-        with path.open("rb") as stream:
-            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                digest.update(chunk)
-        if item.get("sha256") != digest.hexdigest():
+        if item.get("sha256") != _sha256_file(path):
             return f"{role} artifact hash mismatch"
     return None
 
@@ -238,12 +309,14 @@ def _run_one(
                 sample["evidence_error"] = artifact_error
     if fresh_report and not sample.get("execution_error"):
         try:
-            expected_hash = hashlib.sha256(Path(spec["image"]).read_bytes()).hexdigest()
+            expected_hash = _sha256_file(Path(spec["image"]))
         except OSError as exc:
             expected_hash = None
             sample["evidence_error"] = f"cannot verify current source image: {exc}"
         if "evidence_error" not in sample:
-            if Path(str(sample.get("reported_image") or "")).resolve() != Path(spec["image"]).resolve():
+            if spec.get("image_sha256") and expected_hash != spec["image_sha256"]:
+                sample["evidence_error"] = "source image changed after manifest selection"
+            elif Path(str(sample.get("reported_image") or "")).resolve() != Path(spec["image"]).resolve():
                 sample["evidence_error"] = "report image path does not match the current case"
             elif sample.get("source_image_sha256") != expected_hash:
                 sample["evidence_error"] = "source image hash does not match the current case"
@@ -309,7 +382,9 @@ def _write_markdown(path: Path, summary: dict[str, Any]) -> None:
     lines = [
         "# Qwen3-VL Encoder Prefix Parity",
         "",
-        f"- samples: {summary['sample_count']}",
+        f"- selected: {summary['selected_count']}",
+        f"- completed: {summary['completed_count']}",
+        f"- passing: {summary['passing_count']}",
         f"- threads: {summary['threads']}",
         f"- image_max_tokens: {summary.get('image_max_tokens')}",
         f"- input_provenance: {'independent_preprocessing' if summary.get('independent_preprocess') else 'shared_processed_tensor'}",
@@ -353,8 +428,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run Qwen3-VL encoder prefix parity over a small image set.")
     parser.add_argument("--gguf", type=Path, required=True, help="Path to mmproj-Qwen3VL-*.gguf")
     parser.add_argument("--summary-json", type=Path, default=None, help="OCR summary JSON containing result image paths")
+    parser.add_argument("--manifest", type=Path, help="Image corpus manifest with samples and image inputs")
     parser.add_argument("--image", type=Path, action="append", default=[], help="Extra image path; may be repeated")
-    parser.add_argument("--limit", type=int, default=10)
+    parser.add_argument("--limit", type=int, help="Maximum selected images; defaults to all manifest images or 10 ad hoc images")
+    parser.add_argument("--require-images", type=int, help="Fail unless at least this many images are selected")
+    parser.add_argument("--expected-llama-commit", help="Immutable oracle revision; defaults to the checked-in gitlink")
     parser.add_argument("--output-dir", type=Path, default=Path("build/qwen3vl_encoder_prefix_parity"))
     parser.add_argument("--runtime-dir", type=Path, default=None, help="Reusable generated mmproj runtime directory")
     parser.add_argument("--image-min-tokens", type=int, default=None)
@@ -371,6 +449,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.independent_preprocess and (args.reuse_reports or args.no_fail):
         parser.error("independent preprocessing cannot use --reuse-reports or --no-fail")
+    if args.manifest is not None and (args.summary_json is not None or args.image):
+        parser.error("--manifest cannot be combined with --summary-json or --image")
+    if args.limit is not None and args.limit <= 0:
+        parser.error("--limit must be positive")
+    if args.require_images is not None and args.require_images <= 0:
+        parser.error("--require-images must be positive")
 
     args.output_dir = args.output_dir.resolve()
     args.runtime_dir = (args.runtime_dir or (args.output_dir / "runtime")).resolve()
@@ -378,13 +462,30 @@ def main(argv: list[str] | None = None) -> int:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     args.runtime_dir.mkdir(parents=True, exist_ok=True)
 
-    specs = _load_image_specs(args.summary_json, args.image, args.limit)
+    manifest_sha256 = _sha256_file(args.manifest) if args.manifest else None
+    limit = args.limit if args.limit is not None else (None if args.manifest else 10)
+    specs = (_load_manifest_specs(args.manifest, limit) if args.manifest is not None
+             else _load_image_specs(args.summary_json, args.image, limit))
     if not specs:
         raise SystemExit("no images selected; pass --summary-json or --image")
+    if args.require_images is not None and len(specs) < args.require_images:
+        parser.error(f"selected {len(specs)} images; --require-images needs {args.require_images}")
 
     env = os.environ.copy()
     env["CK_NUM_THREADS"] = str(args.ck_threads)
     env["OMP_NUM_THREADS"] = str(args.ck_threads)
+    expected_llama_commit = args.expected_llama_commit or _checked_in_llama_commit()
+    llama_root = Path(env.get("CK_LLAMA_CPP_ROOT", str(REPO_ROOT / "llama.cpp")))
+    llama_commit = None
+    if args.manifest is not None or args.independent_preprocess:
+        if not expected_llama_commit:
+            parser.error("oracle source pin is unavailable; supply --expected-llama-commit")
+        try:
+            llama_commit = _oracle_commit(llama_root)
+        except ValueError as exc:
+            parser.error(str(exc))
+        if llama_commit != expected_llama_commit:
+            parser.error(f"llama.cpp revision {llama_commit} differs from required {expected_llama_commit}")
 
     samples: list[dict[str, Any]] = []
     for index, spec in enumerate(specs, 1):
@@ -396,6 +497,20 @@ def main(argv: list[str] | None = None) -> int:
                             "execution_error": str(exc)})
 
     failures = _evaluate_samples(samples, args)
+    if llama_commit is not None:
+        try:
+            current_llama_commit = _oracle_commit(llama_root)
+        except ValueError:
+            current_llama_commit = None
+        if current_llama_commit != llama_commit:
+            failures.append("llama.cpp source revision changed or disappeared during encoder parity execution")
+    if args.manifest is not None:
+        try:
+            current_manifest_sha256 = _sha256_file(args.manifest)
+        except OSError:
+            current_manifest_sha256 = None
+        if current_manifest_sha256 != manifest_sha256:
+            failures.append("image manifest changed or disappeared during encoder parity execution")
     measured = [sample for sample in samples if all(_metric_value(sample, name) is not None
                 for name in ("cosine", "rmse", "mean_abs", "max_abs"))]
     aggregate = {
@@ -406,7 +521,15 @@ def main(argv: list[str] | None = None) -> int:
     }
     summary = {
         "gguf": str(args.gguf),
+        "manifest_sha256": manifest_sha256,
+        "expected_llama_commit": expected_llama_commit,
+        "llama_commit": llama_commit,
+        "status": "pass" if not failures else "fail",
         "sample_count": len(samples),
+        "selected_count": len(specs),
+        "completed_count": sum(sample.get("status") == "complete" for sample in samples),
+        "passing_count": sum(not _evaluate_samples([sample], args) for sample in samples),
+        "required_images": args.require_images,
         "independent_preprocess": bool(args.independent_preprocess),
         "threads": args.threads,
         "ck_threads": args.ck_threads,
@@ -428,7 +551,9 @@ def main(argv: list[str] | None = None) -> int:
     _write_markdown(report_path, summary)
 
     print(json.dumps({
-        "sample_count": len(samples),
+        "selected_count": summary["selected_count"],
+        "completed_count": summary["completed_count"],
+        "passing_count": summary["passing_count"],
         "aggregate": aggregate,
         "failures": failures,
         "summary": str(summary_path),

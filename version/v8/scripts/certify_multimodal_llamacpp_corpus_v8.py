@@ -125,6 +125,24 @@ def _require_corpus_size(rows: list[dict[str, Any]], minimum: int | None) -> Non
         )
 
 
+def _require_selected_size(rows: list[dict[str, Any]], minimum: int | None) -> None:
+    if minimum is None:
+        return
+    if minimum < 1:
+        raise ValueError("--require-selected-images must be positive")
+    if len(rows) < minimum:
+        raise ValueError(
+            f"selected {len(rows)} images; at least {minimum} are required for this run"
+        )
+    hashes = [row.get("image_sha256") for row in rows]
+    if any(not isinstance(value, str) or not value for value in hashes):
+        raise ValueError("selected image hashes are missing")
+    if len(set(hashes)) < minimum:
+        raise ValueError(
+            f"selected {len(set(hashes))} distinct images; at least {minimum} are required for this run"
+        )
+
+
 def _git_commit(repo: Path) -> str:
     probe = subprocess.run(
         ["git", "-C", str(repo), "rev-parse", "HEAD"],
@@ -413,6 +431,7 @@ def _public_provenance(config: dict[str, Any]) -> dict[str, Any]:
         "image_max_tokens",
         "max_new_tokens",
         "require_images",
+        "require_selected_images",
         "append_on_divergence",
         "chat_template",
         "threads",
@@ -784,6 +803,11 @@ def main() -> int:
         type=int,
         help="fail unless the private manifest contains at least this many images",
     )
+    parser.add_argument(
+        "--require-selected-images",
+        type=int,
+        help="fail unless this execution selects at least this many images",
+    )
     parser.add_argument("--max-new-tokens", type=int, default=128)
     parser.add_argument(
         "--chat-template",
@@ -896,6 +920,7 @@ def main() -> int:
         selected = selected[: args.limit]
     if not selected:
         raise ValueError("the requested corpus range is empty")
+    _require_selected_size(selected, args.require_selected_images)
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     args.output_dir.chmod(0o700)
@@ -923,6 +948,7 @@ def main() -> int:
         "image_max_tokens": args.image_max_tokens,
         "max_new_tokens": args.max_new_tokens,
         "require_images": args.require_images,
+        "require_selected_images": args.require_selected_images,
         "append_on_divergence": args.append_on_divergence,
         "chat_template": args.chat_template,
         "composition_circuit": args.composition_circuit,
