@@ -849,6 +849,19 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_kokoro_generated_text_embedding.py",
         timeout_sec=180,
     ),
+    "tts_kokoro_text_primitives": TestSuite(
+        "TTS Checked Conv1D, Transpose, and LeakyReLU Oracles", "kernels",
+        ROOT / "tests" / "test_v8_kokoro_text_primitives.py",
+    ),
+    "tts_checked_text_ops_generated": TestSuite(
+        "Model-Neutral Checked Conv1D, Transpose, and Activation Graph", "inference",
+        ROOT / "tests" / "test_v8_checked_text_ops_generated.py",
+    ),
+    "tts_kokoro_generated_text_encoder": TestSuite(
+        "Kokoro Generated Acoustic Text Encoder and Duration Alignment", "inference",
+        ROOT / "tests" / "test_v8_kokoro_generated_text_encoder.py",
+        timeout_sec=180,
+    ),
     "tts_duration_logits_oracle": TestSuite(
         "TTS Duration Logits Committed PyTorch Oracle", "kernels",
         ROOT / "tests" / "test_v8_audio_duration_logits_oracle.py",

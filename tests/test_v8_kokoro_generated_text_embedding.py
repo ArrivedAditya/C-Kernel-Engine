@@ -130,7 +130,8 @@ class KokoroGeneratedTextEmbeddingTest(unittest.TestCase):
                 self.assertEqual(point['resolved_contract_id'],
                                  'audio_text_embedding_exact_channel_major_fp32')
             else:
-                self.assertEqual(point['resolved_contract_id'],'unresolved')
+                self.assertEqual(point['resolved_contract_id'],
+                    'audio_duration_expand_checked_strided_copy_fp32')
             selector=tensor if point['layer']<0 else f'{tensor}@{point["layer"]}'
             native_path=self.root/f'{tensor}-native.f32'
             oracle_path=self.root/f'{tensor}-pytorch.f32'

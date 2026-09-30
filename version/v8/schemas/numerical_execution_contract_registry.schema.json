@@ -85,6 +85,7 @@
             "audio_relative_attention",
             "audio_scaled_residual_add",
             "audio_relu",
+            "leaky_relu",
             "audio_argmax",
             "audio_duration_expand",
             "audio_duration_logits_to_frames",

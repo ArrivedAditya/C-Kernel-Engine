@@ -1,0 +1,337 @@
+{
+  "id": "audio_conv1d_checked_channel_major_f32",
+  "op": "audio_conv1d_checked",
+  "operation_interface": "audio.conv1d.checked.channel_major.fp32.v1",
+  "variant": "checked_scalar_fma_strided",
+  "selection": {
+    "status": "candidate",
+    "priority": 100,
+    "equivalence_group": "audio_conv1d_checked_channel_major_f32",
+    "phases": [
+      "prefill"
+    ]
+  },
+  "quant": {
+    "weight": "fp32",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {
+      "name": "input",
+      "dtype": "fp32",
+      "shape": [
+        "I",
+        "T"
+      ],
+      "layout": "channel_major_input_stride",
+      "placement": "local",
+      "access": "read",
+      "storage_class": "activation",
+      "consumption": "required"
+    }
+  ],
+  "weights": [
+    {
+      "name": "weight",
+      "dtype": "fp32",
+      "shape": [
+        "O",
+        "I",
+        "K"
+      ],
+      "layout": "output_input_kernel",
+      "placement": "local",
+      "access": "read",
+      "storage_class": "activation",
+      "consumption": "required"
+    },
+    {
+      "name": "bias",
+      "dtype": "fp32",
+      "shape": [
+        "O"
+      ],
+      "layout": "contiguous",
+      "placement": "local",
+      "access": "read",
+      "storage_class": "activation",
+      "consumption": "required"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "output",
+      "dtype": "fp32",
+      "shape": [
+        "O",
+        "U"
+      ],
+      "layout": "channel_major_output_stride",
+      "placement": "local",
+      "access": "write",
+      "storage_class": "activation",
+      "consumption": "required"
+    }
+  ],
+  "scratch": [
+    {
+      "name": "scratch",
+      "dtype": "fp32",
+      "shape": [
+        "Q"
+      ],
+      "layout": "contiguous",
+      "placement": "local",
+      "access": "read_write",
+      "storage_class": "scratch",
+      "consumption": "required",
+      "lifetime": "kernel_call",
+      "alignment": 4,
+      "size_bytes": "4 * Q",
+      "size_resolution": "required"
+    }
+  ],
+  "dims": [
+    "input_elements",
+    "input_stride",
+    "weight_elements",
+    "bias_elements",
+    "output_elements",
+    "output_stride",
+    "scratch_elements",
+    "input_channels",
+    "output_channels",
+    "input_frames",
+    "kernel_size",
+    "stride",
+    "padding",
+    "output_frames"
+  ],
+  "impl": {
+    "function": "audio_conv1d_checked_channel_major_f32",
+    "c_declaration": "int audio_conv1d_checked_channel_major_f32(const float *input, size_t input_elements, size_t input_stride, const float *weight, size_t weight_elements, const float *bias, size_t bias_elements, float *output, size_t output_elements, size_t output_stride, float *scratch, size_t scratch_elements, size_t input_channels, size_t output_channels, size_t input_frames, size_t kernel_size, size_t stride, size_t padding, size_t output_frames);",
+    "sources": [
+      "src/kernels/audio_conv1d_checked.c"
+    ]
+  },
+  "modes": {
+    "inference": true,
+    "training": false,
+    "backward": false
+  },
+  "numerical_capabilities": [
+    {
+      "contract_id": "audio_conv1d_checked_scalar_fma_fp32",
+      "status": "validated",
+      "phases": [
+        "prefill"
+      ],
+      "function": "audio_conv1d_checked_channel_major_f32",
+      "explicit_selector": true,
+      "implementation": {
+        "isa_dispatch": "scalar",
+        "threading": {
+          "runtime": "serial",
+          "work_partition": [
+            "serial"
+          ],
+          "dispatch": [
+            "inline"
+          ],
+          "reduction_order_effect": "contract_defined"
+        }
+      },
+      "arithmetic": {
+        "partial_accumulator": "fp32",
+        "merge_order": "none",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false,
+        "split_strategy": "serial"
+      }
+    }
+  ],
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {
+        "name": "input",
+        "source": "activation:input",
+        "cast": "const float*",
+        "ports": [
+          "input:input"
+        ]
+      },
+      {
+        "name": "input_elements",
+        "source": "runtime:conv_input_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "input_stride",
+        "source": "runtime:conv_input_stride",
+        "value_type": "size_t"
+      },
+      {
+        "name": "weight",
+        "source": "weight:weight",
+        "cast": "const float*",
+        "ports": [
+          "weight:weight"
+        ]
+      },
+      {
+        "name": "weight_elements",
+        "source": "runtime:conv_weight_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "bias",
+        "source": "weight:bias",
+        "cast": "const float*",
+        "ports": [
+          "weight:bias"
+        ]
+      },
+      {
+        "name": "bias_elements",
+        "source": "runtime:conv_bias_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "output",
+        "source": "output:output",
+        "cast": "float*",
+        "ports": [
+          "output:output"
+        ]
+      },
+      {
+        "name": "output_elements",
+        "source": "runtime:conv_output_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "output_stride",
+        "source": "runtime:conv_output_stride",
+        "value_type": "size_t"
+      },
+      {
+        "name": "scratch",
+        "source": "scratch:scratch",
+        "cast": "float*"
+      },
+      {
+        "name": "scratch_elements",
+        "source": "runtime:conv_scratch_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "input_channels",
+        "source": "runtime:conv_input_channels",
+        "value_type": "size_t"
+      },
+      {
+        "name": "output_channels",
+        "source": "runtime:conv_output_channels",
+        "value_type": "size_t"
+      },
+      {
+        "name": "input_frames",
+        "source": "runtime:conv_input_frames",
+        "value_type": "size_t"
+      },
+      {
+        "name": "kernel_size",
+        "source": "runtime:conv_kernel_size",
+        "value_type": "size_t"
+      },
+      {
+        "name": "stride",
+        "source": "runtime:conv_stride",
+        "value_type": "size_t"
+      },
+      {
+        "name": "padding",
+        "source": "runtime:conv_padding",
+        "value_type": "size_t"
+      },
+      {
+        "name": "output_frames",
+        "source": "runtime:conv_output_frames",
+        "value_type": "size_t"
+      }
+    ]
+  },
+  "tests": {
+    "unit": [
+      "tests/test_v8_kokoro_text_primitives.py",
+      "tests/test_v8_checked_text_ops_generated.py",
+      "tests/test_v8_kokoro_generated_text_encoder.py"
+    ],
+    "oracle": "Pinned PyTorch 2.8 text encoder, independent NumPy/PyTorch primitives"
+  },
+  "notes": "No heap or global threadpool. Caller owns staged output scratch. Ascending output channel, frame, input channel, kernel FMA; geometry, capacity, overlap, finite checks before output commit. Inference only.",
+  "call_constant_contract": {
+    "shape_symbols": {
+      "I": "conv_input_channels",
+      "O": "conv_output_channels",
+      "T": "conv_input_frames",
+      "K": "conv_kernel_size",
+      "U": "conv_output_frames"
+    },
+    "buffer_spans": [
+      {
+        "pointer": "input",
+        "elements": "conv_input_elements",
+        "rows": "conv_input_channels",
+        "width": "conv_input_frames",
+        "element_bytes": 4,
+        "stride": "conv_input_stride",
+        "physical_row_stride": true
+      },
+      {
+        "pointer": "weight",
+        "elements": "conv_weight_elements",
+        "rows": 1,
+        "width": "conv_weight_elements",
+        "element_bytes": 4,
+        "exact_elements_product": [
+          "conv_output_channels",
+          "conv_input_channels",
+          "conv_kernel_size"
+        ]
+      },
+      {
+        "pointer": "bias",
+        "elements": "conv_bias_elements",
+        "rows": "conv_output_channels",
+        "width": 1,
+        "element_bytes": 4,
+        "exact_elements_product": [
+          "conv_output_channels"
+        ]
+      },
+      {
+        "pointer": "output",
+        "elements": "conv_output_elements",
+        "rows": "conv_output_channels",
+        "width": "conv_output_frames",
+        "element_bytes": 4,
+        "stride": "conv_output_stride",
+        "physical_row_stride": true
+      },
+      {
+        "pointer": "scratch",
+        "elements": "conv_scratch_elements",
+        "rows": "conv_output_channels",
+        "width": "conv_output_frames",
+        "element_bytes": 4,
+        "exact_elements_product": [
+          "conv_output_channels",
+          "conv_output_frames"
+        ]
+      }
+    ]
+  }
+}

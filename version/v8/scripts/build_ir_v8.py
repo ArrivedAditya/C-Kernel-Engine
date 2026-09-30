@@ -853,6 +853,13 @@ def _attach_semantic_checkpoints(
         for item in registry.get("kernels", [])
         if isinstance(item, dict)
     }
+    selected_capabilities = {
+        str(item.get("id", "")): item.get("numerical_capabilities", [])
+        for item in registry.get("kernels", []) if isinstance(item, dict)
+    }
+    with (V8_ROOT / "contracts" / "numerical_execution.json").open(
+            "r", encoding="utf-8") as handle:
+        registered_contracts = set(json.load(handle).get("contracts", {}))
     inactive_template_ops: set[Tuple[str, str]] = set()
     sequence = template.get("sequence") if isinstance(template.get("sequence"), list) else []
     block_types = template.get("block_types") if isinstance(template.get("block_types"), dict) else {}
@@ -920,11 +927,25 @@ def _attach_semantic_checkpoints(
                         f"{checkpoint_id!r} has no exact public function"
                     )
                 resolved = arranged.get("resolved_contract")
-                item["resolved_contract_id"] = (
-                    str(resolved.get("resolved_contract_id") or resolved.get("contract_id"))
-                    if isinstance(resolved, dict)
-                    else "unresolved"
-                )
+                if isinstance(resolved, dict):
+                    item["resolved_contract_id"] = str(
+                        resolved.get("resolved_contract_id") or resolved.get("contract_id"))
+                else:
+                    # A circuit may select multiple providers for one semantic
+                    # operation. Attribute this checkpoint to the *selected*
+                    # call site's map only when one validated capability matches
+                    # its phase and implementation function. Ambiguity remains
+                    # visible instead of guessing from the shared op name.
+                    candidates = [cap for cap in selected_capabilities.get(
+                        item["kernel_id"], []) if isinstance(cap, dict)
+                        and cap.get("status") == "validated"
+                        and cap.get("explicit_selector") is True
+                        and item["phase"] in cap.get("phases", [])
+                        and cap.get("function") == item["function"]
+                        and cap.get("contract_id") in registered_contracts]
+                    item["resolved_contract_id"] = (
+                        str(candidates[0]["contract_id"]) if len(candidates) == 1
+                        else "unresolved")
                 checkpoints.append(item)
             arranged["semantic_checkpoints"] = checkpoints
             matched[declaration_name] += 1
@@ -1811,6 +1832,22 @@ def _validate_segmented_prefill_contract(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 OP_DATAFLOW = {
+    "layernorm_rows_param_checked": {
+        "inputs": {"input": "external:features"},
+        "outputs": {"output": {"slot": "normalized_features", "dtype": "fp32"}},
+    },
+    "audio_conv1d_checked": {
+        "inputs": {"input": "external:audio_features"},
+        "outputs": {"output": {"slot": "audio_conv_output", "dtype": "fp32"}},
+    },
+    "transpose_strided_checked": {
+        "inputs": {"input": "external:features"},
+        "outputs": {"output": {"slot": "transposed_features", "dtype": "fp32"}},
+    },
+    "leaky_relu_strided_checked": {
+        "inputs": {"input": "external:features"},
+        "outputs": {"output": {"slot": "activated_features", "dtype": "fp32"}},
+    },
     "feature_concat_broadcast_rows": {
         "inputs": {"input": "external:features", "feature": "external:feature"},
         "outputs": {"output": {"slot": "broadcast_concat", "dtype": "fp32"}},
@@ -4426,6 +4463,10 @@ def _validated_kernel_codegen_capability(kernel_id: str, kernel_map: Dict) -> Op
 # source model is dense, recurrent, DeepStack-style, MoE, SSM, or something else.
 # Note: "matmul" is a logical op that maps to gemv (decode) or gemm (prefill) based on mode
 TEMPLATE_TO_KERNEL_OP = {
+    "layernorm_rows_param_checked": "layernorm",
+    "audio_conv1d_checked": "audio_conv1d_checked",
+    "transpose_strided_checked": "transpose_strided_checked",
+    "leaky_relu_strided_checked": "leaky_relu_strided_checked",
     "feature_concat_broadcast_rows": "feature_concat_broadcast_rows",
     "audio_lstm_bidirectional_scan": "audio_lstm",
     "audio_adaptive_layer_norm": "audio_adaptive_layer_norm",
@@ -5360,6 +5401,21 @@ def _validated_call_constants(op: Dict[str, Any], kernel_map: Dict[str, Any]) ->
                 or (rows - 1) * stride + width > count):
             raise RuntimeError(
                 f"HARD CALL CONSTANT FAULT: {span.get('pointer')} span exceeds claimed capacity")
+        product_names = span.get("exact_elements_product")
+        if product_names is not None:
+            if not isinstance(product_names, list) or not product_names:
+                raise RuntimeError("HARD CALL CONSTANT FAULT: invalid exact element product")
+            expected = 1
+            for factor_name in product_names:
+                factor = values.get(factor_name) if isinstance(factor_name, str) else factor_name
+                if (not isinstance(factor, int) or isinstance(factor, bool)
+                        or factor <= 0 or expected > SIZE_MAX // factor):
+                    raise RuntimeError(
+                        f"HARD CALL CONSTANT FAULT: {span.get('pointer')} element product overflows")
+                expected *= factor
+            if count != expected:
+                raise RuntimeError(
+                    f"HARD CALL CONSTANT FAULT: {span.get('pointer')} capacity disagrees with logical dimensions")
     return values
 
 
