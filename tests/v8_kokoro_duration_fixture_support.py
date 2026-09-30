@@ -18,7 +18,7 @@ sys.path.insert(0, str(ROOT / 'version/v8/tts'))
 import export_kokoro_bump as exporter
 
 
-def prepare_duration_fixture(root, circuit):
+def prepare_duration_fixture(root, circuit, extra_tensors=None):
     fixture = SimpleNamespace()
     encoder_path = ROOT / 'tests/fixtures/tts/kokoro_encoder_pinned.npz'
     duration_path = ROOT / 'tests/fixtures/tts/kokoro_duration_predictor_pinned.npz'
@@ -44,6 +44,11 @@ def prepare_duration_fixture(root, circuit):
             canonical = name.removeprefix('weight__').replace('__', '.')
             tensors[canonical] = value
             origins[canonical] = fixture.duration_meta['weights'][name]
+    for name, value in (extra_tensors or {}).items():
+        if name in tensors:
+            raise ValueError(f'duplicate duration fixture weight: {name}')
+        tensors[name] = value
+        origins[name] = {'source_name': name, 'transform': 'identity'}
     fixture.bundle = exporter.write_bundle(root, tensors, origins,
         {'n_token': 178, 'hidden_dim': 512, 'plbert': {
             'intermediate_size': 2048, 'max_position_embeddings': 512,

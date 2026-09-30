@@ -836,6 +836,19 @@ TEST_SUITES = {
         "TTS Token-Major Duration Expansion Numerical Oracle", "kernels",
         ROOT / "tests" / "test_v8_audio_duration_expand_token_major_oracle.py",
     ),
+    "tts_text_embedding_oracle": TestSuite(
+        "TTS Channel-Major Text Embedding Numerical Oracle", "kernels",
+        ROOT / "tests" / "test_v8_audio_text_embedding_oracle.py",
+    ),
+    "tts_text_embedding_generated": TestSuite(
+        "Model-Neutral Generated Checked Embedding", "inference",
+        ROOT / "tests" / "test_v8_audio_text_embedding_generated.py",
+    ),
+    "tts_kokoro_generated_text_embedding": TestSuite(
+        "Kokoro Generated Acoustic Text Embedding and Duration Alignment", "inference",
+        ROOT / "tests" / "test_v8_kokoro_generated_text_embedding.py",
+        timeout_sec=180,
+    ),
     "tts_duration_logits_oracle": TestSuite(
         "TTS Duration Logits Committed PyTorch Oracle", "kernels",
         ROOT / "tests" / "test_v8_audio_duration_logits_oracle.py",
@@ -1517,6 +1530,8 @@ QUICK_TESTS = [
     "q4k_kernels", "idle_nightly_coordinator",
     "tts_kokoro_shape_bounds", "tts_istft_oracle", "tts_duration_expand_oracle",
     "tts_duration_expand_token_major_oracle",
+    "tts_text_embedding_oracle",
+    "tts_text_embedding_generated",
     "tts_lstm_scan_oracle",
     "tts_adaptive_layer_norm_oracle", "tts_adaptive_layer_norm_live",
     "tts_kokoro_bump_export", "tts_kokoro_bump_export_live",
