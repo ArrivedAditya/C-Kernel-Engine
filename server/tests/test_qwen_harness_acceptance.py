@@ -4,6 +4,7 @@ import argparse
 import io
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -62,6 +63,28 @@ def test_complete_tool_task_passes():
     result = _check(events, recording)
     assert result['status'] == 'pass'
     assert result['tool_sequence'] == ['read_file', 'edit', 'run_shell_command']
+
+
+@pytest.mark.parametrize('task_status,certification_status,expected_exit', [
+    ('pass', 'pass', 0),
+    ('pass', 'incomplete', 1),
+    ('pass', 'fail', 1),
+    ('fail', 'pass', 1),
+])
+def test_cli_requires_task_and_artifact_certification_pass(
+        monkeypatch, tmp_path, capsys, task_status, certification_status, expected_exit):
+    monkeypatch.setattr(acceptance, 'run', lambda _args: {
+        'result': {'status': task_status, 'errors': []},
+        'certification': {'status': certification_status, 'reason': 'test'},
+    })
+    monkeypatch.setattr(sys, 'argv', [
+        'qwen_harness_acceptance', '--endpoint', 'http://example.test/v1',
+        '--model', MODEL, '--run-dir', str(tmp_path),
+    ])
+    assert acceptance.main() == expected_exit
+    summary = json.loads(capsys.readouterr().out)
+    assert summary['status'] == task_status
+    assert summary['certification_status'] == certification_status
 
 
 def test_missing_stream_final_fails_even_if_recording_and_artifact_pass():

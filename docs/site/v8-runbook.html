@@ -2560,8 +2560,10 @@ qwen --bare \
         to remain stable across its task.
         A legacy endpoint with no
         loaded identity, or a run without both expected hashes, remains
-        <code>INCOMPLETE</code> even if its bounded task passes. The endpoint is a startup
-        verification snapshot, not continuous file-integrity monitoring. A cached <code>191335eba</code> Qwen3.8 27B Q4_K_M
+        <code>INCOMPLETE</code> even if its bounded task passes. The acceptance command exits
+        successfully only when both the task and artifact certification report <code>PASS</code>.
+        The endpoint is a startup verification snapshot, not continuous file-integrity
+        monitoring. A cached <code>191335eba</code> Qwen3.8 27B Q4_K_M
         run completed read → edit → test → summary on Ryzen at 16K compiled capacity;
         it does not establish 256K-input execution or other model-family tool support.</p>
     <p style="margin-bottom: 0;" class="mini-note">

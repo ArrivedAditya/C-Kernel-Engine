@@ -547,7 +547,7 @@ def main() -> int:
                       'certification_reason': report['certification']['reason'],
                       'errors': report['result']['errors']}))
     return 0 if (report['result']['status'] == 'pass'
-                 and report['certification']['status'] != 'fail') else 1
+                 and report['certification']['status'] == 'pass') else 1
 
 
 if __name__ == '__main__':
