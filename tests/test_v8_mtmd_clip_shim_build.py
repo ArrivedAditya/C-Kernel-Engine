@@ -36,6 +36,7 @@ def main() -> int:
         for symbol in (
             "ck_mtmd_clip_embd_nbytes_by_img",
             "ck_mtmd_clip_encode_float_image",
+            "ck_mtmd_clip_preprocess_rgb8",
         ):
             if not hasattr(library, symbol):
                 raise RuntimeError(f"compiled mtmd shim is missing {symbol}")

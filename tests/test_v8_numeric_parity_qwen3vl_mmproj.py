@@ -19,6 +19,42 @@ import qwen3vl_encoder_prefix_parity_suite_v8 as prefix_suite  # type: ignore  #
 
 
 class NumericParityQwen3VLMmprojV8Tests(unittest.TestCase):
+    def test_decode_source_rgb8_preserves_ppm_pixels(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            image = Path(tmpdir) / "sample.ppm"
+            image.write_bytes(b"P6\n2 1\n255\n\xff\x00\x00\x00\xff\x00")
+            self.assertEqual(
+                npv8._decode_source_rgb8(image),
+                (2, 1, b"\xff\x00\x00\x00\xff\x00"),
+            )
+
+    def test_independent_preprocess_rejects_inconsistent_input(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "invalid decoded RGB"):
+            npv8._run_llamacpp_preprocess(Path("shim"), Path("model"), b"\0", 2, 2, None, None)
+
+    def test_independent_preprocess_rejects_unavailable_api(self) -> None:
+        class FakeLibrary:
+            def ck_mtmd_clip_init(self, *_args):
+                return 1
+
+            def ck_mtmd_clip_preprocess_rgb8(self, *_args):
+                return -2
+
+            def ck_mtmd_clip_free(self, _ctx):
+                return None
+
+        with mock.patch.object(npv8, "_load_mtmd_shim", return_value=FakeLibrary()):
+            with self.assertRaisesRegex(RuntimeError, "lacks the independent preprocessing"):
+                npv8._run_llamacpp_preprocess(
+                    Path("shim"), Path("model"), b"\x00\x00\x00", 1, 1, None, None,
+                )
+
+    def test_preprocess_parity_requires_finite_bounded_error(self) -> None:
+        self.assertTrue(npv8._preprocess_parity_pass({"max_abs": 5.0e-8}))
+        self.assertFalse(npv8._preprocess_parity_pass({"max_abs": 0.01}))
+        self.assertFalse(npv8._preprocess_parity_pass({"max_abs": float("nan")}))
+        self.assertFalse(npv8._preprocess_parity_pass({"max_abs": 0.0, "rmse": float("nan")}))
+
     def test_image_parity_input_uses_production_normalization(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             image = Path(tmpdir) / "red.ppm"
@@ -32,6 +68,29 @@ class NumericParityQwen3VLMmprojV8Tests(unittest.TestCase):
         self.assertEqual(report["interleaved"], [1.0, -1.0, -1.0])
         self.assertEqual(report["planar"], [1.0, -1.0, -1.0])
         self.assertIn("normalize_mean_std", report["preprocess"])
+
+    def test_bicubic_center_padding_preserves_aspect_and_black_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            image = Path(tmpdir) / "wide.ppm"
+            image.write_bytes(b"P6\n2 1\n255\n" + bytes([255, 0, 0, 0, 255, 0]))
+            report = npv8._load_image_file(
+                image, 4, 4,
+                {"image_resize_algorithm": "bicubic", "image_resize_padding": "center_ceil"},
+            )
+        values = report["interleaved"]
+        self.assertEqual(values[:12], [-1.0] * 12)
+        self.assertEqual(values[-12:], [-1.0] * 12)
+        self.assertNotEqual(values[12:24], [-1.0] * 12)
+        self.assertIn("bicubic_center_ceil", report["preprocess"])
+
+    def test_unsupported_resize_contract_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            image = Path(tmpdir) / "sample.ppm"
+            image.write_bytes(b"P6\n1 1\n255\n\x00\x00\x00")
+            with self.assertRaisesRegex(RuntimeError, "unsupported image resize contract"):
+                npv8._load_image_file(
+                    image, 1, 1, {"image_resize_algorithm": "bicubic", "image_resize_padding": "none"},
+                )
 
     def test_activation_runtime_base_uses_aligned_arena_boundary(self) -> None:
         layout = {
