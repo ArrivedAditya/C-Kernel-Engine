@@ -1,5 +1,11 @@
 var NAVTREEINDEX20 =
 {
+"structCKSectionConfig.html#a70a85143350acb4f082fd2664728e7e9":[1,0,57,8],
+"structCKSectionConfig.html#a754d226bbafb22421965678394c0920c":[1,0,57,9],
+"structCKSectionConfig.html#a817bec49fb3f194acfc02ae60597121c":[1,0,57,10],
+"structCKSectionConfig.html#a96ef28b42bf7654f3eeb5167950f31e9":[1,0,57,11],
+"structCKSectionConfig.html#ac248115abce1c49956194ac4c4ad4be4":[1,0,57,1],
+"structCKSectionConfig.html#acc666f5160d9139f4e59567c7eb0ad83":[1,0,57,3],
 "structCKSectionConfig.html#adb98840ee192100731d7c970794be581":[1,0,57,0],
 "structCKSectionConfig.html#aeb21ad93633c6b7fba562f4882706e22":[1,0,57,14],
 "structCKSessionConfigV8.html":[1,0,58],
@@ -243,11 +249,5 @@ var NAVTREEINDEX20 =
 "structPCIeDevice.html#acd83cab295bf599ca7f3d1e8d6268094":[1,0,79,11],
 "structPCIeDevice.html#ad0ee5cdc2f18d4a309e541766e95a5e6":[1,0,79,15],
 "structPCIeDevice.html#adca9565208f9aefc3cee61726d1a86de":[1,0,79,13],
-"structPCIeDevice.html#adccc4e7aa824d93f3b046cb67e5fbf5b":[1,0,79,10],
-"structPCIeDevice.html#ae033008e7db3ee6fb53a892836d93cf0":[1,0,79,7],
-"structPCIeDevice.html#ae2b77fabb6cbd4700ce8cff006bdf2ab":[1,0,79,1],
-"structPCIeDevice.html#afc1f0a1bb21313d965608d9dac1f2ab4":[1,0,79,8],
-"structPCIeDevice.html#afc8e2ec8cb06bb20fd879836155ad92a":[1,0,79,0],
-"structPCIeTopology.html":[1,0,80],
-"structPCIeTopology.html#a1bee054acd7b3485af38b94205bfd15a":[1,0,80,3]
+"structPCIeDevice.html#adccc4e7aa824d93f3b046cb67e5fbf5b":[1,0,79,10]
 };

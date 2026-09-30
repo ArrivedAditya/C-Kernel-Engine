@@ -16,5 +16,6 @@ var searchData=
   ['audio_5fistft_5fmag_5fphase_2ec_13',['audio_istft_mag_phase.c',['../audio__istft__mag__phase_8c.html',1,'']]],
   ['audio_5fkernels_2ec_14',['audio_kernels.c',['../audio__kernels_8c.html',1,'']]],
   ['audio_5flstm_5fscan_2ec_15',['audio_lstm_scan.c',['../audio__lstm__scan_8c.html',1,'']]],
-  ['axpy_5fkernels_2ec_16',['axpy_kernels.c',['../axpy__kernels_8c.html',1,'']]]
+  ['audio_5ftext_5fembedding_2ec_16',['audio_text_embedding.c',['../audio__text__embedding_8c.html',1,'']]],
+  ['axpy_5fkernels_2ec_17',['axpy_kernels.c',['../axpy__kernels_8c.html',1,'']]]
 ];
