@@ -348,7 +348,8 @@
   "tests": {
     "unit": [
       "tests/test_v8_audio_lstm_scan_oracle.py",
-      "tests/test_v8_kokoro_generated_duration.py"
+      "tests/test_v8_kokoro_generated_duration.py",
+      "tests/test_v8_kokoro_generated_prosody_shared.py"
     ],
     "oracle": "torch.nn.LSTM bidirectional FP32 CPU; committed reference outputs plus live PyTorch reconstruction"
   },

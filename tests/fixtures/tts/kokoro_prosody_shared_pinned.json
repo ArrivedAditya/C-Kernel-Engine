@@ -1,0 +1,26 @@
+{
+  "scope": "shared prosody BiLSTM checkpoint; downstream F0/N not included",
+  "model_pin": "e8a90b41091c3c5b70375c47cc959799920fa4d6",
+  "oracle": "pinned PyTorch predictor_shared_0 checkpoint",
+  "oracle_sha256": "2d5653524a4905404fe26ad85270b09d320610c20b9b64dd68a9c1cd0a50c70c",
+  "weight_payload_sha256": {
+    "duration_prosody.shared.weight_ih_l0": "749a37378edf2afb07a489e4610565116e3f3216a0d81060f7bc136ac7c5b0ac",
+    "duration_prosody.shared.weight_ih_l0_reverse": "54f540344c2fa0f2201f05e8d415d49a57fc6825a3a53ffad0d01ca0f03e6a52",
+    "duration_prosody.shared.weight_hh_l0": "629059e02fa824832603447b7c2241c604441838691ab6b2071080c467e7b825",
+    "duration_prosody.shared.weight_hh_l0_reverse": "28125b154d377b13f3069ae9f18342ee1e54395531ddf86de5db0d1854e9cf18",
+    "duration_prosody.shared.bias_ih_l0": "db93f217dbfe974bb0153d75d926696b230e5b5c1c56bce8320693533c564712",
+    "duration_prosody.shared.bias_ih_l0_reverse": "96fd0f7a87c811a18cdbc8004744776ac5e1e5913fb0746ba4920008d18d44f4",
+    "duration_prosody.shared.bias_hh_l0": "04c3eb962876d272f7015d449740ca3db614078c15b9c99972c439f6d44455ab",
+    "duration_prosody.shared.bias_hh_l0_reverse": "0c68767df92d85efdbe5d12a5958ede65581115e68bb737bdec5aab6d958a949"
+  },
+  "array_sha256": {
+    "weight_ih": "12de3f7ee6679a1ac3adb8533a2e749a1a995b7743c41fc2bd709a9ac4f0783a",
+    "weight_hh": "b202e85646f6245a61fb168f5ba10799a739d5676b668f603106d7812d7c2508",
+    "bias_ih": "8e014377a975e5eb18e37ef8730920ab16faf54200152450334cb3cf1eb99fc6",
+    "bias_hh": "45282178e354824484cddd7d409f611013385e82043e4d7afc046b49f47e8ff7",
+    "output": "f3671cc6eed674a38760603f2f955903a53b4a18ffa33475b96840797442f188"
+  },
+  "fixture_sha256": "0df60fc7bf8c60fac26063677125ea10d81596daf1643fa101538b9e454f0e18",
+  "frame_count": 103,
+  "frame_capacity": 128
+}

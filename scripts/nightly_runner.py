@@ -862,6 +862,11 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_kokoro_generated_text_encoder.py",
         timeout_sec=180,
     ),
+    "tts_kokoro_generated_prosody_shared": TestSuite(
+        "Kokoro Generated Shared Prosody LSTM", "inference",
+        ROOT / "tests" / "test_v8_kokoro_generated_prosody_shared.py",
+        timeout_sec=180,
+    ),
     "tts_duration_logits_oracle": TestSuite(
         "TTS Duration Logits Committed PyTorch Oracle", "kernels",
         ROOT / "tests" / "test_v8_audio_duration_logits_oracle.py",
