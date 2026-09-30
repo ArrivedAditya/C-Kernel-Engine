@@ -2554,6 +2554,10 @@ qwen --bare \
         expected session-library hash to certify that runtime ABI as well. Every
         supplied hash is checked independently: a mismatch prevents task launch or
         fails certification, while an absent expectation leaves certification incomplete.
+        The endpoint reports <code>effective_serving</code> separately from the bundle:
+        configured raw or templated mode, selected output protocol, active context limit,
+        default output allowance, and stop behavior. The runner requires that snapshot
+        to remain stable across its task.
         A legacy endpoint with no
         loaded identity, or a run without both expected hashes, remains
         <code>INCOMPLETE</code> even if its bounded task passes. The endpoint is a startup

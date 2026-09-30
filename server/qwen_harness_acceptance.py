@@ -47,6 +47,21 @@ def _valid_sha256(value: object) -> bool:
         char in '0123456789abcdef' for char in value)
 
 
+def _valid_effective_serving(value: object) -> bool:
+    if not isinstance(value, dict) or value.get('schema') != 'cke.effective_serving.v1':
+        return False
+    limit = value.get('active_context_limit')
+    allowance = value.get('default_max_output_tokens')
+    protocol = value.get('output_protocol')
+    stops = value.get('stop_on_text')
+    return (value.get('configured_mode') in ('raw', 'templated')
+            and isinstance(limit, int) and not isinstance(limit, bool) and limit > 0
+            and isinstance(allowance, int) and not isinstance(allowance, bool) and allowance > 0
+            and (protocol is None or isinstance(protocol, str) and bool(protocol))
+            and isinstance(stops, list) and all(isinstance(s, str) for s in stops)
+            and isinstance(value.get('stop_at_eos'), bool))
+
+
 def _read_loaded_identity(endpoint: str) -> dict | None:
     try:
         with urlopen(endpoint + '/cke/loaded-identity', timeout=10) as response:
@@ -66,6 +81,7 @@ def _read_loaded_identity(endpoint: str) -> dict | None:
             or any(char not in '0123456789abcdef'
                    for char in document['server_instance_id'])
             or not isinstance(document.get('assets_sha256'), dict)
+            or not _valid_effective_serving(document.get('effective_serving'))
             or not {'libmodel.so', 'libckernel_engine.so', 'libckernel_tokenizer.so'}
                    <= document['assets_sha256'].keys()
             or not all(_valid_sha256(value) for value in document['assets_sha256'].values())):

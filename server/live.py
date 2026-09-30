@@ -1439,6 +1439,12 @@ def create_app(
     router = APIRouter()
     if loaded_identity is not None and loaded_identity.get("schema") != "cke.loaded_serving_identity.v1":
         raise ValueError("invalid loaded serving identity")
+    if loaded_identity is not None and (
+        not isinstance(context_length, int) or isinstance(context_length, bool)
+        or context_length <= 0 or not isinstance(max_tokens, int)
+        or isinstance(max_tokens, bool) or max_tokens <= 0
+    ):
+        raise ValueError("loaded serving identity requires positive effective context and output limits")
     attestation = copy.deepcopy(loaded_identity)
     server_instance_id = uuid.uuid4().hex
     response_store: OrderedDict[str, dict[str, Any]] = OrderedDict()
@@ -1458,6 +1464,15 @@ def create_app(
     # hardcoded tags or template-text heuristics.
     declared_tool_protocol = tool_protocol or (chat_contract or {}).get("tool_protocol")
     tool_syntax = _tool_syntax_for_protocol(declared_tool_protocol)
+    effective_serving = {
+        "schema": "cke.effective_serving.v1",
+        "configured_mode": "raw" if allow_untemplated and not chat_template else "templated",
+        "output_protocol": declared_tool_protocol if chat_template else None,
+        "active_context_limit": context_length,
+        "default_max_output_tokens": max_tokens,
+        "stop_on_text": stop_markers,
+        "stop_at_eos": stop_at_eos,
+    }
 
     def _conversation_echo(body) -> dict[str, Any] | None:
         conv = body.conversation
@@ -2872,7 +2887,8 @@ def create_app(
     def get_loaded_identity():
         if attestation is None:
             raise HTTPException(status_code=404, detail="loaded bundle identity unavailable")
-        return {**attestation, "server_instance_id": server_instance_id}
+        return {**attestation, "server_instance_id": server_instance_id,
+                "effective_serving": effective_serving}
 
     if extra_route_registrar is not None:
         extra_route_registrar(router, create_response)

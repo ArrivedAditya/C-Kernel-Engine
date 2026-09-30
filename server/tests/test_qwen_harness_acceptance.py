@@ -216,6 +216,12 @@ def _loaded_identity(*, digest='a' * 64, instance='b' * 32):
         'serving_identity': digest,
         'session_library_sha256': 'c' * 64,
         'server_instance_id': instance,
+        'effective_serving': {
+            'schema': 'cke.effective_serving.v1',
+            'configured_mode': 'templated', 'output_protocol': 'qwen_xml',
+            'active_context_limit': 16384, 'default_max_output_tokens': 512,
+            'stop_on_text': [], 'stop_at_eos': True,
+        },
         'assets_sha256': {name: 'd' * 64 for name in (
             'libmodel.so', 'libckernel_engine.so', 'libckernel_tokenizer.so')},
     }
@@ -286,6 +292,22 @@ def test_loaded_identity_probe_rejects_malformed_or_incomplete_assets(monkeypatc
                         lambda *_args, **_kwargs: io.BytesIO(json.dumps(document).encode()))
     with pytest.raises(ValueError, match='malformed loaded serving identity'):
         acceptance._read_loaded_identity('http://example.test/v1')
+
+
+def test_loaded_identity_requires_effective_serving_and_detects_setting_change(monkeypatch):
+    document = _loaded_identity()
+    document.pop('effective_serving')
+    monkeypatch.setattr(acceptance, 'urlopen',
+                        lambda *_args, **_kwargs: io.BytesIO(json.dumps(document).encode()))
+    with pytest.raises(ValueError, match='malformed loaded serving identity'):
+        acceptance._read_loaded_identity('http://example.test/v1')
+    before = _loaded_identity()
+    after = _loaded_identity()
+    after['effective_serving']['active_context_limit'] = 8192
+    _, certification = acceptance._identity_verdict(
+        before, after, expected='a' * 64, expected_session='c' * 64,
+        model=MODEL, task_passed=True)
+    assert certification == {'status': 'fail', 'reason': 'loaded_artifact_identity_changed'}
 
 
 @pytest.mark.parametrize('malformed', [False, True])

@@ -238,7 +238,7 @@ def test_loaded_identity_endpoint_reports_only_verified_bundle_hashes(setup):
     )
     chat, variants, _ = load_manifest_templates(setup[0])
     client = TestClient(create_app(
-        RecordingSession(["ok"]), model="test", chat_template=chat,
+        RecordingSession(["ok"]), model="test", chat_template=chat, context_length=64,
         chat_templates=variants, loaded_identity=identity,
     ))
     first = client.get("/v1/cke/loaded-identity")
@@ -248,10 +248,24 @@ def test_loaded_identity_endpoint_reports_only_verified_bundle_hashes(setup):
     assert first.json()["serving_identity"] == doc["identity"]
     assert first.json()["assets_sha256"]["libmodel.so"] == doc["assets"]["libmodel.so"]["sha256"]
     assert first.json()["session_library_sha256"] == hashlib.sha256(session_library.read_bytes()).hexdigest()
+    assert first.json()["effective_serving"]["configured_mode"] == "templated"
+    assert first.json()["effective_serving"]["active_context_limit"] == 64
+    assert first.json()["effective_serving"]["stop_at_eos"] is False
     assert str(setup[0]) not in first.text  # No local bundle paths in HTTP evidence.
     assert client.get("/v1/models").json()["data"][0]["id"] == "test"
     legacy = TestClient(create_app(RecordingSession(["ok"]), model="test", chat_template=chat))
     assert legacy.get("/v1/cke/loaded-identity").status_code == 404
+    raw = TestClient(create_app(RecordingSession(["ok"]), model="test",
+                                allow_untemplated=True, context_length=64,
+                                stop_on_text=("DONE",), loaded_identity=identity))
+    raw_identity = raw.get("/v1/cke/loaded-identity").json()
+    assert raw_identity["output_protocol"] == doc["output_protocol"]
+    assert raw_identity["effective_serving"] == {
+        "schema": "cke.effective_serving.v1", "configured_mode": "raw",
+        "output_protocol": None, "active_context_limit": 64,
+        "default_max_output_tokens": 512, "stop_on_text": ["DONE"],
+        "stop_at_eos": False,
+    }
 
 
 def test_loaded_session_library_replacement_cannot_certify_new_path(setup):
