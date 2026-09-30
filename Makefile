@@ -3155,8 +3155,8 @@ test-llamacpp-parity: llamacpp-parity
 # Do not add model-family, template, or end-to-end compatibility checks here.
 # Those belong in llamacpp-e2e / regression lanes so kernel testing stays clean.
 llamacpp-parity-full:
-	@echo "Running full llama.cpp parity test..."
-	@./scripts/run_parity_smoketest.sh --skip-build
+	@echo "Running full llama.cpp kernel parity test..."
+	@./scripts/run_parity_smoketest.sh --skip-build --kernels --require-kernel-parity
 	@echo ""
 	@echo "Building llama.cpp-backed CK attention oracle library..."
 	@$(MAKE) --no-print-directory libck_parity_llama.so
@@ -3290,11 +3290,11 @@ test-qwen3vl-strict-attn-oracle-build:
 
 llamacpp-parity-full-stitched: llamacpp-parity-full llamacpp-parity-stitched
 
-# Nightly parity profile: keep correctness coverage, but use quick ISA parity
-# benches so nightly does not block on long benchmark loops.
+# Nightly runs the complete kernel helper matrix. Model tensor-dump parity
+# remains a separate asset-backed lane and must not be inferred from this target.
 llamacpp-parity-nightly:
 	@echo "Running nightly llama.cpp parity test..."
-	@./scripts/run_parity_smoketest.sh --skip-build
+	@./scripts/run_parity_smoketest.sh --skip-build --kernels --require-kernel-parity
 	@echo ""
 	@echo "Running OpenMP GEMV parity tests (serial vs parallel)..."
 	@$(MAKE) --no-print-directory test-gemv-omp
@@ -3342,6 +3342,15 @@ llamacpp-parity-nightly:
 	else \
 	  echo "[SKIP] $(LLAMA_KERNEL_TEST) is unavailable"; \
 	fi
+
+.PHONY: test-llamacpp-xray-callback
+test-llamacpp-xray-callback:
+	@test -f "$(CK_LLAMA_CALLBACK_MODEL)" || { echo "ERROR: CK_LLAMA_CALLBACK_MODEL is missing"; exit 2; }
+	@llama_root="$${CK_LLAMA_CPP_ROOT:-$(CURDIR)/llama.cpp}"; \
+		CK_LLAMA_CPP_ROOT="$$llama_root" $(PYTHON) scripts/test_llamacpp_xray_callback_v8.py \
+		--model "$(CK_LLAMA_CALLBACK_MODEL)" --llama-root "$$llama_root" \
+		$(if $(CK_LLAMA_CALLBACK_COMMIT),--expected-commit "$(CK_LLAMA_CALLBACK_COMMIT)",) \
+		--output-dir "$(BUILD_DIR)/llama_xray_callback"
 
 # Full parity + ISA variant sweep for GEMM AVX benchmarks
 llamacpp-parity-full-all-isa-variants:

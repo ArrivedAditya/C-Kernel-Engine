@@ -15,6 +15,10 @@ SPEC.loader.exec_module(MODULE)
 
 
 class RollingCompatReportTests(unittest.TestCase):
+    def test_immutable_commit_ref_is_accepted(self) -> None:
+        commit = "A" * 40
+        self.assertEqual(MODULE.remote_commit(commit), commit.lower())
+
     def test_parse_quick_log(self) -> None:
         content = """
 PERFORMANCE SUMMARY
@@ -36,21 +40,38 @@ PARITY SMOKETEST SUMMARY
             [{"ck_over_llama_speedup": 0.9, "ck_gflops": 7.26, "llama_gflops": 9.77}],
         )
 
-    def test_optional_patch_drift_does_not_fail_runtime_compatibility(self) -> None:
+    def test_legacy_patch_drift_does_not_replace_callback_evidence(self) -> None:
         phases = {
             "patch_compatibility": {"status": "warn", "blocking": False},
             "ck_build": {"status": "pass"},
             "quick_parity": {"status": "pass"},
+            "production_graph_parity": {"status": "pass"},
+            "mtmd_adapter_build": {"status": "pass"},
+            "xray_callback": {"status": "pass"},
         }
         self.assertEqual(MODULE.compatibility_status(phases), "pass")
 
-    def test_build_or_parity_failure_remains_blocking(self) -> None:
-        for phase_name in ("ck_build", "quick_parity"):
+    def test_missing_capture_is_incomplete(self) -> None:
+        self.assertEqual(
+            MODULE.compatibility_status({"ck_build": {"status": "pass"}, "quick_parity": {"status": "pass"}}),
+            "incomplete",
+        )
+
+    def test_missing_production_graph_evidence_is_incomplete(self) -> None:
+        phases = {name: {"status": "pass"} for name in
+                  ("ck_build", "quick_parity", "mtmd_adapter_build", "xray_callback")}
+        self.assertEqual(MODULE.compatibility_status(phases), "incomplete")
+
+    def test_required_phase_failure_remains_blocking(self) -> None:
+        for phase_name in ("ck_build", "quick_parity", "production_graph_parity", "mtmd_adapter_build", "xray_callback"):
             with self.subTest(phase=phase_name):
                 phases = {
                     "patch_compatibility": {"status": "pass", "blocking": False},
                     "ck_build": {"status": "pass"},
                     "quick_parity": {"status": "pass"},
+                    "production_graph_parity": {"status": "pass"},
+                    "mtmd_adapter_build": {"status": "pass"},
+                    "xray_callback": {"status": "pass"},
                 }
                 phases[phase_name]["status"] = "fail"
                 self.assertEqual(MODULE.compatibility_status(phases), "fail")

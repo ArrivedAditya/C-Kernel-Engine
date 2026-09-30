@@ -32,6 +32,7 @@ FORCE_REBUILD=false
 VERBOSE=false
 PERF_MODE=false
 PERF_LARGE=false
+REQUIRE_KERNEL_PARITY=false
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -50,6 +51,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --skip-tests)
             SKIP_TESTS=true
+            shift
+            ;;
+        --require-kernel-parity)
+            REQUIRE_KERNEL_PARITY=true
             shift
             ;;
         --force-rebuild)
@@ -79,6 +84,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --perf-large    Run performance benchmarks with 7B model dimensions"
             echo "  --skip-build    Skip llama.cpp build step (assume already built)"
             echo "  --skip-tests    Build only, don't run tests"
+            echo "  --require-kernel-parity  Fail if the llama.cpp or CK kernel helper is unavailable"
             echo "  --force-rebuild Force rebuild of llama.cpp (clean build)"
             echo "  --verbose       Verbose output"
             echo "  --help          Show this help"
@@ -150,6 +156,14 @@ if [ -z "$DEFAULT_LLAMA_CPP_COMMIT" ]; then
 fi
 LLAMA_CPP_COMMIT="${LLAMA_CPP_COMMIT:-$DEFAULT_LLAMA_CPP_COMMIT}"
 LLAMA_CPP_REPO="https://github.com/ggerganov/llama.cpp.git"
+
+if [ -d "$LLAMA_DIR/.git" ] || git -C "$LLAMA_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    ACTUAL_LLAMA_CPP_COMMIT="$(git -C "$LLAMA_DIR" rev-parse HEAD)"
+    if [ "$ACTUAL_LLAMA_CPP_COMMIT" != "$LLAMA_CPP_COMMIT" ]; then
+        log_error "llama.cpp revision $ACTUAL_LLAMA_CPP_COMMIT does not match required $LLAMA_CPP_COMMIT"
+        exit 1
+    fi
+fi
 
 # Auto-detect CPU capabilities (needed for compiler flags)
 HAS_AVX512=$(grep -q avx512f /proc/cpuinfo 2>/dev/null && echo "yes" || echo "no")
@@ -356,17 +370,10 @@ if [ "$SKIP_BUILD" = false ]; then
             # Need LD_LIBRARY_PATH for linking
             export LD_LIBRARY_PATH="$PWD/build/bin:$LD_LIBRARY_PATH"
 
-            # Use same compiler as llama.cpp build
-            if command -v icpx &> /dev/null; then
-                CXX_COMPILER="icpx"
-                CXX_FLAGS="$INTEL_ARCH"
-            elif command -v icx &> /dev/null; then
-                CXX_COMPILER="icx"
-                CXX_FLAGS="$INTEL_ARCH"
-            else
-                CXX_COMPILER="g++"
-                CXX_FLAGS="${GCC_ARCH:--march=native}"
-            fi
+            # The helper includes scalar reference arithmetic; keep its compiler
+            # controlled independently of the upstream ggml build.
+            CXX_COMPILER="${PARITY_HELPER_CXX:-g++}"
+            CXX_FLAGS="${PARITY_HELPER_CXXFLAGS:-${GCC_ARCH:--march=native}}"
 
             log_step "Using $CXX_COMPILER with flags: $CXX_FLAGS"
             if $CXX_COMPILER -shared -fPIC $CXX_FLAGS -o libggml_kernel_test.so \
@@ -412,7 +419,7 @@ PY
     fi
 
     if [ -f "$LLAMA_DIR/build/bin/libggml.so" ] || [ -f "$LLAMA_DIR/build/lib/libggml.so" ]; then
-        if [ ! -f "$LLAMA_DIR/libggml_kernel_test.so" ] || \
+        if [ "$REQUIRE_KERNEL_PARITY" = true ] || [ ! -f "$LLAMA_DIR/libggml_kernel_test.so" ] || \
            [ "$LLAMA_DIR/tests/test-kernel-parity.cpp" -nt "$LLAMA_DIR/libggml_kernel_test.so" ] || \
            [ "$PATCHES_DIR/test-kernel-parity.cpp" -nt "$LLAMA_DIR/libggml_kernel_test.so" ]; then
             log_step "Refreshing ggml kernel test library..."
@@ -420,16 +427,8 @@ PY
 
             export LD_LIBRARY_PATH="$PWD/build/bin:$PWD/build/lib:$LD_LIBRARY_PATH"
 
-            if command -v icpx &> /dev/null; then
-                CXX_COMPILER="icpx"
-                CXX_FLAGS="$INTEL_ARCH"
-            elif command -v icx &> /dev/null; then
-                CXX_COMPILER="icx"
-                CXX_FLAGS="$INTEL_ARCH"
-            else
-                CXX_COMPILER="g++"
-                CXX_FLAGS="${GCC_ARCH:--march=native}"
-            fi
+            CXX_COMPILER="${PARITY_HELPER_CXX:-g++}"
+            CXX_FLAGS="${PARITY_HELPER_CXXFLAGS:-${GCC_ARCH:--march=native}}"
 
             GGML_LIB_DIR="build/bin"
             if [ ! -f "$GGML_LIB_DIR/libggml.so" ]; then
@@ -491,6 +490,13 @@ LLAMA_LIB_EXISTS=false
 CK_LIB_EXISTS=false
 [ -f "$LLAMA_DIR/libggml_kernel_test.so" ] && LLAMA_LIB_EXISTS=true
 [ -f "$BUILD_DIR/libck_parity.so" ] && CK_LIB_EXISTS=true
+
+if [ "$REQUIRE_KERNEL_PARITY" = true ]; then
+    if [ ! -f "$KERNEL_TEST" ] || [ "$LLAMA_LIB_EXISTS" = false ] || [ "$CK_LIB_EXISTS" = false ]; then
+        log_error "Required llama.cpp kernel parity inputs are missing; PyTorch is not a substitute"
+        exit 1
+    fi
+fi
 
 if [ -f "$KERNEL_TEST" ]; then
     if [ "$LLAMA_LIB_EXISTS" = false ] || [ "$CK_LIB_EXISTS" = false ]; then
@@ -842,6 +848,6 @@ if [ "$TESTS_FAILED" -gt 0 ]; then
     log_error "Some tests failed!"
     exit 1
 else
-    log_success "All parity tests passed!"
+    log_success "All executed parity tests passed ($TESTS_SKIPPED skipped; see lane scope above)"
     exit 0
 fi

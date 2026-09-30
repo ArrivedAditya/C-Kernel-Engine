@@ -53,6 +53,10 @@ def pinned_commit() -> str:
 
 
 def remote_commit(ref: str) -> str:
+    if re.fullmatch(r"[0-9a-fA-F]{40}", ref):
+        # git ls-remote lists refs, not arbitrary reachable commits. The
+        # fetch in clone_for_probe verifies an explicitly pinned object.
+        return ref.lower()
     rows = git_output(["ls-remote", LLAMA_REPO, ref]).splitlines()
     if not rows:
         raise RuntimeError(f"llama.cpp ref not found: {ref}")
@@ -88,11 +92,14 @@ def patch_status(probe: pathlib.Path, relative_path: str) -> dict[str, Any]:
 
 
 def compatibility_status(phases: dict[str, Any]) -> str:
-    """Treat executable compatibility as authoritative and patch drift as advisory."""
-    for phase_name in ("ck_build", "quick_parity"):
+    """Require both numerical and executable capture compatibility."""
+    required = ("ck_build", "quick_parity", "production_graph_parity", "mtmd_adapter_build", "xray_callback")
+    for phase_name in required:
         status = phases.get(phase_name, {}).get("status")
         if status in {"fail", "error"}:
             return "fail"
+    if any(phases.get(phase_name, {}).get("status") != "pass" for phase_name in required):
+        return "incomplete"
     return "pass"
 
 
@@ -153,7 +160,7 @@ def main() -> int:
     pinned = pinned_commit()
     rolling = remote_commit(args.ref)
     report: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "cke_commit": git_output(["rev-parse", "HEAD"]),
         "llama_cpp": {"repository": LLAMA_REPO, "pinned_commit": pinned, "rolling_commit": rolling},
@@ -177,8 +184,8 @@ def main() -> int:
             "status": "warn" if patch_drift else "pass",
             "blocking": False,
             "reason": (
-                "Optional tensor-dump and benchmark patches drifted; rolling build and "
-                "quick parity determine compatibility."
+                "Legacy tensor-dump or benchmark patches drifted; public callback "
+                "execution is checked separately."
                 if patch_drift
                 else "Optional patches still apply cleanly."
             ),
@@ -187,7 +194,7 @@ def main() -> int:
 
         if args.resolve_only:
             report["phases"]["quick_parity"] = {"status": "skip", "reason": "resolve-only"}
-            report["status"] = "pass"
+            report["status"] = "incomplete"
             write_report(report_path, report)
             print(report_path)
             return 0
@@ -197,6 +204,8 @@ def main() -> int:
         environment = os.environ.copy()
         environment["LLAMA_CPP_COMMIT"] = rolling
         environment["LLAMA_CPP_DIR"] = str(probe)
+        environment["Q4Q6_LLAMA_CPP_DIR"] = str(probe)
+        environment["CK_LLAMA_CPP_ROOT"] = str(probe)
         environment.setdefault("PYTHON_BIN", str(ROOT / ".venv" / "bin" / "python"))
         with build_log_path.open("w", encoding="utf-8") as log:
             build_result = run(
@@ -219,7 +228,7 @@ def main() -> int:
             return 1
         with log_path.open("w", encoding="utf-8") as log:
             result = run(
-                [str(ROOT / "scripts" / "run_parity_smoketest.sh"), "--quick"],
+                [str(ROOT / "scripts" / "run_parity_smoketest.sh"), "--quick", "--require-kernel-parity"],
                 check=False,
                 stdout=log,
                 stderr=subprocess.STDOUT,
@@ -231,6 +240,62 @@ def main() -> int:
             "log": str(log_path),
             "summary": parse_quick_log(log_path),
         }
+        graph_log_path = output_dir / "production-graph-parity.log"
+        with graph_log_path.open("w", encoding="utf-8") as log:
+            graph = run(
+                ["make", "test-q6k-q8k-llama-production-quick"],
+                check=False,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                env=environment,
+            )
+        report["phases"]["production_graph_parity"] = {
+            "status": "pass" if graph.returncode == 0 else "fail",
+            "returncode": graph.returncode,
+            "log": str(graph_log_path),
+        }
+        adapter_log_path = output_dir / "mtmd-adapter.log"
+        with adapter_log_path.open("w", encoding="utf-8") as log:
+            adapter = run(
+                [environment["PYTHON_BIN"], "tests/test_v8_mtmd_clip_shim_build.py"],
+                check=False,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                env=environment,
+            )
+        report["phases"]["mtmd_adapter_build"] = {
+            "status": "pass" if adapter.returncode == 0 else "fail",
+            "returncode": adapter.returncode,
+            "log": str(adapter_log_path),
+        }
+        capture_model = environment.get("CK_LLAMA_ROLLING_CAPTURE_MODEL", "")
+        if capture_model and pathlib.Path(capture_model).is_file():
+            capture_log_path = output_dir / "xray-callback.log"
+            with capture_log_path.open("w", encoding="utf-8") as log:
+                capture = run(
+                    [
+                        environment["PYTHON_BIN"], "scripts/test_llamacpp_xray_callback_v8.py",
+                        "--model", capture_model,
+                        "--llama-root", str(probe),
+                        "--expected-commit", rolling,
+                        "--output-dir", str(output_dir / "xray-callback"),
+                    ],
+                    check=False,
+                    stdout=log,
+                    stderr=subprocess.STDOUT,
+                    env=environment,
+                )
+            report["phases"]["xray_callback"] = {
+                "status": "pass" if capture.returncode == 0 else "fail",
+                "returncode": capture.returncode,
+                "log": str(capture_log_path),
+                "report": str(output_dir / "xray-callback" / "report.json"),
+            }
+        else:
+            report["phases"]["xray_callback"] = {
+                "status": "incomplete",
+                "reason": "CK_LLAMA_ROLLING_CAPTURE_MODEL is missing or unavailable",
+            }
         report["status"] = compatibility_status(report["phases"])
     except Exception as exc:  # Preserve diagnostics even when upstream changes break setup.
         report["status"] = "error"
