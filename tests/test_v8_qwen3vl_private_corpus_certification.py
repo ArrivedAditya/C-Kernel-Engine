@@ -4,6 +4,7 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+import subprocess
 import tempfile
 import sys
 from types import SimpleNamespace
@@ -26,6 +27,17 @@ def _load_module():
 class Qwen3VLCorpusCertificationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.module = _load_module()
+
+    def test_default_oracle_commit_matches_checked_in_gitlink(self) -> None:
+        result = subprocess.run(
+            ["git", "ls-tree", "HEAD", "llama.cpp"], cwd=ROOT,
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            self.skipTest("source export has no llama.cpp gitlink")
+        entry = result.stdout.split()
+        self.assertEqual(entry[:2], ["160000", "commit"])
+        self.assertEqual(self.module.PINNED_LLAMA_COMMIT, entry[2])
 
     def test_model_profiles_select_architecture_explicitly(self) -> None:
         qwen3 = SimpleNamespace(
