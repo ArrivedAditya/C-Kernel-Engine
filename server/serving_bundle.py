@@ -5,6 +5,7 @@ import hashlib
 import ctypes
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -98,6 +99,38 @@ def resolved_templates(run_dir: Path, doc: dict[str, Any]) -> tuple[str, dict[st
     chat = bundle_path(run_dir, assets["chat"]["path"]).read_bytes().decode("utf-8")
     tools = bundle_path(run_dir, assets["tools"]["path"]).read_bytes().decode("utf-8")
     return chat, {"tool_use": tools}, None
+
+
+def resolved_renderer_tokens(run_dir: Path, doc: dict[str, Any]) -> dict[str, str]:
+    """Read publisher Jinja token variables only from verified bundle assets.
+
+    The caller must first validate ``doc`` with ``load_resolved_serving``. A
+    missing variable stays undefined so a template that requires it fails
+    rather than rendering an invented delimiter.
+    """
+    variables: dict[str, str] = {}
+    for name in ("special_tokens_map.json", "tokenizer_config.json"):
+        asset = doc["assets"].get(name)
+        if asset is None:
+            continue
+        payload = json.loads(bundle_path(Path(run_dir), asset["path"]).read_bytes())
+        if not isinstance(payload, dict):
+            raise ValueError(f"invalid publisher token metadata: {name}")
+        for key, value in payload.items():
+            if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*_token", key):
+                continue
+            if isinstance(value, dict):
+                value = value.get("content")
+            if value is None or not isinstance(value, str):
+                # An unsupported metadata shape cannot supply a Jinja scalar;
+                # templates requiring it still fail under StrictUndefined.
+                continue
+            if not value:
+                raise ValueError(f"invalid publisher token variable: {name}:{key}")
+            if key in variables and variables[key] != value:
+                raise ValueError(f"conflicting publisher token variable: {key}")
+            variables[key] = value
+    return variables
 
 
 def verify_loaded_libraries(doc: dict[str, Any], *, maps_text: str | None = None) -> None:

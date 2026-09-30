@@ -28,6 +28,7 @@ import re
 import threading
 import time
 import uuid
+from datetime import datetime
 import xml.etree.ElementTree as ET
 from collections import OrderedDict
 from collections.abc import Callable, Sequence
@@ -777,6 +778,8 @@ def _render_with_chat_templates(
     chat_contract: dict[str, Any] | None = None,
     effective_thinking: str = "suppressed",
     *, add_generation_prompt: bool = True,
+    renderer_tokens: dict[str, str] | None = None,
+    render_time: datetime | None = None,
 ) -> str | None:
     tmpl_str = _select_template(
         chat_template,
@@ -804,6 +807,8 @@ def _render_with_chat_templates(
         env = jinja2.sandbox.SandboxedEnvironment(
             undefined=jinja2.StrictUndefined, autoescape=False
         )
+        captured_time = render_time if render_time is not None else datetime.now()
+        env.globals["strftime_now"] = lambda format: captured_time.strftime(format)
         tmpl = env.from_string(tmpl_str)
         return str(
             tmpl.render(
@@ -816,6 +821,7 @@ def _render_with_chat_templates(
                 add_generation_prompt=add_generation_prompt,
                 add_vision_id=False,
                 raise_exception=_raise_exception,
+                **(renderer_tokens or {}),
             )
         )
     except Exception as exc:
@@ -1416,6 +1422,7 @@ def create_app(
     chat_templates: dict[str, str] | None = None,
     tool_protocol: str | None = None,
     loaded_identity: dict[str, Any] | None = None,
+    renderer_tokens: dict[str, str] | None = None,
     allow_untemplated: bool = False,
     cancel_wait_seconds: float = 10.0,
     viz_html: str | None = None,
@@ -1595,6 +1602,7 @@ def create_app(
         generation_prefix = ""
         if chat_template is not None or chat_templates is not None:
             try:
+                render_time = datetime.now()
                 jinja_rendered = _render_with_chat_templates(
                     chat_template,
                     chat_templates,
@@ -1602,10 +1610,14 @@ def create_app(
                     body,
                     chat_contract,
                     effective_thinking,
+                    renderer_tokens=renderer_tokens,
+                    render_time=render_time,
                 )
                 without_prefix = _render_with_chat_templates(
                     chat_template, chat_templates, messages, body, chat_contract,
                     effective_thinking, add_generation_prompt=False,
+                    renderer_tokens=renderer_tokens,
+                    render_time=render_time,
                 )
                 if jinja_rendered is not None and without_prefix is not None:
                     if not jinja_rendered.startswith(without_prefix):
@@ -2966,11 +2978,14 @@ def create_live_app_from_run_dir(
     """Build a live app directly from a compiled runtime directory."""
     from .runtime import load_manifest_templates, load_tool_protocol
     from .serving_bundle import (
-        load_resolved_serving, loaded_serving_identity, verify_loaded_libraries,
+        load_resolved_serving, loaded_serving_identity, resolved_renderer_tokens,
+        verify_loaded_libraries,
     )
 
     run_dir = Path(run_dir).expanduser().resolve()
     chat_template, chat_templates, contract = load_manifest_templates(run_dir)
+    resolved = load_resolved_serving(run_dir)
+    renderer_tokens = resolved_renderer_tokens(run_dir, resolved) if resolved is not None else None
     if not chat_template and not kwargs.get("allow_untemplated", False):
         raise ValueError(
             f"normal chat serving requires {run_dir / 'chat_template.jinja'} "
@@ -3011,5 +3026,6 @@ def create_live_app_from_run_dir(
         chat_templates=chat_templates,
         tool_protocol=tool_protocol,
         loaded_identity=loaded_identity,
+        renderer_tokens=renderer_tokens,
         **kwargs,
     )

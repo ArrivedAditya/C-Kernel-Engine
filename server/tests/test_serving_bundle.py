@@ -15,7 +15,8 @@ from fastapi.testclient import TestClient
 from server.live import create_app
 from server.runtime import load_manifest_templates, load_tool_protocol
 from server.serving_bundle import (
-    load_resolved_serving, loaded_serving_identity, verify_loaded_libraries,
+    load_resolved_serving, loaded_serving_identity, resolved_renderer_tokens,
+    verify_loaded_libraries,
 )
 from server.tests.test_native_qwen_jinja_contract import RecordingSession
 
@@ -91,6 +92,91 @@ def test_publisher_default_and_explicit_compat(setup):
     assert load_tool_protocol(setup[0], chat, variants) == "qwen_code_xml_raw_v2"
     with pytest.raises(ValueError, match="override conflicts"):
         load_tool_protocol(setup[0], chat + "changed", variants)
+
+
+def test_publisher_special_tokens_feed_strict_jinja_from_verified_bundle(setup):
+    from server.live import TemplateRenderError, _render_with_chat_templates
+
+    run = setup[0]
+    (run / "chat_template.jinja").write_text(
+        "{{ bos_token }}{% for message in messages %}{{ message.role }}:{{ message.content }}{% endfor %}assistant:")
+    (run / "tokenizer_config.json").write_text(json.dumps({
+        "bos_token": "<|begin_of_text|>", "eos_token": "<|end_of_text|>"}))
+    (run / "special_tokens_map.json").write_text(json.dumps({
+        "bos_token": {"content": "<|begin_of_text|>"}}))
+    doc = resolve(setup)
+    tokens = resolved_renderer_tokens(run, load_resolved_serving(run))
+    assert tokens == {"bos_token": "<|begin_of_text|>", "eos_token": "<|end_of_text|>"}
+    chat, variants, _ = load_manifest_templates(run)
+    with pytest.raises(TemplateRenderError, match="bos_token"):
+        _render_with_chat_templates(chat, variants,
+                                    [{"role": "user", "content": "Hello."}], None)
+    assert _render_with_chat_templates(chat, variants,
+                                       [{"role": "user", "content": "Hello."}], None,
+                                       renderer_tokens=tokens) == "<|begin_of_text|>user:Hello.assistant:"
+    session = RecordingSession(["Hi."])
+    client = TestClient(create_app(session, model="test", chat_template=chat,
+                                   chat_templates=variants, renderer_tokens=tokens))
+    response = client.post("/v1/responses", json={"model": "test", "input": "Hello."})
+    assert response.status_code == 200
+    assert session.prompts == ["<|begin_of_text|>user:Hello.assistant:"]
+    assert "tokenizer_config.json" in doc["assets"]
+    (run / "tokenizer_config.json").write_text('{"bos_token":"stale"}')
+    with pytest.raises(ValueError, match="stale serving asset"):
+        load_resolved_serving(run)
+
+
+def test_conflicting_publisher_special_tokens_fail_closed(setup):
+    run = setup[0]
+    (run / "tokenizer_config.json").write_text(json.dumps({"bos_token": "<bos-a>"}))
+    (run / "special_tokens_map.json").write_text(json.dumps({"bos_token": "<bos-b>"}))
+    doc = resolve(setup)
+    with pytest.raises(ValueError, match="conflicting publisher token variable"):
+        resolved_renderer_tokens(run, doc)
+
+
+def test_publisher_date_helper_has_upstream_format_contract(monkeypatch):
+    import server.live as live
+
+    class FixedDatetime:
+        @staticmethod
+        def now():
+            from datetime import datetime
+            return datetime(2026, 9, 30)
+
+    monkeypatch.setattr(live, "datetime", FixedDatetime)
+    actual = live._render_with_chat_templates(
+        "{{ bos_token }}Current date: {{ strftime_now('%Y-%m-%d') }}.",
+        None, [{"role": "user", "content": "Hello."}], None,
+        renderer_tokens={"bos_token": "<|begin_of_text|>"})
+    assert actual == "<|begin_of_text|>Current date: 2026-09-30."
+
+
+def test_request_reuses_one_clock_snapshot_across_prefix_renders(monkeypatch):
+    import server.live as live
+    from datetime import datetime
+
+    class RolloverDatetime:
+        calls = 0
+
+        @classmethod
+        def now(cls):
+            cls.calls += 1
+            return (datetime(2026, 9, 30, 23, 59, 59) if cls.calls == 1
+                    else datetime(2026, 10, 1, 0, 0, 0))
+
+    monkeypatch.setattr(live, "datetime", RolloverDatetime)
+    template = (
+        "{{ strftime_now('%Y-%m-%d') }} {{ strftime_now('%Y-%m-%d') }} "
+        "{% for message in messages %}{{ message.role }}:{{ message.content }}{% endfor %}"
+        "{% if add_generation_prompt %}assistant:{% endif %}"
+    )
+    session = RecordingSession(["Hi."])
+    client = TestClient(create_app(session, model="test", chat_template=template))
+    response = client.post("/v1/responses", json={"model": "test", "input": "Hello."})
+    assert response.status_code == 200
+    assert session.prompts == ["2026-09-30 2026-09-30 user:Hello.assistant:"]
+    assert RolloverDatetime.calls == 1
 
 
 def test_copied_bundle_serves_without_profile_or_server_templates(setup):
