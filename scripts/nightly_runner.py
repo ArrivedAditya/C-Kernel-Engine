@@ -986,7 +986,7 @@ MAKE_TARGETS = {
         "timeout_sec": 180,
     },
     "server_schema_scaffold": {
-        "name": "Experimental Responses Server Schema",
+        "name": "Server Protocol and Lifecycle",
         "category": "inference",
         "target": "test-server-schema",
         "timeout_sec": 60,
