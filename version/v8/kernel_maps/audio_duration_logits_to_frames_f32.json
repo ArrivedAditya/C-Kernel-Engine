@@ -44,6 +44,6 @@
     {"name": "max_expanded_frames", "source": "runtime:expanded_capacity"},
     {"name": "expanded_frames", "source": "output:expanded_frames", "cast": "int32_t*", "ports": ["output:expanded_frames"]}
   ]},
-  "tests": {"unit": ["tests/test_v8_audio_duration_logits_oracle.py", "tests/test_v8_audio_duration_logits_live.py"], "oracle": "Pinned Kokoro 0.9.4 PyTorch 2.8.0+cpu predictor duration logits and exact int32 result; separately classified live PyTorch recomputation"},
+  "tests": {"unit": ["tests/test_v8_audio_duration_logits_oracle.py", "tests/test_v8_audio_duration_logits_live.py", "tests/test_v8_kokoro_generated_duration.py"], "oracle": "Pinned Kokoro 0.9.4 PyTorch 2.8.0+cpu predictor duration logits and exact int32 result; separately classified live PyTorch recomputation"},
   "notes": "Caller-owned nonaliasing buffers. Inference only. The first fixed-utterance circuit declares speed in config; a per-request speed setting requires a separate generic scalar-entry binding. Expanded-frames output is a named runtime valid length, not an allocation. Actual model-graph composition remains NOT_TESTED."
 }

@@ -779,6 +779,14 @@ TEST_SUITES = {
         "TTS Kokoro Generated Attention Context X-Ray Oracle", "kernels",
         ROOT / "tests" / "test_v8_kokoro_generated_attention_context.py",
     ),
+    "feature_concat_broadcast_oracle": TestSuite(
+        "Checked FP32 Feature Broadcast Concat Numerical Oracle", "kernels",
+        ROOT / "tests" / "test_v8_feature_concat_broadcast_oracle.py",
+    ),
+    "feature_concat_broadcast_generated": TestSuite(
+        "Model-Neutral Generated Feature Broadcast Composition", "inference",
+        ROOT / "tests" / "test_v8_feature_concat_broadcast_generated.py",
+    ),
     "normalization_checked_generated": TestSuite(
         "Model-Neutral Checked Normalization Generated Graph", "kernels",
         ROOT / "tests" / "test_v8_normalization_checked_generated.py",
@@ -793,6 +801,11 @@ TEST_SUITES = {
         # Four compiled 147-operation graphs, independent affine checks and
         # standalone replay exceeded the default 120s on a hosted runner.
         timeout_sec=300,
+    ),
+    "tts_kokoro_generated_duration": TestSuite(
+        "Kokoro Connected Encoder and Duration Predictor Oracle", "inference",
+        ROOT / "tests" / "test_v8_kokoro_generated_duration.py",
+        timeout_sec=180,
     ),
     "normalization_checked_oracle": TestSuite(
         "Checked LayerNorm and Tanh GELU Numerical Contracts", "kernels",

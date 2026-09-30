@@ -5,7 +5,7 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "version/v8/kernel_maps",
     "counts": {
-      "total": 393,
+      "total": 394,
       "by_op": {
         "add_backward": 1,
         "add_stream": 2,
@@ -53,6 +53,7 @@
         "embedding_three_table_layer_norm": 1,
         "farskip_routed_shared_combine": 1,
         "feature_concat": 1,
+        "feature_concat_broadcast_rows": 1,
         "feature_slice_copy": 1,
         "final_logit_scale": 2,
         "final_logit_softcap": 2,
@@ -12347,7 +12348,8 @@
           },
           {
             "name": "input_elements",
-            "source": "runtime:input_elements"
+            "source": "runtime:adaln_input_elements",
+            "value_type": "size_t"
           },
           {
             "name": "style",
@@ -12359,7 +12361,8 @@
           },
           {
             "name": "style_elements",
-            "source": "runtime:style_elements"
+            "source": "runtime:adaln_style_elements",
+            "value_type": "size_t"
           },
           {
             "name": "projection_weight",
@@ -12371,7 +12374,8 @@
           },
           {
             "name": "projection_weight_elements",
-            "source": "runtime:projection_weight_elements"
+            "source": "runtime:adaln_projection_weight_elements",
+            "value_type": "size_t"
           },
           {
             "name": "projection_bias",
@@ -12383,7 +12387,8 @@
           },
           {
             "name": "projection_bias_elements",
-            "source": "runtime:projection_bias_elements"
+            "source": "runtime:adaln_projection_bias_elements",
+            "value_type": "size_t"
           },
           {
             "name": "output",
@@ -12395,7 +12400,8 @@
           },
           {
             "name": "output_elements",
-            "source": "runtime:output_elements"
+            "source": "runtime:adaln_output_elements",
+            "value_type": "size_t"
           },
           {
             "name": "projection_scratch",
@@ -12420,11 +12426,13 @@
           },
           {
             "name": "input_stride",
-            "source": "runtime:input_stride"
+            "source": "runtime:adaln_input_stride",
+            "value_type": "size_t"
           },
           {
             "name": "output_stride",
-            "source": "runtime:output_stride"
+            "source": "runtime:adaln_output_stride",
+            "value_type": "size_t"
           },
           {
             "name": "epsilon",
@@ -12434,11 +12442,70 @@
       },
       "tests": {
         "unit": [
+          "tests/test_v8_kokoro_generated_duration.py",
           "tests/test_v8_audio_adaptive_layer_norm_oracle.py"
         ],
         "oracle": "Independent torch.nn.functional.linear and layer_norm FP32 CPU; separately registered native-versus-fixture, native-versus-live at small and 24x512x128 shapes, and historical fixture-versus-live PyTorch 2.8.0 and 2.12.1 comparisons; all use existing nightly reporting."
       },
-      "notes": "Batch-one token-major input with explicit input/output row strides. Style projection uses [2*C,S] output-feature-major weights, first C gamma, second C beta, and an ascending FP32 multiply/add reduction. Mean and biased variance each use an ascending FP64 channel reduction; normalization casts to FP32 before affine modulation. This reduction order is a separate numerical identity from a future alternative provider. The pinned Kokoro fixture was captured under PyTorch 2.8.0. Nightly stage captures first differed at PyTorch F.linear projection while normalized LayerNorm output matched. The compared hosts reported AVX512 and AVX2 capability; this does not identify the exact operation backend dispatch or prove version-specific drift. Historical fixture reproduction requests MKL_CBWR=AVX2 and preserves its original 1e-7 bound. Separate native-dispatch lanes compare CKE to live PyTorch at the unchanged 5e-6 bound; neither lane silently refreshes the fixture. Reports retain versions, stage tensors and requested settings, explicitly marking actual dispatch identity unverified. Fixture reproduction and native parity have distinct case identities and execute independently. Epsilon is positive finite. Only logical columns are read; padding is untouched. All buffers caller-owned; no aliasing between input, weights, style, output or scratch. Output remains unchanged on null, geometry, capacity or nonfinite rejection. Inference only; backward unsupported.",
+      "notes": "Batch-one token-major input with explicit input/output row strides. Style projection uses [2*C,S] output-feature-major weights, first C gamma, second C beta, and an ascending FP32 multiply/add reduction. Mean and biased variance each use an ascending FP64 channel reduction; normalization casts to FP32 before affine modulation. This reduction order is a separate numerical identity from a future alternative provider. The pinned Kokoro fixture was captured under PyTorch 2.8.0. Nightly stage captures first differed at PyTorch F.linear projection while normalized LayerNorm output matched. The compared hosts reported AVX512 and AVX2 capability; this does not identify the exact operation backend dispatch or prove version-specific drift. Historical fixture reproduction requests MKL_CBWR=AVX2 and preserves its original 1e-7 bound. Separate native-dispatch lanes compare CKE to live PyTorch at the unchanged 5e-6 bound; neither lane silently refreshes the fixture. Reports retain versions, stage tensors and requested settings, explicitly marking actual dispatch identity unverified. Fixture reproduction and native parity have distinct case identities and execute independently. Epsilon is positive finite. Only logical columns are read; padding is untouched. All buffers caller-owned; no aliasing between input, weights, style, output or scratch. Output remains unchanged on null, geometry, capacity or nonfinite rejection. Inference only; backward unsupported. Operation-local size_t capacity/stride overrides are checked against planner-owned storage; the provider validates logical geometry before writes.",
+      "call_constant_contract": {
+        "shape_symbols": {},
+        "buffer_spans": [
+          {
+            "pointer": "input",
+            "elements": "adaln_input_elements",
+            "rows": 1,
+            "width": "adaln_input_elements",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "style",
+            "elements": "adaln_style_elements",
+            "rows": 1,
+            "width": "adaln_style_elements",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "projection_weight",
+            "elements": "adaln_projection_weight_elements",
+            "rows": 1,
+            "width": "adaln_projection_weight_elements",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "projection_bias",
+            "elements": "adaln_projection_bias_elements",
+            "rows": 1,
+            "width": "adaln_projection_bias_elements",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "output",
+            "elements": "adaln_output_elements",
+            "rows": 1,
+            "width": "adaln_output_elements",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "input",
+            "elements": "adaln_input_elements",
+            "rows": 1,
+            "width": 1,
+            "stride": "adaln_input_stride",
+            "physical_row_stride": true,
+            "element_bytes": 4
+          },
+          {
+            "pointer": "output",
+            "elements": "adaln_output_elements",
+            "rows": 1,
+            "width": 1,
+            "stride": "adaln_output_stride",
+            "physical_row_stride": true,
+            "element_bytes": 4
+          }
+        ]
+      },
       "name": "audio_adaptive_layer_norm_f32",
       "_source_file": "audio_adaptive_layer_norm_f32.json"
     },
@@ -14029,7 +14096,8 @@
       "tests": {
         "unit": [
           "tests/test_v8_audio_duration_logits_oracle.py",
-          "tests/test_v8_audio_duration_logits_live.py"
+          "tests/test_v8_audio_duration_logits_live.py",
+          "tests/test_v8_kokoro_generated_duration.py"
         ],
         "oracle": "Pinned Kokoro 0.9.4 PyTorch 2.8.0+cpu predictor duration logits and exact int32 result; separately classified live PyTorch recomputation"
       },
@@ -16559,7 +16627,8 @@
           },
           {
             "name": "input_elements",
-            "source": "runtime:input_elements"
+            "source": "runtime:scan_input_elements",
+            "value_type": "size_t"
           },
           {
             "name": "weight_ih",
@@ -16571,7 +16640,8 @@
           },
           {
             "name": "weight_ih_elements",
-            "source": "runtime:weight_ih_elements"
+            "source": "runtime:scan_weight_ih_elements",
+            "value_type": "size_t"
           },
           {
             "name": "weight_hh",
@@ -16583,7 +16653,8 @@
           },
           {
             "name": "weight_hh_elements",
-            "source": "runtime:weight_hh_elements"
+            "source": "runtime:scan_weight_hh_elements",
+            "value_type": "size_t"
           },
           {
             "name": "bias_ih",
@@ -16595,7 +16666,8 @@
           },
           {
             "name": "bias_ih_elements",
-            "source": "runtime:bias_ih_elements"
+            "source": "runtime:scan_bias_ih_elements",
+            "value_type": "size_t"
           },
           {
             "name": "bias_hh",
@@ -16607,7 +16679,8 @@
           },
           {
             "name": "bias_hh_elements",
-            "source": "runtime:bias_hh_elements"
+            "source": "runtime:scan_bias_hh_elements",
+            "value_type": "size_t"
           },
           {
             "name": "output",
@@ -16619,7 +16692,8 @@
           },
           {
             "name": "output_elements",
-            "source": "runtime:output_elements"
+            "source": "runtime:scan_output_elements",
+            "value_type": "size_t"
           },
           {
             "name": "hidden_state",
@@ -16628,7 +16702,8 @@
           },
           {
             "name": "hidden_state_elements",
-            "source": "runtime:hidden_state_elements"
+            "source": "runtime:scan_hidden_state_elements",
+            "value_type": "size_t"
           },
           {
             "name": "cell_state",
@@ -16637,7 +16712,8 @@
           },
           {
             "name": "cell_state_elements",
-            "source": "runtime:cell_state_elements"
+            "source": "runtime:scan_cell_state_elements",
+            "value_type": "size_t"
           },
           {
             "name": "gates_scratch",
@@ -16662,21 +16738,89 @@
           },
           {
             "name": "input_stride",
-            "source": "runtime:input_stride"
+            "source": "runtime:scan_input_stride",
+            "value_type": "size_t"
           },
           {
             "name": "output_stride",
-            "source": "runtime:output_stride"
+            "source": "runtime:scan_output_stride",
+            "value_type": "size_t"
           }
         ]
       },
       "tests": {
         "unit": [
-          "tests/test_v8_audio_lstm_scan_oracle.py"
+          "tests/test_v8_audio_lstm_scan_oracle.py",
+          "tests/test_v8_kokoro_generated_duration.py"
         ],
         "oracle": "torch.nn.LSTM bidirectional FP32 CPU; committed reference outputs plus live PyTorch reconstruction"
       },
-      "notes": "Batch-one bidirectional zero-state IFGO scan. Requires 0 < H <= INT_MAX/4 for signed IFGO gate indexing. Input/output physical row strides are explicit. State and gates are caller-owned scratch reset per invocation. Inputs, weights, output, and scratch must not alias; valid capacity is checked before writing. Serial forward then reverse recurrence; output concatenates forward and reverse hidden features. Inference only; backward unsupported.",
+      "notes": "Batch-one bidirectional zero-state IFGO scan. Requires 0 < H <= INT_MAX/4 for signed IFGO gate indexing. Input/output physical row strides are explicit. State and gates are caller-owned scratch reset per invocation. Inputs, weights, output, and scratch must not alias; valid capacity is checked before writing. Serial forward then reverse recurrence; output concatenates forward and reverse hidden features. Inference only; backward unsupported. Operation-local size_t capacity/stride overrides are checked against planner-owned storage; the provider validates logical geometry before writes.",
+      "call_constant_contract": {
+        "shape_symbols": {},
+        "buffer_spans": [
+          {
+            "pointer": "input",
+            "elements": "scan_input_elements",
+            "rows": 1,
+            "width": "scan_input_elements",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "weight_ih",
+            "elements": "scan_weight_ih_elements",
+            "rows": 1,
+            "width": "scan_weight_ih_elements",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "weight_hh",
+            "elements": "scan_weight_hh_elements",
+            "rows": 1,
+            "width": "scan_weight_hh_elements",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "bias_ih",
+            "elements": "scan_bias_ih_elements",
+            "rows": 1,
+            "width": "scan_bias_ih_elements",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "bias_hh",
+            "elements": "scan_bias_hh_elements",
+            "rows": 1,
+            "width": "scan_bias_hh_elements",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "output",
+            "elements": "scan_output_elements",
+            "rows": 1,
+            "width": "scan_output_elements",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "input",
+            "elements": "scan_input_elements",
+            "rows": 1,
+            "width": 1,
+            "stride": "scan_input_stride",
+            "physical_row_stride": true,
+            "element_bytes": 4
+          },
+          {
+            "pointer": "output",
+            "elements": "scan_output_elements",
+            "rows": 1,
+            "width": 1,
+            "stride": "scan_output_stride",
+            "physical_row_stride": true,
+            "element_bytes": 4
+          }
+        ]
+      },
       "name": "audio_lstm_bidirectional_scan_f32",
       "_source_file": "audio_lstm_bidirectional_scan_f32.json"
     },
@@ -24029,6 +24173,247 @@
       "notes": "Generic feature-axis concat for fixed branch collections.",
       "name": "feature_concat",
       "_source_file": "feature_concat.json"
+    },
+    {
+      "id": "feature_concat_broadcast_rows_f32",
+      "op": "feature_concat_broadcast_rows",
+      "operation_interface": "tensor.concat.broadcast_feature_rows.strided.fp32.v1",
+      "variant": "checked_scalar_reuse",
+      "selection": {
+        "status": "candidate",
+        "priority": 100,
+        "equivalence_group": "feature_concat_broadcast_rows_f32",
+        "phases": [
+          "prefill"
+        ]
+      },
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "input",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "C"
+          ],
+          "layout": "row_major_strided",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        },
+        {
+          "name": "feature",
+          "dtype": "fp32",
+          "shape": [
+            "S"
+          ],
+          "layout": "feature_contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "N"
+          ],
+          "layout": "row_major_strided",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "input_elements",
+        "input_stride",
+        "feature_elements",
+        "output_elements",
+        "output_stride",
+        "rows",
+        "input_channels",
+        "feature_channels",
+        "output_channels"
+      ],
+      "constraints": {
+        "notes": "Positive rows/channels; output_channels must equal input_channels+feature_channels within INT_MAX. Checked physical spans and capacities. Output may not alias either input. Logical inputs must be finite; row padding is ignored, output padding untouched. Rejection leaves output unchanged. No internal allocation or persistent state."
+      },
+      "impl": {
+        "function": "feature_concat_broadcast_rows_f32",
+        "c_declaration": "int feature_concat_broadcast_rows_f32(const float *input, size_t input_elements, size_t input_stride, const float *feature, size_t feature_elements, float *output, size_t output_elements, size_t output_stride, size_t rows, size_t input_channels, size_t feature_channels, size_t output_channels);",
+        "sources": [
+          "src/kernels/feature_concat_broadcast_rows.c",
+          "src/kernels/vision_kernels.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "call_constant_contract": {
+        "shape_symbols": {
+          "T": "concat_rows",
+          "C": "concat_input_channels",
+          "S": "concat_feature_channels",
+          "N": "concat_output_channels"
+        },
+        "buffer_spans": [
+          {
+            "pointer": "input",
+            "elements": "concat_input_elements",
+            "rows": "concat_rows",
+            "width": "concat_input_channels",
+            "stride": "concat_input_stride",
+            "physical_row_stride": true,
+            "element_bytes": 4
+          },
+          {
+            "pointer": "feature",
+            "elements": "concat_feature_elements",
+            "rows": 1,
+            "width": "concat_feature_channels",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "output",
+            "elements": "concat_output_elements",
+            "rows": "concat_rows",
+            "width": "concat_output_channels",
+            "stride": "concat_output_stride",
+            "physical_row_stride": true,
+            "element_bytes": 4
+          }
+        ]
+      },
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "input",
+            "source": "activation:input",
+            "cast": "const float*",
+            "ports": [
+              "input:input"
+            ]
+          },
+          {
+            "name": "input_elements",
+            "source": "runtime:concat_input_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "input_stride",
+            "source": "runtime:concat_input_stride",
+            "value_type": "size_t"
+          },
+          {
+            "name": "feature",
+            "source": "activation:feature",
+            "cast": "const float*",
+            "ports": [
+              "input:feature"
+            ]
+          },
+          {
+            "name": "feature_elements",
+            "source": "runtime:concat_feature_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output",
+            "source": "output:output",
+            "cast": "float*",
+            "ports": [
+              "output:output"
+            ]
+          },
+          {
+            "name": "output_elements",
+            "source": "runtime:concat_output_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output_stride",
+            "source": "runtime:concat_output_stride",
+            "value_type": "size_t"
+          },
+          {
+            "name": "rows",
+            "source": "runtime:concat_rows",
+            "value_type": "size_t"
+          },
+          {
+            "name": "input_channels",
+            "source": "runtime:concat_input_channels",
+            "value_type": "size_t"
+          },
+          {
+            "name": "feature_channels",
+            "source": "runtime:concat_feature_channels",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output_channels",
+            "source": "runtime:concat_output_channels",
+            "value_type": "size_t"
+          }
+        ]
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "feature_concat_broadcast_rows_copy_fp32",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "feature_concat_broadcast_rows_f32",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "independent_rows"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "none",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "tests": {
+        "unit": [
+          "tests/test_v8_feature_concat_broadcast_oracle.py",
+          "tests/test_v8_feature_concat_broadcast_generated.py",
+          "tests/test_v8_kokoro_generated_duration.py"
+        ],
+        "oracle": "Independent NumPy concatenate and optional live PyTorch expand/cat; exact bitwise copy, padded/tail/production widths, bounds, malformed metadata and output-preserving rejection."
+      },
+      "notes": "Reuses the existing scalar feature_concat one row at a time, with a checked broadcast, physical-stride and capacity ABI. Output columns are input features followed by repeated feature-vector values. No reduction; exact FP32 bit copy. Input padding is not consumed and output padding is not written. Inference only; backward uncertified.",
+      "name": "feature_concat_broadcast_rows_f32",
+      "_source_file": "feature_concat_broadcast_rows_f32.json"
     },
     {
       "id": "feature_slice_copy",

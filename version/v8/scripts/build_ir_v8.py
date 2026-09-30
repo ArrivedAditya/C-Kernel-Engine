@@ -1811,6 +1811,18 @@ def _validate_segmented_prefill_contract(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 OP_DATAFLOW = {
+    "feature_concat_broadcast_rows": {
+        "inputs": {"input": "external:features", "feature": "external:feature"},
+        "outputs": {"output": {"slot": "broadcast_concat", "dtype": "fp32"}},
+    },
+    "audio_lstm_bidirectional_scan": {
+        "inputs": {"input": "external:sequence"},
+        "outputs": {"output": {"slot": "scan_output", "dtype": "fp32"}},
+    },
+    "audio_adaptive_layer_norm": {
+        "inputs": {"input": "external:sequence", "style": "external:style"},
+        "outputs": {"output": {"slot": "adaptive_norm_output", "dtype": "fp32"}},
+    },
     "audio_scaled_residual_add": {
         "inputs": {"residual": "external:residual", "branch": "external:branch"},
         "outputs": {"output": {"slot": "residual_sum", "dtype": "fp32"}},
@@ -4410,6 +4422,9 @@ def _validated_kernel_codegen_capability(kernel_id: str, kernel_map: Dict) -> Op
 # source model is dense, recurrent, DeepStack-style, MoE, SSM, or something else.
 # Note: "matmul" is a logical op that maps to gemv (decode) or gemm (prefill) based on mode
 TEMPLATE_TO_KERNEL_OP = {
+    "feature_concat_broadcast_rows": "feature_concat_broadcast_rows",
+    "audio_lstm_bidirectional_scan": "audio_lstm",
+    "audio_adaptive_layer_norm": "audio_adaptive_layer_norm",
     "audio_scaled_residual_add": "audio_scaled_residual_add",
     "attention_full_token_major_checked": "attention_full_token_major_checked",
     "linear_rows_checked": "linear_rows_checked",
@@ -5330,7 +5345,7 @@ def _validated_call_constants(op: Dict[str, Any], kernel_map: Dict[str, Any]) ->
         width_name = span.get("width")
         stride_name = span.get("stride")
         count = values.get(count_name)
-        rows = values.get(row_name)
+        rows = values.get(row_name) if isinstance(row_name, str) else row_name
         width = values.get(width_name) if isinstance(width_name, str) else width_name
         stride = values.get(stride_name) if stride_name else width
         if (not all(isinstance(v, int) and not isinstance(v, bool) for v in
@@ -9051,6 +9066,9 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
     # Op → Weight mapping (which weights each op uses for quant lookup)
     # ═══════════════════════════════════════════════════════════
     OP_TO_WEIGHT_KEYS = {
+        "feature_concat_broadcast_rows": None,
+        "audio_lstm_bidirectional_scan": ["weight_ih", "weight_hh", "bias_ih", "bias_hh"],
+        "audio_adaptive_layer_norm": ["projection_weight", "projection_bias"],
         "attention_full_token_major_checked": None,
         "linear_rows_checked": ["weight", "bias"],
         "embedding_three_table_layer_norm": ["word", "position", "token_type", "gamma", "beta"],
@@ -12371,6 +12389,9 @@ WEIGHT_PATTERNS = {
 # Template op → weight refs it uses
 # This tells us which weights each template op needs
 TEMPLATE_OP_WEIGHTS = {
+    "feature_concat_broadcast_rows": [],
+    "audio_lstm_bidirectional_scan": ["weight_ih", "weight_hh", "bias_ih", "bias_hh"],
+    "audio_adaptive_layer_norm": ["projection_weight", "projection_bias"],
     "linear_rows_checked": ["weight", "bias"],
     "embedding_three_table_layer_norm": ["word", "position", "token_type", "gamma", "beta"],
     "audio_duration_logits_to_frames": [],

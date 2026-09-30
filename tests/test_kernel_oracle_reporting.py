@@ -43,11 +43,12 @@ class KernelOracleReportingTest(unittest.TestCase):
     def test_map_selects_existing_registration_without_duplicates(self):
         path = "version/v8/kernel_maps/audio_adaptive_layer_norm_f32.json"
         selected = nightly.select_kernel_map_tests([path, path])
-        self.assertEqual(selected, ["tts_adaptive_layer_norm_oracle", "tts_adaptive_layer_norm_live"])
+        self.assertEqual(selected, ["tts_kokoro_generated_duration",
+                                    "tts_adaptive_layer_norm_oracle", "tts_adaptive_layer_norm_live"])
         self.assertNotIn("tts_live_torch_oracles", nightly.TEST_SUITES)
         targets = [target for key in selected for target in nightly.TEST_SUITES[key].unittest_targets]
         self.assertEqual(len(targets), len(set(targets)))
-        self.assertEqual(len(targets), 6)
+        self.assertEqual(len(targets), 7)
 
     def test_unregistered_map_test_fails_selection(self):
         with mock.patch.object(nightly.ROOT.__class__, "read_text", return_value=json.dumps({
