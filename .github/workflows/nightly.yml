@@ -150,7 +150,7 @@ jobs:
           # v8 inference (ck_run_v8.py) hard-requires its own requirement set —
           # tiktoken in particular — and refuses to auto-bootstrap inside CI.
           pip install -c .github/requirements-nightly-constraints.txt -r version/v8/requirements.txt
-          pip install -c .github/requirements-nightly-constraints.txt huggingface_hub torch
+          pip install -c .github/requirements-nightly-constraints.txt huggingface_hub torch Pillow
 
       - name: Build CK-Engine
         run: |

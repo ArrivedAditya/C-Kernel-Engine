@@ -57,6 +57,10 @@ POLL_INTERVAL = 0.5
 TERMINATE_GRACE_SEC = 10.0
 KILL_GRACE_SEC = 5.0
 LOG_TAIL_CHARS = 40000
+TOOL_REQUEST = (
+    'Call read_file with path README.md. Reply using this exact syntax and nothing else: '
+    '<tool_call>{"name":"read_file","arguments":{"path":"README.md"}}</tool_call>'
+)
 
 
 def _find_free_port() -> int:
@@ -505,7 +509,7 @@ def main(argv: list[str] | None = None) -> int:
             "POST", f"{base}/v1/responses",
             {
                 "model": "ck-v8",
-                "input": "Call the read_file tool now with path README.md. Return only the tool call.",
+                "input": TOOL_REQUEST,
                 "tools": [{
                     "type": "function", "name": "read_file",
                     "description": "Read the named file",
@@ -572,7 +576,7 @@ def main(argv: list[str] | None = None) -> int:
         }
         chat_body = {
             "model": "ck-v8",
-            "messages": [{"role": "user", "content": "Call the read_file tool now with path README.md. Return only the tool call."}],
+            "messages": [{"role": "user", "content": TOOL_REQUEST}],
             "tools": [chat_tool],
             "max_tokens": 96,
             "temperature": 0,
