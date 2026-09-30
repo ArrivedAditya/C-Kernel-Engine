@@ -23,6 +23,7 @@ var dir_40856f0cdd4bcafd28810d9265a200f7 =
     [ "embedding_kernels.c", "embedding__kernels_8c.html", "embedding__kernels_8c" ],
     [ "embedding_kernels_bf16.c", "embedding__kernels__bf16_8c.html", "embedding__kernels__bf16_8c" ],
     [ "embedding_three_table_layer_norm.c", "embedding__three__table__layer__norm_8c.html", "embedding__three__table__layer__norm_8c" ],
+    [ "feature_concat_broadcast_rows.c", "feature__concat__broadcast__rows_8c.html", "feature__concat__broadcast__rows_8c" ],
     [ "fp16_convert.c", "fp16__convert_8c.html", "fp16__convert_8c" ],
     [ "geglu_kernels.c", "geglu__kernels_8c.html", "geglu__kernels_8c" ],
     [ "gelu_kernels.c", "gelu__kernels_8c.html", "gelu__kernels_8c" ],

@@ -1,5 +1,11 @@
 var NAVTREEINDEX20 =
 {
+"structCKSessionConfigV8.html#a5c23ed8eacf07b52d36bd0fb743f1115":[1,0,58,3],
+"structCKSessionConfigV8.html#a666cd07dce421abe28bb0113cba0245e":[1,0,58,5],
+"structCKSessionConfigV8.html#a6e3a15db35c3a66a44dadff55af9f31a":[1,0,58,7],
+"structCKSessionConfigV8.html#a9d014eabf547a01723365c2632d5e439":[1,0,58,1],
+"structCKSessionConfigV8.html#adddfa06e356784ee8dc61967f1766fbd":[1,0,58,0],
+"structCKSessionConfigV8.html#aff2a54ae49d9384bce0b3cddae97a252":[1,0,58,2],
 "structCKSessionGenerateRequestV8.html":[1,0,59],
 "structCKSessionGenerateRequestV8.html#a24a2da51c5349c60b20a08880423a688":[1,0,59,2],
 "structCKSessionGenerateRequestV8.html#a28007ad9705b62600399c839451ff85c":[1,0,59,6],
@@ -243,11 +249,5 @@ var NAVTREEINDEX20 =
 "structPCIeTopology.html#a8abdf84a7b22a1bd888b4d50efc10e8c":[1,0,80,0],
 "structPCIeTopology.html#a8fabded9e6dd8d7efb115abfd5d38044":[1,0,80,5],
 "structPCIeTopology.html#ac42eaf6c16f881a6098cf8e443503936":[1,0,80,4],
-"structPCIeTopology.html#ad6202b8874dbca1e0fdd88dc9a899203":[1,0,80,6],
-"structQWEN2__0__5B__DECODECanary.html":[1,0,81],
-"structQWEN2__0__5B__DECODECanary.html#a18aabfa5f115473f97230e403dd86333":[1,0,81,0],
-"structQWEN2__0__5B__DECODECanary.html#aef48257f4afe7c0a5e13668d907fcc89":[1,0,81,1],
-"structQWEN2__0__5B__DECODEFooterOffsets.html":[1,0,82],
-"structQWEN2__0__5B__DECODEFooterOffsets.html#aa7f30858b9156e6490e32a352acc1e94":[1,0,82,3],
-"structQWEN2__0__5B__DECODEFooterOffsets.html#ac589598a0405dd5321d3605f104c52af":[1,0,82,1]
+"structPCIeTopology.html#ad6202b8874dbca1e0fdd88dc9a899203":[1,0,80,6]
 };
