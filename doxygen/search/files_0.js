@@ -11,9 +11,10 @@ var searchData=
   ['attention_5foracle_5fggml_2eh_8',['attention_oracle_ggml.h',['../attention__oracle__ggml_8h.html',1,'']]],
   ['audio_5fadaptive_5flayer_5fnorm_2ec_9',['audio_adaptive_layer_norm.c',['../audio__adaptive__layer__norm_8c.html',1,'']]],
   ['audio_5fduration_5fexpand_2ec_10',['audio_duration_expand.c',['../audio__duration__expand_8c.html',1,'']]],
-  ['audio_5fduration_5flogits_2ec_11',['audio_duration_logits.c',['../audio__duration__logits_8c.html',1,'']]],
-  ['audio_5fistft_5fmag_5fphase_2ec_12',['audio_istft_mag_phase.c',['../audio__istft__mag__phase_8c.html',1,'']]],
-  ['audio_5fkernels_2ec_13',['audio_kernels.c',['../audio__kernels_8c.html',1,'']]],
-  ['audio_5flstm_5fscan_2ec_14',['audio_lstm_scan.c',['../audio__lstm__scan_8c.html',1,'']]],
-  ['axpy_5fkernels_2ec_15',['axpy_kernels.c',['../axpy__kernels_8c.html',1,'']]]
+  ['audio_5fduration_5fexpand_5ftoken_5fmajor_2ec_11',['audio_duration_expand_token_major.c',['../audio__duration__expand__token__major_8c.html',1,'']]],
+  ['audio_5fduration_5flogits_2ec_12',['audio_duration_logits.c',['../audio__duration__logits_8c.html',1,'']]],
+  ['audio_5fistft_5fmag_5fphase_2ec_13',['audio_istft_mag_phase.c',['../audio__istft__mag__phase_8c.html',1,'']]],
+  ['audio_5fkernels_2ec_14',['audio_kernels.c',['../audio__kernels_8c.html',1,'']]],
+  ['audio_5flstm_5fscan_2ec_15',['audio_lstm_scan.c',['../audio__lstm__scan_8c.html',1,'']]],
+  ['axpy_5fkernels_2ec_16',['axpy_kernels.c',['../axpy__kernels_8c.html',1,'']]]
 ];
