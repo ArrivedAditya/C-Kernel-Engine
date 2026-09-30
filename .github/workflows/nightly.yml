@@ -425,6 +425,7 @@ jobs:
           CKE_KOKORO_LAYER_EVIDENCE_DIR: ${{ github.workspace }}/build/kernel-oracle-captures/kokoro-first-layer
           CKE_KOKORO_ENCODER_EVIDENCE_DIR: ${{ github.workspace }}/build/kernel-oracle-captures/kokoro-encoder
           CKE_KOKORO_DURATION_EVIDENCE_DIR: ${{ github.workspace }}/build/kernel-oracle-captures/kokoro-duration
+          CKE_KOKORO_EXPANSION_EVIDENCE_DIR: ${{ github.workspace }}/build/kernel-oracle-captures/kokoro-expansion
         run: |
           set -o pipefail
           echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
