@@ -97,6 +97,15 @@ def _write_json(path: Path, obj: Any) -> None:
     path.write_text(json.dumps(obj, indent=2), encoding="utf-8")
 
 
+def _artifact_identity(path: Path) -> dict[str, Any]:
+    path = path.resolve(strict=True)
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return {"path": str(path), "size_bytes": path.stat().st_size, "sha256": digest.hexdigest()}
+
+
 def _apply_qwen3vl_geometry_to_runtime_manifest(
     output_dir: Path,
     image_path: Path | None,
@@ -1409,6 +1418,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--llama-row-index", type=int, default=None, help="Optional llama-only row index; negative indices count from the end")
     ap.add_argument("--llama-row-width", type=int, default=None, help="Optional llama-only row width")
     ap.add_argument("--report", type=Path, default=None, help="Optional JSON report output")
+    ap.add_argument("--invocation-id", type=str, default=None, help="Caller-generated ID echoed into this execution report")
     ap.add_argument("--dump-ck-f32", type=Path, default=None, help="Optional raw decoder-facing CK output tensor")
     ap.add_argument("--dump-llama-f32", type=Path, default=None, help="Optional raw decoder-facing llama.cpp output tensor")
     args = ap.parse_args(argv)
@@ -1492,6 +1502,7 @@ def main(argv: list[str] | None = None) -> int:
         if not same_geometry:
             mismatch = {
                 "status": "alignment_unresolved",
+                "invocation_id": args.invocation_id,
                 "input_provenance": "independently_preprocessed_from_shared_decoded_rgb8",
                 "preprocess_evidence": preprocess_evidence,
                 "note": "Encoder numerical parity was not attempted because prepared image geometry differs.",
@@ -1627,6 +1638,28 @@ def main(argv: list[str] | None = None) -> int:
     if not lowering.get("has_vision_mrope", False):
         notes.append("Qwen3-VL vision multi-section M-RoPE is lowered; remaining deltas should be interpreted from the reported tensor metrics.")
     result = {
+        "status": "complete",
+        "invocation_id": args.invocation_id,
+        "artifact_identity_kind": "selected_file_hashes_after_execution",
+        "artifact_identity": {
+            "mmproj_gguf": _artifact_identity(args.gguf),
+            "ck_model_library": _artifact_identity(model_so),
+            "ck_generated_source": _artifact_identity(output_dir / "qwen3_vl_mmproj_v8.c"),
+            "ck_engine_library": _artifact_identity(_resolve_generated_engine(model_so)),
+            "ck_weights": _artifact_identity(Path(report["weights_bump"])),
+            "ck_manifest": _artifact_identity(output_dir / "weights_manifest.map"),
+            "llama_shim_library": _artifact_identity(shim_so),
+            "llama_mtmd_library": _artifact_identity(LLAMA_CPP_ROOT / "build" / "bin" / "libmtmd.so"),
+            **{
+                name: _artifact_identity(LLAMA_CPP_ROOT / "build" / "bin" / filename)
+                for name, filename in (
+                    ("llama_ggml_base_library", "libggml-base.so"),
+                    ("llama_ggml_library", "libggml.so"),
+                    ("llama_ggml_cpu_library", "libggml-cpu.so"),
+                )
+                if (LLAMA_CPP_ROOT / "build" / "bin" / filename).is_file()
+            },
+        },
         "gguf": str(args.gguf),
         "output_dir": str(output_dir),
         "image_source": str(image_report["image_source"]),
