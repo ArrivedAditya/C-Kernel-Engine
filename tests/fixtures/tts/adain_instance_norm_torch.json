@@ -1,0 +1,56 @@
+{
+  "oracle": "torch.nn.functional.instance_norm plus explicit style affine",
+  "backend_version": "2.13.0+cpu",
+  "device": "cpu",
+  "epsilon": 1e-05,
+  "shapes": [
+    [
+      1,
+      2
+    ],
+    [
+      2,
+      5
+    ],
+    [
+      3,
+      7
+    ],
+    [
+      8,
+      16
+    ],
+    [
+      512,
+      103
+    ]
+  ],
+  "array_sha256": {
+    "case0_input": "d3702ac3e1bf0f0c5712d799060dcfcc4ea643eb43f0bbcf25e71430db94abd8",
+    "case0_norm_weight": "293d2564260255297b8b38169b21899d155306115363f5d153184af7cf25a1c7",
+    "case0_norm_bias": "384b60f1717173175b5440f964523d2723d44333d1bc7c258cece2e0f0ac2c99",
+    "case0_style_affine": "f874d285eb3811c9bae45113b463b64dfb9b7328921a39e6ac0cc354490210cb",
+    "case0_output": "886c98198e878308269fe9eec665f21cdc22603354331e363bd79602835876f8",
+    "case1_input": "2c34ce1df23b838c5abf2a7f6437cca3d3067ed509ff25f11df6b11b582b51eb",
+    "case1_norm_weight": "042a7f8ee7a57920e3c33ab766e92f9d123a6980c3e6725b36c5297bbc2e055e",
+    "case1_norm_bias": "82c6176665a564c14abafd3a7072a41acb438a6efde00f90fedc37b0d68f03d2",
+    "case1_style_affine": "9f93cd8eeb58c43ac98761b2d55373285eefbdd3fd9a928783a452652f8d69a7",
+    "case1_output": "5a71f63e571628009a68c33bbbc36f1d674b46089b77615b07d45fd6dd23b066",
+    "case2_input": "7d44112f5dadaab8a2abdb4c53e7ff9b1f2aeee16c51ac1308737c10521844a4",
+    "case2_norm_weight": "904b47313eb3466dff051ad9f2b6d9545f9353a3b1fa5868254ed6d44276ce08",
+    "case2_norm_bias": "44a2fa95a077c775cb5a1eb429e8683eb8bc850712f1e9d25c1625fe986d2b29",
+    "case2_style_affine": "4acf1c102967213ecdec1aba0ca294498c13d6d4908844e3391a77fbd2a61eaa",
+    "case2_output": "615138844a8d15e117739b7ac6661c8df67c37e8a120002218fae00990a1cf44",
+    "case3_input": "5c0cb5428ee092b8d6f8ce84a5aa710d7100e5f05a53212f3adeadf9ac4aaaf0",
+    "case3_norm_weight": "fcb4d2cc3f2e6c28cfeb9ba054349714dc1d9795ba8a5534e28637ee5450900a",
+    "case3_norm_bias": "1d6ac22e1e5da769984181412bc0d33bec9eb07d75809f15daa1ffbf639f8009",
+    "case3_style_affine": "a278f2dbf49cebb829dcb4326dec0d394716d6388aee5656286abb9583bb5338",
+    "case3_output": "3b6e6aa074e1eead60a5c7ba1ac0a77b37e78d57fec217a0e79c97173a4bdae1",
+    "case4_input": "f1ecc7d4dd5cfbebbdcd7664a164a1a583b21db1224cf3bd698b7ce0110d73d2",
+    "case4_norm_weight": "d841dec143a03d9ca9c20a44ae3d19d3a03b160c8b14b72ca988af879653f748",
+    "case4_norm_bias": "25696a914be33f290cc951e5038d906dc89022a149f52b9a3293386aa5f533d4",
+    "case4_style_affine": "d80fc4609ff95f12266eb3e1e9d4ab9e09f3b4486d3ebf8665bd2f341c3999ee",
+    "case4_output": "0e1daaf04c053f4ddc455200ee49f7dc12d1545a85daeb6e6c9b4d30c64e5d02"
+  },
+  "fixture_sha256": "2ce21d6cb5d543594cab1469d0d7d3b8aabf594e3e063dc35bd0124e3b32fe68"
+}

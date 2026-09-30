@@ -82,6 +82,7 @@
             "audio_batch_norm",
             "audio_lstm",
             "audio_adaptive_layer_norm",
+            "audio_adain_instance_norm",
             "audio_relative_attention",
             "audio_scaled_residual_add",
             "audio_relu",
