@@ -257,6 +257,90 @@ class NumericParityQwen3VLMmprojV8Tests(unittest.TestCase):
         args = SimpleNamespace(min_cosine=0.9999, max_rmse=0.03, max_abs=None)
         self.assertIn("cosine", prefix_suite._evaluate_samples([sample], args)[0])
 
+    def test_encoder_prefix_suite_retains_report_after_child_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            image = root / "image.ppm"
+            image.write_bytes(b"P6\n1 1\n255\n\x00\x00\x00")
+            args = SimpleNamespace(
+                gguf=root / "mmproj.gguf", output_dir=root, runtime_dir=root / "runtime",
+                threads=1, ck_threads=1, image_min_tokens=None, image_max_tokens=8,
+                embed_dim=4, reuse_reports=False, independent_preprocess=True,
+                min_cosine=0.99, max_rmse=0.03, max_abs=None,
+            )
+            spec = {"id": "image", "image": str(image)}
+
+            def run_and_fail(_cmd, **_kwargs):
+                self.assertIn("--independent-preprocess", _cmd)
+                report = root / "reports" / "01_image.json"
+                report.write_text(json.dumps({
+                    "gguf": str(args.gguf), "image_path": str(image),
+                    "source_image_sha256": prefix_suite.hashlib.sha256(image.read_bytes()).hexdigest(),
+                    "input_provenance": "independently_preprocessed_from_shared_decoded_rgb8",
+                    "preprocess_evidence": {"verdict": "fail"},
+                    "merged_grid": [1, 1], "num_values": 4,
+                    "raw_num_values": {"ck": 4, "llama": 4},
+                    "metrics": {"cosine": 0.5, "rmse": 1.0, "max_abs": 2.0},
+                }), encoding="utf-8")
+                return SimpleNamespace(returncode=1)
+
+            with mock.patch.object(prefix_suite.subprocess, "run", side_effect=run_and_fail):
+                sample = prefix_suite._run_one(spec=spec, index=1, args=args, env={})
+            self.assertEqual(sample["preprocess_evidence"]["verdict"], "fail")
+            self.assertEqual(sample["metrics"]["rmse"], 1.0)
+            failures = prefix_suite._evaluate_samples([sample], args)
+            self.assertTrue(any("numeric parity process exited 1" in item for item in failures))
+            self.assertTrue(any("independent preprocessing did not pass" in item for item in failures))
+
+    def test_encoder_prefix_suite_rejects_stale_report(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            report = root / "reports" / "01_image.json"
+            report.parent.mkdir()
+            report.write_text('{"metrics": {"cosine": 1.0}}', encoding="utf-8")
+            args = SimpleNamespace(
+                gguf=root / "mmproj.gguf", output_dir=root, runtime_dir=root / "runtime",
+                threads=1, ck_threads=1, image_min_tokens=None, image_max_tokens=None,
+                embed_dim=4, reuse_reports=False, independent_preprocess=False,
+            )
+            with mock.patch.object(prefix_suite.subprocess, "run", return_value=SimpleNamespace(returncode=0)):
+                sample = prefix_suite._run_one(
+                    spec={"id": "image", "image": str(root / "image.ppm")},
+                    index=1, args=args, env={},
+                )
+            self.assertIn("no fresh report", sample["execution_error"])
+            self.assertFalse(sample["shape_ok"])
+
+    def test_encoder_prefix_suite_cannot_suppress_independent_failures(self) -> None:
+        for bypass in ("--reuse-reports", "--no-fail"):
+            with self.subTest(bypass=bypass), self.assertRaises(SystemExit) as exit_info:
+                prefix_suite.main(["--gguf", "missing.gguf", "--independent-preprocess", bypass])
+            self.assertEqual(exit_info.exception.code, 2)
+
+    def test_encoder_prefix_suite_summary_keeps_failed_case(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            specs = [
+                {"id": "failed", "image": str(root / "failed.ppm")},
+                {"id": "passed", "image": str(root / "passed.ppm")},
+            ]
+            passed = {
+                "id": "passed", "shape_ok": True,
+                "metrics": {"cosine": 1.0, "rmse": 0.0, "max_abs": 0.0},
+            }
+            failed = {"id": "failed", "shape_ok": False, "execution_error": "child failed"}
+            with (
+                mock.patch.object(prefix_suite, "_load_image_specs", return_value=specs),
+                mock.patch.object(prefix_suite, "_run_one", side_effect=[failed, passed]),
+                mock.patch("builtins.print"),
+            ):
+                code = prefix_suite.main(["--gguf", "fixture.gguf", "--output-dir", str(root)])
+            summary = json.loads((root / "summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(code, 1)
+            self.assertEqual(summary["sample_count"], 2)
+            self.assertEqual([item["id"] for item in summary["samples"]], ["failed", "passed"])
+            self.assertTrue(any("child failed" in item for item in summary["failures"]))
+
 
 if __name__ == "__main__":
     unittest.main()

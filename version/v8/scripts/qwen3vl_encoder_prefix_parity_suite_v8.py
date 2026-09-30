@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import math
 import os
 import re
 import subprocess
@@ -74,10 +76,17 @@ def _shape_status(sample: dict[str, Any], embed_dim: int) -> tuple[bool, int | N
 
 def _sample_from_report(spec: dict[str, str], report_path: Path, embed_dim: int) -> dict[str, Any]:
     report = json.loads(report_path.read_text(encoding="utf-8"))
+    if not isinstance(report, dict):
+        raise ValueError("numeric parity report must be a JSON object")
     sample = {
         "id": spec["id"],
         "image": spec["image"],
         "report": str(report_path),
+        "status": report.get("status"),
+        "input_provenance": report.get("input_provenance"),
+        "preprocess_evidence": report.get("preprocess_evidence"),
+        "source_image_sha256": report.get("source_image_sha256"),
+        "gguf": report.get("gguf"),
         "grid": report.get("merged_grid"),
         "height": report.get("height"),
         "width": report.get("width"),
@@ -106,7 +115,9 @@ def _run_one(
     report_path.parent.mkdir(parents=True, exist_ok=True)
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
-    if not (args.reuse_reports and report_path.exists()):
+    reuse = args.reuse_reports and report_path.exists()
+    if not reuse:
+        previous_mtime = report_path.stat().st_mtime_ns if report_path.exists() else None
         cmd = [
             sys.executable,
             str(NUMERIC_PARITY),
@@ -123,18 +134,51 @@ def _run_one(
             "--report",
             str(report_path),
         ]
+        if getattr(args, "independent_preprocess", False):
+            cmd.append("--independent-preprocess")
         if args.image_min_tokens is not None:
             cmd.extend(["--image-min-tokens", str(args.image_min_tokens)])
         if args.image_max_tokens is not None:
             cmd.extend(["--image-max-tokens", str(args.image_max_tokens)])
         start = time.perf_counter()
         with log_path.open("wb") as log_file:
-            subprocess.run(cmd, cwd=str(REPO_ROOT), env=env, stdout=log_file, stderr=subprocess.STDOUT, check=True)
+            completed = subprocess.run(cmd, cwd=str(REPO_ROOT), env=env, stdout=log_file, stderr=subprocess.STDOUT)
         elapsed = time.perf_counter() - start
+        fresh_report = report_path.exists() and (
+            previous_mtime is None or report_path.stat().st_mtime_ns > previous_mtime
+        )
     else:
         elapsed = 0.0
+        completed = None
+        fresh_report = True
 
-    sample = _sample_from_report(spec, report_path, args.embed_dim)
+    if fresh_report:
+        try:
+            sample = _sample_from_report(spec, report_path, args.embed_dim)
+        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+            sample = {"id": spec["id"], "image": spec["image"], "shape_ok": False,
+                      "execution_error": f"invalid numeric parity report: {exc}"}
+    else:
+        sample = {"id": spec["id"], "image": spec["image"], "shape_ok": False,
+                  "execution_error": "numeric parity process produced no fresh report"}
+    if completed is not None and completed.returncode != 0:
+        sample["execution_error"] = (
+            f"numeric parity process exited {completed.returncode}; retained report at {report_path}"
+            if sample.get("report") else _log_failure_reason(log_path, completed.returncode)
+        )
+    if getattr(args, "independent_preprocess", False):
+        try:
+            expected_hash = hashlib.sha256(Path(spec["image"]).read_bytes()).hexdigest()
+        except OSError as exc:
+            expected_hash = None
+            sample["evidence_error"] = f"cannot verify current source image: {exc}"
+        if "evidence_error" not in sample:
+            if sample.get("source_image_sha256") != expected_hash:
+                sample["evidence_error"] = "source image hash does not match the current case"
+            elif sample.get("input_provenance") != "independently_preprocessed_from_shared_decoded_rgb8":
+                sample["evidence_error"] = "report did not execute independent preprocessing"
+            elif str(sample.get("gguf")) != str(args.gguf):
+                sample["evidence_error"] = "report used a different mmproj path"
     sample["log"] = str(log_path)
     sample["suite_elapsed_sec"] = elapsed
     return sample
@@ -157,11 +201,23 @@ def _evaluate_samples(samples: list[dict[str, Any]], args: argparse.Namespace) -
     failures: list[str] = []
     for sample in samples:
         sid = str(sample.get("id", "sample"))
+        for key in ("execution_error", "evidence_error"):
+            if sample.get(key):
+                failures.append(f"{sid}: {sample[key]}")
+        if getattr(args, "independent_preprocess", False):
+            preprocessing = sample.get("preprocess_evidence")
+            if not isinstance(preprocessing, dict) or preprocessing.get("verdict") != "pass":
+                failures.append(f"{sid}: independent preprocessing did not pass")
         if not sample.get("shape_ok"):
             failures.append(f"{sid}: shape mismatch, got {sample.get('num_values')} expected {sample.get('expected_values')}")
+        if not isinstance(sample.get("metrics"), dict) or not sample["metrics"]:
+            continue
         cosine = _metric_value(sample, "cosine")
         rmse = _metric_value(sample, "rmse")
         max_abs = _metric_value(sample, "max_abs")
+        if not all(math.isfinite(value) for value in (cosine, rmse, max_abs)):
+            failures.append(f"{sid}: nonfinite encoder parity metrics")
+            continue
         if cosine < float(args.min_cosine):
             failures.append(f"{sid}: cosine {cosine:.9f} < {args.min_cosine:.9f}")
         if rmse > float(args.max_rmse):
@@ -178,21 +234,27 @@ def _write_markdown(path: Path, summary: dict[str, Any]) -> None:
         f"- samples: {summary['sample_count']}",
         f"- threads: {summary['threads']}",
         f"- image_max_tokens: {summary.get('image_max_tokens')}",
+        f"- input_provenance: {'independent_preprocessing' if summary.get('independent_preprocess') else 'shared_processed_tensor'}",
         f"- min_cosine: {summary['aggregate']['min_cosine']:.9f}",
         f"- max_rmse: {summary['aggregate']['max_rmse']:.6f}",
         f"- max_abs: {summary['aggregate']['max_abs']:.6f}",
         f"- failures: {len(summary['failures'])}",
         "",
-        "| sample | grid | values | cosine | rmse | mean_abs | max_abs | ck_s | llama_s |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| sample | preprocessing | grid | values | cosine | rmse | mean_abs | max_abs | ck_s | llama_s |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for sample in summary["samples"]:
-        grid = sample.get("grid") or ["?", "?"]
-        metrics = sample.get("metrics") or {}
-        timings = sample.get("timings_sec") or {}
+        grid = sample.get("grid")
+        if not isinstance(grid, list) or len(grid) != 2:
+            grid = ["?", "?"]
+        metrics = sample.get("metrics") if isinstance(sample.get("metrics"), dict) else {}
+        timings = sample.get("timings_sec") if isinstance(sample.get("timings_sec"), dict) else {}
+        preprocessing = sample.get("preprocess_evidence")
         lines.append(
-            "| {sid} | {gx}x{gy} | {values} | {cos:.9f} | {rmse:.6f} | {mean:.6f} | {max_abs:.6f} | {ck:.1f} | {llama:.1f} |".format(
+            "| {sid} | {preprocess} | {gx}x{gy} | {values} | {cos:.9f} | {rmse:.6f} | {mean:.6f} | {max_abs:.6f} | {ck:.1f} | {llama:.1f} |".format(
                 sid=sample.get("id"),
+                preprocess=(preprocessing.get("verdict", "missing") if isinstance(preprocessing, dict)
+                            else "missing" if summary.get("independent_preprocess") else "shared"),
                 gx=grid[0],
                 gy=grid[1],
                 values=sample.get("num_values"),
@@ -227,8 +289,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-rmse", type=float, default=0.03)
     parser.add_argument("--max-abs", type=float, default=None)
     parser.add_argument("--reuse-reports", action="store_true", help="Reuse existing per-image reports instead of recomputing")
+    parser.add_argument("--independent-preprocess", action="store_true", help="Require independent CKE/llama.cpp RGB preprocessing for each image")
     parser.add_argument("--no-fail", action="store_true", help="Write reports but return success even when thresholds fail")
     args = parser.parse_args(argv)
+    if args.independent_preprocess and (args.reuse_reports or args.no_fail):
+        parser.error("independent preprocessing cannot use --reuse-reports or --no-fail")
 
     args.output_dir = args.output_dir.resolve()
     args.runtime_dir = (args.runtime_dir or (args.output_dir / "runtime")).resolve()
@@ -245,19 +310,15 @@ def main(argv: list[str] | None = None) -> int:
     env["OMP_NUM_THREADS"] = str(args.ck_threads)
 
     samples: list[dict[str, Any]] = []
-    execution_failures: list[str] = []
     for index, spec in enumerate(specs, 1):
         print(f"[{index}/{len(specs)}] encoder parity {spec['id']} -> {spec['image']}", flush=True)
         try:
             samples.append(_run_one(spec=spec, index=index, args=args, env=env))
-        except subprocess.CalledProcessError as exc:
-            sample_name = f"{index:02d}_{_sanitize_id(spec['id'])}"
-            log_path = args.output_dir / "logs" / f"{sample_name}.log"
-            execution_failures.append(
-                f"{spec['id']}: {_log_failure_reason(log_path, exc.returncode)}"
-            )
+        except (OSError, ValueError, TypeError) as exc:
+            samples.append({"id": spec["id"], "image": spec["image"], "shape_ok": False,
+                            "execution_error": str(exc)})
 
-    failures = execution_failures + _evaluate_samples(samples, args)
+    failures = _evaluate_samples(samples, args)
     aggregate = {
         "min_cosine": min((_metric_value(sample, "cosine") for sample in samples), default=0.0),
         "max_rmse": max((_metric_value(sample, "rmse") for sample in samples), default=0.0),
@@ -267,6 +328,7 @@ def main(argv: list[str] | None = None) -> int:
     summary = {
         "gguf": str(args.gguf),
         "sample_count": len(samples),
+        "independent_preprocess": bool(args.independent_preprocess),
         "threads": args.threads,
         "ck_threads": args.ck_threads,
         "image_min_tokens": args.image_min_tokens,
