@@ -109,6 +109,14 @@ def resolved_renderer_tokens(run_dir: Path, doc: dict[str, Any]) -> dict[str, st
     rather than rendering an invented delimiter.
     """
     variables: dict[str, str] = {}
+
+    def bind(key: str, value: str) -> None:
+        if not value:
+            raise ValueError(f"invalid publisher token variable: {key}")
+        if key in variables and variables[key] != value:
+            raise ValueError(f"conflicting publisher token variable: {key}")
+        variables[key] = value
+
     for name in ("special_tokens_map.json", "tokenizer_config.json"):
         asset = doc["assets"].get(name)
         if asset is None:
@@ -125,11 +133,39 @@ def resolved_renderer_tokens(run_dir: Path, doc: dict[str, Any]) -> dict[str, st
                 # An unsupported metadata shape cannot supply a Jinja scalar;
                 # templates requiring it still fail under StrictUndefined.
                 continue
-            if not value:
-                raise ValueError(f"invalid publisher token variable: {name}:{key}")
-            if key in variables and variables[key] != value:
-                raise ValueError(f"conflicting publisher token variable: {key}")
-            variables[key] = value
+            bind(key, value)
+
+    # A GGUF conversion can retain special-token IDs in its verified manifest
+    # without an HF tokenizer_config.json. Resolve their text only when the
+    # exact ID is present in the bundled tokenizer.json added-token table.
+    manifest_asset = doc["assets"].get("weights_manifest.json")
+    tokenizer_asset = doc["assets"].get("tokenizer.json")
+    if manifest_asset is not None and tokenizer_asset is not None:
+        manifest = json.loads(bundle_path(Path(run_dir), manifest_asset["path"]).read_bytes())
+        tokenizer = json.loads(bundle_path(Path(run_dir), tokenizer_asset["path"]).read_bytes())
+        if not isinstance(manifest, dict) or not isinstance(tokenizer, dict):
+            raise ValueError("invalid bundled GGUF token metadata")
+        special = manifest.get("special_tokens", {})
+        added = tokenizer.get("added_tokens", [])
+        if not isinstance(special, dict) or not isinstance(added, list):
+            raise ValueError("invalid bundled GGUF special-token metadata")
+        by_id: dict[int, str] = {}
+        for item in added:
+            if not isinstance(item, dict):
+                continue
+            token_id, content = item.get("id"), item.get("content")
+            if (not isinstance(token_id, int) or isinstance(token_id, bool)
+                    or not isinstance(content, str)):
+                continue
+            if token_id in by_id and by_id[token_id] != content:
+                raise ValueError(f"conflicting bundled tokenizer text for ID {token_id}")
+            by_id[token_id] = content
+        for name in ("bos", "eos", "unk", "pad"):
+            token_id = special.get(f"{name}_token_id")
+            if isinstance(token_id, int) and not isinstance(token_id, bool):
+                value = by_id.get(token_id)
+                if value is not None:
+                    bind(f"{name}_token", value)
     return variables
 
 

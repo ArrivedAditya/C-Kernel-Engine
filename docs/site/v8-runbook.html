@@ -2591,6 +2591,8 @@ qwen --bare \
     <p class="mini-note">Gemma4 now references the shared <code>publisher-chat-v1</code>
         profile. Its declared output protocol is <code>none</code>: ordinary text chat can
         resolve the publisher Jinja asset, while tool-bearing requests fail before generation.
+        When HF token sidecars are absent, verified GGUF special-token IDs are matched to
+        bundled <code>tokenizer.json</code> text; conflicting definitions fail at startup.
         This is a declaration, not a Gemma4 serving certification. Exact rendered bytes,
         native token IDs, generated-runtime chat, and a Gemma tool protocol still need
         artifact-specific tests.</p>
