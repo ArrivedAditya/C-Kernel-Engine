@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -387,7 +388,7 @@ def _case_config(
 
 
 def _load_resumed(
-    path: Path, expected: dict[str, Any], config: dict[str, Any]
+    path: Path, expected: dict[str, Any], config: dict[str, Any], truth: dict[str, Any]
 ) -> dict[str, Any] | None:
     if not path.is_file():
         return None
@@ -402,20 +403,25 @@ def _load_resumed(
         return None
     hashes = evidence.get("model_library_sha256")
     prefix_tokens = evidence.get("prefix_tokens")
-    metrics = value.get("metrics")
-    valid_metrics = (
-        isinstance(metrics, dict)
-        and isinstance(metrics.get("json_valid"), bool)
-        and all(
-            isinstance(metrics.get(key), int) and not isinstance(metrics.get(key), bool)
-            and metrics[key] >= 0
-            for key in ("expected_fields", "exact_fields", "nonempty_expected_fields",
-                        "nonempty_exact_fields")
-        )
-        and metrics["exact_fields"] <= metrics["expected_fields"]
-        and metrics["nonempty_exact_fields"] <= metrics["nonempty_expected_fields"]
-        and isinstance(metrics.get("extra_fields"), list)
-        and isinstance(value.get("timings"), dict)
+    generated_text = value.get("generated_text")
+    tokens = value.get("generated_token_ids")
+    timings = value.get("timings")
+    wall_sec = timings.get("wall_sec") if isinstance(timings, dict) else None
+    parsed = _extract_json_object(generated_text) if isinstance(generated_text, str) else None
+    valid_output = (
+        isinstance(generated_text, str)
+        and value.get("output_sha256") == _sha256_bytes(generated_text.encode("utf-8"))
+        and value.get("parsed_output") == parsed
+        and value.get("metrics") == _score(truth, parsed)
+        and isinstance(tokens, list)
+        and all(isinstance(token, int) and not isinstance(token, bool) and token >= 0
+                for token in tokens)
+        and isinstance(value.get("generated_tokens"), int)
+        and not isinstance(value["generated_tokens"], bool)
+        and value["generated_tokens"] == len(tokens)
+        and value.get("token_trace_sha256") == _sha256_json(tokens)
+        and isinstance(wall_sec, (int, float)) and not isinstance(wall_sec, bool)
+        and math.isfinite(wall_sec) and wall_sec >= 0
     )
     if (value.get("case_config") != expected or value.get("status") != "complete"
             or value.get("image_index") != expected["image_index"]
@@ -424,7 +430,7 @@ def _load_resumed(
             or evidence.get("evidence_kind") != "bridge_reported_paths_and_artifact_hashes"
             or evidence.get("loaded_engine_verified") is not False
             or evidence.get("prefix_source") != "encoder"
-            or not valid_metrics
+            or not valid_output
             or not isinstance(prefix_tokens, int) or isinstance(prefix_tokens, bool)
             or prefix_tokens <= 0 or not isinstance(hashes, dict)
             or any(hashes.get(role) != config[f"{role}_runtime"]["model_library"]["sha256"]
@@ -579,7 +585,9 @@ def main(argv: list[str] | None = None) -> int:
         max_new_tokens = _max_new_tokens(args.max_new_tokens, sample)
         case_config = _case_config(global_hash, sample, prompt, max_new_tokens)
         case_result = case_dir / "case_result.json"
-        resumed = None if args.force_rerun else _load_resumed(case_result, case_config, config)
+        resumed = None if args.force_rerun else _load_resumed(
+            case_result, case_config, config, sample["truth"]
+        )
         if resumed is not None:
             rows.append(resumed)
             print(f"[{completed}/{len(selected)}] image {sample['index']:02d}: resumed")

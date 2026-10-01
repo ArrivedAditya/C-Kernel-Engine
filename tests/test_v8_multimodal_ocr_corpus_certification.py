@@ -277,10 +277,11 @@ class MultimodalOcrCorpusCertificationTest(unittest.TestCase):
                 "encoder_runtime": {"model_library": {"sha256": "a" * 64}},
                 "decoder_runtime": {"model_library": {"sha256": "b" * 64}},
             }
+            truth = {"name": "Ada"}
             row = {"case_config": expected, "status": "complete", "image_index": 1,
                    "image_sha256": "image", "truth_sha256": "truth"}
             path.write_text(json.dumps(row), encoding="utf-8")
-            self.assertIsNone(MODULE._load_resumed(path, expected, config))
+            self.assertIsNone(MODULE._load_resumed(path, expected, config, truth))
             row["execution_evidence"] = {
                 "evidence_kind": "bridge_reported_paths_and_artifact_hashes",
                 "loaded_engine_verified": False,
@@ -288,15 +289,32 @@ class MultimodalOcrCorpusCertificationTest(unittest.TestCase):
                 "prefix_tokens": 4,
                 "model_library_sha256": {"encoder": "a" * 64, "decoder": "b" * 64},
             }
-            row["metrics"] = {"json_valid": True, "expected_fields": 1,
-                              "exact_fields": 1, "nonempty_expected_fields": 1,
-                              "nonempty_exact_fields": 1, "extra_fields": []}
+            row["generated_text"] = '{"name":"Ada"}'
+            row["parsed_output"] = {"name": "Ada"}
+            row["metrics"] = MODULE._score(truth, row["parsed_output"])
+            row["output_sha256"] = MODULE._sha256_bytes(row["generated_text"].encode("utf-8"))
+            row["generated_token_ids"] = [1, 2]
+            row["generated_tokens"] = 2
+            row["token_trace_sha256"] = MODULE._sha256_json([1, 2])
             row["timings"] = {"wall_sec": 1.0}
             path.write_text(json.dumps(row), encoding="utf-8")
-            self.assertIsNotNone(MODULE._load_resumed(path, expected, config))
+            self.assertIsNotNone(MODULE._load_resumed(path, expected, config, truth))
             malformed = dict(row, metrics={"json_valid": True})
             path.write_text(json.dumps(malformed), encoding="utf-8")
-            self.assertIsNone(MODULE._load_resumed(path, expected, config))
+            self.assertIsNone(MODULE._load_resumed(path, expected, config, truth))
+            for mutation in (
+                {"metrics": {**row["metrics"], "exact_fields": 0}},
+                {"parsed_output": {"name": "Grace"}},
+                {"output_sha256": "0" * 64},
+                {"generated_token_ids": [1, 3]},
+                {"generated_tokens": True},
+                {"timings": {"wall_sec": float("nan")}},
+            ):
+                with self.subTest(mutation=mutation):
+                    path.write_text(json.dumps({**row, **mutation}), encoding="utf-8")
+                    self.assertIsNone(MODULE._load_resumed(path, expected, config, truth))
+            path.write_text(json.dumps(row), encoding="utf-8")
+            self.assertIsNone(MODULE._load_resumed(path, expected, config, {"name": "Grace"}))
             for mutation in (
                 {"prefix_tokens": 0},
                 {"prefix_tokens": True},
@@ -306,12 +324,12 @@ class MultimodalOcrCorpusCertificationTest(unittest.TestCase):
                 with self.subTest(mutation=mutation):
                     changed = dict(row, execution_evidence={**row["execution_evidence"], **mutation})
                     path.write_text(json.dumps(changed), encoding="utf-8")
-                    self.assertIsNone(MODULE._load_resumed(path, expected, config))
+                    self.assertIsNone(MODULE._load_resumed(path, expected, config, truth))
             wrong_case = dict(row, image_index=2)
             path.write_text(json.dumps(wrong_case), encoding="utf-8")
-            self.assertIsNone(MODULE._load_resumed(path, expected, config))
+            self.assertIsNone(MODULE._load_resumed(path, expected, config, truth))
             path.write_text("{malformed", encoding="utf-8")
-            self.assertIsNone(MODULE._load_resumed(path, expected, config))
+            self.assertIsNone(MODULE._load_resumed(path, expected, config, truth))
 
     def test_make_target_declares_unsupported_llamacpp_oracle(self) -> None:
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
