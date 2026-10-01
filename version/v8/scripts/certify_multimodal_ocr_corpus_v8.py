@@ -402,6 +402,21 @@ def _load_resumed(
         return None
     hashes = evidence.get("model_library_sha256")
     prefix_tokens = evidence.get("prefix_tokens")
+    metrics = value.get("metrics")
+    valid_metrics = (
+        isinstance(metrics, dict)
+        and isinstance(metrics.get("json_valid"), bool)
+        and all(
+            isinstance(metrics.get(key), int) and not isinstance(metrics.get(key), bool)
+            and metrics[key] >= 0
+            for key in ("expected_fields", "exact_fields", "nonempty_expected_fields",
+                        "nonempty_exact_fields")
+        )
+        and metrics["exact_fields"] <= metrics["expected_fields"]
+        and metrics["nonempty_exact_fields"] <= metrics["nonempty_expected_fields"]
+        and isinstance(metrics.get("extra_fields"), list)
+        and isinstance(value.get("timings"), dict)
+    )
     if (value.get("case_config") != expected or value.get("status") != "complete"
             or value.get("image_index") != expected["image_index"]
             or value.get("image_sha256") != expected["image_sha256"]
@@ -409,6 +424,7 @@ def _load_resumed(
             or evidence.get("evidence_kind") != "bridge_reported_paths_and_artifact_hashes"
             or evidence.get("loaded_engine_verified") is not False
             or evidence.get("prefix_source") != "encoder"
+            or not valid_metrics
             or not isinstance(prefix_tokens, int) or isinstance(prefix_tokens, bool)
             or prefix_tokens <= 0 or not isinstance(hashes, dict)
             or any(hashes.get(role) != config[f"{role}_runtime"]["model_library"]["sha256"]
@@ -440,6 +456,12 @@ def _public_row(case: dict[str, Any]) -> dict[str, Any]:
 
 def _aggregate(rows: list[dict[str, Any]], requested: int) -> dict[str, Any]:
     completed = [row for row in rows if row.get("status") == "complete"]
+    passing = [
+        row for row in completed
+        if row["metrics"]["json_valid"]
+        and row["metrics"]["exact_fields"] == row["metrics"]["expected_fields"]
+        and not row["metrics"]["extra_fields"]
+    ]
     repeated = [row for row in completed if isinstance(row.get("repeatability"), dict)]
     expected = sum(int(row["metrics"]["expected_fields"]) for row in completed)
     exact = sum(int(row["metrics"]["exact_fields"]) for row in completed)
@@ -448,6 +470,7 @@ def _aggregate(rows: list[dict[str, Any]], requested: int) -> dict[str, Any]:
     return {
         "requested": requested,
         "completed": len(completed),
+        "passing": len(passing),
         "errors": len(rows) - len(completed),
         "json_valid": sum(bool(row["metrics"]["json_valid"]) for row in completed),
         "expected_fields": expected,
@@ -498,13 +521,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.context_len <= 0 or args.max_new_tokens <= 0:
         parser.error("context and generation limits must be positive")
     samples = _load_samples(args.manifest)
-    if args.require_images is not None and len(samples) < args.require_images:
-        parser.error(f"manifest has {len(samples)} images; {args.require_images} required")
     selected = [row for row in samples if row["index"] >= args.start_index]
     if args.limit is not None:
         selected = selected[: args.limit]
     if not selected:
         parser.error("selection contains no samples")
+    if args.require_images is not None:
+        if len(selected) != args.require_images:
+            parser.error(
+                f"selected {len(selected)} images; exactly {args.require_images} required"
+            )
+        distinct = len({row["image_sha256"] for row in selected})
+        if distinct != len(selected):
+            parser.error(
+                f"selected {len(selected)} entries but only {distinct} distinct images"
+            )
 
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -611,7 +642,10 @@ def main(argv: list[str] | None = None) -> int:
             }
             _write_json(case_result, row)
             rows.append(row)
-            print(f"[{completed}/{len(selected)}] image {sample['index']:02d}: ERROR {exc}")
+            print(
+                f"[{completed}/{len(selected)}] image {sample['index']:02d}: ERROR; "
+                "inspect the private case result"
+            )
             if not args.continue_on_failure:
                 stop_after_failure = True
 
@@ -623,6 +657,11 @@ def main(argv: list[str] | None = None) -> int:
                 "schema": SCHEMA,
                 "schema_version": SCHEMA_VERSION,
                 "status": "complete" if aggregate["completed"] == len(selected) else "incomplete",
+                "quality_status": (
+                    "pass" if aggregate["passing"] == len(selected)
+                    else "fail" if aggregate["completed"] == len(selected)
+                    else "incomplete"
+                ),
                 "config_sha256": global_hash,
                 "adapter_id": args.adapter_id,
                 "model_label": args.model_label,

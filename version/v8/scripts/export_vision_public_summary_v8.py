@@ -149,9 +149,69 @@ def _build_decoder_public_summary(private: dict[str, Any], corpus_alias: str) ->
     }
 
 
+def _build_ocr_public_summary(private: dict[str, Any], corpus_alias: str) -> dict[str, Any]:
+    aggregate = private.get("aggregate")
+    rows = private.get("rows")
+    if not isinstance(aggregate, dict) or not isinstance(rows, list):
+        raise ValueError("missing OCR aggregate or rows")
+    selected = _count(aggregate.get("requested"), "selected count")
+    completed = _count(aggregate.get("completed"), "completed count")
+    passing = _count(aggregate.get("passing"), "passing count")
+    errors = _count(aggregate.get("errors"), "error count")
+    if not selected or not (0 <= passing <= completed <= selected) or errors > selected - completed:
+        raise ValueError("inconsistent OCR case counts")
+    if len(rows) != completed:
+        raise ValueError("incomplete OCR row evidence")
+    expected_status = "pass" if passing == selected else "fail" if completed == selected else "incomplete"
+    expected_execution = "complete" if completed == selected else "incomplete"
+    if (private.get("quality_status") != expected_status
+            or private.get("status") != expected_execution):
+        raise ValueError("inconsistent OCR verdict")
+    identities: dict[str, set[str]] = {"encoder": set(), "decoder": set()}
+    for row in rows:
+        if not isinstance(row, dict) or row.get("status") != "complete":
+            raise ValueError("invalid OCR case row")
+        evidence = row.get("execution_evidence")
+        if (not isinstance(evidence, dict)
+                or evidence.get("evidence_kind") != "bridge_reported_paths_and_artifact_hashes"
+                or evidence.get("loaded_engine_verified") is not False
+                or evidence.get("prefix_source") != "encoder"):
+            raise ValueError("invalid OCR execution evidence")
+        hashes = evidence.get("model_library_sha256")
+        for role in identities:
+            digest = hashes.get(role) if isinstance(hashes, dict) else None
+            if not isinstance(digest, str) or not SHA256_RE.fullmatch(digest):
+                raise ValueError(f"missing {role} generated-library hash")
+            identities[role].add(digest)
+    accuracy = _number(aggregate.get("field_accuracy"), "field accuracy")
+    nonempty_accuracy = _number(aggregate.get("nonempty_field_accuracy"), "nonempty field accuracy")
+    elapsed = _number(aggregate.get("total_wall_sec"), "total elapsed time")
+    if not (0 <= accuracy <= 1 and 0 <= nonempty_accuracy <= 1 and elapsed >= 0):
+        raise ValueError("invalid OCR aggregate metrics")
+    return {
+        "schema_version": 1,
+        "lane": "independent_image_to_ocr_task_quality",
+        "corpus_alias": corpus_alias,
+        "status": expected_status,
+        "selected_count": selected,
+        "completed_count": completed,
+        "passing_count": passing,
+        "error_count": errors,
+        "unattempted_count": selected - completed - errors,
+        "field_accuracy": accuracy,
+        "nonempty_field_accuracy": nonempty_accuracy,
+        "total_elapsed_sec": elapsed,
+        "runtime_identity_kind": "bridge_reported_paths_and_artifact_hashes",
+        "loaded_engine_verified": False,
+        "bridge_reported_artifact_sha256": {role: sorted(hashes) for role, hashes in identities.items()},
+    }
+
+
 def build_public_summary(private: dict[str, Any], corpus_alias: str) -> dict[str, Any]:
     if not ALIAS_RE.fullmatch(corpus_alias):
         raise ValueError("invalid corpus alias")
+    if private.get("schema") == "cke.multimodal_ocr_corpus_certification":
+        return _build_ocr_public_summary(private, corpus_alias)
     if "samples" in private:
         return _build_encoder_public_summary(private, corpus_alias)
     if "rows" in private:
@@ -159,12 +219,27 @@ def build_public_summary(private: dict[str, Any], corpus_alias: str) -> dict[str
     raise ValueError("unknown vision-parity summary")
 
 
+def build_count_free_public_summary(private: dict[str, Any]) -> dict[str, Any]:
+    validated = build_public_summary(private, "private")
+    return {
+        "schema_version": validated["schema_version"],
+        "lane": validated["lane"],
+        "status": validated["status"],
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--private-summary", type=Path, required=True)
     parser.add_argument("--public-summary", type=Path, required=True)
-    parser.add_argument("--corpus-alias", required=True)
+    parser.add_argument("--corpus-alias", help="Required unless --count-free is used")
+    parser.add_argument(
+        "--count-free", action="store_true",
+        help="Publish only the scoped lane and verdict, without corpus identifiers, counts, metrics, or timings",
+    )
     args = parser.parse_args(argv)
+    if not args.count_free and not args.corpus_alias:
+        parser.error("--corpus-alias is required without --count-free")
     os.umask(0o077)
     try:
         if args.private_summary.resolve() == args.public_summary.resolve():
@@ -173,7 +248,10 @@ def main(argv: list[str] | None = None) -> int:
         private = json.loads(args.private_summary.read_text(encoding="utf-8"))
         if not isinstance(private, dict):
             raise ValueError("invalid private summary")
-        public = build_public_summary(private, args.corpus_alias)
+        public = (
+            build_count_free_public_summary(private)
+            if args.count_free else build_public_summary(private, args.corpus_alias)
+        )
         args.public_summary.parent.mkdir(parents=True, exist_ok=True)
         args.public_summary.write_text(json.dumps(public, indent=2) + "\n", encoding="utf-8")
         args.public_summary.chmod(0o600)
