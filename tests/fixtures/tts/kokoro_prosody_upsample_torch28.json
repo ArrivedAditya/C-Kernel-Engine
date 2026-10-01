@@ -1,0 +1,45 @@
+{
+  "oracle": "PyTorch F.interpolate nearest and F.conv_transpose1d depthwise",
+  "oracle_version": "2.8.0+cpu",
+  "model_pin": "e8a90b41091c3c5b70375c47cc959799920fa4d6",
+  "direct_branch_fixture_sha256": "f36b64f3cd12c3fa091c1ce99f36a250e2af90aaebdfe709f5da0e59d8c1fab9",
+  "shapes": [
+    [
+      1,
+      1
+    ],
+    [
+      3,
+      7
+    ],
+    [
+      512,
+      103
+    ]
+  ],
+  "geometry": {
+    "scale": 2,
+    "kernel": 3,
+    "stride": 2,
+    "padding": 1,
+    "output_padding": 1
+  },
+  "array_sha256": {
+    "case0_input": "f7dc9cf63f96e146d822dff906cdd75d6634c6440b54373a9e72136d6c0bbaf1",
+    "case0_weight": "d48b0404cac072c94fc9079b5a7692f0fba74929dd361987e54b579f0a5d8081",
+    "case0_bias": "0ded618b354bfc5338220528a68e215e603ab9b4b1d84cfa34a2caf44623b301",
+    "case0_nearest": "3f752daffc10b45098fba078beed99e024abb97c4b871592e64f89c8ae692b5d",
+    "case0_transposed": "b4e21295dbe6674f15e1c69e51d8418e485fa053bbdd3870720084ae5d1acc51",
+    "case1_input": "5bea1f681ee906d179e8428fd82e96e9b6dc584775d728d849514686ee99b1d7",
+    "case1_weight": "c3af874b8473d29175025e4d8ded90060f63a5873299a20f7e7ed8ea3d1a85b0",
+    "case1_bias": "4d79052520c73c3a1f9704f7356a61519ad931ec9df74532385b4b565c8f8e96",
+    "case1_nearest": "08e9a989690eec7ca2fdecb842780300eee4c0c81ba3ee97b10628bbf4c76583",
+    "case1_transposed": "c5c5489b2babe378550874039c8fc25d2278f954ac640340776fb2553fb030a3",
+    "case2_input": "a3ede6e3bfbd7be14c6d56d7f59e2d5f44f89fd73130971432780656bfca38bd",
+    "case2_weight": "48957cb964b7bcedb0a8e14d1157f553916cf0cf7d9b70262adde7d270045c37",
+    "case2_bias": "180e835d19233ff8842389784baaa3881c7614fd67ec157e5b9f14513a8abda3",
+    "case2_nearest": "372ed75256cf484c4e9473f2eec47df26274b8d09c91a1003dc5607bf2bf6928",
+    "case2_transposed": "4c7fbd58dd3ead0353e83265ea918bf32cd6e31dd65e7ddd6d781f4210e985a3"
+  },
+  "fixture_sha256": "7ffe1a0a4011e41ba68614ee6b07cb747137cf1206c5f5ae75eb87a378b993e7"
+}

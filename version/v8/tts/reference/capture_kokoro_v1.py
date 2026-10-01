@@ -29,6 +29,10 @@ CAPTURED_REFERENCE = json.loads((HERE / "fixture_manifest.json").read_text())
 FINE_PREDICTOR_HOOKS = tuple(
     f"predictor.text_encoder.lstms.{index}" for index in range(6)
 )
+PROSODY_BRANCH_HOOKS = tuple(
+    f"predictor.{branch}.{index}"
+    for branch in ("F0", "N") for index in range(3)
+)
 
 
 def sha256(path: Path) -> str:
@@ -170,13 +174,13 @@ def main() -> int:
         "predictor.duration_proj", "predictor.shared", "predictor.F0_proj",
         "predictor.N_proj", "text_encoder", "decoder", "decoder.generator",
         "decoder.generator.conv_post",
-    ) + FINE_PREDICTOR_HOOKS
+    ) + FINE_PREDICTOR_HOOKS + PROSODY_BRANCH_HOOKS
     modules = dict(model.named_modules())
     hooks = []
     for name in module_names:
         module = modules.get(name)
         if module is None:
-            if name in FINE_PREDICTOR_HOOKS:
+            if name in FINE_PREDICTOR_HOOKS + PROSODY_BRANCH_HOOKS:
                 raise RuntimeError(f"pinned predictor checkpoint module missing: {name}")
             record.setdefault("unavailable_hooks", []).append(name)
             continue
@@ -206,7 +210,11 @@ def main() -> int:
             raise RuntimeError(f"pinned predictor input checkpoint not reached: {name}")
         if not any(key.startswith(f"{stem}_output") for key in record["tensors"]):
             raise RuntimeError(f"pinned predictor output checkpoint not reached: {name}")
+    for name in PROSODY_BRANCH_HOOKS:
+        if name.replace(".", "_") not in record["tensors"]:
+            raise RuntimeError(f"pinned prosody block checkpoint not reached: {name}")
     record["fine_predictor_hooks"] = list(FINE_PREDICTOR_HOOKS)
+    record["prosody_branch_hooks"] = list(PROSODY_BRANCH_HOOKS)
     capture_tensor(output.pred_dur, "predicted_duration", out_dir, record["tensors"])
     durations = output.pred_dur.detach().cpu().reshape(-1).to(torch.int64)
     if len(durations) != len(ids) or (durations < 1).any():
