@@ -1391,15 +1391,20 @@ class _FlightLease:
 
 
 class _OwnedStreamingResponse(StreamingResponse):
-    def __init__(self, *args, lease, **kwargs):
+    def __init__(self, *args, lease, on_disconnect=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.lease = lease
+        self.on_disconnect = on_disconnect
 
     async def __call__(self, scope, receive, send):
         try:
             await super().__call__(scope, receive, send)
         finally:
-            self.lease.disconnect()
+            try:
+                self.lease.disconnect()
+            finally:
+                if self.on_disconnect is not None:
+                    self.on_disconnect()
 
 
 # --- app factory --------------------------------------------------------------
@@ -1872,6 +1877,7 @@ def create_app(
         body,
         prompt,
         *,
+        response_id,
         max_tokens,
         temperature,
         top_p,
@@ -1881,7 +1887,6 @@ def create_app(
         lease=None,
     ):
         think_enabled = _resolve_thinking_mode(body) == "visible"
-        response_id = f"resp_{uuid.uuid4().hex[:24]}"
         message_id = f"msg_{uuid.uuid4().hex[:24]}"
         reasoning_item_id = f"rsn_{uuid.uuid4().hex[:24]}" if think_enabled else None
         created_at = int(time.time())
@@ -1969,6 +1974,22 @@ def create_app(
             except Exception as e:
                 terminal_event = ("error", str(e))
             finally:
+                # A disconnected SSE consumer may never drain the terminal
+                # event. Publish cancellation only after native generation
+                # has returned, before releasing its session lease.
+                if cancelled.is_set() or terminal_event[0] in {"error", "busy"}:
+                    with response_store_lock:
+                        stored = response_store.get(response_id)
+                        if stored is not None and stored["status"] == ResponseStatus.in_progress:
+                            if terminal_event[0] in {"error", "busy"}:
+                                stored["status"] = ResponseStatus.failed
+                                stored["error"] = {
+                                    "code": "session_busy" if terminal_event[0] == "busy" else "server_error",
+                                    "message": str(terminal_event[1]),
+                                }
+                            else:
+                                stored["status"] = ResponseStatus.cancelled
+                            stored["completed_at"] = int(time.time())
                 with active_streams_lock:
                     active_streams.pop(response_id, None)
                 lease.release()
@@ -1986,13 +2007,20 @@ def create_app(
         if not lease.start_worker(cancelled):
             with active_streams_lock:
                 active_streams.pop(response_id, None)
+            _settle_unstarted_stream(response_id, lease)
             worker_finished.set()
             return
         try:
             worker_thread.start()
-        except BaseException:
+        except BaseException as exc:
             with active_streams_lock:
                 active_streams.pop(response_id, None)
+            with response_store_lock:
+                stored = response_store.get(response_id)
+                if stored is not None and stored["status"] == ResponseStatus.in_progress:
+                    stored["status"] = ResponseStatus.failed
+                    stored["completed_at"] = int(time.time())
+                    stored["error"] = {"code": "server_error", "message": str(exc)}
             lease.release()
             raise
 
@@ -2073,7 +2101,11 @@ def create_app(
                 try:
                     kind, payload = events.get(timeout=0.2)
                 except queue.Empty:
-                    if _has_function_tools(body) and time.monotonic() - last_heartbeat >= 15:
+                    # A prefill can run for minutes without producing a token.
+                    # Starlette's ASGI 2.4 path notices a disconnected client
+                    # when the next send fails, so every stream needs a bounded
+                    # write even when no tools are advertised.
+                    if time.monotonic() - last_heartbeat >= 1.0:
                         yield ": keep-alive\n\n"
                         last_heartbeat = time.monotonic()
                     if cancelled.is_set() and worker_finished.is_set():
@@ -2564,6 +2596,19 @@ def create_app(
             if not worker_finished.is_set():
                 lease.cancel()
 
+    def _settle_unstarted_stream(response_id, lease):
+        # A client may disconnect while the generator is suspended at its
+        # initial response.created event. In that case stream_events never
+        # reaches start_worker or its own cleanup block.
+        with lease.guard:
+            if lease.worker_started:
+                return
+        with response_store_lock:
+            stored = response_store.get(response_id)
+            if stored is not None and stored["status"] == ResponseStatus.in_progress:
+                stored["status"] = ResponseStatus.cancelled
+                stored["completed_at"] = int(time.time())
+
 
     def _acquire_flight_or_429(timeout: float | None = None) -> None:
         """Take the single-flight lock, waiting briefly for harness bursts.
@@ -2611,10 +2656,12 @@ def create_app(
                 lease.release()
             raise
         if body.stream:
+            stream_response_id = f"resp_{uuid.uuid4().hex[:24]}"
             return _OwnedStreamingResponse(
                 stream_events(
                     body,
                     prompt,
+                    response_id=stream_response_id,
                     max_tokens=tok_limit,
                     temperature=temperature_eff,
                     top_p=top_p_eff,
@@ -2624,6 +2671,9 @@ def create_app(
                     lease=lease,
                 ),
                 lease=lease,
+                on_disconnect=lambda: _settle_unstarted_stream(
+                    stream_response_id, lease
+                ),
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",

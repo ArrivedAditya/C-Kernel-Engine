@@ -3,14 +3,15 @@
 
 Starts ``ck_serve_v8.py`` with Qwen3-0.6B (context 1024) on an ephemeral
 localhost port, waits for readiness with a hard timeout, sends a streamed
-text request and a two-request native tool continuation, and validates:
+text request and an optional model-generated tool continuation, and validates:
 
   * schema (Responses + SSE event shapes),
   * non-empty emitted text,
-  * terminal ``response.completed`` event,
+  * truthful terminal ``response.completed`` or token-budget ``response.incomplete`` event,
   * ``GET /v1/responses/{id}`` retrievability,
-  * model-generated function call, matching tool result and continuation on
-    both Responses and Chat Completions routes,
+  * when explicitly requested, model-generated function calls and continuation
+    on both Responses and Chat Completions routes; this model-quality probe is
+    not part of the required server-contract smoke,
   * server process exit / port cleanup.
 
 All HTTP traffic targets ``127.0.0.1`` only (no external network access in
@@ -309,28 +310,34 @@ def _validate_stream(events: list[tuple[str, dict]]) -> tuple[str, str, str, dic
         raise RuntimeError("emitted text is empty")
 
     terminal = names[-1]
-    if terminal != "response.completed":
+    if terminal not in {"response.completed", "response.incomplete"}:
         raise RuntimeError(
-            f"expected terminal response.completed, got {terminal!r}; "
+            f"expected terminal response.completed or response.incomplete, got {terminal!r}; "
             f"events={names[-4:]}"
         )
     terminal_response = events[-1][1].get("response")
     if not isinstance(terminal_response, dict):
-        raise RuntimeError("response.completed is missing its response payload")
+        raise RuntimeError(f"{terminal} is missing its response payload")
     if terminal_response.get("output_text") != emitted:
-        raise RuntimeError("streamed deltas do not match response.completed output_text")
+        raise RuntimeError("streamed deltas do not match terminal output_text")
+    if terminal == "response.incomplete" and terminal_response.get("incomplete_details") != {"reason": "max_output_tokens"}:
+        raise RuntimeError("response.incomplete lacks the max_output_tokens reason")
     return response_id, emitted, terminal, terminal_response
 
 
 def _validate_final_response(
-    doc: dict, response_id: str, emitted: str, terminal_response: dict
+    doc: dict, response_id: str, emitted: str, terminal_response: dict,
+    terminal: str = "response.completed",
 ) -> None:
     if doc.get("id") != response_id:
         raise RuntimeError(
             f"GET id mismatch: {doc.get('id')!r} != {response_id!r}"
         )
-    if doc.get("status") != "completed":
-        raise RuntimeError(f"final status is {doc.get('status')!r}, want completed")
+    expected_status = "incomplete" if terminal == "response.incomplete" else "completed"
+    if doc.get("status") != expected_status:
+        raise RuntimeError(f"final status is {doc.get('status')!r}, want {expected_status}")
+    if expected_status == "incomplete" and doc.get("incomplete_details") != {"reason": "max_output_tokens"}:
+        raise RuntimeError("stored incomplete response lacks the max_output_tokens reason")
     if not isinstance(doc.get("output_text"), str) or not doc["output_text"].strip():
         raise RuntimeError("final output_text is empty")
     if doc["output_text"] != emitted:
@@ -406,6 +413,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--total-timeout", type=float, default=DEFAULT_TOTAL_TIMEOUT)
     parser.add_argument("--cleanup-reserve", type=float, default=DEFAULT_CLEANUP_RESERVE)
     parser.add_argument("--max-output-tokens", type=int, default=32)
+    parser.add_argument("--require-model-tool-roundtrip", action="store_true",
+                        help="Optional model-quality probe; required nightly validates the HTTP/native contract")
     args = parser.parse_args(argv)
 
     if args.total_timeout <= args.cleanup_reserve:
@@ -436,6 +445,11 @@ def main(argv: list[str] | None = None) -> int:
         "--no-viz",
         "--tool-protocol",
         "tagged_json",
+        # This legacy Qwen3 fixture otherwise emits another assistant turn
+        # after its first tool envelope. The marker is visible in decoded
+        # output and is a tested stop policy, not a parser fallback.
+        "--stop-on-text",
+        "<|im_end|>",
     ]
     if args.run_dir:
         cmd += ["--run", args.run_dir]
@@ -502,120 +516,147 @@ def main(argv: list[str] | None = None) -> int:
         if get_status != 200:
             raise RuntimeError(f"GET /v1/responses/{{id}} status={get_status}")
         _validate_final_response(
-            json.loads(get_body), response_id, emitted, terminal_response
+            json.loads(get_body), response_id, emitted, terminal_response, terminal
         )
 
-        tool_status, tool_body = _http(
+        # A token-budget stop is a valid but incomplete response. Exercise it
+        # separately so it cannot make the completed-response fixture pass.
+        budget_status, budget_body = _http(
             "POST", f"{base}/v1/responses",
             {
                 "model": "ck-v8",
-                "input": TOOL_REQUEST,
-                "tools": [{
-                    "type": "function", "name": "read_file",
-                    "description": "Read the named file",
+                "input": "Continue this count with many numbers: 1, 2, 3,",
+                "max_output_tokens": 1,
+                "store": True,
+            },
+            timeout=min(args.request_timeout, max(0.001, work_deadline - time.monotonic())),
+        )
+        if budget_status != 200:
+            raise RuntimeError(f"budget-limited response status={budget_status}: {budget_body[:500]}")
+        budget_response = json.loads(budget_body)
+        if (budget_response.get("status") != "incomplete"
+                or budget_response.get("incomplete_details") != {"reason": "max_output_tokens"}):
+            raise RuntimeError(f"one-token budget did not produce an explicit incomplete response: {budget_body[:500]}")
+        summary["budget_limited_status"] = budget_response["status"]
+
+        tool_result = {"model_tool_roundtrip": "not_run"}
+        if args.require_model_tool_roundtrip:
+            tool_status, tool_body = _http(
+                "POST", f"{base}/v1/responses",
+                {
+                    "model": "ck-v8",
+                    "input": TOOL_REQUEST,
+                    "tools": [{
+                        "type": "function", "name": "read_file",
+                        "description": "Read the named file",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"path": {"type": "string"}},
+                            "required": ["path"],
+                        },
+                    }],
+                    "max_output_tokens": 96,
+                    "temperature": 0,
+                },
+                timeout=min(args.request_timeout, max(0.001, work_deadline - time.monotonic())),
+            )
+            if tool_status != 200:
+                raise RuntimeError(f"tool request status={tool_status}: {tool_body[:500]}")
+            tool_response = json.loads(tool_body)
+            calls = [item for item in tool_response.get("output", []) if item.get("type") == "function_call"]
+            if len(calls) != 1 or calls[0].get("name") != "read_file":
+                raise RuntimeError(f"expected one model-generated read_file call: {tool_body[:500]}")
+            if json.loads(calls[0].get("arguments") or "null") != {"path": "README.md"}:
+                raise RuntimeError(f"unexpected tool arguments: {calls[0].get('arguments')}")
+            call_id = calls[0].get("call_id")
+            if not isinstance(call_id, str) or not call_id:
+                raise RuntimeError("generated tool call has no call_id")
+
+            continuation_status, continuation_body = _http(
+                "POST", f"{base}/v1/responses",
+                {
+                    "model": "ck-v8",
+                    "previous_response_id": tool_response["id"],
+                    "input": [{
+                        "type": "function_call_output", "call_id": call_id,
+                        "output": "CKE is a compiler for generated C model execution.",
+                    }],
+                    "tools": [{
+                        "type": "function", "name": "read_file",
+                        "description": "Read the named file",
+                        "parameters": {"type": "object", "properties": {"path": {"type": "string"}}},
+                    }],
+                    "max_output_tokens": 96,
+                    "temperature": 0,
+                },
+                timeout=min(args.request_timeout, max(0.001, work_deadline - time.monotonic())),
+            )
+            if continuation_status != 200:
+                raise RuntimeError(
+                    f"tool continuation status={continuation_status}: {continuation_body[:500]}"
+                )
+            continuation = json.loads(continuation_body)
+            if continuation.get("status") != "completed" or not continuation.get("output_text"):
+                raise RuntimeError(f"tool continuation has no completed answer: {continuation_body[:500]}")
+
+            chat_tool = {
+                "type": "function",
+                "function": {
+                    "name": "read_file", "description": "Read the named file",
                     "parameters": {
                         "type": "object",
                         "properties": {"path": {"type": "string"}},
                         "required": ["path"],
                     },
-                }],
-                "max_output_tokens": 96,
-                "temperature": 0,
-            },
-            timeout=min(args.request_timeout, max(0.001, work_deadline - time.monotonic())),
-        )
-        if tool_status != 200:
-            raise RuntimeError(f"tool request status={tool_status}: {tool_body[:500]}")
-        tool_response = json.loads(tool_body)
-        calls = [item for item in tool_response.get("output", []) if item.get("type") == "function_call"]
-        if len(calls) != 1 or calls[0].get("name") != "read_file":
-            raise RuntimeError(f"expected one model-generated read_file call: {tool_body[:500]}")
-        if json.loads(calls[0].get("arguments") or "null") != {"path": "README.md"}:
-            raise RuntimeError(f"unexpected tool arguments: {calls[0].get('arguments')}")
-        call_id = calls[0].get("call_id")
-        if not isinstance(call_id, str) or not call_id:
-            raise RuntimeError("generated tool call has no call_id")
-
-        continuation_status, continuation_body = _http(
-            "POST", f"{base}/v1/responses",
-            {
-                "model": "ck-v8",
-                "previous_response_id": tool_response["id"],
-                "input": [{
-                    "type": "function_call_output", "call_id": call_id,
-                    "output": "CKE is a compiler for generated C model execution.",
-                }],
-                "tools": [{
-                    "type": "function", "name": "read_file",
-                    "description": "Read the named file",
-                    "parameters": {"type": "object", "properties": {"path": {"type": "string"}}},
-                }],
-                "max_output_tokens": 96,
-                "temperature": 0,
-            },
-            timeout=min(args.request_timeout, max(0.001, work_deadline - time.monotonic())),
-        )
-        if continuation_status != 200:
-            raise RuntimeError(
-                f"tool continuation status={continuation_status}: {continuation_body[:500]}"
-            )
-        continuation = json.loads(continuation_body)
-        if continuation.get("status") != "completed" or not continuation.get("output_text"):
-            raise RuntimeError(f"tool continuation has no completed answer: {continuation_body[:500]}")
-
-        chat_tool = {
-            "type": "function",
-            "function": {
-                "name": "read_file", "description": "Read the named file",
-                "parameters": {
-                    "type": "object",
-                    "properties": {"path": {"type": "string"}},
-                    "required": ["path"],
                 },
-            },
-        }
-        chat_body = {
-            "model": "ck-v8",
-            "messages": [{"role": "user", "content": TOOL_REQUEST}],
-            "tools": [chat_tool],
-            "max_tokens": 96,
-            "temperature": 0,
-        }
-        chat_status, chat_text = _http(
-            "POST", f"{base}/v1/chat/completions", chat_body,
-            timeout=min(args.request_timeout, max(0.001, work_deadline - time.monotonic())),
-        )
-        if chat_status != 200:
-            raise RuntimeError(f"chat tool request status={chat_status}: {chat_text[:500]}")
-        chat_choice = json.loads(chat_text)["choices"][0]
-        chat_calls = chat_choice["message"].get("tool_calls") or []
-        if chat_choice.get("finish_reason") != "tool_calls" or len(chat_calls) != 1:
-            raise RuntimeError(f"expected one Chat Completions tool call: {chat_text[:500]}")
-        chat_call = chat_calls[0]
-        if chat_call["function"]["name"] != "read_file" or json.loads(chat_call["function"]["arguments"]) != {"path": "README.md"}:
-            raise RuntimeError(f"unexpected Chat Completions tool call: {chat_text[:500]}")
-        chat_body["messages"] = [
-            chat_body["messages"][0],
-            {"role": "assistant", "content": None, "tool_calls": [chat_call]},
-            {"role": "tool", "tool_call_id": chat_call["id"],
-             "content": "CKE is a compiler for generated C model execution."},
-        ]
-        chat_continuation_status, chat_continuation_text = _http(
-            "POST", f"{base}/v1/chat/completions", chat_body,
-            timeout=min(args.request_timeout, max(0.001, work_deadline - time.monotonic())),
-        )
-        if chat_continuation_status != 200:
-            raise RuntimeError(f"chat tool continuation status={chat_continuation_status}: {chat_continuation_text[:500]}")
-        chat_answer = json.loads(chat_continuation_text)["choices"][0]["message"].get("content")
-        if not isinstance(chat_answer, str) or not chat_answer.strip():
-            raise RuntimeError(f"Chat Completions tool continuation has no answer: {chat_continuation_text[:500]}")
+            }
+            chat_body = {
+                "model": "ck-v8",
+                "messages": [{"role": "user", "content": TOOL_REQUEST}],
+                "tools": [chat_tool],
+                "max_tokens": 96,
+                "temperature": 0,
+            }
+            chat_status, chat_text = _http(
+                "POST", f"{base}/v1/chat/completions", chat_body,
+                timeout=min(args.request_timeout, max(0.001, work_deadline - time.monotonic())),
+            )
+            if chat_status != 200:
+                raise RuntimeError(f"chat tool request status={chat_status}: {chat_text[:500]}")
+            chat_choice = json.loads(chat_text)["choices"][0]
+            chat_calls = chat_choice["message"].get("tool_calls") or []
+            if chat_choice.get("finish_reason") != "tool_calls" or len(chat_calls) != 1:
+                raise RuntimeError(f"expected one Chat Completions tool call: {chat_text[:500]}")
+            chat_call = chat_calls[0]
+            if chat_call["function"]["name"] != "read_file" or json.loads(chat_call["function"]["arguments"]) != {"path": "README.md"}:
+                raise RuntimeError(f"unexpected Chat Completions tool call: {chat_text[:500]}")
+            chat_body["messages"] = [
+                chat_body["messages"][0],
+                {"role": "assistant", "content": None, "tool_calls": [chat_call]},
+                {"role": "tool", "tool_call_id": chat_call["id"],
+                 "content": "CKE is a compiler for generated C model execution."},
+            ]
+            chat_continuation_status, chat_continuation_text = _http(
+                "POST", f"{base}/v1/chat/completions", chat_body,
+                timeout=min(args.request_timeout, max(0.001, work_deadline - time.monotonic())),
+            )
+            if chat_continuation_status != 200:
+                raise RuntimeError(f"chat tool continuation status={chat_continuation_status}: {chat_continuation_text[:500]}")
+            chat_answer = json.loads(chat_continuation_text)["choices"][0]["message"].get("content")
+            if not isinstance(chat_answer, str) or not chat_answer.strip():
+                raise RuntimeError(f"Chat Completions tool continuation has no answer: {chat_continuation_text[:500]}")
+
+            tool_result = {
+                "model_tool_roundtrip": "pass", "tool_call_id": call_id,
+                "tool_continuation_id": continuation["id"],
+                "chat_tool_call_id": chat_call["id"],
+            }
 
         _require_native_jinja_log(Path(log_path).read_text(encoding="utf-8"))
 
         summary.update(
             {"status": "pass", "response_id": response_id, "terminal": terminal,
-             "tool_call_id": call_id, "tool_continuation_id": continuation["id"],
-             "chat_tool_call_id": chat_call["id"]}
+             **tool_result}
         )
         pass_details = (response_id, len(emitted))
     except Exception as exc:
@@ -637,7 +678,9 @@ def main(argv: list[str] | None = None) -> int:
         response_id, emitted_chars = pass_details
         print(
             f"PASS serve-localhost-e2e model=Qwen3-0.6B-Q8_0.gguf context-len={args.context_len} "
-            f"port={port} id={response_id} chars={emitted_chars}",
+            f"port={port} id={response_id} chars={emitted_chars} "
+            f"greeting_terminal={summary['terminal']} budget_terminal={summary['budget_limited_status']} "
+            f"model_tool_roundtrip={summary['model_tool_roundtrip']}",
             flush=True,
         )
         return 0
