@@ -69,6 +69,30 @@ def test_stream_contract_accepts_consistent_events() -> None:
     assert response["output_text"] == emitted
 
 
+def test_stream_contract_accepts_explicit_token_budget_limit() -> None:
+    events = _events()
+    events[-1] = (
+        "response.incomplete",
+        {
+            "type": "response.incomplete",
+            "response": {
+                "id": "resp_test",
+                "output_text": "Hello",
+                "status": "incomplete",
+                "incomplete_details": {"reason": "max_output_tokens"},
+            },
+            "sequence_number": 3,
+        },
+    )
+    response_id, emitted, terminal, response = MODULE._validate_stream(events)
+    assert (response_id, emitted, terminal) == ("resp_test", "Hello", "response.incomplete")
+    assert response["incomplete_details"] == {"reason": "max_output_tokens"}
+
+    events[-1][1]["response"]["incomplete_details"] = None
+    with pytest.raises(RuntimeError, match="lacks the max_output_tokens reason"):
+        MODULE._validate_stream(events)
+
+
 @pytest.mark.parametrize(
     ("mutate", "message"),
     [
