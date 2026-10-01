@@ -22,6 +22,7 @@ from server.tests.test_native_qwen_jinja_contract import RecordingSession
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "version/v8/scripts"))
+from ck_serve_v8 import create_app as create_serving_app
 spec = importlib.util.spec_from_file_location("resolve_serving_bundle_v8", ROOT / "version/v8/scripts/resolve_serving_bundle_v8.py")
 resolver = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(resolver)
@@ -94,6 +95,44 @@ def test_publisher_default_and_explicit_compat(setup):
         load_tool_protocol(setup[0], chat + "changed", variants)
 
 
+def test_publisher_chat_profile_rejects_tools_before_generation(setup):
+    run, circuit_path, source = setup
+    shutil.copyfile(
+        ROOT / "version/v8/serving_profiles/publisher_chat_v1.json",
+        source / "serving_profiles/publisher_chat_v1.json",
+    )
+    circuit = json.loads(circuit_path.read_text())
+    circuit["serving"]["profile_ref"] = "serving_profiles/publisher_chat_v1.json"
+    circuit_path.write_text(json.dumps(circuit))
+    resolved = resolver.resolve_serving_bundle(
+        run, circuit_path, v8_root=source, allow_serving_update=True,
+    )
+    assert resolved["output_protocol"] == "none"
+    chat, variants, _ = load_manifest_templates(run)
+    assert load_tool_protocol(run, chat, variants) == "none"
+    session = RecordingSession(["Hello.", "Hello again."])
+    client = TestClient(create_serving_app(
+        session, model="test", chat_template=chat, chat_templates=variants,
+        tool_protocol="none", viz=False,
+    ))
+    assert client.post("/v1/responses", json={"model": "test", "input": "Hello."}).status_code == 200
+    assert client.post("/v1/chat/completions", json={
+        "model": "test", "messages": [{"role": "user", "content": "Hello."}],
+    }).status_code == 200
+    prompts_before_tools = list(session.prompts)
+    function = {"name": "read_file", "parameters": {"type": "object", "properties": {}}}
+    response_tool = client.post("/v1/responses", json={
+        "model": "test", "input": "Read a file", "tools": [{"type": "function", **function}],
+    })
+    chat_tool = client.post("/v1/chat/completions", json={
+        "model": "test", "messages": [{"role": "user", "content": "Read a file"}],
+        "tools": [{"type": "function", "function": function}],
+    })
+    assert response_tool.status_code == 501
+    assert chat_tool.status_code == 501
+    assert session.prompts == prompts_before_tools
+
+
 def test_publisher_special_tokens_feed_strict_jinja_from_verified_bundle(setup):
     from server.live import TemplateRenderError, _render_with_chat_templates
 
@@ -124,6 +163,63 @@ def test_publisher_special_tokens_feed_strict_jinja_from_verified_bundle(setup):
     (run / "tokenizer_config.json").write_text('{"bos_token":"stale"}')
     with pytest.raises(ValueError, match="stale serving asset"):
         load_resolved_serving(run)
+
+
+def test_gguf_manifest_ids_bind_publisher_token_text_from_verified_assets(setup):
+    from server.live import _render_with_chat_templates
+
+    run = setup[0]
+    manifest_path = run / "weights_manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["special_tokens"] = {"bos_token_id": 2, "eos_token_id": 106}
+    manifest_path.write_text(json.dumps(manifest))
+    ir_stamp = run / ".ck_ir_bundle.json"
+    stamp = json.loads(ir_stamp.read_text())
+    stamp["inputs"]["manifest"] = {
+        "path": str(manifest_path), "size": manifest_path.stat().st_size,
+        "sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+    }
+    ir_stamp.write_text(json.dumps(stamp))
+    (run / "tokenizer.json").write_text(json.dumps({"added_tokens": [
+        {"id": 2, "content": "<bos>"}, {"id": 106, "content": "<turn|>"},
+    ]}))
+    (run / "chat_template.jinja").write_text(
+        "{{ bos_token }}{% for message in messages %}{{ message.content }}{% endfor %}{{ eos_token }}"
+    )
+    resolved = resolve(setup)
+    tokens = resolved_renderer_tokens(run, load_resolved_serving(run))
+    assert tokens == {"bos_token": "<bos>", "eos_token": "<turn|>"}
+    chat, variants, _ = load_manifest_templates(run)
+    assert _render_with_chat_templates(chat, variants, [{"role": "user", "content": "Hello"}],
+                                       None, renderer_tokens=tokens) == "<bos>Hello<turn|>"
+    (run / "tokenizer.json").write_text(json.dumps({"added_tokens": [
+        {"id": 2, "content": "<different>"}, {"id": 106, "content": "<turn|>"},
+    ]}))
+    with pytest.raises(ValueError, match="stale serving asset"):
+        load_resolved_serving(run)
+    assert resolved["assets"]["tokenizer.json"]["sha256"] != hashlib.sha256(
+        (run / "tokenizer.json").read_bytes()).hexdigest()
+
+
+def test_gguf_manifest_token_text_conflict_fails_closed(setup):
+    run = setup[0]
+    (run / "weights_manifest.json").write_text(json.dumps({
+        **json.loads((run / "weights_manifest.json").read_text()),
+        "special_tokens": {"bos_token_id": 2},
+    }))
+    manifest_path = run / "weights_manifest.json"
+    ir_stamp = run / ".ck_ir_bundle.json"
+    stamp = json.loads(ir_stamp.read_text())
+    stamp["inputs"]["manifest"] = {
+        "path": str(manifest_path), "size": manifest_path.stat().st_size,
+        "sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+    }
+    ir_stamp.write_text(json.dumps(stamp))
+    (run / "tokenizer.json").write_text(json.dumps({"added_tokens": [{"id": 2, "content": "<bos>"}]}))
+    (run / "tokenizer_config.json").write_text(json.dumps({"bos_token": "<other>"}))
+    resolve(setup)
+    with pytest.raises(ValueError, match="conflicting publisher token variable"):
+        resolved_renderer_tokens(run, load_resolved_serving(run))
 
 
 def test_conflicting_publisher_special_tokens_fail_closed(setup):
