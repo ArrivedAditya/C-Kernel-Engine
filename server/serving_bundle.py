@@ -9,7 +9,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-PROTOCOLS = frozenset({"tagged_json", "bare_json", "qwen_xml", "qwen_code_xml", "qwen_code_xml_raw_v2"})
+PROTOCOLS = frozenset({"none", "tagged_json", "bare_json", "qwen_xml", "qwen_code_xml", "qwen_code_xml_raw_v2"})
 SCHEMA = "cke.resolved_serving.v1"
 
 

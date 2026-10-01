@@ -22,6 +22,7 @@ from server.tests.test_native_qwen_jinja_contract import RecordingSession
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "version/v8/scripts"))
+from ck_serve_v8 import create_app as create_serving_app
 spec = importlib.util.spec_from_file_location("resolve_serving_bundle_v8", ROOT / "version/v8/scripts/resolve_serving_bundle_v8.py")
 resolver = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(resolver)
@@ -92,6 +93,44 @@ def test_publisher_default_and_explicit_compat(setup):
     assert load_tool_protocol(setup[0], chat, variants) == "qwen_code_xml_raw_v2"
     with pytest.raises(ValueError, match="override conflicts"):
         load_tool_protocol(setup[0], chat + "changed", variants)
+
+
+def test_publisher_chat_profile_rejects_tools_before_generation(setup):
+    run, circuit_path, source = setup
+    shutil.copyfile(
+        ROOT / "version/v8/serving_profiles/publisher_chat_v1.json",
+        source / "serving_profiles/publisher_chat_v1.json",
+    )
+    circuit = json.loads(circuit_path.read_text())
+    circuit["serving"]["profile_ref"] = "serving_profiles/publisher_chat_v1.json"
+    circuit_path.write_text(json.dumps(circuit))
+    resolved = resolver.resolve_serving_bundle(
+        run, circuit_path, v8_root=source, allow_serving_update=True,
+    )
+    assert resolved["output_protocol"] == "none"
+    chat, variants, _ = load_manifest_templates(run)
+    assert load_tool_protocol(run, chat, variants) == "none"
+    session = RecordingSession(["Hello.", "Hello again."])
+    client = TestClient(create_serving_app(
+        session, model="test", chat_template=chat, chat_templates=variants,
+        tool_protocol="none", viz=False,
+    ))
+    assert client.post("/v1/responses", json={"model": "test", "input": "Hello."}).status_code == 200
+    assert client.post("/v1/chat/completions", json={
+        "model": "test", "messages": [{"role": "user", "content": "Hello."}],
+    }).status_code == 200
+    prompts_before_tools = list(session.prompts)
+    function = {"name": "read_file", "parameters": {"type": "object", "properties": {}}}
+    response_tool = client.post("/v1/responses", json={
+        "model": "test", "input": "Read a file", "tools": [{"type": "function", **function}],
+    })
+    chat_tool = client.post("/v1/chat/completions", json={
+        "model": "test", "messages": [{"role": "user", "content": "Read a file"}],
+        "tools": [{"type": "function", "function": function}],
+    })
+    assert response_tool.status_code == 501
+    assert chat_tool.status_code == 501
+    assert session.prompts == prompts_before_tools
 
 
 def test_publisher_special_tokens_feed_strict_jinja_from_verified_bundle(setup):
