@@ -865,9 +865,22 @@ TEST_SUITES = {
         "Model-Neutral Checked AdaIN Generated Graph", "inference",
         ROOT / "tests" / "test_v8_checked_adain_generated.py",
     ),
+    "tts_scaled_sum_strided_oracle": TestSuite(
+        "TTS Checked Strided Scaled Sum Numerical Oracle", "kernels",
+        ROOT / "tests" / "test_v8_audio_scaled_sum_strided.py",
+    ),
+    "tts_checked_scaled_sum_generated": TestSuite(
+        "Model-Neutral Checked Strided Scaled Sum Generated Graph", "inference",
+        ROOT / "tests" / "test_v8_checked_scaled_sum_generated.py",
+    ),
     "tts_kokoro_generated_prosody_norm": TestSuite(
         "Kokoro Generated First F0/Noise AdaIN Stages", "inference",
         ROOT / "tests" / "test_v8_kokoro_generated_prosody_norm.py",
+        timeout_sec=300,
+    ),
+    "tts_kokoro_generated_prosody_first_block": TestSuite(
+        "Kokoro Generated First F0/Noise Residual Blocks", "inference",
+        ROOT / "tests" / "test_v8_kokoro_generated_prosody_first_block.py",
         timeout_sec=300,
     ),
     "tts_checked_text_ops_generated": TestSuite(
