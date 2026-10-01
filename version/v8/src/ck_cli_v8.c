@@ -26,6 +26,7 @@
 #include <stdbool.h>
 #include <errno.h>
 #include <signal.h>
+#include <stdatomic.h>
 #include <dlfcn.h>
 #include <unistd.h>
 #include <time.h>
@@ -61,7 +62,6 @@
 
 static volatile sig_atomic_t g_exit_requested = 0;
 static volatile sig_atomic_t g_generation_active = 0;
-static volatile sig_atomic_t *g_session_cancel_ptr = NULL;
 
 /* Timing globals */
 static double g_prefill_time_ms = 0.0;
@@ -157,6 +157,7 @@ typedef int (*set_encoder_memory_t)(const float *, int, int);
 typedef int (*build_generation_prefix_t)(const char *, const char *, uint32_t, int32_t *, int);
 typedef int (*apply_generation_policy_t)(float *, int, const int32_t *, int, int, uint32_t);
 typedef int (*set_gemm_schedule_t)(int);
+typedef void (*set_cancel_flag_t)(const atomic_int *);
 
 typedef struct {
     void *handle;
@@ -217,6 +218,7 @@ typedef struct {
     build_generation_prefix_t build_generation_prefix;
     apply_generation_policy_t apply_generation_policy;
     set_gemm_schedule_t set_gemm_schedule;
+    set_cancel_flag_t set_cancel_flag;
 } ModelAPI;
 
 static void print_runtime_capabilities(const ModelAPI *api) {
@@ -378,9 +380,14 @@ typedef struct {
     int eos_count;
     ck_session_token_callback_v8 token_callback;
     void *token_callback_user_data;
-    volatile sig_atomic_t *cancel_requested;
+    const atomic_int *cancel_requested;
     CKSessionGenerateResultV8 *session_result;
 } CLIOptions;
+
+static bool cli_cancel_requested(const CLIOptions *opt) {
+    return opt && opt->cancel_requested &&
+           atomic_load_explicit(opt->cancel_requested, memory_order_relaxed);
+}
 
 static const char *stop_reason_name(int reason) {
     switch (reason) {
@@ -1807,6 +1814,7 @@ static bool load_model_api(const char *lib_path, ModelAPI *api) {
         goto fail;
     }
     resolve_symbol(api->handle, "ck_model_embed_tokens", (void **)&api->embed, false);
+    resolve_symbol(api->handle, "ck_model_set_cancel_flag", (void **)&api->set_cancel_flag, false);
     resolve_symbol(api->handle, "ck_model_forward", (void **)&api->forward, false);
     resolve_symbol(api->handle, "ck_model_decode", (void **)&api->decode, false);
     /* ck_prefill - optional, only present when prefill IR was generated */
@@ -2410,7 +2418,7 @@ static int run_generation_loop(ModelAPI *api, CLIOptions *opt) {
 
     struct timespec t0, t1;
     for (int generated = 0; generated < max_tokens && !g_exit_requested && g_generation_active; generated++) {
-        if (opt->cancel_requested && *opt->cancel_requested) {
+        if (cli_cancel_requested(opt)) {
             stop_reason = CK_SESSION_STOP_CANCELLED;
             break;
         }
@@ -2493,7 +2501,7 @@ static int run_generation_loop(ModelAPI *api, CLIOptions *opt) {
 
         generated_history_count = emitted_tokens;
 
-        if (opt->cancel_requested && *opt->cancel_requested) {
+        if (cli_cancel_requested(opt)) {
             stop_reason = CK_SESSION_STOP_CANCELLED;
             break;
         }
@@ -2504,7 +2512,7 @@ static int run_generation_loop(ModelAPI *api, CLIOptions *opt) {
             break;
         }
         clock_gettime(CLOCK_MONOTONIC, &t1);
-        if (opt->cancel_requested && *opt->cancel_requested) {
+        if (cli_cancel_requested(opt)) {
             stop_reason = CK_SESSION_STOP_CANCELLED;
             break;
         }
@@ -2512,13 +2520,13 @@ static int run_generation_loop(ModelAPI *api, CLIOptions *opt) {
                             (t1.tv_nsec - t0.tv_nsec) / 1000000.0;
         g_decode_count++;
 
-        if (opt->cancel_requested && *opt->cancel_requested) {
+        if (cli_cancel_requested(opt)) {
             stop_reason = CK_SESSION_STOP_CANCELLED;
             break;
         }
         /* Sample next token */
         SAMPLE_NEXT_TOKEN();
-        if (opt->cancel_requested && *opt->cancel_requested) {
+        if (cli_cancel_requested(opt)) {
             stop_reason = CK_SESSION_STOP_CANCELLED;
             break;
         }
@@ -2662,6 +2670,7 @@ static int run_token_ids(ModelAPI *api, CLIOptions *opt, int32_t *ids, int n, in
     struct timespec t0, t1;
     clock_gettime(CLOCK_MONOTONIC, &t0);
 
+    if (cli_cancel_requested(opt)) goto prefill_done;
     if (prefix_tokens > 0) {
         if (opt->verbose) {
             fprintf(stderr,
@@ -2669,6 +2678,7 @@ static int run_token_ids(ModelAPI *api, CLIOptions *opt, int32_t *ids, int n, in
                     prefix_tokens, prefix_embed_dim, n);
         }
         if (api->forward_mixed(prefix_embeddings, prefix_tokens, ids, n, NULL) != 0) {
+            if (cli_cancel_requested(opt)) goto prefill_done;
             fprintf(stderr, "[Model] forward_mixed failed\n");
             free(prefix_embeddings);
             free(ids);
@@ -2676,11 +2686,13 @@ static int run_token_ids(ModelAPI *api, CLIOptions *opt, int32_t *ids, int n, in
         }
     } else {
         if (api->embed(ids, n) != 0) {
+            if (cli_cancel_requested(opt)) goto prefill_done;
             fprintf(stderr, "[Model] embed failed\n");
             free(ids);
             return -1;
         }
 
+        if (cli_cancel_requested(opt)) goto prefill_done;
         if (api->forward(NULL) != 0) {
             fprintf(stderr, "[Model] forward failed\n");
             free(ids);
@@ -2688,6 +2700,7 @@ static int run_token_ids(ModelAPI *api, CLIOptions *opt, int32_t *ids, int n, in
         }
     }
 
+prefill_done:
     clock_gettime(CLOCK_MONOTONIC, &t1);
     g_prefill_time_ms = (t1.tv_sec - t0.tv_sec) * 1000.0 +
                         (t1.tv_nsec - t0.tv_nsec) / 1000000.0;
@@ -2703,6 +2716,16 @@ static int run_token_ids(ModelAPI *api, CLIOptions *opt, int32_t *ids, int n, in
                 (double)profile.completion_wait_ns / 1.0e6);
     }
     free(prefix_embeddings);
+    if (cli_cancel_requested(opt)) {
+        if (opt->session_result) {
+            opt->session_result->prompt_tokens = api->get_active_tokens ? api->get_active_tokens() : 0;
+            opt->session_result->generated_tokens = 0;
+            opt->session_result->stop_reason = CK_SESSION_STOP_CANCELLED;
+            opt->session_result->prefill_time_ms = g_prefill_time_ms;
+        }
+        free(ids);
+        return 0;
+    }
     int generation_status = run_generation_loop(api, opt);
     free(ids);
     return generation_status;
@@ -5593,7 +5616,7 @@ static char *read_repl_turn(bool multiline_input) {
 struct CKSessionV8 {
     ModelAPI api;
     pthread_mutex_t generation_lock;
-    volatile sig_atomic_t cancel_requested;
+    atomic_int cancel_requested;
     pthread_t generation_thread;
     volatile sig_atomic_t generation_thread_valid;
     int context_length;
@@ -5625,6 +5648,7 @@ int ck_session_v8_open(
 
     CKSessionV8 *session = (CKSessionV8 *)calloc(1, sizeof(*session));
     if (!session) return CK_SESSION_V8_ERROR_RUNTIME;
+    atomic_init(&session->cancel_requested, 0);
     int failure_status = CK_SESSION_V8_ERROR_INIT;
     if (pthread_mutex_init(&session->generation_lock, NULL) != 0) {
         free(session);
@@ -5794,8 +5818,8 @@ int ck_session_v8_generate(
 
     memset((char *)result + 2 * sizeof(uint32_t), 0,
             sizeof(*result) - 2 * sizeof(uint32_t));
-    session->cancel_requested = 0;
-    g_session_cancel_ptr = &session->cancel_requested;
+    atomic_store_explicit(&session->cancel_requested, 0, memory_order_relaxed);
+    if (session->api.set_cancel_flag) session->api.set_cancel_flag(&session->cancel_requested);
     session->last_error[0] = '\0';
     g_exit_requested = 0;
     if (!(request->flags & CK_SESSION_REQUEST_CONTINUE_STATE) &&
@@ -5827,17 +5851,17 @@ int ck_session_v8_generate(
         session_error(session, CK_SESSION_V8_ERROR_RUNTIME,
                       "native generation failed");
     }
-    g_session_cancel_ptr = NULL;
+    if (session->api.set_cancel_flag) session->api.set_cancel_flag(NULL);
+    if (result->stop_reason == CK_SESSION_STOP_CANCELLED && session->api.kv_reset) {
+        session->api.kv_reset();
+    }
     pthread_mutex_unlock(&session->generation_lock);
     return status == 0 ? CK_SESSION_V8_OK : CK_SESSION_V8_ERROR_RUNTIME;
 }
 
 void ck_session_v8_cancel(CKSessionV8 *session) {
     if (session) {
-        session->cancel_requested = 1;
-        // Also signal the generation loop via globals for faster exit
-        // when the loop is stuck in a long decode/forward.
-        g_generation_active = 0;
+        atomic_store_explicit(&session->cancel_requested, 1, memory_order_relaxed);
     }
 }
 
@@ -5847,7 +5871,7 @@ int ck_session_v8_reset(CKSessionV8 *session) {
         return CK_SESSION_V8_ERROR_BUSY;
     }
     if (session->api.kv_reset) session->api.kv_reset();
-    session->cancel_requested = 0;
+    atomic_store_explicit(&session->cancel_requested, 0, memory_order_relaxed);
     pthread_mutex_unlock(&session->generation_lock);
     return CK_SESSION_V8_OK;
 }

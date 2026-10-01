@@ -3551,6 +3551,11 @@ typedef struct {{
 static CKModel *g_model = NULL;
 static ck_manifest_map_t *g_manifest = NULL;
 static int g_ck_skip_decode_logits = 0;
+static const atomic_int *g_ck_cancel_flag = NULL;
+
+static int ck_model_cancel_requested(void) {{
+    return g_ck_cancel_flag && atomic_load_explicit(g_ck_cancel_flag, memory_order_relaxed);
+}}
 {debug_kv_offset_decls}
 
 /* Weight pointer macros */
@@ -3922,8 +3927,13 @@ static void ck_trace_pos(const char *stage, int32_t token, int count, int before
  * ============================================================================ */
 
 /* Embed tokens (prefill) - stores embeddings in activation buffer */
+CK_EXPORT void ck_model_set_cancel_flag(const atomic_int *flag) {{
+    g_ck_cancel_flag = flag;
+}}
+
 CK_EXPORT int ck_model_embed_tokens(const int32_t *tokens, int count) {{
     if (!g_model || !tokens || count <= 0) return -1;
+    if (ck_model_cancel_requested()) return -2;
     int before_pos = g_model->pos;
     ck_trace_pos("embed_begin", tokens[0], count, before_pos, g_model->pos);
 
@@ -3932,6 +3942,7 @@ CK_EXPORT int ck_model_embed_tokens(const int32_t *tokens, int count) {{
     if ({prefill_count_guard}{prefill_guard}) {{
         ck_prefill(g_model, tokens, count);{profile_dump_after_prefill}
         ck_parallel_prefill_release_transient_caches();
+        if (ck_model_cancel_requested()) return -2;
         ck_trace_pos("embed_prefill_end", tokens[count - 1], count, before_pos, g_model->pos);
         return 0;
     }}
@@ -3939,10 +3950,15 @@ CK_EXPORT int ck_model_embed_tokens(const int32_t *tokens, int count) {{
 
     /* Single token or no prefill: process one by one via decode */
     for (int i = 0; i < count; i++) {{
+        if (ck_model_cancel_requested()) {{
+            g_ck_skip_decode_logits = 0;
+            return -2;
+        }}
         g_ck_skip_decode_logits = (i + 1 < count);
         ck_decode(g_model, tokens[i]);
     }}
     g_ck_skip_decode_logits = 0;{profile_dump_after_decode}
+    if (ck_model_cancel_requested()) return -2;
     ck_trace_pos("embed_decode_end", tokens[count - 1], count, before_pos, g_model->pos);
     return 0;
 }}
@@ -4154,6 +4170,7 @@ def generate(
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <stdatomic.h>
 #include <math.h>
 #include <unistd.h>
 #ifdef _OPENMP

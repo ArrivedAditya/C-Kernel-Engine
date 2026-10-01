@@ -12,6 +12,8 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import types
 import unittest
 from array import array
@@ -222,6 +224,7 @@ def _build_tiny_decoder_runtime(
     workdir: Path,
     *,
     include_tokenizer_contract: bool = False,
+    batched_prefill: bool = False,
 ) -> tuple[Path, Path, Path]:
     manifest = _make_qwen3_decoder_manifest(
         include_tokenizer_contract=include_tokenizer_contract
@@ -285,6 +288,8 @@ def _build_tiny_decoder_runtime(
     ]
     if include_tokenizer_contract:
         codegen_args.extend(["--init", str(init_call_path)])
+    if batched_prefill:
+        codegen_args.extend(["--prefill-layout", str(prefill_layout)])
     result = subprocess.run(
         codegen_args,
         cwd=str(ROOT),
@@ -1670,6 +1675,175 @@ class V8NativeBridgeHostTests(unittest.TestCase):
                 self.assertEqual(session_lib.ck_session_v8_reset(session), 0)
             finally:
                 session_lib.ck_session_v8_close(session)
+
+    def test_generated_prefill_cancellation_releases_native_session(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="v8_prefill_cancel_") as tmpdir:
+            workdir = Path(tmpdir)
+            so_path, bump_path, manifest_map = _build_tiny_decoder_runtime(
+                workdir, include_tokenizer_contract=True, batched_prefill=True
+            )
+            source_path = workdir / "decoder_v8.c"
+            source = source_path.read_text(encoding="utf-8")
+            prefill_start = (
+                "static void ck_prefill_range(CKModel *model, const int32_t *tokens, "
+                "int num_tokens, int prefill_start_pos) {\n"
+            )
+            self.assertEqual(source.count(prefill_start), 1)
+            source = source.replace(
+                prefill_start,
+                "static atomic_int ck_test_prefill_entered = 0;\n"
+                "__attribute__((visibility(\"default\"))) int ck_test_prefill_was_entered(void) {\n"
+                "    return atomic_load(&ck_test_prefill_entered);\n"
+                "}\n" + prefill_start +
+                "    atomic_store(&ck_test_prefill_entered, 1);\n"
+                "    usleep(250000);\n",
+                1,
+            )
+            source_path.write_text(source, encoding="utf-8")
+            _compile_generated_model(source_path, so_path)
+
+            class SessionConfig(ctypes.Structure):
+                _fields_ = [
+                    ("struct_size", ctypes.c_uint32), ("abi_version", ctypes.c_uint32),
+                    ("model_library_path", ctypes.c_char_p), ("weights_path", ctypes.c_char_p),
+                    ("manifest_path", ctypes.c_char_p), ("context_length", ctypes.c_int32),
+                    ("num_threads", ctypes.c_int32), ("required_capabilities", ctypes.c_uint64),
+                    ("reserved", ctypes.c_uint64 * 8),
+                ]
+
+            class GenerateRequest(ctypes.Structure):
+                _fields_ = [
+                    ("struct_size", ctypes.c_uint32), ("abi_version", ctypes.c_uint32),
+                    ("system_text", ctypes.c_char_p), ("user_text", ctypes.c_char_p),
+                    ("max_tokens", ctypes.c_int32), ("temperature", ctypes.c_float),
+                    ("top_p", ctypes.c_float), ("flags", ctypes.c_uint32),
+                    ("reserved0", ctypes.c_uint32), ("reserved", ctypes.c_uint64 * 8),
+                ]
+
+            class GenerateResult(ctypes.Structure):
+                _fields_ = [
+                    ("struct_size", ctypes.c_uint32), ("abi_version", ctypes.c_uint32),
+                    ("prompt_tokens", ctypes.c_int32), ("generated_tokens", ctypes.c_int32),
+                    ("stop_reason", ctypes.c_int32), ("reserved0", ctypes.c_int32),
+                    ("prefill_time_ms", ctypes.c_double), ("decode_time_ms", ctypes.c_double),
+                    ("reserved", ctypes.c_uint64 * 8),
+                ]
+
+            session_lib = ctypes.CDLL(str(LIBCK_SESSION_V8))
+            session_lib.ck_session_v8_open.argtypes = [ctypes.POINTER(SessionConfig), ctypes.POINTER(ctypes.c_void_p)]
+            session_lib.ck_session_v8_open.restype = ctypes.c_int
+            session_lib.ck_session_v8_close.argtypes = [ctypes.c_void_p]
+            session_lib.ck_session_v8_generate.argtypes = [
+                ctypes.c_void_p, ctypes.POINTER(GenerateRequest), ctypes.c_void_p,
+                ctypes.c_void_p, ctypes.POINTER(GenerateResult),
+            ]
+            session_lib.ck_session_v8_generate.restype = ctypes.c_int
+            session_lib.ck_session_v8_cancel.argtypes = [ctypes.c_void_p]
+            model_lib = ctypes.CDLL(str(so_path))
+            model_lib.ck_test_prefill_was_entered.restype = ctypes.c_int
+
+            config = SessionConfig(
+                struct_size=ctypes.sizeof(SessionConfig), abi_version=1,
+                model_library_path=str(so_path).encode(), weights_path=str(bump_path).encode(),
+                manifest_path=str(manifest_map).encode(), context_length=32, num_threads=1,
+            )
+            session = ctypes.c_void_p()
+            self.assertEqual(session_lib.ck_session_v8_open(ctypes.byref(config), ctypes.byref(session)), 0)
+            try:
+                request = GenerateRequest(
+                    struct_size=ctypes.sizeof(GenerateRequest), abi_version=1,
+                    user_text=b"Hello world", max_tokens=1, top_p=1.0,
+                    flags=1,  # CK_SESSION_REQUEST_RAW_PROMPT
+                )
+                cancelled = GenerateResult(struct_size=ctypes.sizeof(GenerateResult), abi_version=1)
+                status = []
+                worker = threading.Thread(target=lambda: status.append(
+                    session_lib.ck_session_v8_generate(
+                        session, ctypes.byref(request), None, None, ctypes.byref(cancelled)
+                    )
+                ))
+                worker.start()
+                deadline = time.monotonic() + 5.0
+                while not model_lib.ck_test_prefill_was_entered() and time.monotonic() < deadline:
+                    time.sleep(0.001)
+                self.assertTrue(
+                    model_lib.ck_test_prefill_was_entered(),
+                    f"prefill did not start: status={status}, reason={cancelled.stop_reason}, "
+                    f"prompt_tokens={cancelled.prompt_tokens}",
+                )
+                session_lib.ck_session_v8_cancel(session)
+                worker.join(timeout=5.0)
+                self.assertFalse(worker.is_alive(), "native prefill did not acknowledge cancellation")
+                self.assertEqual(status, [0])
+                self.assertEqual(cancelled.stop_reason, 3)  # CK_SESSION_STOP_CANCELLED
+                self.assertEqual(cancelled.generated_tokens, 0)
+
+                followup = GenerateResult(struct_size=ctypes.sizeof(GenerateResult), abi_version=1)
+                self.assertEqual(session_lib.ck_session_v8_generate(
+                    session, ctypes.byref(request), None, None, ctypes.byref(followup)
+                ), 0)
+                self.assertEqual(followup.stop_reason, 2)  # token limit
+                self.assertEqual(followup.generated_tokens, 1)
+            finally:
+                session_lib.ck_session_v8_close(session)
+
+    def test_decode_layout_prompt_replay_acknowledges_cancellation(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="v8_replay_cancel_") as tmpdir:
+            workdir = Path(tmpdir)
+            so_path, bump_path, manifest_map = _build_tiny_decoder_runtime(workdir)
+            source_path = workdir / "decoder_v8.c"
+            source = source_path.read_text(encoding="utf-8")
+            decode_start = "static void ck_decode(CKModel *model, int32_t token) {\n"
+            self.assertEqual(source.count(decode_start), 1)
+            source = source.replace(
+                decode_start,
+                "static atomic_int ck_test_decode_entered = 0;\n"
+                "__attribute__((visibility(\"default\"))) int ck_test_decode_was_entered(void) {\n"
+                "    return atomic_load(&ck_test_decode_entered);\n"
+                "}\n"
+                "__attribute__((visibility(\"default\"))) void ck_test_set_cancel(atomic_int *flag, int value) {\n"
+                "    atomic_store(flag, value);\n"
+                "}\n" + decode_start +
+                "    atomic_store(&ck_test_decode_entered, 1);\n"
+                "    usleep(250000);\n",
+                1,
+            )
+            source_path.write_text(source, encoding="utf-8")
+            _compile_generated_model(source_path, so_path)
+            model = ctypes.CDLL(str(so_path))
+            model.ck_model_init_with_manifest.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+            model.ck_model_init_with_manifest.restype = ctypes.c_int
+            model.ck_model_set_cancel_flag.argtypes = [ctypes.POINTER(ctypes.c_int)]
+            model.ck_model_embed_tokens.argtypes = [ctypes.POINTER(ctypes.c_int32), ctypes.c_int]
+            model.ck_model_embed_tokens.restype = ctypes.c_int
+            model.ck_model_free.argtypes = []
+            model.ck_model_kv_cache_reset.argtypes = []
+            model.ck_test_decode_was_entered.restype = ctypes.c_int
+            model.ck_test_set_cancel.argtypes = [ctypes.POINTER(ctypes.c_int), ctypes.c_int]
+            self.assertEqual(model.ck_model_init_with_manifest(
+                str(bump_path).encode(), str(manifest_map).encode()
+            ), 0)
+            try:
+                flag = ctypes.c_int(0)
+                model.ck_model_set_cancel_flag(ctypes.byref(flag))
+                ids = (ctypes.c_int32 * 3)(1, 2, 1)
+                status = []
+                worker = threading.Thread(target=lambda: status.append(model.ck_model_embed_tokens(ids, 3)))
+                worker.start()
+                deadline = time.monotonic() + 5.0
+                while not model.ck_test_decode_was_entered() and time.monotonic() < deadline:
+                    time.sleep(0.001)
+                self.assertTrue(model.ck_test_decode_was_entered(), "decode replay did not start")
+                model.ck_test_set_cancel(ctypes.byref(flag), 1)
+                worker.join(timeout=5.0)
+                self.assertFalse(worker.is_alive())
+                self.assertEqual(status, [-2])
+                model.ck_test_set_cancel(ctypes.byref(flag), 0)
+                model.ck_model_kv_cache_reset()
+                self.assertEqual(model.ck_model_embed_tokens(ids, 3), 0)
+            finally:
+                model.ck_model_set_cancel_flag(None)
+                model.ck_model_free()
 
     def test_ck_cli_v8_runs_forward_mixed_with_prompt_tokens_and_prefix_file(self) -> None:
         with tempfile.TemporaryDirectory(prefix="v8_native_bridge_cli_") as tmpdir:
