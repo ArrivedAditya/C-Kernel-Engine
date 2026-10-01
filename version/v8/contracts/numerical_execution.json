@@ -3790,6 +3790,17 @@
       "position_transform": null,
       "description": "Token-major FP32 adaptive LayerNorm with ascending FP32 output-major style projection, ascending FP64 mean and biased-variance channel reductions, (1+gamma)*normalized+beta, caller-owned 2C projection scratch, and output unchanged on rejection. Across separate AVX512 and AVX2 nightly hosts, the first reference-stage difference appears in PyTorch F.linear while LayerNorm outputs match; a version-specific cause is unproven. A new reduction order requires a distinct provider and numerical contract."
     },
+    "audio_adain_instance_norm_biased_channel_fp64_stats_fp32_affine": {
+      "operator_family": "audio_adain_instance_norm",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "fp32", "output": "fp32"},
+      "compute": {"input": "fp32", "weight": "fp32", "accumulator": "fp64", "contraction": "disabled", "evaluation_order": "ascending_valid_frame_mean_then_biased_variance_per_channel_in_fp64_then_fp32_instance_affine_then_fp32_style_affine"},
+      "rounding": {"mode": "rne", "points": ["input_load", "reduction_update", "norm_sqrt", "activation_intermediate_store", "affine_normalization", "output_store"]},
+      "reduction": {"kind": "composite", "order": "stage_ordered", "partial_accumulator": "fp64", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Channel-major FP32 InstanceNorm1d with ascending FP64 mean and biased variance over valid frames, FP32 norm weight/bias, then FP32 (1+style_gamma)*norm+style_beta. The style projection is a separate circuit operation. Caller-owned buffers, no scratch or hidden allocation; output unchanged on rejection. PyTorch 2.13 fixture and live CPU comparison are primitive evidence, not Kokoro F0/noise branch certification."
+    },
     "audio_lstm_pytorch_ifgo_single_step_fp32": {
       "operator_family": "audio_lstm",
       "status": "validated",

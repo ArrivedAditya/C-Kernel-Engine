@@ -1,0 +1,294 @@
+{
+  "id": "audio_adain_instance_norm_f32",
+  "op": "audio_adain_instance_norm",
+  "operation_interface": "audio.adain_instance_norm.channel_major.fp32.v1",
+  "variant": "biased_channel_stats_separate_style_projection_fp32",
+  "selection": {
+    "status": "candidate",
+    "priority": 100,
+    "equivalence_group": "audio_adain_instance_norm_fp32",
+    "phases": [
+      "prefill",
+      "decode"
+    ]
+  },
+  "quant": {
+    "weight": "fp32",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {
+      "name": "input",
+      "dtype": "fp32",
+      "shape": [
+        "C",
+        "T"
+      ],
+      "layout": "channel_major_input_stride",
+      "placement": "local",
+      "access": "read",
+      "storage_class": "activation",
+      "consumption": "required"
+    },
+    {
+      "name": "style_affine",
+      "dtype": "fp32",
+      "shape": [
+        "2*C"
+      ],
+      "layout": "feature_contiguous",
+      "placement": "local",
+      "access": "read",
+      "storage_class": "activation",
+      "consumption": "required"
+    }
+  ],
+  "weights": [
+    {
+      "name": "norm_weight",
+      "dtype": "fp32",
+      "shape": [
+        "C"
+      ],
+      "layout": "feature_contiguous",
+      "placement": "local",
+      "access": "read",
+      "storage_class": "weight",
+      "consumption": "required"
+    },
+    {
+      "name": "norm_bias",
+      "dtype": "fp32",
+      "shape": [
+        "C"
+      ],
+      "layout": "feature_contiguous",
+      "placement": "local",
+      "access": "read",
+      "storage_class": "weight",
+      "consumption": "required"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "output",
+      "dtype": "fp32",
+      "shape": [
+        "C",
+        "T"
+      ],
+      "layout": "channel_major_output_stride",
+      "placement": "local",
+      "access": "write",
+      "storage_class": "activation",
+      "consumption": "required"
+    }
+  ],
+  "scratch": [],
+  "dims": [
+    "input_elements",
+    "input_stride",
+    "norm_weight_elements",
+    "norm_bias_elements",
+    "style_affine_elements",
+    "output_elements",
+    "output_stride",
+    "channels",
+    "frames",
+    "normalization_epsilon"
+  ],
+  "impl": {
+    "function": "audio_adain_instance_norm_f32",
+    "c_declaration": "int audio_adain_instance_norm_f32(const float *input, size_t input_elements, size_t input_stride, const float *norm_weight, size_t norm_weight_elements, const float *norm_bias, size_t norm_bias_elements, const float *style_affine, size_t style_affine_elements, float *output, size_t output_elements, size_t output_stride, size_t channels, size_t frames, float epsilon);",
+    "sources": [
+      "src/kernels/audio_adain_instance_norm.c"
+    ]
+  },
+  "modes": {
+    "inference": true,
+    "training": false,
+    "backward": false
+  },
+  "numerical_capabilities": [
+    {
+      "contract_id": "audio_adain_instance_norm_biased_channel_fp64_stats_fp32_affine",
+      "status": "validated",
+      "phases": [
+        "prefill",
+        "decode"
+      ],
+      "function": "audio_adain_instance_norm_f32",
+      "explicit_selector": true,
+      "implementation": {
+        "isa_dispatch": "scalar",
+        "threading": {
+          "runtime": "serial",
+          "work_partition": [
+            "serial"
+          ],
+          "dispatch": [
+            "inline"
+          ],
+          "reduction_order_effect": "contract_defined"
+        }
+      },
+      "arithmetic": {
+        "partial_accumulator": "fp64",
+        "merge_order": "none",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false,
+        "split_strategy": "serial"
+      }
+    }
+  ],
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {
+        "name": "input",
+        "source": "activation:input",
+        "cast": "const float*",
+        "ports": [
+          "input:input"
+        ]
+      },
+      {
+        "name": "input_elements",
+        "source": "runtime:adain_input_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "input_stride",
+        "source": "runtime:adain_input_stride",
+        "value_type": "size_t"
+      },
+      {
+        "name": "norm_weight",
+        "source": "weight_f:norm_weight",
+        "cast": "const float*",
+        "ports": [
+          "weight:norm_weight"
+        ]
+      },
+      {
+        "name": "norm_weight_elements",
+        "source": "runtime:adain_norm_weight_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "norm_bias",
+        "source": "weight_f:norm_bias",
+        "cast": "const float*",
+        "ports": [
+          "weight:norm_bias"
+        ]
+      },
+      {
+        "name": "norm_bias_elements",
+        "source": "runtime:adain_norm_bias_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "style_affine",
+        "source": "activation:style_affine",
+        "cast": "const float*",
+        "ports": [
+          "input:style_affine"
+        ]
+      },
+      {
+        "name": "style_affine_elements",
+        "source": "runtime:adain_style_affine_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "output",
+        "source": "output:output",
+        "cast": "float*",
+        "ports": [
+          "output:output"
+        ]
+      },
+      {
+        "name": "output_elements",
+        "source": "runtime:adain_output_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "output_stride",
+        "source": "runtime:adain_output_stride",
+        "value_type": "size_t"
+      },
+      {
+        "name": "channels",
+        "source": "runtime:adain_channels",
+        "value_type": "size_t"
+      },
+      {
+        "name": "frames",
+        "source": "runtime:adain_frames",
+        "value_type": "size_t"
+      },
+      {
+        "name": "epsilon",
+        "source": "dim:normalization_epsilon"
+      }
+    ]
+  },
+  "tests": {
+    "unit": [
+      "tests/test_v8_audio_adain_instance_norm_oracle.py",
+      "tests/test_v8_audio_adain_instance_norm_live.py"
+    ],
+    "oracle": "Independent torch.nn.functional.instance_norm CPU, committed PyTorch 2.13 fixture and optional live comparison; fixture-versus-live and native-versus-live reported separately"
+  },
+  "notes": "Batch-one channel-major InstanceNorm1d with per-channel biased variance over runtime-valid frames, affine norm weight/bias, then style (1+gamma)*norm+beta. Style projection is a separate circuit operation. Ascending FP64 statistics and FP32 affine order define this scalar numerical identity; no claim of bitwise PyTorch parity across backends. Explicit capacities and physical frame strides; padding untouched. No hidden allocation, scratch, persistent state, or backward support. Output unchanged on invalid geometry, short buffers, or nonfinite input/result. Input/output and weight aliasing unsupported. Runtime frame count may bind to a checked producer extent while memory planning uses capacity.",
+  "call_constant_contract": {
+    "shape_symbols": {
+      "C": "adain_channels",
+      "T": "adain_frames"
+    },
+    "buffer_spans": [
+      {
+        "pointer": "norm_weight",
+        "elements": "adain_norm_weight_elements",
+        "rows": 1,
+        "width": "adain_norm_weight_elements",
+        "element_bytes": 4
+      },
+      {
+        "pointer": "norm_bias",
+        "elements": "adain_norm_bias_elements",
+        "rows": 1,
+        "width": "adain_norm_bias_elements",
+        "element_bytes": 4
+      },
+      {
+        "pointer": "style_affine",
+        "elements": "adain_style_affine_elements",
+        "rows": 1,
+        "width": "adain_style_affine_elements",
+        "element_bytes": 4
+      },
+      {
+        "pointer": "input",
+        "elements": "adain_input_elements",
+        "rows": "adain_channels",
+        "width": "adain_frames",
+        "stride": "adain_input_stride",
+        "physical_row_stride": true,
+        "element_bytes": 4
+      },
+      {
+        "pointer": "output",
+        "elements": "adain_output_elements",
+        "rows": "adain_channels",
+        "width": "adain_frames",
+        "stride": "adain_output_stride",
+        "physical_row_stride": true,
+        "element_bytes": 4
+      }
+    ]
+  }
+}

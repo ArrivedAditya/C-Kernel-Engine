@@ -853,6 +853,14 @@ TEST_SUITES = {
         "TTS Checked Conv1D, Transpose, and LeakyReLU Oracles", "kernels",
         ROOT / "tests" / "test_v8_kokoro_text_primitives.py",
     ),
+    "tts_adain_instance_norm_oracle": TestSuite(
+        "TTS AdaIN InstanceNorm PyTorch Oracle and Bounds", "kernels",
+        ROOT / "tests" / "test_v8_audio_adain_instance_norm_oracle.py",
+    ),
+    "tts_adain_instance_norm_live": TestSuite(
+        "TTS AdaIN InstanceNorm Live PyTorch Oracle", "kernels",
+        ROOT / "tests" / "test_v8_audio_adain_instance_norm_live.py",
+    ),
     "tts_checked_text_ops_generated": TestSuite(
         "Model-Neutral Checked Conv1D, Transpose, and Activation Graph", "inference",
         ROOT / "tests" / "test_v8_checked_text_ops_generated.py",

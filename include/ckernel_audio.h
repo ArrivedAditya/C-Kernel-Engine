@@ -168,6 +168,21 @@ int audio_adaptive_layer_norm_f32(
     int tokens, int channels, int style_dim,
     size_t input_stride, size_t output_stride, float epsilon);
 
+/* Channel-major InstanceNorm1d affine followed by style affine. Statistics
+ * use only valid frames, with biased variance. Style affine is [gamma, beta]
+ * of length 2*channels, ordinarily produced by a separate linear operation.
+ * Input/output strides are physical frame capacities. Returns -1 for invalid
+ * geometry, -2 for short buffers, -3 for nonfinite input or result. Output is
+ * unchanged on rejection; no hidden allocation or persistent state.
+ */
+int audio_adain_instance_norm_f32(
+    const float *input, size_t input_elements, size_t input_stride,
+    const float *norm_weight, size_t norm_weight_elements,
+    const float *norm_bias, size_t norm_bias_elements,
+    const float *style_affine, size_t style_affine_elements,
+    float *output, size_t output_elements, size_t output_stride,
+    size_t channels, size_t frames, float epsilon);
+
 int audio_stft_precompute_tables_f32(
     int n_fft,
     float *window,
