@@ -3728,6 +3728,12 @@ def _run_decoder(
             prefill_tokens_total = int(len(before_token_ids)) + int(prefix_tokens) + int(len(after_token_ids))
             available_generation_budget = max(0, runtime_context_len - prefill_tokens_total) if runtime_context_len > 0 else int(max_tokens)
             effective_max_tokens = min(int(max_tokens), int(available_generation_budget))
+            if effective_max_tokens == 0:
+                raise RuntimeError(
+                    "decoder context has no generation capacity: "
+                    f"context={runtime_context_len} prefill_tokens={prefill_tokens_total} "
+                    f"requested_generation={int(max_tokens)}"
+                )
             if effective_max_tokens < int(max_tokens):
                 _log_progress(
                     "decoder: generation clamp "
@@ -4095,9 +4101,10 @@ def _derive_decoder_context_len(
     minimum_context: int = 32,
 ) -> int:
     needed = max(1, int(prompt_token_count) + max(0, int(prefix_tokens)))
+    required = needed + max(1, int(slack_tokens))
     if requested is not None and int(requested) > 0:
-        return max(int(requested), needed)
-    return max(minimum_context, needed + max(1, int(slack_tokens)))
+        return max(int(requested), required)
+    return max(minimum_context, required)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -4145,7 +4152,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--image-min-tokens", type=int, default=None, help="Minimum merged visual tokens for smart-resized Qwen3-VL images")
     ap.add_argument("--image-max-tokens", type=int, default=None, help="Maximum merged visual tokens for smart-resized Qwen3-VL images")
     ap.add_argument("--synthetic-prefix-tokens", type=int, default=0, help="Use zero prefix embeddings when a real encoder bridge is unavailable")
-    ap.add_argument("--decoder-context-len", type=int, default=None, help="Override decoder context length; default is prompt+prefix budget with small headroom")
+    ap.add_argument("--decoder-context-len", type=int, default=None, help="Minimum decoder context length; reserves prompt, visual prefix, and requested generation budget")
     ap.add_argument("--dump-prefix-f32", type=Path, default=None, help="Optional output path for resolved float32 prefix embeddings")
     ap.add_argument("--dump-logits-f32", type=Path, default=None, help="Optional output path for first mixed-prefill logits as float32")
     ap.add_argument("--max-tokens", type=int, default=0, help="Generate up to N tokens after multimodal prefill; 0 reports first-token logits only")
