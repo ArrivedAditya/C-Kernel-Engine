@@ -148,14 +148,31 @@ class Qwen3VLCorpusCertificationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "must be positive"):
             self.module._require_corpus_size(rows, 0)
 
+    def test_selected_size_gate_rejects_partial_certification(self) -> None:
+        selected = [{"index": index, "image_sha256": f"hash-{index}"} for index in range(1, 17)]
+        self.module._require_selected_size(selected, 16)
+        with self.assertRaisesRegex(ValueError, "selected 16 images"):
+            self.module._require_selected_size(selected, 40)
+        with self.assertRaisesRegex(ValueError, "must be positive"):
+            self.module._require_selected_size(selected, 0)
+        duplicated = [dict(row) for row in selected]
+        duplicated[-1]["image_sha256"] = duplicated[0]["image_sha256"]
+        with self.assertRaisesRegex(ValueError, "15 distinct images"):
+            self.module._require_selected_size(duplicated, 16)
+        with self.assertRaisesRegex(ValueError, "hashes are missing"):
+            self.module._require_selected_size([{"index": 1}], 1)
+
     def test_makefile_exposes_both_private_model_profiles(self) -> None:
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
         self.assertIn("certify_multimodal_llamacpp_corpus_v8.py", makefile)
         self.assertIn("-Wl,--no-as-needed -lckernel_tokenizer", makefile)
         self.assertIn("test-qwen3vl-private-corpus-parity-auto:", makefile)
         self.assertIn("--model-profile qwen3vl", makefile)
+        self.assertIn("--require-selected-images \"$(QWEN3VL_PRIVATE_CORPUS_REQUIRED_IMAGES)\"", makefile)
         self.assertIn("test-qwen36vl-private-corpus-parity-auto:", makefile)
         self.assertIn("--model-profile qwen36vl", makefile)
+        self.assertIn("--require-selected-images \"$(QWEN36VL_PRIVATE_CORPUS_REQUIRED_IMAGES)\"", makefile)
+        self.assertIn("--require-selected-images \"$(GEMMA4_PRIVATE_CORPUS_REQUIRED_IMAGES)\"", makefile)
         self.assertIn(
             "V8_PRIVATE_VISION_CORPUS_MANIFEST ?= $(CK_QWEN3VL_OCR_MANIFEST)",
             makefile,
@@ -835,6 +852,7 @@ class Qwen3VLCorpusCertificationTests(unittest.TestCase):
             "image_max_tokens": 1024,
             "max_new_tokens": 128,
             "require_images": 40,
+            "require_selected_images": None,
             "append_on_divergence": "stop",
             "chat_template": "qwen3vl",
             "threads": 20,
