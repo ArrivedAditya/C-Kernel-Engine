@@ -6807,7 +6807,11 @@ v7-regression-fast: test-v7-dsl-policy
 	@echo "Running v7 regression fast suite..."
 	@$(PYTHON) version/v7/scripts/run_regression_v7.py --mode fast --force-rebuild $(REGRESSION_ARGS)
 
-v8-regression-fast: test-v8-dsl-policy test-v8-artifact-compile-matrix v8-training-python-authoring-smoke
+.PHONY: test-v8-serving-coverage-inventory
+test-v8-serving-coverage-inventory:
+	@$(PYTHON) version/v8/scripts/build_serving_coverage_inventory_v8.py --check
+
+v8-regression-fast: test-v8-dsl-policy test-v8-artifact-compile-matrix v8-training-python-authoring-smoke test-v8-serving-coverage-inventory
 	@echo "Running v8 regression fast suite..."
 	@$(PYTHON) version/v8/scripts/run_regression_v8.py --mode fast --force-rebuild $(REGRESSION_ARGS)
 
