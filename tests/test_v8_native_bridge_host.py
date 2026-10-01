@@ -2377,6 +2377,10 @@ class V8NativeBridgeHostTests(unittest.TestCase):
                             "Describe the image.",
                             "--synthetic-prefix-tokens",
                             "40",
+                            "--decoder-context-len",
+                            "32",
+                            "--max-tokens",
+                            "8",
                             "--top-k",
                             "2",
                         ]
@@ -2395,6 +2399,20 @@ class V8NativeBridgeHostTests(unittest.TestCase):
             report = json.loads((workdir / "bridge_report.json").read_text(encoding="utf-8"))
             self.assertEqual(report["decoder_context_len"], 61)
             self.assertEqual(report["total_prefill_tokens"], 45)
+
+    def test_explicit_decoder_context_reserves_generation_capacity(self) -> None:
+        self.assertEqual(
+            bridge_runner_v8._derive_decoder_context_len(
+                prompt_token_count=5, prefix_tokens=40, requested=32, slack_tokens=8,
+            ),
+            53,
+        )
+        self.assertEqual(
+            bridge_runner_v8._derive_decoder_context_len(
+                prompt_token_count=5, prefix_tokens=40, requested=64, slack_tokens=8,
+            ),
+            64,
+        )
 
     def test_bridge_runner_encoder_path_delays_dim_check_until_decoder_ready(self) -> None:
         with tempfile.TemporaryDirectory(prefix="v8_native_bridge_encoder_") as tmpdir:
@@ -2872,6 +2890,20 @@ class V8NativeBridgeHostTests(unittest.TestCase):
         self.assertEqual(len(result["generated_token_ids"]), 3)
         self.assertIn("decoder: generation clamp requested=99 effective=3 context=8 prefill_tokens=5", stderr.getvalue())
         self.assertEqual(fake_lib.decode_calls, 2)
+
+        runtime["context_length"] = 5
+        with mock.patch.object(bridge_runner_v8, "_load_decoder_lib", return_value=FakeLib()):
+            with self.assertRaisesRegex(RuntimeError, "no generation capacity"):
+                bridge_runner_v8._run_decoder(
+                    runtime,
+                    array("f", [0.0] * 16),
+                    1,
+                    [1, 2],
+                    tokens_before=[10, 20],
+                    tokenizer=FakeTokenizer(),
+                    max_tokens=1,
+                    stream_output=False,
+                )
 
     def test_ck_run_v8_multimodal_forwards_sampling_controls(self) -> None:
         with tempfile.TemporaryDirectory(prefix="v8_multimodal_sampling_") as tmpdir:
