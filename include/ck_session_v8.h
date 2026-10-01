@@ -14,6 +14,23 @@ extern "C" {
 
 typedef struct CKSessionV8 CKSessionV8;
 
+/* v1 ownership and concurrency contract:
+ * - The caller owns all request strings, output buffers, and callback user_data.
+ *   Keep them alive until the synchronous call returns; the session retains none.
+ * - A token callback runs synchronously inside generate. Its utf8_text pointer is
+ *   borrowed only for that callback invocation. Copy it before returning if needed.
+ * - The host must serialize encode, decode, format_chat, generate, and reset with
+ *   one another. Current generated-model state is not certified for concurrent
+ *   generation by separate sessions in one process.
+ * - cancel may be called from another thread while generate runs. It requests a
+ *   cooperative stop; only generate returning acknowledges that native work has
+ *   finished. A slow kernel can delay that return. Do not release request buffers,
+ *   callback user_data, or session storage on the strength of cancel returning.
+ * - Quiesce all other callers before close; close is not a concurrent free API.
+ *   The pointer returned by last_error is session-owned and becomes invalid after
+ *   another session call or close.
+ */
+
 enum CKSessionStatusV8 {
     CK_SESSION_V8_OK = 0,
     CK_SESSION_V8_ERROR_INVALID_ARGUMENT = -1,
