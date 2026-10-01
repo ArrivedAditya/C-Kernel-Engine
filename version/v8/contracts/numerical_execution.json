@@ -3790,6 +3790,17 @@
       "position_transform": null,
       "description": "Token-major FP32 adaptive LayerNorm with ascending FP32 output-major style projection, ascending FP64 mean and biased-variance channel reductions, (1+gamma)*normalized+beta, caller-owned 2C projection scratch, and output unchanged on rejection. Across separate AVX512 and AVX2 nightly hosts, the first reference-stage difference appears in PyTorch F.linear while LayerNorm outputs match; a version-specific cause is unproven. A new reduction order requires a distinct provider and numerical contract."
     },
+    "audio_scaled_sum_strided_sum_then_scale_fp32": {
+      "operator_family": "audio_scaled_sum_strided_checked",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "none", "output": "fp32"},
+      "compute": {"input": "fp32", "weight": "none", "accumulator": "fp32", "contraction": "disabled", "evaluation_order": "per_valid_element_left_plus_right_then_multiply_scale"},
+      "rounding": {"mode": "rne", "points": ["input_load", "activation_intermediate_store", "output_store"]},
+      "reduction": {"kind": "none", "order": "none", "partial_accumulator": "none", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "independent_outputs", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Checked channel-major two-input sum followed by FP32 scale over valid columns with independently declared physical strides. No FMA, heap or scratch. Rejects nonfinite values and results before writes; leaves padding untouched. Inference only."
+    },
     "audio_adain_instance_norm_biased_channel_fp64_stats_fp32_affine": {
       "operator_family": "audio_adain_instance_norm",
       "status": "validated",
