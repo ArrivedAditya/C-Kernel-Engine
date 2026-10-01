@@ -114,7 +114,10 @@
             "farskip_shared_swiglu",
             "mla_kv_decompress",
             "partial_rope_concat",
-            "yarn_rope_init"
+            "yarn_rope_init",
+            "runtime_extent_scale",
+            "audio_upsample_nearest",
+            "audio_conv_transpose1d_depthwise"
           ]
         },
         "status": {

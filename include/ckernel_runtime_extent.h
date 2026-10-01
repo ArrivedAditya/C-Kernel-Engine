@@ -28,6 +28,14 @@ int ck_runtime_sum_i32_checked(
     size_t capacity,
     int32_t *valid_extent);
 
+/* Multiply a computed valid extent by a positive integer factor. Reject
+ * overflow and capacity excess before publishing the output scalar. */
+int ck_runtime_scale_i32_checked(
+    size_t source_extent,
+    size_t factor,
+    size_t capacity,
+    int32_t *valid_extent);
+
 /* Copy only the valid columns of channel-major FP32 rows. Physical row
  * strides and buffer capacities are independent of valid_frames. The two
  * buffers must not overlap. Invalid metadata leaves output untouched. */

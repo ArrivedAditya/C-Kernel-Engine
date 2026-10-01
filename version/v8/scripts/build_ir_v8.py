@@ -1840,6 +1840,14 @@ OP_DATAFLOW = {
         "inputs": {"input": "external:audio_features"},
         "outputs": {"output": {"slot": "audio_conv_output", "dtype": "fp32"}},
     },
+    "audio_upsample_nearest_checked": {
+        "inputs": {"input": "external:audio_features"},
+        "outputs": {"output": {"slot": "upsampled_features", "dtype": "fp32"}},
+    },
+    "audio_conv_transpose1d_depthwise_checked": {
+        "inputs": {"input": "external:audio_features"},
+        "outputs": {"output": {"slot": "transposed_convolution_output", "dtype": "fp32"}},
+    },
     "transpose_strided_checked": {
         "inputs": {"input": "external:features"},
         "outputs": {"output": {"slot": "transposed_features", "dtype": "fp32"}},
@@ -1897,6 +1905,10 @@ OP_DATAFLOW = {
     },
     "runtime_extent_sum": {
         "inputs": {"values": "external:runtime_values"},
+        "outputs": {"valid_extent": {"slot": "runtime_valid_extent", "dtype": "i32"}},
+    },
+    "runtime_extent_scale": {
+        "inputs": {},
         "outputs": {"valid_extent": {"slot": "runtime_valid_extent", "dtype": "i32"}},
     },
     "audio_duration_expand": {
@@ -4473,6 +4485,8 @@ def _validated_kernel_codegen_capability(kernel_id: str, kernel_map: Dict) -> Op
 TEMPLATE_TO_KERNEL_OP = {
     "layernorm_rows_param_checked": "layernorm",
     "audio_conv1d_checked": "audio_conv1d_checked",
+    "audio_upsample_nearest_checked": "audio_upsample_nearest_checked",
+    "audio_conv_transpose1d_depthwise_checked": "audio_conv_transpose1d_depthwise_checked",
     "transpose_strided_checked": "transpose_strided_checked",
     "leaky_relu_strided_checked": "leaky_relu_strided_checked",
     "feature_concat_broadcast_rows": "feature_concat_broadcast_rows",
@@ -4487,6 +4501,7 @@ TEMPLATE_TO_KERNEL_OP = {
     "embedding_lookup_checked": "embedding_lookup_checked",
     "audio_duration_logits_to_frames": "audio_duration_logits_to_frames",
     "runtime_extent_sum": "runtime_extent_sum",
+    "runtime_extent_scale": "runtime_extent_scale",
     "audio_duration_expand": "audio_duration_expand",
     "runtime_copy_valid": "runtime_copy_valid",
     "audio_istft_mag_phase": "audio_istft_mag_phase",
@@ -9189,6 +9204,9 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         "embedding_three_table_layer_norm": ["word", "position", "token_type", "gamma", "beta"],
         "audio_duration_logits_to_frames": None,
         "runtime_extent_sum": None,
+        "runtime_extent_scale": None,
+        "audio_upsample_nearest_checked": None,
+        "audio_conv_transpose1d_depthwise_checked": ["weight", "bias"],
         "audio_duration_expand": None,
         "runtime_copy_valid": None,
         "audio_istft_mag_phase": None,
@@ -12515,6 +12533,9 @@ TEMPLATE_OP_WEIGHTS = {
     "embedding_three_table_layer_norm": ["word", "position", "token_type", "gamma", "beta"],
     "audio_duration_logits_to_frames": [],
     "runtime_extent_sum": [],
+    "runtime_extent_scale": [],
+    "audio_upsample_nearest_checked": [],
+    "audio_conv_transpose1d_depthwise_checked": ["weight", "bias"],
     "audio_duration_expand": [],
     "runtime_copy_valid": [],
     "audio_istft_mag_phase": [],

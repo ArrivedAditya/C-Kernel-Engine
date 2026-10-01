@@ -49,6 +49,6 @@
       {"pointer": "output", "elements": "sum_output_elements", "rows": "sum_rows", "width": "sum_columns", "element_bytes": 4, "stride": "sum_output_stride", "physical_row_stride": true}
     ]
   },
-  "tests": {"unit": ["tests/test_v8_audio_scaled_sum_strided.py", "tests/test_v8_checked_scaled_sum_generated.py", "tests/test_v8_kokoro_generated_prosody_first_block.py"], "oracle": "Independent NumPy FP32 sum then multiply; synthetic generated-C fixture; pinned shared checkpoint plus independent PyTorch F0/noise block operations"},
+  "tests": {"unit": ["tests/test_v8_audio_scaled_sum_strided.py", "tests/test_v8_checked_scaled_sum_generated.py", "tests/test_v8_kokoro_generated_prosody_first_block.py", "tests/test_v8_kokoro_generated_prosody_complete.py"], "oracle": "Independent NumPy FP32 sum then multiply; synthetic generated-C fixture; pinned shared checkpoint plus independent PyTorch F0/noise block operations"},
   "notes": "Inference only. Separate FP32 sum then FP32 scale, no FMA. All valid inputs and derived results are preflighted before output writes; physical padding is untouched. Inputs and output must not alias. No heap or scratch."
 }

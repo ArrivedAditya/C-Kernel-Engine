@@ -1,12 +1,12 @@
 {
-  "id": "leaky_relu_strided_f32_checked",
-  "op": "leaky_relu_strided_checked",
-  "operation_interface": "activation.leaky_relu.checked.strided.fp32.v1",
-  "variant": "checked_scalar_strided",
+  "id": "audio_upsample_nearest_channel_major_f32_checked",
+  "op": "audio_upsample_nearest_checked",
+  "operation_interface": "audio.upsample.nearest.checked.channel_major.fp32.v1",
+  "variant": "scalar_checked_strided",
   "selection": {
     "status": "candidate",
     "priority": 100,
-    "equivalence_group": "leaky_relu_strided_f32_checked",
+    "equivalence_group": "audio_upsample_nearest_exact_fp32",
     "phases": [
       "prefill"
     ]
@@ -21,10 +21,10 @@
       "name": "input",
       "dtype": "fp32",
       "shape": [
-        "R",
-        "C"
+        "C",
+        "T"
       ],
-      "layout": "row_major_strided",
+      "layout": "channel_major_input_stride",
       "placement": "local",
       "access": "read",
       "storage_class": "activation",
@@ -37,10 +37,10 @@
       "name": "output",
       "dtype": "fp32",
       "shape": [
-        "R",
-        "C"
+        "C",
+        "U"
       ],
-      "layout": "row_major_strided",
+      "layout": "channel_major_output_stride",
       "placement": "local",
       "access": "write",
       "storage_class": "activation",
@@ -53,14 +53,16 @@
     "input_stride",
     "output_elements",
     "output_stride",
-    "rows",
-    "columns"
+    "channels",
+    "input_frames",
+    "factor",
+    "output_frames"
   ],
   "impl": {
-    "function": "leaky_relu_strided_f32_checked",
-    "c_declaration": "int leaky_relu_strided_f32_checked(const float *input, size_t input_elements, size_t input_stride, float *output, size_t output_elements, size_t output_stride, size_t rows, size_t columns, float negative_slope);",
+    "function": "audio_upsample_nearest_channel_major_f32_checked",
+    "c_declaration": "int audio_upsample_nearest_channel_major_f32_checked(const float *input, size_t input_elements, size_t input_stride, float *output, size_t output_elements, size_t output_stride, size_t channels, size_t input_frames, size_t factor, size_t output_frames);",
     "sources": [
-      "src/kernels/strided_unary_checked.c"
+      "src/kernels/audio_prosody_upsample_checked.c"
     ]
   },
   "modes": {
@@ -70,12 +72,12 @@
   },
   "numerical_capabilities": [
     {
-      "contract_id": "leaky_relu_strided_f32_checked_exact_fp32",
+      "contract_id": "audio_upsample_nearest_checked_exact_fp32",
       "status": "validated",
       "phases": [
         "prefill"
       ],
-      "function": "leaky_relu_strided_f32_checked",
+      "function": "audio_upsample_nearest_channel_major_f32_checked",
       "explicit_selector": true,
       "implementation": {
         "isa_dispatch": "scalar",
@@ -95,7 +97,7 @@
         "merge_order": "none",
         "deterministic": true,
         "thread_count_changes_arithmetic_order": false,
-        "split_strategy": "serial"
+        "split_strategy": "independent_outputs"
       }
     }
   ],
@@ -112,12 +114,12 @@
       },
       {
         "name": "input_elements",
-        "source": "runtime:leaky_input_elements",
+        "source": "runtime:nearest_input_elements",
         "value_type": "size_t"
       },
       {
         "name": "input_stride",
-        "source": "runtime:leaky_input_stride",
+        "source": "runtime:nearest_input_stride",
         "value_type": "size_t"
       },
       {
@@ -130,65 +132,70 @@
       },
       {
         "name": "output_elements",
-        "source": "runtime:leaky_output_elements",
+        "source": "runtime:nearest_output_elements",
         "value_type": "size_t"
       },
       {
         "name": "output_stride",
-        "source": "runtime:leaky_output_stride",
+        "source": "runtime:nearest_output_stride",
         "value_type": "size_t"
       },
       {
-        "name": "rows",
-        "source": "runtime:leaky_rows",
+        "name": "channels",
+        "source": "runtime:nearest_channels",
         "value_type": "size_t"
       },
       {
-        "name": "columns",
-        "source": "runtime:leaky_columns",
+        "name": "input_frames",
+        "source": "runtime:nearest_input_frames",
         "value_type": "size_t"
       },
       {
-        "name": "negative_slope",
-        "source": "param:negative_slope"
+        "name": "factor",
+        "source": "runtime:nearest_factor",
+        "value_type": "size_t"
+      },
+      {
+        "name": "output_frames",
+        "source": "runtime:nearest_output_frames",
+        "value_type": "size_t"
+      }
+    ]
+  },
+  "call_constant_contract": {
+    "shape_symbols": {
+      "C": "nearest_channels",
+      "T": "nearest_input_frames",
+      "U": "nearest_output_frames"
+    },
+    "buffer_spans": [
+      {
+        "pointer": "input",
+        "elements": "nearest_input_elements",
+        "rows": "nearest_channels",
+        "width": "nearest_input_frames",
+        "element_bytes": 4,
+        "stride": "nearest_input_stride",
+        "physical_row_stride": true
+      },
+      {
+        "pointer": "output",
+        "elements": "nearest_output_elements",
+        "rows": "nearest_channels",
+        "width": "nearest_output_frames",
+        "element_bytes": 4,
+        "stride": "nearest_output_stride",
+        "physical_row_stride": true
       }
     ]
   },
   "tests": {
     "unit": [
-      "tests/test_v8_kokoro_text_primitives.py",
-      "tests/test_v8_checked_text_ops_generated.py",
-      "tests/test_v8_kokoro_generated_text_encoder.py",
-      "tests/test_v8_kokoro_generated_prosody_first_block.py",
+      "tests/test_v8_audio_prosody_upsample_oracle.py",
+      "tests/test_v8_prosody_upsample_generated.py",
       "tests/test_v8_kokoro_generated_prosody_complete.py"
     ],
-    "oracle": "Pinned PyTorch 2.8 text encoder, independent NumPy/PyTorch primitives"
+    "oracle": "Pinned PyTorch 2.8 F.interpolate(mode=nearest), exact element copy"
   },
-  "notes": "Checked strided unary transform, no heap or scratch. Rejects nonfinite inputs and insufficient capacities before writes; padding remains untouched. Inference only.",
-  "call_constant_contract": {
-    "shape_symbols": {
-      "R": "leaky_rows",
-      "C": "leaky_columns"
-    },
-    "buffer_spans": [
-      {
-        "pointer": "input",
-        "elements": "leaky_input_elements",
-        "rows": "leaky_rows",
-        "width": "leaky_columns",
-        "element_bytes": 4,
-        "stride": "leaky_input_stride",
-        "physical_row_stride": true
-      },
-      {
-        "pointer": "output",
-        "elements": "leaky_output_elements",
-        "rows": "leaky_rows",
-        "width": "leaky_columns",
-        "element_bytes": 4,
-        "stride": "leaky_output_stride",
-        "physical_row_stride": true
-      }
-    ]
-  }
+  "notes": "Checked nearest upsampling with explicit input/output valid frames, physical strides, and capacities. Rejects invalid or nonfinite input before writes; padding untouched. Inference only."
 }

@@ -883,6 +883,23 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_kokoro_generated_prosody_first_block.py",
         timeout_sec=300,
     ),
+    "tts_prosody_upsample_oracle": TestSuite(
+        "TTS Nearest and Depthwise Transposed Conv1D Pinned Oracle", "kernels",
+        ROOT / "tests" / "test_v8_audio_prosody_upsample_oracle.py",
+    ),
+    "tts_runtime_extent_scale": TestSuite(
+        "Checked Runtime Extent Scale", "kernels",
+        ROOT / "tests" / "test_v8_runtime_extent_scale.py",
+    ),
+    "tts_prosody_upsample_generated": TestSuite(
+        "Model-Neutral Generated A-to-2A Upsampling Graph", "inference",
+        ROOT / "tests" / "test_v8_prosody_upsample_generated.py",
+    ),
+    "tts_kokoro_generated_complete_prosody": TestSuite(
+        "Kokoro Generated Complete F0/Noise Prosody", "inference",
+        ROOT / "tests" / "test_v8_kokoro_generated_prosody_complete.py",
+        timeout_sec=300,
+    ),
     "tts_checked_text_ops_generated": TestSuite(
         "Model-Neutral Checked Conv1D, Transpose, and Activation Graph", "inference",
         ROOT / "tests" / "test_v8_checked_text_ops_generated.py",

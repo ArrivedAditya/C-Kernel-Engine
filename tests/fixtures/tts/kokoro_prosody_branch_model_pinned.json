@@ -1,0 +1,46 @@
+{
+  "scope": "direct pinned KModel F0/N blocks and projections",
+  "model_pin": "e8a90b41091c3c5b70375c47cc959799920fa4d6",
+  "code_pin": "dfb907a02bba8152ca444717ca5d78747ccb4bec",
+  "voice": "af_heart",
+  "oracle": "pinned full KModel forward hooks",
+  "environment": {
+    "kokoro": "0.9.4",
+    "misaki": "0.9.4",
+    "torch": "2.8.0+cpu",
+    "transformers": "5.17.0",
+    "spacy": "3.8.16",
+    "num2words": "0.5.14",
+    "phonemizer-fork": "3.3.2",
+    "espeakng-loader": "0.2.4"
+  },
+  "asset_sha256": {
+    "config.json": "5abb01e2403b072bf03d04fde160443e209d7a0dad49a423be15196b9b43c17f",
+    "kokoro-v1_0.pth": "496dba118d1a58f5f3db2efc88dbdc216e0483fc89fe6e47ee1f2c53f18ad1e4",
+    "voices/af_heart.pt": "0ab5709b8ffab19bfd849cd11d98f75b60af7733253ad0d67b12382a102cb4ff"
+  },
+  "capture_manifest_sha256": "235ed46ea24480e53db991ee9c7186a80f8ca570c45b37107df017f74e8df6c0",
+  "source_tensor_sha256": {
+    "predictor_F0_0": "0da5357b39fd885776c0bc06bcaa5e5c2c009c08d365e53eb855fabd622cbb1a",
+    "predictor_F0_1": "fc985cfb0613ab653f7803292c591231c6954e26005943f4e18a5bff4a408fe2",
+    "predictor_F0_2": "0e76af2204f1f673aa807fa7e6a5737de0da0400f56407762651bc2c81e1c392",
+    "predictor_F0_proj": "f9ec0475c4cf0beda307042eb458671390b12071277445ce081660c9d48df8fe",
+    "predictor_N_0": "3e99ff61e356def4105c46c255288eb761f742106e0862391538b1e03e6bfcba",
+    "predictor_N_1": "e4a6a56b18f2a8113e0e9a3e3963c2d0b66752e45e48f75087807f0914d228f4",
+    "predictor_N_2": "d354313b6deb841860e5c7d91da32cce59d1338391db2380e012c3c81b8e3e48",
+    "predictor_N_proj": "6d9758811fdc43205ceda74c9b60d1e0ca48a927901cfdf1bfbfad7e9dc521b3"
+  },
+  "array_sha256": {
+    "predictor_F0_0": "a3ede6e3bfbd7be14c6d56d7f59e2d5f44f89fd73130971432780656bfca38bd",
+    "predictor_F0_1": "fd668b1612169405ed744206557fb1ea8e26c1aa97995413e6dc86e7b3ea1ace",
+    "predictor_F0_2": "961436e86620ad8ae82811f89b2b1a6980bb59ab2f3120698334c654cd47cfd2",
+    "predictor_F0_proj": "ae57333dc727899284ca3b21c06efd7049ea4cb08822e59b26da78375cf0b5a8",
+    "predictor_N_0": "c502797320dd90021da48f42bdc9c51df814f9dd13ac9db3f685be5cbc2d0522",
+    "predictor_N_1": "bc78eaa088232e78660f89c334b5f5a2beb6a1ef650498f2c7241fc6605fd3ac",
+    "predictor_N_2": "2912b066f57be4470515bacbeca8fef1adb599ce9014489bee9eb7a507e2ea1e",
+    "predictor_N_proj": "d55c0460863248079d04c417ff54a60d91757d473cf5ca711a06a9158f2f5faa"
+  },
+  "fixture_sha256": "f36b64f3cd12c3fa091c1ce99f36a250e2af90aaebdfe709f5da0e59d8c1fab9",
+  "valid_frames": 103,
+  "upsampled_frames": 206
+}
