@@ -10,6 +10,8 @@ import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest import mock
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,9 +20,112 @@ SPEC = importlib.util.spec_from_file_location("certify_multimodal_ocr_corpus_v8"
 assert SPEC is not None and SPEC.loader is not None
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
+PUBLIC_SPEC = importlib.util.spec_from_file_location(
+    "export_vision_public_summary_v8",
+    ROOT / "version" / "v8" / "scripts" / "export_vision_public_summary_v8.py",
+)
+assert PUBLIC_SPEC is not None and PUBLIC_SPEC.loader is not None
+PUBLIC = importlib.util.module_from_spec(PUBLIC_SPEC)
+PUBLIC_SPEC.loader.exec_module(PUBLIC)
 
 
 class MultimodalOcrCorpusCertificationTest(unittest.TestCase):
+    def test_required_count_applies_to_selected_distinct_images(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for index, payload in enumerate((b"first", b"second"), start=1):
+                (root / f"image{index}.jpg").write_bytes(payload)
+                (root / f"truth{index}.json").write_text('{"name":"Ada"}', encoding="utf-8")
+            manifest = root / "manifest.json"
+            def write_manifest(second_image: str) -> None:
+                manifest.write_text(json.dumps({"samples": [
+                    {"inputs": [{"path": "image1.jpg"}],
+                     "groundTruth": [{"path": "truth1.json"}]},
+                    {"inputs": [{"path": second_image}],
+                     "groundTruth": [{"path": "truth2.json"}]},
+                ]}), encoding="utf-8")
+            args = [
+                "--manifest", str(manifest), "--encoder-runtime", str(root / "encoder"),
+                "--decoder-runtime", str(root / "decoder"),
+                "--composition-circuit", "fixture", "--adapter-id", "fixture",
+                "--model-label", "fixture", "--output-dir", str(root / "out"),
+                "--require-images", "2", "--dry-run",
+            ]
+            write_manifest("image2.jpg")
+            with redirect_stderr(StringIO()), self.assertRaises(SystemExit):
+                MODULE.main([*args, "--start-index", "2"])
+            with redirect_stderr(StringIO()), self.assertRaises(SystemExit):
+                MODULE.main([*args, "--limit", "1"])
+            write_manifest("image1.jpg")
+            with redirect_stderr(StringIO()), self.assertRaises(SystemExit):
+                MODULE.main(args)
+
+    def test_public_ocr_summary_excludes_private_material_and_preserves_verdict(self) -> None:
+        private = {
+            "schema": "cke.multimodal_ocr_corpus_certification",
+            "status": "complete", "quality_status": "fail",
+            "aggregate": {"requested": 2, "completed": 2, "passing": 1, "errors": 0,
+                          "field_accuracy": 0.5, "nonempty_field_accuracy": 0.5,
+                          "total_wall_sec": 4.0},
+            "rows": [
+                {"status": "complete", "image_path": "/private/SENTINEL.jpg",
+                 "generated_text": "SENTINEL-SECRET-OCR", "prompt": "SENTINEL-PRIVATE-PROMPT",
+                 "image_sha256": "c" * 64,
+                 "execution_evidence": {
+                     "evidence_kind": "bridge_reported_paths_and_artifact_hashes",
+                     "loaded_engine_verified": False, "prefix_source": "encoder",
+                     "model_library_sha256": {"encoder": "a" * 64, "decoder": "b" * 64},
+                 }} for _ in range(2)
+            ],
+        }
+        public = PUBLIC.build_public_summary(private, "ocr-v1")
+        serialized = json.dumps(public)
+        self.assertEqual(public["selected_count"], 2)
+        self.assertEqual(public["completed_count"], 2)
+        self.assertEqual(public["passing_count"], 1)
+        self.assertEqual(public["status"], "fail")
+        for secret in ("SENTINEL", "/private", "c" * 64):
+            self.assertNotIn(secret, serialized)
+        minimal = PUBLIC.build_count_free_public_summary(private)
+        self.assertEqual(minimal, {
+            "schema_version": 1,
+            "lane": "independent_image_to_ocr_task_quality",
+            "status": "fail",
+        })
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "private.json"
+            output = root / "public.json"
+            source.write_text(json.dumps(private), encoding="utf-8")
+            with redirect_stdout(StringIO()):
+                self.assertEqual(PUBLIC.main([
+                    "--private-summary", str(source), "--public-summary", str(output),
+                    "--count-free",
+                ]), 0)
+            self.assertEqual(json.loads(output.read_text(encoding="utf-8")), minimal)
+        with self.assertRaisesRegex(ValueError, "inconsistent OCR verdict"):
+            PUBLIC.build_public_summary({**private, "quality_status": "pass"}, "ocr-v1")
+        with self.assertRaisesRegex(ValueError, "missing decoder generated-library hash"):
+            broken = json.loads(json.dumps(private))
+            broken["rows"][0]["execution_evidence"]["model_library_sha256"].pop("decoder")
+            PUBLIC.build_public_summary(broken, "ocr-v1")
+        partial = json.loads(json.dumps(private))
+        partial["status"] = "incomplete"
+        partial["quality_status"] = "incomplete"
+        partial["aggregate"].update(completed=1, passing=1, errors=1)
+        partial["rows"] = partial["rows"][:1]
+        self.assertEqual(PUBLIC.build_public_summary(partial, "ocr-v1")["status"], "incomplete")
+
+    def test_aggregate_distinguishes_execution_from_field_quality(self) -> None:
+        metrics = {"json_valid": True, "expected_fields": 2, "exact_fields": 1,
+                   "extra_fields": [], "nonempty_expected_fields": 2,
+                   "nonempty_exact_fields": 1}
+        aggregate = MODULE._aggregate([
+            {"status": "complete", "metrics": metrics, "timings": {"wall_sec": 1.0}}
+        ], 1)
+        self.assertEqual(aggregate["completed"], 1)
+        self.assertEqual(aggregate["passing"], 0)
+
     def test_extracts_plain_and_fenced_json(self) -> None:
         self.assertEqual(MODULE._extract_json_object('{"name":"Ada"}'), {"name": "Ada"})
         self.assertEqual(
@@ -183,8 +288,15 @@ class MultimodalOcrCorpusCertificationTest(unittest.TestCase):
                 "prefix_tokens": 4,
                 "model_library_sha256": {"encoder": "a" * 64, "decoder": "b" * 64},
             }
+            row["metrics"] = {"json_valid": True, "expected_fields": 1,
+                              "exact_fields": 1, "nonempty_expected_fields": 1,
+                              "nonempty_exact_fields": 1, "extra_fields": []}
+            row["timings"] = {"wall_sec": 1.0}
             path.write_text(json.dumps(row), encoding="utf-8")
             self.assertIsNotNone(MODULE._load_resumed(path, expected, config))
+            malformed = dict(row, metrics={"json_valid": True})
+            path.write_text(json.dumps(malformed), encoding="utf-8")
+            self.assertIsNone(MODULE._load_resumed(path, expected, config))
             for mutation in (
                 {"prefix_tokens": 0},
                 {"prefix_tokens": True},
@@ -322,10 +434,11 @@ class MultimodalOcrCorpusCertificationTest(unittest.TestCase):
                 "--composition-circuit", "fixture", "--adapter-id", "fixture",
                 "--model-label", "fixture", "--output-dir", str(root / "out"),
             ]
-            with mock.patch.object(MODULE, "_run", side_effect=fake_run):
+            with mock.patch.object(MODULE, "_run", side_effect=fake_run), redirect_stdout(StringIO()) as output:
                 result = MODULE.main(args)
             summary = json.loads((root / "out" / "summary.json").read_text(encoding="utf-8"))
             self.assertEqual(result, 1)
+            self.assertNotIn(str(root), output.getvalue())
             self.assertEqual(summary["status"], "incomplete")
             self.assertEqual(summary["aggregate"]["errors"], 1)
             self.assertEqual(summary["rows"], [])
@@ -347,6 +460,54 @@ class MultimodalOcrCorpusCertificationTest(unittest.TestCase):
             self.assertFalse(stale.exists())
             summary = json.loads((root / "out" / "summary.json").read_text(encoding="utf-8"))
             self.assertEqual(summary["status"], "incomplete")
+
+    def test_completed_execution_does_not_promote_wrong_ocr_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            image = root / "private-image.jpg"
+            image.write_bytes(b"image")
+            (root / "truth.json").write_text('{"name":"Ada"}', encoding="utf-8")
+            (root / "manifest.json").write_text(json.dumps({"samples": [{
+                "inputs": [{"path": image.name}],
+                "groundTruth": [{"path": "truth.json"}],
+            }]}), encoding="utf-8")
+            for role, library in (("encoder", "libvision_encoder.so"),
+                                  ("decoder", "libmodel.so")):
+                runtime = root / role
+                runtime.mkdir()
+                (runtime / library).write_bytes(role.encode())
+                (runtime / "libckernel_engine.so").write_bytes(b"engine")
+
+            def fake_run(_command, log_path, _env):
+                bridge = log_path.parent / "runtime" / "bridge_report.json"
+                bridge.parent.mkdir()
+                bridge.write_text(json.dumps({
+                    "status": "ok", "prefix_source": "encoder", "prefix_tokens": 4,
+                    "encoder_report": {"image_source": "file", "image_path": str(image),
+                                       "prefix_tokens": 4},
+                    "encoder_runtime": {"source": "prebuilt", "workdir": str(root / "encoder"),
+                                        "so_path": str(root / "encoder" / "libvision_encoder.so")},
+                    "decoder_runtime": {"source": "prebuilt", "workdir": str(root / "decoder"),
+                                        "so_path": str(root / "decoder" / "libmodel.so")},
+                    "generated_text": '{"name":"Grace"}',
+                }), encoding="utf-8")
+                return 0.01
+
+            args = [
+                "--manifest", str(root / "manifest.json"),
+                "--encoder-runtime", str(root / "encoder"),
+                "--decoder-runtime", str(root / "decoder"),
+                "--composition-circuit", "fixture", "--adapter-id", "fixture",
+                "--model-label", "fixture", "--output-dir", str(root / "out"),
+                "--require-images", "1",
+            ]
+            with mock.patch.object(MODULE, "_run", side_effect=fake_run):
+                self.assertEqual(MODULE.main(args), 0)
+            summary = json.loads((root / "out" / "summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(summary["status"], "complete")
+            self.assertEqual(summary["quality_status"], "fail")
+            self.assertEqual(summary["aggregate"]["passing"], 0)
+            self.assertEqual(PUBLIC.build_public_summary(summary, "ocr-v1")["status"], "fail")
 
 
 if __name__ == "__main__":

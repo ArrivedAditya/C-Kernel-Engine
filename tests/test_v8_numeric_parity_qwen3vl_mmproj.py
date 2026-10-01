@@ -473,6 +473,9 @@ class NumericParityQwen3VLMmprojV8Tests(unittest.TestCase):
         self.assertEqual(public["completed_count"], 1)
         self.assertEqual(public["status"], "incomplete")
         self.assertEqual(public["bridge_reported_artifact_sha256"]["decoder"], ["d" * 64])
+        self.assertEqual(public_summary.build_count_free_public_summary(private), {
+            "schema_version": 1, "lane": "shared_prefix_decoder", "status": "incomplete",
+        })
         localized = dict(private, certification_scope="localization")
         self.assertEqual(public_summary.build_public_summary(localized, "ocr40-v1")["lane"], "localization")
 
@@ -495,6 +498,9 @@ class NumericParityQwen3VLMmprojV8Tests(unittest.TestCase):
         self.assertEqual(public["bridge_reported_artifact_sha256"]["ck_generated_source"], ["a" * 64, "b" * 64])
         self.assertEqual(public["bridge_reported_artifact_sha256"]["ck_model_library"], ["a" * 64, "c" * 64])
         self.assertEqual(public["bridge_reported_artifact_sha256"]["ck_engine_library"], ["a" * 64])
+        self.assertEqual(public_summary.build_count_free_public_summary(private), {
+            "schema_version": 1, "lane": "independent_encoder_prefix", "status": "pass",
+        })
 
     def test_encoder_prefix_suite_thresholds_shape_and_metrics(self) -> None:
         values = 36 * 28 * 16384
