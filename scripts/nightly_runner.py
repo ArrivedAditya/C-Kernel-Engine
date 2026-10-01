@@ -861,6 +861,15 @@ TEST_SUITES = {
         "TTS AdaIN InstanceNorm Live PyTorch Oracle", "kernels",
         ROOT / "tests" / "test_v8_audio_adain_instance_norm_live.py",
     ),
+    "tts_checked_adain_generated": TestSuite(
+        "Model-Neutral Checked AdaIN Generated Graph", "inference",
+        ROOT / "tests" / "test_v8_checked_adain_generated.py",
+    ),
+    "tts_kokoro_generated_prosody_norm": TestSuite(
+        "Kokoro Generated First F0/Noise AdaIN Stages", "inference",
+        ROOT / "tests" / "test_v8_kokoro_generated_prosody_norm.py",
+        timeout_sec=300,
+    ),
     "tts_checked_text_ops_generated": TestSuite(
         "Model-Neutral Checked Conv1D, Transpose, and Activation Graph", "inference",
         ROOT / "tests" / "test_v8_checked_text_ops_generated.py",

@@ -1,0 +1,41 @@
+{
+  "scope": "first F0/N norm from pinned shared-LSTM output; no convolution or full branch",
+  "model_pin": "e8a90b41091c3c5b70375c47cc959799920fa4d6",
+  "oracle": "PyTorch F.linear then F.instance_norm and style affine",
+  "oracle_version": "2.13.0+cpu",
+  "shared_fixture_sha256": "0df60fc7bf8c60fac26063677125ea10d81596daf1643fa101538b9e454f0e18",
+  "duration_fixture_sha256": "8b4ab025e27cb024711d3e8b3c51f02e71a49937156ea8199a1ab90dcda1828c",
+  "weight_payload_sha256": {
+    "duration_prosody.F0.0.norm1.fc.weight": "620cafd1c46d0c93bc7ee8e500da36b02c0cd66e20139e40aa66a7a442b54711",
+    "duration_prosody.F0.0.norm1.fc.bias": "e9210daf2d04146b03c8725d69c81f57964456a431ea96aa0fd6f2a306c374d1",
+    "duration_prosody.F0.0.norm1.norm.weight": "fef951e6c76ad6a01b208af650ca6d95769bec840e009981c5ae1316a42c90b1",
+    "duration_prosody.F0.0.norm1.norm.bias": "e5a00aa9991ac8a5ee3109844d84a55583bd20572ad3ffcd42792f3c36b183ad",
+    "duration_prosody.N.0.norm1.fc.weight": "3df70631ee09f46a866893dca111cd54d5c6d4f6acdbf887519f50d1cceffc92",
+    "duration_prosody.N.0.norm1.fc.bias": "0a3673baf534ba901080d44e030dc14e77e40bec973ec024fb78c58852f484f8",
+    "duration_prosody.N.0.norm1.norm.weight": "fef951e6c76ad6a01b208af650ca6d95769bec840e009981c5ae1316a42c90b1",
+    "duration_prosody.N.0.norm1.norm.bias": "e5a00aa9991ac8a5ee3109844d84a55583bd20572ad3ffcd42792f3c36b183ad"
+  },
+  "array_sha256": {
+    "length36_shared": "f100590fbaa15a8c5733fb4b5728a723ab5c149e72ec94c6e2e8525581d5fc8a",
+    "length72_shared": "15178aa88bb7737b92166667b7fe201340f20fb3d145fc13fcd81d9b5d3f8d36",
+    "F0_fc_weight": "620cafd1c46d0c93bc7ee8e500da36b02c0cd66e20139e40aa66a7a442b54711",
+    "F0_fc_bias": "e9210daf2d04146b03c8725d69c81f57964456a431ea96aa0fd6f2a306c374d1",
+    "F0_norm_weight": "fef951e6c76ad6a01b208af650ca6d95769bec840e009981c5ae1316a42c90b1",
+    "F0_norm_bias": "e5a00aa9991ac8a5ee3109844d84a55583bd20572ad3ffcd42792f3c36b183ad",
+    "F0_style_affine": "48feec147047f2c13230dae3b26cacf7c9fcadf8325c04a7e938dd3a6b99986d",
+    "F0_output": "b44cd02e5578a720fa1498950008d53f188c329127e2dbf713a9f766ba42f8f4",
+    "length36_F0_output": "611334dd4b0364c03d56b7a4c492fbaf6fbe6a08c61dbce2aa2dbd47d6f0db96",
+    "length72_F0_output": "88a730e5c9463ef7dfd96d0f3ad0241f27b3edd510ec5b5437e5582842220958",
+    "N_fc_weight": "3df70631ee09f46a866893dca111cd54d5c6d4f6acdbf887519f50d1cceffc92",
+    "N_fc_bias": "0a3673baf534ba901080d44e030dc14e77e40bec973ec024fb78c58852f484f8",
+    "N_norm_weight": "fef951e6c76ad6a01b208af650ca6d95769bec840e009981c5ae1316a42c90b1",
+    "N_norm_bias": "e5a00aa9991ac8a5ee3109844d84a55583bd20572ad3ffcd42792f3c36b183ad",
+    "N_style_affine": "18bf9c3a6c9410f9221d43675168558d860459484fd230a1c8545c45ae9ce5ff",
+    "N_output": "a88d3df4273ea94acd2f0ed24b51725dcb2286e416c63b92e1ec5edbd3c8f528",
+    "length36_N_output": "ff0a25d7129fa82b949b76c9610d044899e5f13987728c680f8e16160510a455",
+    "length72_N_output": "560de72f6f63b2b93df669784e93bdc94e1068e694fa035c421383459cb5f4f8"
+  },
+  "fixture_sha256": "a463a01f98164cb3d6a08c1dfb08661f3357f3c92c2cfe224428257e7cce4799",
+  "valid_frames": 103,
+  "frame_capacity": 128
+}

@@ -239,7 +239,9 @@
   "tests": {
     "unit": [
       "tests/test_v8_audio_adain_instance_norm_oracle.py",
-      "tests/test_v8_audio_adain_instance_norm_live.py"
+      "tests/test_v8_audio_adain_instance_norm_live.py",
+      "tests/test_v8_checked_adain_generated.py",
+      "tests/test_v8_kokoro_generated_prosody_norm.py"
     ],
     "oracle": "Independent torch.nn.functional.instance_norm CPU, committed PyTorch 2.13 fixture and optional live comparison; fixture-versus-live and native-versus-live reported separately"
   },
