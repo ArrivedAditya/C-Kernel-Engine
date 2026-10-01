@@ -1493,7 +1493,7 @@ rm /srv/cke/nightly-state/PAUSE</pre>
         </thead>
         <tbody>
             <tr><td>Text</td><td>At least three fixed real prompts that exercise every declared layer kind; layer and state checkpoints through the full graph; complete first-step logits; and 128 deterministic decode steps against PyTorch or llama.cpp.</td><td>2K, 8K, and 32K are progression points. A model advertised for 64K, 128K, or 256K is not production-certified until matched runs reach that boundary with identical input IDs, checkpoint logits, KV/recurrent-state evidence, and stop reason. Code and SVG prompts measure application quality separately.</td></tr>
-            <tr><td>Vision</td><td>Official image processor and token IDs; encoder-layer checkpoints; projector/bridge output; decoder-layer and logit trajectory; at least one small, one native-resolution, and one multi-image X-Ray case.</td><td>The resumable 40-image corpus covers OCR, forms, tables, charts, handwriting, natural images, and varied geometry. Exact fields and visual-question outputs are quality gates, not substitutes for PyTorch numerical comparison.</td></tr>
+            <tr><td>Vision</td><td>Official image processor and token IDs; encoder-layer checkpoints; projector/bridge output; decoder-layer and logit trajectory; at least one small, one native-resolution, and one multi-image X-Ray case.</td><td>The private resumable corpus covers OCR, forms, tables, charts, handwriting, natural images, and varied geometry. Exact fields and visual-question outputs are quality gates, not substitutes for PyTorch numerical comparison.</td></tr>
             <tr><td>Audio</td><td>Waveform decode/resample, frontend features, every encoder block, cross-attention context, decoder state/logits, and transcript tokens compared with an independent implementation.</td><td>Short and long public fixtures, silence/noise boundaries, and every claimed language/task mode. Real-time factor, peak memory, and core occupancy are recorded independently.</td></tr>
         </tbody>
     </table>
@@ -1541,10 +1541,35 @@ make test-gemma4-private-corpus-parity-auto</pre>
         satisfy their declared numerical and corpus gates.
     </p>
     <p class="v8-note">
-        At source commit <code>352108874</code>, the Qwen3-VL profile passed all
-        40 corpus images across P3 AVX2 and Ryzen AVX-512: 640/640 generated
-        full-vocabulary decoder rows were bit-exact to llama.cpp, with 40
-        distinct image and prefix hashes. This is shared-prefix decoder parity,
+        Keep private manifests, images, raw reports, hashes, prompts, token IDs,
+        and tensor captures outside the checkout and nightly upload paths.
+        Redacted console output is not a publishable report. The independent
+        Qwen3-VL encoder suite redacts image paths and IDs by default; use
+        <code>--show-private-details</code> only in a trusted local terminal.
+        Private corpus targets require their configured number of selected,
+        distinct image hashes; partial selections cannot satisfy full coverage.
+    </p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>python version/v8/scripts/export_vision_public_summary_v8.py \
+  --private-summary /data/cke/vision-certification/RUN/summary.json \
+  --public-summary /data/cke/vision-certification/RUN/public-summary.json \
+  --count-free</pre>
+    </div>
+    <p class="v8-note">
+        Publish only the exported file, never its containing private run directory.
+        The count-free exporter accepts encoder-prefix, shared-prefix decoder,
+        and image-fed OCR task-quality summaries. It publishes only the scoped
+        lane and verdict, omitting corpus identity, counts, percentages, timing,
+        sample identities, paths, text, and artifact hashes. Full counts and
+        provenance remain in private reports. OCR quality remains separate from
+        execution completion and does not certify numerical parity.
+    </p>
+    <p class="v8-note">
+        At source commit <code>352108874</code>, the Qwen3-VL profile passed
+        its selected private corpus across P3 AVX2 and Ryzen AVX-512; all
+        generated full-vocabulary decoder rows were bit-exact to llama.cpp.
+        This is shared-prefix decoder parity,
         not independent vision-encoder parity or OCR-quality certification.
     </p>
 </div>
@@ -1595,7 +1620,7 @@ make certify-v8-engineering-quality</pre>
 make certify-v8-engineering-quality</pre>
     </div>
     <p class="v8-note" style="margin-bottom: 0;">
-        Configure local checkpoints with <code>V8_QWEN36_MODEL</code>, <code>V8_QWEN38_MODEL</code>, <code>V8_QWEN35_MOE_MODEL</code>, <code>V8_GEMMA4_MODEL</code>, <code>V8_GLM4_MODEL</code>, <code>V8_NEMOTRON9_MODEL</code>, <code>V8_INSTELLA_MODEL</code>, <code>V8_KIMI_MODEL</code>, <code>V8_LAGUNA_MODEL</code>, and <code>V8_COHERE2_MODEL</code>. The corresponding <code>V8_*_GGUF</code> variables may identify a separate llama.cpp oracle. Reports are written incrementally to <code>build/v8-long-context-certification/summary.md</code> and <code>summary.json</code>, so an interrupted multi-day run resumes completed rows. Qwen3.6-VL is intentionally excluded from this text matrix and remains covered by <code>make test-qwen36vl-private-corpus-parity-auto</code>, which exercises its encoder, bridge, decoder, and 40-image OCR corpus.
+        Configure local checkpoints with <code>V8_QWEN36_MODEL</code>, <code>V8_QWEN38_MODEL</code>, <code>V8_QWEN35_MOE_MODEL</code>, <code>V8_GEMMA4_MODEL</code>, <code>V8_GLM4_MODEL</code>, <code>V8_NEMOTRON9_MODEL</code>, <code>V8_INSTELLA_MODEL</code>, <code>V8_KIMI_MODEL</code>, <code>V8_LAGUNA_MODEL</code>, and <code>V8_COHERE2_MODEL</code>. The corresponding <code>V8_*_GGUF</code> variables may identify a separate llama.cpp oracle. Reports are written incrementally to <code>build/v8-long-context-certification/summary.md</code> and <code>summary.json</code>, so an interrupted multi-day run resumes completed rows. Qwen3.6-VL is intentionally excluded from this text matrix and remains covered by <code>make test-qwen36vl-private-corpus-parity-auto</code>, which exercises its encoder, bridge, decoder, and private OCR corpus.
     </p>
     <p class="mini-note">The capacity matrix uses a deterministic fixed-token sequence so exact consumption, hashes, timing, and oracle comparisons remain reproducible. It does not claim that normal prompts should fill every supported context window. The standalone engineering command writes to <code>build/v8-engineering-quality/quality/</code>: open <code>index.html</code> for the readable gallery, or inspect each model's exact prompt, raw response, clean <code>.c</code>/<code>.svg</code> artifact, compiler logs, trace, and validation JSON. Repository, documentation, retrieval, and multi-turn application corpora are the next certification layer.</p>
 </div>
@@ -1667,7 +1692,7 @@ make test-v8-arm-model-smoke CK_ARM_MODEL_DIR=/path/to/generated-v8-model</pre><
             <tr><td>Laguna-XS 2.1 Q4_K_M</td><td>Coherent text E2E; all 684 mapped entries converted</td><td>Embedding and layer-0 RMSNorm are bit-exact; identical-input router replay preserves selected experts and routing weights within one ULP</td><td>The current llama.cpp Laguna loader omits the GGUF YaRN beta metadata; after oracle alignment, small attention/projection drift still changes a near-tied MoE route</td></tr>
             <tr><td>Cohere2 Command R Q4_K_M</td><td>GGUF Q4_K_M bring-up — 8-token llama.cpp replay agreement on Command R7B; long-trajectory parity pending</td><td>Tokenizer-free replay matches llama.cpp for the first 8 greedy positions</td><td>Long-trajectory parity and matched performance sweeps</td></tr>
             <tr><td>Cohere North Mini Code 30B-A3B Q4_K_M</td><td>Coherent and repeatable text; two complete 131,072-token capacity runs</td><td>Identical input, first-logit, and output-token hashes across both CKE runs</td><td>Matched full-model oracle parity and practical long-code quality</td></tr>
-            <tr><td>Cohere North Micro Vision 2.4B</td><td>Real-image encoder, bridge, and decoder bring-up</td><td>Portable BF16 provider contracts; official PyTorch layer X-Ray remains follow-up work</td><td>Complete encoder/bridge/decoder parity and 40-image OCR quality</td></tr>
+            <tr><td>Cohere North Micro Vision 2.4B</td><td>Real-image encoder, bridge, and decoder bring-up</td><td>Portable BF16 provider contracts; official PyTorch layer X-Ray remains follow-up work</td><td>Complete encoder/bridge/decoder parity and private OCR quality</td></tr>
             <tr><td>Cohere Transcribe 2B</td><td>Provider and exact 2,104-tensor inventory foundation; CKE conversion fails closed</td><td>Independent oracle exports frontend, all 48 encoder blocks, cross-attention, and decoder checkpoints</td><td>Assemble and certify the complete CKE audio trajectory</td></tr>
             <tr><td>Cohere Command A+ 218B/25B-active W4A4</td><td>Experimental native NVFP4 real-weight text runtime; coherent short answer</td><td>675/675 required weights mapped, packed-row and leaf parity, bounded X-Ray</td><td>Full-model and long-context parity, vision, quality, and matched performance</td></tr>
         </tbody>
@@ -2375,6 +2400,8 @@ python version/v8/scripts/compare_whisper_encoder_pytorch_v8.py \
 
 <div class="card">
     <h3 style="margin-top: 0;">Native Server And FFI Boundary</h3>
+    <p>See the <a href="v8-serving-coverage.html">circuit-derived serving coverage inventory</a>
+        for declared profiles and the artifact-level evidence still missing for each circuit.</p>
     <p>
         External Python, Rust, or C hosts should bind <code>include/ck_session_v8.h</code> through
         <code>build/libck_session_v8.so</code>. The session loads the generated model once and exposes native
@@ -2401,12 +2428,23 @@ make test-native-session-v8</pre>
         A busy response uses a positive <code>Retry-After</code>; a cancellation
         timeout means native execution may still own the session. These checks
         establish request ownership, not completed Qwen Code tasks.</p>
+    <p>Streaming responses send bounded keep-alive comments during silent prefill,
+        including requests without tools. This lets the HTTP transport detect a
+        disconnected reader before a long native call finishes. The native worker
+        records a cancelled or failed stored response only after it returns, then
+        releases the session lease. The socket regression closes a stream during
+        active silent prefill, checks its stored status, and serves another request.</p>
     <p>
         Bounded localhost integration for <code>ck_serve_v8.py</code> serves Qwen3-0.6B with Q8_0 quantizations 
         on context length of 1024 on an ephemeral <code>127.0.0.1</code> port, waits for
         <code>GET /v1/health</code> under one monotonic deadline, streams one
         <code>POST /v1/responses</code> request, validates every event against the
         Responses schema, and requires streamed, terminal, and stored text to agree.
+        A budget-limited greeting is reported as <code>response.incomplete</code>,
+        not as a completed answer. A separate one-token request must explicitly
+        report <code>max_output_tokens</code>. The model-generated tool round trip
+        is an opt-in diagnostic with <code>--require-model-tool-roundtrip</code>;
+        passing the required smoke does not certify Qwen3-0.6B tool-use quality.
         Process-group shutdown and port cleanup complete before the lane reports success.
         Failures preserve the server log and partial SSE transcript.
     </p>
@@ -2554,6 +2592,50 @@ version/v8/scripts/ck_serve_v8.py "$RUN_DIR" --run "$RUN_DIR" \
         response cannot cancel a newer request. A legitimate active request can still produce 429.
         Long-prefill cancellation may exceed its acknowledgement deadline: a cancellation timeout
         must not release buffers still in use or be described as successful bounded cancellation.</p>
+    <p>Newly generated text runtimes can accept a request-owned cancellation flag and poll it
+        between lowered prefill operations or sequential prompt tokens. The native session
+        reports cancellation before sampling and resets partial model state before reuse.
+        Older generated libraries do not have this hook. A slow individual kernel can still
+        delay acknowledgement, so a real-model prefill cancellation result is required before
+        claiming bounded latency for a deployed bundle.</p>
+    <h4>Black-box HTTP lifecycle acceptance</h4>
+    <p>Run this probe against the intended live endpoint after deployment. It uses only HTTP:
+        cancel a long-input request after its in-progress event and a decoding request after
+        observing an output delta, close a stream, close a client after its read deadline,
+        then serve a follow-up request after each case. It checks the loaded bundle, native
+        session library and server instance before and after the run. A mismatched identity
+        fails before generation; a missing run leaves no PASS report. The JSON records whether
+        follow-up generation completed or exhausted its output allowance. The long-input
+        cancellation is a timing inference, not native prefill-phase proof; the report labels
+        its trigger and phase evidence explicitly.</p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>python3 server/http_lifecycle_acceptance.py \
+  --endpoint http://127.0.0.1:8080/v1 \
+  --model &lt;advertised-model-id&gt; \
+  --expected-serving-identity &lt;serving.json identity&gt; \
+  --expected-session-library-sha256 &lt;loaded session-library SHA-256&gt; \
+  --output /path/to/new-http-lifecycle-report.json</pre>
+    </div>
+    <p class="mini-note">The probe is a transport and ownership check, not a tool-use or
+        answer-quality certification. It requires a generated runtime with the cancellation
+        hook and a local plain-HTTP endpoint; use the separate Qwen Code acceptance runner
+        to test model-generated tool calls and task completion. Schedule the two on a local
+        runner at separate times so the single-flight endpoint is not deliberately contended;
+        retain each dated report and show a missing run as <code>NOT_TESTED</code>, never PASS.</p>
+    <p class="mini-note">The versioned native session ABI borrows request buffers and callback
+        data only while a synchronous call is active. Cancellation requests a stop; generation
+        returning acknowledges that native work has stopped. The current generated-model state
+        is not certified for concurrent sessions in one process, so another HTTP host must
+        preserve single-flight ownership until a separate sequence-state contract is proven.
+        See <code>include/ck_session_v8.h</code> for the buffer and thread rules.</p>
+    <p>In an isolated Ryzen native-session probe on 2026-09-30, regenerated Qwen3.8-27B
+        Q4_K_M code acknowledged a long-prefill cancellation in 0.55 seconds and completed
+        a one-token follow-up in 3.24 seconds without reopening the session. Its uncancelled
+        64-token logits matched the previous generated library byte-for-byte. The retained
+        report is <code>/srv/cke/profiles/qwen38-prefill-cancel-20260930/probe.json</code>.
+        This probe does not certify HTTP disconnect timing, all prompt lengths, or other
+        model/provider combinations.</p>
     <p>The 2026-09-28 Qwen3.8 overnight documentation trial failed after approximately five hours
         and eighteen successful inspection calls with repeated busy responses. It produced no
         HTML/SVG outputs. This is retained failure evidence; short read/edit acceptance does not
@@ -2628,7 +2710,22 @@ qwen --bare \
         compatibility template at request time. Tool-bearing streams publish parsed calls
         only after validation. A complete bundle can serve with <code>--no-build</code> without
         the source GGUF or a server-owned template copy.
+        Publisher special-token variables such as <code>bos_token</code> come from the
+        bundle's hashed tokenizer metadata. Missing variables remain undefined and
+        conflicting metadata fails; the renderer does not invent model delimiters.
+        The standard <code>strftime_now</code> helper uses the host's current date
+        when a publisher template requests it.
+        This supports publisher text-chat rendering, but does not certify Gemma4 or Muse
+        tool parsing, native token IDs, or generated-model harness tasks.
     </p>
+    <p class="mini-note">Gemma4 now references the shared <code>publisher-chat-v1</code>
+        profile. Its declared output protocol is <code>none</code>: ordinary text chat can
+        resolve the publisher Jinja asset, while tool-bearing requests fail before generation.
+        When HF token sidecars are absent, verified GGUF special-token IDs are matched to
+        bundled <code>tokenizer.json</code> text; conflicting definitions fail at startup.
+        This is a declaration, not a Gemma4 serving certification. Exact rendered bytes,
+        native token IDs, generated-runtime chat, and a Gemma tool protocol still need
+        artifact-specific tests.</p>
     <h4>Bounded local Qwen Code acceptance</h4>
     <p>Use the same Qwen Code client as a real contributor task in a new disposable directory.
         This command reads a small HTML file, edits one heading, runs its Python validator and
@@ -2643,16 +2740,35 @@ qwen --bare \
 <pre>python3 server/qwen_harness_acceptance.py \
   --endpoint http://127.0.0.1:8080/v1 \
   --model qwen38-27b-q4km \
+  --expected-serving-identity &lt;serving.json identity&gt; \
+  --expected-session-library-sha256 &lt;libck_session_v8.so SHA-256&gt; \
   --settings server/qwen-code/interactive.settings.json \
   --run-dir /tmp/cke-qwen-acceptance-001</pre>
     </div>
     <p class="mini-note">The runner requires an empty run directory and writes
         <code>events.jsonl</code>, <code>stderr.log</code>, the edited fixture and
         <code>report.json</code>. A PASS proves this bounded harness task on the named
-        endpoint. The report marks loaded artifact identity as unverified because
-        <code>/v1/models</code> exposes a model ID and context capacity, not the loaded
-        library/template hashes. Bind those identities separately before promoting a
-        result as current-artifact certification. A cached <code>191335eba</code> Qwen3.8 27B Q4_K_M
+        endpoint. For a resolved bundle, read the intended <code>identity</code> field from
+        its <code>serving.json</code> and pass it with
+        <code>--expected-serving-identity</code>. The runner checks
+        <code>GET /v1/cke/loaded-identity</code> before launching Qwen Code and again after
+        the task. That endpoint reports the verified bundle identity, asset hashes,
+        native session-library hash and server-instance ID without filesystem paths.
+        The session hash comes from the backing file of the loaded native session symbol;
+        deleted, replaced or ambiguous mappings are rejected at startup. Supply the
+        expected session-library hash to certify that runtime ABI as well. Every
+        supplied hash is checked independently: a mismatch prevents task launch or
+        fails certification, while an absent expectation leaves certification incomplete.
+        The endpoint reports <code>effective_serving</code> separately from the bundle:
+        configured raw or templated mode, selected output protocol, active context limit,
+        default output allowance, and stop behavior. The runner requires that snapshot
+        to remain stable across its task.
+        A legacy endpoint with no
+        loaded identity, or a run without both expected hashes, remains
+        <code>INCOMPLETE</code> even if its bounded task passes. The acceptance command exits
+        successfully only when both the task and artifact certification report <code>PASS</code>.
+        The endpoint is a startup verification snapshot, not continuous file-integrity
+        monitoring. A cached <code>191335eba</code> Qwen3.8 27B Q4_K_M
         run completed read → edit → test → summary on Ryzen at 16K compiled capacity;
         it does not establish 256K-input execution or other model-family tool support.</p>
     <p style="margin-bottom: 0;" class="mini-note">
@@ -3155,7 +3271,7 @@ make v8-visualizer-vision-artifacts</pre>
             </div>
             <div style="text-align: right;">
                 <p style="color: #606060; font-size: 0.75rem; margin: 0;">Static docs · C-first execution</p>
-                <p style="color: #606060; font-size: 0.75rem; margin: 0.5rem 0 0 0;">2026-09-30</p>
+                <p style="color: #606060; font-size: 0.75rem; margin: 0.5rem 0 0 0;">2026-10-01</p>
             </div>
         </div>
     </footer>
