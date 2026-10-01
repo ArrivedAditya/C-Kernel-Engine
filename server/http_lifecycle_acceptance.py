@@ -128,6 +128,11 @@ def run_cancel(label: str, prompt: str, *, wait_for: str, delay: float = 0.0) ->
     thread.join(timeout=1.0)
     stored = request("GET", f"/responses/{response_id}")
     row = {"label": label, "response_id": response_id,
+           "trigger_event": wait_for,
+           "phase_evidence": (
+               "output_delta_observed" if wait_for == "response.output_text.delta"
+               else "in_progress_event_only_native_phase_unverified"
+           ),
            "cancel_http_status": cancelled.status_code,
            "cancel_ack_seconds": ack_latency,
            "stream_events": state["events"][-6:], "stream_error": state["error"],
@@ -291,7 +296,8 @@ def main() -> int:
                         model=MODEL)
         long_prompt = "Test data follows.\n" + "alpha beta gamma delta\n" * PREFILL_LINES
         report["cases"].append(run_cancel(
-            "long-prefill", long_prompt, wait_for="response.in_progress", delay=3.0))
+            "long-input-timed-cancel", long_prompt,
+            wait_for="response.in_progress", delay=3.0))
         report["cases"].append(run_cancel(
             "decode", "Count upward forever, one number per line, beginning at one.",
             wait_for="response.output_text.delta"))
