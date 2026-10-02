@@ -74,8 +74,15 @@ def load_resolved_serving(run_dir: Path, *, document: dict[str, Any] | None = No
         declaration = circuit.get("serving", {})
         if declaration.get("schema") != "cke.circuit_serving.v1" or declaration.get("profile_ref") != doc.get("profile_ref"):
             raise ValueError("serving circuit/profile ownership mismatch")
-        if config.get("model") != circuit.get("name"):
+        if config.get("model") is not None and config["model"] != circuit.get("name"):
             raise ValueError("serving circuit does not match runtime configuration")
+        if config.get("model") is None:
+            manifest_asset = assets.get("weights_manifest.json")
+            if manifest_asset is None:
+                raise ValueError("serving circuit has no compiled manifest identity")
+            manifest = json.loads(bundle_path(run_dir, manifest_asset["path"]).read_bytes())
+            if manifest.get("model") != circuit.get("name"):
+                raise ValueError("serving circuit does not match compiled manifest model")
         if profile.get("schema") != "cke.serving_profile.v1" or profile.get("id") != doc.get("profile_id"):
             raise ValueError("serving profile identity mismatch")
         variant = profile.get("variants", {}).get(doc.get("variant"))

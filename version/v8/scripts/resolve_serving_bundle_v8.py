@@ -74,6 +74,8 @@ def _verify_compilation_lineage(run_dir: Path, circuit: dict, *, allow_serving_u
     are retained for diagnostics; relocated bundles validate their local bytes.
     """
     manifest = _json(run_dir / "weights_manifest.json")
+    if manifest.get("model") is not None and manifest["model"] != circuit.get("name"):
+        raise ValueError("compiled manifest model does not match serving circuit")
     compiled = manifest.get("template")
     if not isinstance(compiled, dict):
         raise ValueError("missing compiled circuit snapshot; rebuild before metadata upgrade")
@@ -128,8 +130,13 @@ def resolve_serving_bundle(run_dir: Path, circuit_path: Path, *, variant: str | 
     if not isinstance(spec, dict) or spec.get("output_protocol") not in PROTOCOLS:
         raise ValueError(f"unsupported serving variant: {selected}")
     config = _json(run_dir / "config.json")
-    if config.get("model") != circuit.get("name"):
+    # GGUF conversion uses model_type/model_name; only some runtime configs
+    # declare a canonical model key. The retained compiled manifest and its
+    # verified circuit snapshot are the authoritative identity in both cases.
+    if config.get("model") is not None and config["model"] != circuit.get("name"):
         raise ValueError("circuit does not match runtime configuration")
+    if config.get("model") is None and _json(run_dir / "weights_manifest.json").get("model") != circuit.get("name"):
+        raise ValueError("circuit does not match compiled manifest model")
     lineage = _verify_compilation_lineage(run_dir, circuit, allow_serving_update=allow_serving_update)
     publisher = _publisher_templates(run_dir)
     assets: dict[str, dict] = {}
