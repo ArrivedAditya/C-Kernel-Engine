@@ -84,6 +84,7 @@
             "audio_adaptive_layer_norm",
             "audio_adain_instance_norm",
             "audio_scaled_sum_strided_checked",
+            "audio_concat_channels_checked",
             "audio_relative_attention",
             "audio_scaled_residual_add",
             "audio_relu",
