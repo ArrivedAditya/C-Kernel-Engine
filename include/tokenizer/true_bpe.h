@@ -178,6 +178,10 @@ CK_TRUE_BPE_API int ck_true_bpe_add_special_token(CKTrueBPE *bpe,
  */
 CK_TRUE_BPE_API void ck_true_bpe_set_config(CKTrueBPE *bpe, const CKBPEConfig *config);
 
+/** Disable the optional SentencePiece dummy prefix for publisher tokenizers
+ * that declare add_space_prefix=false. Does not change the config ABI. */
+CK_TRUE_BPE_API void ck_true_bpe_set_suppress_dummy_prefix(CKTrueBPE *bpe, bool suppress);
+
 /**
  * Load vocabulary + merges from binary buffers.
  *

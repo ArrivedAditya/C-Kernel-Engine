@@ -2878,6 +2878,7 @@ def _generate_tokenizer_c_code(tokenizer_type: str, vocab_size: int, num_merges:
     if tokenizer_type == "bpe":
         add_bos = None
         add_eos = None
+        add_space_prefix = None
         unk_id = None
         bos_id = None
         eos_id = None
@@ -2885,6 +2886,7 @@ def _generate_tokenizer_c_code(tokenizer_type: str, vocab_size: int, num_merges:
         if special_tokens:
             add_bos = special_tokens.get("add_bos_token")
             add_eos = special_tokens.get("add_eos_token")
+            add_space_prefix = special_tokens.get("add_space_prefix")
             unk_id = special_tokens.get("unk_token_id")
             bos_id = special_tokens.get("bos_token_id")
             eos_id = special_tokens.get("eos_token_id")
@@ -2908,7 +2910,7 @@ def _generate_tokenizer_c_code(tokenizer_type: str, vocab_size: int, num_merges:
                 "            " + (str(pad_id) if pad_id is not None else "-1") + ");"
             )
         pretokenizer = str((tokenizer_contract or {}).get("pretokenizer") or "").strip().lower()
-        if add_bos is not None or add_eos is not None or pretokenizer:
+        if add_bos is not None or add_eos is not None or add_space_prefix is not None or pretokenizer:
             pretokenizer_enum = {
                 "unicode_split_isolated": "CK_BPE_PRETOKENIZER_UNICODE_SPLIT_ISOLATED",
             }.get(pretokenizer, "CK_BPE_PRETOKENIZER_GPT2")
@@ -2922,6 +2924,7 @@ def _generate_tokenizer_c_code(tokenizer_type: str, vocab_size: int, num_merges:
                     "            cfg.space_prefix_style = CK_SPACE_PREFIX_AUTO;",
                     f"            cfg.pretokenizer = {pretokenizer_enum};",
                     "            ck_true_bpe_set_config(g_model->tokenizer, &cfg);",
+                    f"            ck_true_bpe_set_suppress_dummy_prefix(g_model->tokenizer, {'true' if add_space_prefix is False else 'false'});",
                     "        }",
                 ]
             )

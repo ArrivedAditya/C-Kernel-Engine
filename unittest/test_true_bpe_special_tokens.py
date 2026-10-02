@@ -88,6 +88,8 @@ class CKBPEConfig(ctypes.Structure):
 
 lib.ck_true_bpe_set_config.restype = None
 lib.ck_true_bpe_set_config.argtypes = [ctypes.c_void_p, ctypes.POINTER(CKBPEConfig)]
+lib.ck_true_bpe_set_suppress_dummy_prefix.restype = None
+lib.ck_true_bpe_set_suppress_dummy_prefix.argtypes = [ctypes.c_void_p, ctypes.c_bool]
 
 lib.ck_true_bpe_vocab_size.restype = ctypes.c_size_t
 lib.ck_true_bpe_vocab_size.argtypes = [ctypes.c_void_p]
@@ -664,6 +666,35 @@ def test_imported_token_types():
     finally:
         lib.ck_true_bpe_free(bpe)
 
+
+def test_explicit_bos_and_declared_space_prefix():
+    bpe = lib.ck_true_bpe_create()
+    if not bpe:
+        return False
+    try:
+        for token, token_id in ((b"<bos>", 2), (b"h", 3), ("▁h".encode(), 4)):
+            if lib.ck_true_bpe_add_token(bpe, token, token_id, 0.0) != 0:
+                return False
+        if lib.ck_true_bpe_add_special_token(bpe, b"<bos>", 2) != 0:
+            return False
+        lib.ck_true_bpe_set_special_ids(bpe, -1, 2, -1, -1)
+        cfg = CKBPEConfig(True, False, False, CK_SPACE_PREFIX_SPM, 0)
+        lib.ck_true_bpe_set_config(bpe, ctypes.byref(cfg))
+        lib.ck_true_bpe_set_suppress_dummy_prefix(bpe, True)
+        if encode_c(bpe, "<bos>h") != [2, 3]:
+            print("FAIL: explicit BOS was duplicated or a dummy prefix was inserted")
+            return False
+        if encode_c(bpe, "h") != [2, 3]:
+            print("FAIL: implicit BOS was lost")
+            return False
+        lib.ck_true_bpe_set_suppress_dummy_prefix(bpe, False)
+        if encode_c(bpe, "<bos>h") != [2, 4]:
+            print("FAIL: default SPM dummy-prefix behavior changed")
+            return False
+        return True
+    finally:
+        lib.ck_true_bpe_free(bpe)
+
 def main():
     print("="*60)
     print("True BPE Tokenizer Test: Special Tokens & Byte Decoding")
@@ -671,6 +702,7 @@ def main():
 
     results = []
     results.append(("Imported Token Types", test_imported_token_types()))
+    results.append(("Explicit BOS and Space Prefix", test_explicit_bos_and_declared_space_prefix()))
 
     # Run tests
     results.append(("Special Token Encoding", test_special_token_encoding()))
