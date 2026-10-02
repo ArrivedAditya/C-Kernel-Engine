@@ -393,7 +393,10 @@ class CohereCompassContractTests(unittest.TestCase):
             requested=8192,
             slack_tokens=3072,
         )
-        self.assertEqual(required_context, 8702)
+        # The requested context is a floor: preflight must also reserve the
+        # requested continuation after the text and visual prefix.
+        self.assertEqual(required_context, 462 + 8240 + 3072)
+        self.assertGreater(required_context, 8192)
 
         main_source = inspect.getsource(bridge.main)
         self.assertLess(
