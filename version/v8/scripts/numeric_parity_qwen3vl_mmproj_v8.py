@@ -746,6 +746,7 @@ def _llama_raw_dump_name(op_name: str) -> str:
         "rope_k": "Kcur_rope",
         "attn_out_head_major": "kqv_out",
         "attn_output": "attn_out",
+        "attn_output": "attn_out",
     }
     return reverse_aliases.get(op_name, op_name)
 

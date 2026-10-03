@@ -24,6 +24,9 @@ import export_vision_public_summary_v8 as public_summary  # type: ignore  # noqa
 
 
 class NumericParityQwen3VLMmprojV8Tests(unittest.TestCase):
+    def test_llama_attention_output_alias_resolves_to_capture_name(self) -> None:
+        self.assertEqual(npv8._llama_raw_dump_name("attn_output"), "attn_out")
+
     def test_gemma4_diagnostic_uses_image_geometry_and_graph_input_scale(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
