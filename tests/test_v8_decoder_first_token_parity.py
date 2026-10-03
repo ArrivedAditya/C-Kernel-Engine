@@ -198,6 +198,7 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
 
     def test_llama_capture_preserves_explicit_prefix_and_decode_schedules(self) -> None:
         captured: list[str] = []
+        actual_mode = ["enabled"]
 
         def fake_run(command: list[str]):
             captured.extend(command)
@@ -205,7 +206,7 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
             np.array([0.0], dtype=np.float32).tofile(logits_path)
             return mock.Mock(
                 returncode=0,
-                stdout=json.dumps({"ok": True, "n_vocab": 1}),
+                stdout=json.dumps({"ok": True, "n_vocab": 1, "flash_attention_mode": actual_mode[0]}),
                 stderr="",
             )
 
@@ -223,10 +224,17 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
                 tokens_before=[1, 2],
                 prefix_decode_mode="batched",
                 decode_mode="sequential",
+                flash_attention="enabled",
             )
+            actual_mode[0] = "disabled_for_internal_dump"
+            with self.assertRaisesRegex(RuntimeError, "did not execute requested flash attention"):
+                decoder_parity_v8._run_llama_capture(
+                    Path("model.gguf"), [3], 128, 1, 1, flash_attention="enabled",
+                )
 
         self.assertEqual(captured[captured.index("--prefix-decode-mode") + 1], "batched")
         self.assertEqual(captured[captured.index("--decode-mode") + 1], "sequential")
+        self.assertEqual(captured[captured.index("--flash-attn") + 1], "enabled")
 
     def test_llama_helper_fingerprint_tracks_root_source_and_library_content(self) -> None:
         helper_module = decoder_parity_v8.compare_first_token_logits_v7
@@ -1805,7 +1813,7 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
             ), mock.patch.object(
                 decoder_parity_v8,
                 "_run_llama_capture",
-                return_value={"meta": {"dumped": 1, "decode_mode": "sequential"}},
+                return_value={"meta": {"dumped": 1, "decode_mode": "sequential", "flash_attention_mode": "enabled"}},
             ) as llama_capture, mock.patch.object(
                 decoder_parity_v8,
                 "_capture_ck_dump",
@@ -1836,6 +1844,7 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
                     dump_atol=1.0e-4,
                     dump_rtol=1.0e-3,
                     prefix_decode_policy="non_causal_visual_chunk",
+                    llama_flash_attention="enabled",
                 )
 
             self.assertEqual(ck["vocab_size"], 4)
@@ -1849,6 +1858,7 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
             ck_capture.assert_called_once()
             self.assertEqual(ck_capture.call_args.kwargs["prefix_decode_policy"], "non_causal_visual_chunk")
             llama_capture.assert_called_once()
+            self.assertEqual(llama_capture.call_args.kwargs["flash_attention"], "enabled")
 
     def test_coalesce_multimodal_prefill_segments_joins_token_rows(self) -> None:
         dump = decoder_parity_v8.parity_test_v7.ParityDump
@@ -1972,6 +1982,7 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
                              "prefix_position_count": 3,
                              "prefix_start_pos": 2,
                              "prefix_text_pos": 5,
+                             "flash_attention_mode": "enabled",
                              "topk": [{"id": 1, "logit": 0.95}, {"id": 2, "logit": 0.18}],
                          },
                          "logits": np.array([0.0, 1.0, 0.1, -0.5], dtype=np.float32),
@@ -1984,6 +1995,8 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
                             str(bridge_report_path),
                             "--workdir",
                             str(tmp / "work"),
+                            "--llama-flash-attention",
+                            "enabled",
                             "--json-out",
                             str(report_path),
                         ]
@@ -1996,6 +2009,7 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
             self.assertEqual(llama_capture.call_args.kwargs["tokens_before"], [11, 22])
             self.assertEqual(llama_capture.call_args.kwargs["prefix_grid"], (3, 3))
             self.assertEqual(llama_capture.call_args.kwargs["prefix_text_pos"], 5)
+            self.assertEqual(llama_capture.call_args.kwargs["flash_attention"], "enabled")
             self.assertEqual(Path(llama_capture.call_args.kwargs["prefix_path"]), prefix_path.resolve())
             _, decoder_kwargs = run_decoder.call_args
             self.assertEqual(decoder_kwargs["tokens_before"], [11, 22])
@@ -2004,6 +2018,8 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
             self.assertEqual(decoder_kwargs["prefix_decode_policy"], "non_causal_visual_chunk")
             report = json.loads(report_path.read_text(encoding="utf-8"))
             self.assertEqual(report["prefix_decode_policy"], "non_causal_visual_chunk")
+            self.assertEqual(report["llama_flash_attention_requested"], "enabled")
+            self.assertEqual(report["llama_flash_attention_actual"], "enabled")
             self.assertTrue(report["multimodal_prompt_segmented"])
             self.assertEqual(report["formatted_prompt"], "<|im_start|>user\n<|vision_start|><image_embeds><|vision_end|>Explain this image.<|im_end|>\n<|im_start|>assistant\n")
             self.assertEqual(report["prompt_tokens_before_image"], [11, 22])
