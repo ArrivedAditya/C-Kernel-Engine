@@ -52,6 +52,24 @@ int ck_runtime_scale_i32_checked(
     return CK_RUNTIME_EXTENT_OK;
 }
 
+int ck_runtime_affine_i32_checked(
+    size_t source_extent,
+    size_t factor,
+    size_t offset,
+    size_t capacity,
+    int32_t *valid_extent) {
+    if (!valid_extent || !factor)
+        return CK_RUNTIME_EXTENT_INVALID;
+    if (capacity > INT32_MAX || offset > INT32_MAX ||
+        source_extent > ((size_t)INT32_MAX - offset) / factor)
+        return CK_RUNTIME_EXTENT_OVERFLOW;
+    const size_t result = source_extent * factor + offset;
+    if (result > capacity)
+        return CK_RUNTIME_EXTENT_LIMIT;
+    *valid_extent = (int32_t)result;
+    return CK_RUNTIME_EXTENT_OK;
+}
+
 int ck_runtime_copy_valid_f32(
     const float *input,
     size_t input_elements,

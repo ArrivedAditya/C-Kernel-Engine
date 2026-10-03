@@ -120,6 +120,7 @@
             "partial_rope_concat",
             "yarn_rope_init",
             "runtime_extent_scale",
+            "runtime_extent_affine",
             "audio_upsample_nearest",
             "audio_conv_transpose1d_depthwise",
             "audio_conv_transpose1d_dense"

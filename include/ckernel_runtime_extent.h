@@ -36,6 +36,15 @@ int ck_runtime_scale_i32_checked(
     size_t capacity,
     int32_t *valid_extent);
 
+/* Compute source_extent * factor + offset with checked arithmetic and a
+ * declared capacity. Failure leaves valid_extent untouched. */
+int ck_runtime_affine_i32_checked(
+    size_t source_extent,
+    size_t factor,
+    size_t offset,
+    size_t capacity,
+    int32_t *valid_extent);
+
 /* Copy only the valid columns of channel-major FP32 rows. Physical row
  * strides and buffer capacities are independent of valid_frames. The two
  * buffers must not overlap. Invalid metadata leaves output untouched. */
