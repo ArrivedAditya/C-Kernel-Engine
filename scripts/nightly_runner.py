@@ -891,6 +891,10 @@ TEST_SUITES = {
         "TTS Dense Transposed Conv1D PyTorch Oracle", "kernels",
         ROOT / "tests" / "test_v8_audio_dense_deconv_oracle.py",
     ),
+    "tts_dense_deconv_generated": TestSuite(
+        "Model-Neutral Generated Dense Transposed Conv1D Graph", "inference",
+        ROOT / "tests" / "test_v8_audio_dense_deconv_generated.py",
+    ),
     "tts_runtime_extent_scale": TestSuite(
         "Checked Runtime Extent Scale", "kernels",
         ROOT / "tests" / "test_v8_runtime_extent_scale.py",

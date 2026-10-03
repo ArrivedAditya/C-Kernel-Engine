@@ -330,9 +330,10 @@
   },
   "tests": {
     "unit": [
-      "tests/test_v8_audio_dense_deconv_oracle.py"
+      "tests/test_v8_audio_dense_deconv_oracle.py",
+      "tests/test_v8_audio_dense_deconv_generated.py"
     ],
     "oracle": "Independent committed PyTorch 2.12.1 and optional live F.conv_transpose1d(groups=1) comparisons; generator stages need connected pinned-model evidence"
   },
-  "notes": "Group-one dense ConvTranspose1D with [I,O,K] weights, explicit geometry, caller-owned output/scratch and output-preserving rejection. FP32 FMA in input-channel, input-frame, tap order. Inference only; generated Kokoro composition not yet certified."
+  "notes": "Group-one dense ConvTranspose1D with [I,O,K] weights, explicit geometry, caller-owned output/scratch and output-preserving rejection. FP32 FMA in input-channel, input-frame, tap order. Model-neutral generated composition is tested; generated Kokoro composition is not yet certified. Inference only."
 }

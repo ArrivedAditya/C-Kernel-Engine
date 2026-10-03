@@ -143,6 +143,36 @@ class AudioDenseDeconvOracleTest(unittest.TestCase):
             alias = args.copy(); alias[10] = self.ptr(output)
             self.assertNotEqual(function(*alias), 0)
             self.assertTrue(np.all(output == -91.))
+            # Reject overlapping subregions, not only identical base pointers.
+            partial = args.copy()
+            partial[10] = self.ptr(output.ravel()[1:])
+            self.assertNotEqual(function(*partial), 0)
+            self.assertTrue(np.all(output == -91.))
+            for pointer_index in (0, 3, 5, 7, 10):
+                with self.subTest(null_pointer=pointer_index):
+                    invalid = args.copy()
+                    invalid[pointer_index] = POINTER()
+                    self.assertNotEqual(function(*invalid), 0)
+                    self.assertTrue(np.all(output == -91.))
+            for capacity_index, needed in ((1, 18), (4, 75),
+                                           (6, 5), (8, 61), (11, 45)):
+                # Use the actual checked span or exact weight/scratch geometry.
+                exact = args.copy()
+                exact[capacity_index] = needed
+                self.assertEqual(function(*exact), 0)
+                short = exact.copy()
+                short[capacity_index] = needed - 1
+                output.fill(-91.)
+                self.assertNotEqual(function(*short), 0)
+                self.assertTrue(np.all(output == -91.))
+            source[:, :self.meta['cases'][1][2]] = np.float32(1e30)
+            weight[:] = np.float32(1e30)
+            output.fill(-91.)
+            self.assertEqual(function(*args), -3)
+            self.assertTrue(np.all(output == -91.))
+            source[:, :self.meta['cases'][1][2]] = self.arrays['case1_input']
+            weight[:] = self.arrays['case1_weight']
+            self.assertEqual(function(*args), 0)
             required = SIZE(0)
             self.assertEqual(workspace(0, 3, ctypes.byref(required)), -4)
             self.assertEqual(workspace(SIZE(-1).value, 3,
