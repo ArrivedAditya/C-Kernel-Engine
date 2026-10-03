@@ -4288,12 +4288,14 @@ def build_activation_specs(
 
     specs = {}
 
-    def add(name: str, size: int, shape: str, dtype: str = "fp32") -> None:
+    def add(name: str, size: int, shape: str, dtype: str = "fp32", lifetime: str = "call", mutable: bool = True) -> None:
         specs[name] = {
             "name": name,
             "size": int(size),
             "shape": shape,
             "dtype": dtype,
+            "lifetime": lifetime,
+            "mutable": mutable,
         }
 
     # Text input (optional)
@@ -4351,11 +4353,11 @@ def build_activation_specs(
     if uses_kv_cache:
         if kv_cache_token_stride_total > 0:
             total_kv_size = context_len * kv_cache_token_stride_total * kv_elem_bytes
-            add("kv_cache", total_kv_size, f"[variable_kv, {context_len}, mixed_head_dim]", kv_cache_dtype)
+            add("kv_cache", total_kv_size, f"[variable_kv, {context_len}, mixed_head_dim]", kv_cache_dtype, "sequence")
         else:
             kv_per_layer = num_kv_heads * context_len * kv_cache_head_dim * kv_elem_bytes
             total_kv_size = num_layers * 2 * kv_per_layer
-            add("kv_cache", total_kv_size, f"[{num_layers}, 2, {num_kv_heads}, {context_len}, {kv_cache_head_dim}]", kv_cache_dtype)
+            add("kv_cache", total_kv_size, f"[{num_layers}, 2, {num_kv_heads}, {context_len}, {kv_cache_head_dim}]", kv_cache_dtype, "sequence")
 
     rotary_dim = int(config.get("rotary_dim", head_dim) or head_dim)
     layer_rotary = config.get("layer_rotary_dim")
@@ -4364,7 +4366,7 @@ def build_activation_specs(
     rope_half = int(rotary_dim) // 2
     if uses_rope:
         rope_size = context_len * rope_half * 4 * 2
-        add("rope_cache", rope_size, f"[2, {context_len}, {rope_half}]")
+        add("rope_cache", rope_size, f"[2, {context_len}, {rope_half}]", lifetime="model", mutable=False)
 
     # Scratch buffers
     q_size = num_heads * seq_len * max_q_head_dim * 4
@@ -4448,8 +4450,8 @@ def build_activation_specs(
         add("recurrent_conv_input", conv_input_size, f"[{recurrent_conv_channels}, {recurrent_conv_history + seq_len}]")
         add("recurrent_conv_qkv_raw", conv_qkv_size, f"[{seq_len}, {recurrent_conv_channels}]")
         add("recurrent_conv_qkv", conv_qkv_size, f"[{seq_len}, {recurrent_conv_channels}]")
-        add("recurrent_conv_state", conv_state_size, f"[{num_layers}, {recurrent_conv_history}, {recurrent_conv_channels}]")
-        add("recurrent_ssm_state", ssm_state_size, f"[{num_layers}, {recurrent_state_heads}, {recurrent_state_rows}, {recurrent_state_cols}]")
+        add("recurrent_conv_state", conv_state_size, f"[{num_layers}, {recurrent_conv_history}, {recurrent_conv_channels}]", lifetime="sequence")
+        add("recurrent_ssm_state", ssm_state_size, f"[{num_layers}, {recurrent_state_heads}, {recurrent_state_rows}, {recurrent_state_cols}]", lifetime="sequence")
 
     # Logits
     if has_logits:
@@ -13176,7 +13178,7 @@ def generate_memory_layout(
     activation_buffers = []
     current_offset = 0
 
-    def add_buffer(name, size, shape_desc, dtype="fp32"):
+    def add_buffer(name, size, shape_desc, dtype="fp32", lifetime="call", mutable=True):
         nonlocal current_offset
         current_offset = _align_up(current_offset, 64)
         activation_buffers.append({
@@ -13184,7 +13186,9 @@ def generate_memory_layout(
             "size": size,
             "offset": current_offset,
             "shape": shape_desc,
-            "dtype": dtype
+            "dtype": dtype,
+            "lifetime": lifetime,
+            "mutable": mutable,
         })
         current_offset += size
 
@@ -13264,11 +13268,11 @@ def generate_memory_layout(
     if uses_kv_cache:
         if kv_cache_token_stride_total > 0:
             total_kv_size = context_len * kv_cache_token_stride_total * kv_elem_bytes
-            add_buffer("kv_cache", total_kv_size, f"[variable_kv, {context_len}, mixed_head_dim]", kv_cache_dtype)
+            add_buffer("kv_cache", total_kv_size, f"[variable_kv, {context_len}, mixed_head_dim]", kv_cache_dtype, "sequence")
         else:
             kv_per_layer = num_kv_heads * context_len * kv_cache_head_dim * kv_elem_bytes
             total_kv_size = num_layers * 2 * kv_per_layer
-            add_buffer("kv_cache", total_kv_size, f"[{num_layers}, 2, {num_kv_heads}, {context_len}, {kv_cache_head_dim}]", kv_cache_dtype)
+            add_buffer("kv_cache", total_kv_size, f"[{num_layers}, 2, {num_kv_heads}, {context_len}, {kv_cache_head_dim}]", kv_cache_dtype, "sequence")
 
     # RoPE tables: precomputed cos/sin [2, context_len, rotary_dim/2]
     rotary_dim = int(config.get("rotary_dim", head_dim) or head_dim)
@@ -13278,7 +13282,7 @@ def generate_memory_layout(
     rope_half = int(rotary_dim) // 2
     if uses_rope:
         rope_size = context_len * rope_half * 4 * 2
-        add_buffer("rope_cache", rope_size, f"[2, {context_len}, {rope_half}]")
+        add_buffer("rope_cache", rope_size, f"[2, {context_len}, {rope_half}]", lifetime="model", mutable=False)
 
     # Layer scratch buffers (reused across layers)
     # Q output: [num_heads, seq_len, head_dim]
@@ -13393,8 +13397,8 @@ def generate_memory_layout(
         add_buffer("recurrent_conv_input", conv_input_size, f"[{recurrent_conv_channels}, {recurrent_conv_history + seq_len}]")
         add_buffer("recurrent_conv_qkv_raw", conv_qkv_size, f"[{seq_len}, {recurrent_conv_channels}]")
         add_buffer("recurrent_conv_qkv", conv_qkv_size, f"[{seq_len}, {recurrent_conv_channels}]")
-        add_buffer("recurrent_conv_state", conv_state_size, f"[{num_layers}, {recurrent_conv_history}, {recurrent_conv_channels}]")
-        add_buffer("recurrent_ssm_state", ssm_state_size, f"[{num_layers}, {recurrent_state_heads}, {recurrent_state_rows}, {recurrent_state_cols}]")
+        add_buffer("recurrent_conv_state", conv_state_size, f"[{num_layers}, {recurrent_conv_history}, {recurrent_conv_channels}]", lifetime="sequence")
+        add_buffer("recurrent_ssm_state", ssm_state_size, f"[{num_layers}, {recurrent_state_heads}, {recurrent_state_rows}, {recurrent_state_cols}]", lifetime="sequence")
 
     # ─────────────────────────────────────────────────────────────
     # FOOTER buffers: final output
@@ -13636,6 +13640,8 @@ def generate_memory_layout_packed(
             "abs_offset": off,
             "shape": spec["shape"],
             "dtype": spec["dtype"],
+            "lifetime": spec["lifetime"],
+            "mutable": spec["mutable"],
             "define": f"A_{_sanitize_macro(name)}",
         })
         act_offset = off + spec["size"]

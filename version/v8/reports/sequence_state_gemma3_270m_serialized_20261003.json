@@ -1,0 +1,21 @@
+{
+  "schema": "cke.sequence-state-serialized-v1",
+  "status": "pass",
+  "scope": "serialized_kv_only_not_batched",
+  "compiled_context_length": 128,
+  "tokens_a": [
+    100,
+    101,
+    102,
+    103
+  ],
+  "tokens_b": [
+    200,
+    201
+  ],
+  "exact_logit_rows": 8,
+  "library_sha256": "03c7a19a483c590a141f50d385b0da4977b16d229a96a2360cac848ca14d5583",
+  "weights_sha256": "d2bb2c0819b93e50716ff3cc5288f00c4a540cccbd0aa09d9a05077a84edde6d",
+  "layout_sha256": "c14d2dceb6cbcc6d79c9b87dd22afc76de41ae0f6debc583098b030c285e0dba",
+  "config_sha256": "cb8125e7964d3b18c83fc8d0251c4ecda8ee7314acaa899265ef81fc4772815e"
+}
