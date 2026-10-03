@@ -15,6 +15,7 @@ CAPTURES = {
     'gaussian': 'generator_harmonic_gaussian',
     'sine_waves': 'decoder_generator_m_source_l_sin_gen_0',
     'source': 'generator_source_samples',
+    'window': 'generator_stft_window',
     'magnitude': 'generator_source_magnitude',
     'phase': 'generator_source_phase',
     'first_source_conv': 'decoder_generator_noise_convs_0',
@@ -64,6 +65,7 @@ def main():
             arrays['gaussian'].shape != (1, 61800, 9) or
             arrays['sine_waves'].shape != (1, 61800, 9) or
             arrays['source'].shape != (1, 61800) or
+            arrays['window'].shape != (20,) or
             arrays['magnitude'].shape != (1, 11, 12361) or
             arrays['phase'].shape != (1, 11, 12361) or
             arrays['first_source_conv'].shape != (1, 256, 2060)):

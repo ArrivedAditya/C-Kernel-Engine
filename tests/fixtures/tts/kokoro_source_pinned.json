@@ -18,7 +18,7 @@
     "kokoro-v1_0.pth": "496dba118d1a58f5f3db2efc88dbdc216e0483fc89fe6e47ee1f2c53f18ad1e4",
     "voices/af_heart.pt": "0ab5709b8ffab19bfd849cd11d98f75b60af7733253ad0d67b12382a102cb4ff"
   },
-  "capture_manifest_sha256": "6e0797da9211539aac1c9607e5cfeeaf3af1349f96869ddcca803e869b7d0cd5",
+  "capture_manifest_sha256": "2aaad5470b535a8ccfb9428a57075d10b6c22f2d09779053758b7723f3df7bca",
   "effective_weight_sha256": {
     "waveform_decoder.generator.m_source.l_linear.weight": "04ddcf828712b77936b58288099f64bf1107e5f3ed2411aef759795244f37056",
     "waveform_decoder.generator.m_source.l_linear.bias": "a193edba12b1f46bc8236999c04d7f902ed733d54d627476dc062e2583fd1847"
@@ -28,13 +28,14 @@
     "gaussian": "8cf54924ca438776b2246fbd7cda298d31ebfce214c8a62c9a96dc20dbecbdee",
     "sine_waves": "ec2fafbf2f7572e21ae0bc98d2582d3294373cf553f5403b518c7c36031e67f5",
     "source": "677c757f3a18e1d6c79f7f9f4996f41bac9ee5b8bdf5954ff53a8f3807e1733d",
+    "window": "f76a29a42dff00554c815ee17ad9b420701b61099f2f66ea8e53055fc3e8070b",
     "magnitude": "8d8c8700b9865922a4c80245fdc1502610bc3145ca253e0d38cbb2f5fd4919ba",
     "phase": "1f1e539a1f5f633b23268fd0a3f790b4e8a46e593e5f46360486137ba3fa6605",
     "first_source_conv": "fe76703557376309193018fafeaf920d0edbcdad7b1de46b2c38c8d4d2469bc7",
     "linear_weight": "04ddcf828712b77936b58288099f64bf1107e5f3ed2411aef759795244f37056",
     "linear_bias": "a193edba12b1f46bc8236999c04d7f902ed733d54d627476dc062e2583fd1847"
   },
-  "fixture_sha256": "9f2d9c3fc6c35b28bb2f27e14b9b1a56bbb4fc9d3915642ebe89388aa4726d7f",
+  "fixture_sha256": "fd0df42d48bc9e2b532ac851ded682148e90c9f87c863bb4b41f13cf6294ac47",
   "input_text": "Read this assistant response aloud.",
   "valid_f0_frames": 206,
   "valid_source_samples": 61800,

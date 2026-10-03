@@ -219,6 +219,8 @@ def main() -> int:
             capture_tensor(output, stem, out_dir, record["tensors"])
         hooks.append(module.register_forward_hook(on_output))
     stft = model.decoder.generator.stft
+    capture_tensor(stft.window, "generator_stft_window", out_dir,
+                   record["tensors"])
     original_transform = stft.transform
     original_inverse = stft.inverse
     original_rand = torch.rand
@@ -267,7 +269,8 @@ def main() -> int:
         for hook in hooks:
             hook.remove()
     for name in ("generator_initial_phase_random", "generator_harmonic_gaussian",
-                 "generator_source_gaussian", "generator_source_samples",
+                 "generator_source_gaussian", "generator_stft_window",
+                 "generator_source_samples",
                  "generator_source_magnitude", "generator_source_phase"):
         if name not in record["tensors"]:
             raise RuntimeError(f"pinned source checkpoint not reached: {name}")

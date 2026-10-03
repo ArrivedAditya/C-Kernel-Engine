@@ -185,6 +185,42 @@ class AudioStftMagnitudePhaseTest(unittest.TestCase):
         # symmetric and retains a small FFT branch-cut sign discrepancy.
         self.assertLess(np.max(np.abs(actual_phase[:, 1:] - phase[:, 1:])), 3e-5)
 
+    def test_pinned_source_window_raw_phase_diagnostic(self):
+        source_fixture = ROOT / 'tests/fixtures/tts/kokoro_source_pinned.npz'
+        metadata = json.loads(source_fixture.with_suffix('.json').read_text())
+        self.assertEqual(hashlib.sha256(source_fixture.read_bytes()).hexdigest(),
+                         metadata['fixture_sha256'])
+        with np.load(source_fixture) as archive:
+            samples = archive['source'].reshape(-1).copy()
+            window = archive['window'].copy()
+            expected_magnitude = archive['magnitude'][0]
+            expected_phase = archive['phase'][0]
+        for run, _ in self.calls:
+            status, output, _, arguments, _ = self.invoke(
+                run, samples, 20, 5, stride_extra=0)
+            self.assertEqual(status, 0)
+            arguments[2] = self.pointer(window)
+            self.assertEqual(run(*arguments), 0)
+            self.assertTrue(np.isfinite(output).all())
+            magnitude_error = np.abs(output[:11] - expected_magnitude)
+            phase_error = np.abs(output[11:] - expected_phase)
+            self.assertLessEqual(float(magnitude_error.max()), 2e-7)
+            angular = np.abs(np.angle(np.exp(1j *
+                (output[11:] - expected_phase))))
+            self.assertLessEqual(float(angular.max()), 3e-4)
+            mismatches = np.argwhere(phase_error > 1.)
+            print('CKE_NUMERICAL_CASE ' + json.dumps({
+                'case_id': 'kokoro.source-stft.raw-phase-diagnostic',
+                'name': 'pinned-window raw phase before source convolution',
+                'provider': 'audio_stft_mag_phase_checked_f32',
+                'oracle': 'direct-pinned-kokoro-pytorch28',
+                'status': 'not_tested',
+                'configuration': '61,800 samples, PyTorch 2.8 Hann window, nfft20/hop5',
+                'max_magnitude_error': float(magnitude_error.max()),
+                'max_raw_phase_error': float(phase_error.max()),
+                'phase_branch_cut_mismatches': mismatches.tolist(),
+                'reason': 'source-convolution parity remains unresolved'}))
+
     def test_live_pytorch_when_available(self):
         try:
             import torch
