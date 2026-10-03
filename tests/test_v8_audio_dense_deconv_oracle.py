@@ -67,8 +67,8 @@ class AudioDenseDeconvOracleTest(unittest.TestCase):
         source = np.full((inputs, frames + 3), np.nan, np.float32)
         source[:, :frames] = self.arrays[f'case{index}_input']
         output = np.full((outputs, out_frames + 4), -91., np.float32)
-        weight = self.arrays[f'case{index}_weight']
-        bias = self.arrays[f'case{index}_bias']
+        weight = self.arrays[f'case{index}_weight'].copy()
+        bias = self.arrays[f'case{index}_bias'].copy()
         scratch = np.full(outputs * out_frames, -37., np.float32)
         args = [self.ptr(source), source.size, source.shape[1],
                 self.ptr(weight), weight.size, self.ptr(bias), bias.size,
@@ -117,9 +117,9 @@ class AudioDenseDeconvOracleTest(unittest.TestCase):
             'configuration': str(self.meta['cases']),
             'reproduction_command': 'python3 -m unittest ' + self.id()}))
 
-    def test_rejection_preserves_output(self):
+    def test_00_rejection_preserves_output_and_recovers_oracle(self):
         for function, workspace in self.functions:
-            status, output, _, args, buffers = self.call(function, 1)
+            status, output, expected, args, buffers = self.call(function, 1)
             self.assertEqual(status, 0)
             for index, value in ((1, 0), (4, 0), (6, 0), (8, 0), (11, 0),
                                  (12, 0), (13, 0), (14, 0), (15, 0),
@@ -165,14 +165,24 @@ class AudioDenseDeconvOracleTest(unittest.TestCase):
                 output.fill(-91.)
                 self.assertNotEqual(function(*short), 0)
                 self.assertTrue(np.all(output == -91.))
+            original_source = source.copy()
+            original_weight = weight.copy()
             source[:, :self.meta['cases'][1][2]] = np.float32(1e30)
             weight[:] = np.float32(1e30)
             output.fill(-91.)
             self.assertEqual(function(*args), -3)
             self.assertTrue(np.all(output == -91.))
-            source[:, :self.meta['cases'][1][2]] = self.arrays['case1_input']
-            weight[:] = self.arrays['case1_weight']
+            np.copyto(source, original_source)
+            np.copyto(weight, original_weight)
+            output.fill(-91.)
             self.assertEqual(function(*args), 0)
+            actual = output[:, :expected.shape[1]]
+            self.assertTrue(np.isfinite(actual).all())
+            np.testing.assert_allclose(actual, expected, rtol=0, atol=3e-6)
+            self.assertTrue(np.all(output[:, expected.shape[1]:] == -91.))
+            for name, value in self.arrays.items():
+                self.assertEqual(hashlib.sha256(value.tobytes()).hexdigest(),
+                    self.meta['array_sha256'][name], name)
             required = SIZE(0)
             self.assertEqual(workspace(0, 3, ctypes.byref(required)), -4)
             self.assertEqual(workspace(SIZE(-1).value, 3,
