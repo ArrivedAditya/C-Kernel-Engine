@@ -715,6 +715,7 @@ TEST_SUITES = {
     "nemotron_router": TestSuite("Nemotron Group-Limited Router", "kernels", UNITTEST_DIR / "test_nemotron_router.py"),
     "moe_relu2_expert": TestSuite("MoE ReLU2 Expert", "kernels", UNITTEST_DIR / "test_moe_relu2_expert.py"),
     "mamba2_reference": TestSuite("Mamba2 Reference Kernels", "kernels", UNITTEST_DIR / "test_mamba2_reference.py"),
+    "rwkv7_reference": TestSuite("RWKV-7 FP32 Decode Reference", "kernels", UNITTEST_DIR / "test_rwkv_decode.py"),
     "gemma4_assistant": TestSuite("Gemma4 Assistant/MTP Kernels", "kernels", UNITTEST_DIR / "test_gemma4_assistant_kernels.py"),
     "vision": TestSuite("Vision", "kernels", UNITTEST_DIR / "test_vision.py"),
     "audio_frontend": TestSuite(
@@ -1710,7 +1711,7 @@ BENCH_TARGETS = {
 # Quick subset for fast validation
 QUICK_TESTS = [
     "gemm", "relu", "relu2", "nemotron_router", "moe_relu2_expert", "mamba2_reference", "gemma4_assistant", "softmax", "rmsnorm", "attention", "attention_sliding",
-    "deltanet_backward", "v8_generated_layout_bridges",
+    "deltanet_backward", "rwkv7_reference", "v8_generated_layout_bridges",
     "relu_bf16", "rmsnorm_bf16",
     "q4k_kernels", "idle_nightly_coordinator",
     "tts_kokoro_shape_bounds", "tts_istft_oracle", "tts_duration_expand_oracle",
