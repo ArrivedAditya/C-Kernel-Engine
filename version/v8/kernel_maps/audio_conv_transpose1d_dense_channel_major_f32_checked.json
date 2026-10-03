@@ -331,9 +331,10 @@
   "tests": {
     "unit": [
       "tests/test_v8_audio_dense_deconv_oracle.py",
-      "tests/test_v8_audio_dense_deconv_generated.py"
+      "tests/test_v8_audio_dense_deconv_generated.py",
+      "tests/test_v8_kokoro_generated_generator_stage0.py"
     ],
-    "oracle": "Independent committed PyTorch 2.12.1 and optional live F.conv_transpose1d(groups=1) comparisons; generator stages need connected pinned-model evidence"
+    "oracle": "Independent committed PyTorch 2.12.1 and optional live F.conv_transpose1d(groups=1) comparisons; the first Kokoro main upsampling stage also has direct pinned full-model PyTorch 2.8 hook comparisons"
   },
-  "notes": "Group-one dense ConvTranspose1D with [I,O,K] weights, explicit geometry, caller-owned output/scratch and output-preserving rejection. FP32 FMA in input-channel, input-frame, tap order. Model-neutral generated composition is tested; generated Kokoro composition is not yet certified. Inference only."
+  "notes": "Group-one dense ConvTranspose1D with [I,O,K] weights, explicit geometry, caller-owned output/scratch and output-preserving rejection. FP32 FMA in input-channel, input-frame, tap order. Model-neutral generated composition and Kokoro first-generator main upsampling stage have generated-entry evidence against direct pinned PyTorch 2.8 hooks. Excitation, source addition, later generator stages and waveform remain unsupported. Inference only."
 }

@@ -43,6 +43,7 @@ DECODER_HOOKS = (
     "decoder.decode.3.pool", "decoder.decode.3.upsample",
     *(f"decoder.decode.{index}" for index in range(4)),
 )
+GENERATOR_HOOKS = ("decoder.generator.ups.0",)
 
 
 def sha256(path: Path) -> str:
@@ -188,13 +189,13 @@ def main() -> int:
         "predictor.duration_proj", "predictor.shared", "predictor.F0_proj",
         "predictor.N_proj", "text_encoder", "decoder", "decoder.generator",
         "decoder.generator.conv_post",
-    ) + FINE_PREDICTOR_HOOKS + PROSODY_BRANCH_HOOKS + DECODER_HOOKS
+    ) + FINE_PREDICTOR_HOOKS + PROSODY_BRANCH_HOOKS + DECODER_HOOKS + GENERATOR_HOOKS
     modules = dict(model.named_modules())
     hooks = []
     for name in module_names:
         module = modules.get(name)
         if module is None:
-            if name in FINE_PREDICTOR_HOOKS + PROSODY_BRANCH_HOOKS + DECODER_HOOKS:
+            if name in FINE_PREDICTOR_HOOKS + PROSODY_BRANCH_HOOKS + DECODER_HOOKS + GENERATOR_HOOKS:
                 raise RuntimeError(f"pinned predictor checkpoint module missing: {name}")
             record.setdefault("unavailable_hooks", []).append(name)
             continue
@@ -235,9 +236,13 @@ def main() -> int:
     for name in DECODER_HOOKS:
         if name.replace(".", "_") not in record["tensors"]:
             raise RuntimeError(f"pinned decoder checkpoint not reached: {name}")
+    for name in GENERATOR_HOOKS:
+        if name.replace(".", "_") not in record["tensors"]:
+            raise RuntimeError(f"pinned generator checkpoint not reached: {name}")
     record["fine_predictor_hooks"] = list(FINE_PREDICTOR_HOOKS)
     record["prosody_branch_hooks"] = list(PROSODY_BRANCH_HOOKS)
     record["decoder_hooks"] = list(DECODER_HOOKS)
+    record["generator_hooks"] = list(GENERATOR_HOOKS)
     capture_tensor(output.pred_dur, "predicted_duration", out_dir, record["tensors"])
     durations = output.pred_dur.detach().cpu().reshape(-1).to(torch.int64)
     if len(durations) != len(ids) or (durations < 1).any():

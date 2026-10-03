@@ -1,0 +1,40 @@
+{
+  "scope": "direct pinned full-model generator.ups[0] hook and effective weights",
+  "model_pin": "e8a90b41091c3c5b70375c47cc959799920fa4d6",
+  "code_pin": "dfb907a02bba8152ca444717ca5d78747ccb4bec",
+  "oracle": "pinned full KModel forward hook",
+  "environment": {
+    "kokoro": "0.9.4",
+    "misaki": "0.9.4",
+    "torch": "2.8.0+cpu",
+    "transformers": "5.17.0",
+    "spacy": "3.8.16",
+    "num2words": "0.5.14",
+    "phonemizer-fork": "3.3.2",
+    "espeakng-loader": "0.2.4"
+  },
+  "asset_sha256": {
+    "config.json": "5abb01e2403b072bf03d04fde160443e209d7a0dad49a423be15196b9b43c17f",
+    "kokoro-v1_0.pth": "496dba118d1a58f5f3db2efc88dbdc216e0483fc89fe6e47ee1f2c53f18ad1e4",
+    "voices/af_heart.pt": "0ab5709b8ffab19bfd849cd11d98f75b60af7733253ad0d67b12382a102cb4ff"
+  },
+  "capture_manifest_sha256": "ab9e806aaf009863ed3487e3facef8e7f0280391e0e660d66d8014b7833dc083",
+  "source_tensor_sha256": {
+    "decoder_generator_ups_0": "3b1b2fe48f91c28e72d7592a07609acf29ae335acf6c492d99cd125cb1ad3a2a"
+  },
+  "effective_weight_sha256": {
+    "waveform_decoder.generator.ups.0.weight": "b8267dd6b48ab30bb8002c259120ddba62715481dc350a258985601824889f83",
+    "waveform_decoder.generator.ups.0.bias": "8c1277e2141cca0def109e6c7cddcc42ab2b6e7b9f1a866011d7d9f4c02eaaef"
+  },
+  "weights_included": false,
+  "array_sha256": {
+    "decoder_generator_ups_0": "5d59863ea35e645e324b5230f70874028296fc2631a800f0c88de2a7a5dc4bc7",
+    "word_ids": "f67234c93ed31b0b86b28c7e7419c0cb08f1c0944ad32c1df7020f3a7ccb0084",
+    "decoder_style": "ec9518045009b676f9cdc1fd05ce82c3fb8d4a777be4df9c7ae722eb3f12ee87",
+    "predictor_style": "cb40b42394ace4e2ef7c9e16950cd0da3a360a6cd16d2d6a5df4746756a69337"
+  },
+  "fixture_sha256": "cfeda0d351e81dff9296168ea70ba87b2a2b49694288447c70d47f439ceb9718",
+  "input_text": "Read your assistant response aloud.",
+  "valid_input_frames": 196,
+  "valid_output_frames": 1960
+}
