@@ -34,8 +34,14 @@ version/v8/scripts/cks-v8-run run \
   --context-len 1024 \
   --prompt 'Explain why numerical reduction order matters.' \
   --max-tokens 256 \
+  --temperature 0.0 \
   --generate-visualizer
 ```
+
+`--temperature 0.0` selects greedy decoding and removes sampling randomness (the
+default is 0.7). Exact repeatability additionally depends on fixed artifacts and
+deterministic runtime execution. Omit `--prompt` for an interactive chat
+session.
 
 Use the same command with a local GGUF path or another supported Hugging Face
 artifact. For inference, follow the
