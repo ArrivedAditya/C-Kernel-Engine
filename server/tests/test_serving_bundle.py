@@ -80,6 +80,46 @@ def resolve(setup, variant=None, *, allow_serving_update=False):
     return resolver.resolve_serving_bundle(run, circuit, variant=variant, v8_root=source, allow_serving_update=allow_serving_update)
 
 
+def test_gguf_config_uses_verified_manifest_circuit_identity(setup):
+    run, _, _ = setup
+    (run / "config.json").write_text(json.dumps({
+        "model_type": "test-circuit", "model_name": "Publisher Checkpoint Name",
+    }))
+    manifest_path = run / "weights_manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["model"] = "test-circuit"
+    manifest_path.write_text(json.dumps(manifest))
+    ir_stamp = run / ".ck_ir_bundle.json"
+    stamp = json.loads(ir_stamp.read_text())
+    stamp["inputs"]["manifest"] = {
+        "path": str(manifest_path), "size": manifest_path.stat().st_size,
+        "sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+    }
+    ir_stamp.write_text(json.dumps(stamp))
+
+    assert resolve(setup)["variant"] == "publisher"
+    manifest["model"] = "different-circuit"
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="compiled manifest model"):
+        resolve(setup)
+
+
+def test_explicit_config_model_mismatch_still_fails(setup):
+    run, _, _ = setup
+    (run / "config.json").write_text(json.dumps({"model": "different-circuit"}))
+    with pytest.raises(ValueError, match="runtime configuration"):
+        resolve(setup)
+
+
+def test_gguf_config_without_compiled_model_identity_fails(setup):
+    run, _, _ = setup
+    (run / "config.json").write_text(json.dumps({
+        "model_type": "test-circuit", "model_name": "Publisher Checkpoint Name",
+    }))
+    with pytest.raises(ValueError, match="compiled manifest model"):
+        resolve(setup)
+
+
 def test_publisher_default_and_explicit_compat(setup):
     native = resolve(setup)
     assert native["variant"] == "publisher"
