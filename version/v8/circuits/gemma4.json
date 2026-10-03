@@ -212,7 +212,37 @@
       }
     }
   },
+  "required_numerical_contracts": {
+    "decoder.rmsnorm": {
+      "operation_interface": "rmsnorm.fp32.v1",
+      "op": "rmsnorm",
+      "template_ops": ["attn_norm", "post_attention_norm", "ffn_norm", "post_ffn_norm", "final_rmsnorm"],
+      "phases": {
+        "prefill": {
+          "contract_id": "rmsnorm_llama_cpu_production_fp32_output",
+          "validation": "validated",
+          "evidence": "Exact-input Gemma4 decoder layer-0 normalization replay against pinned llama.cpp CPU capture; serial and parallel providers have independent row parity tests."
+        },
+        "decode": {
+          "contract_id": "rmsnorm_llama_cpu_production_fp32_output",
+          "validation": "validated",
+          "evidence": "Exact-input Gemma4 decoder layer-0 normalization replay against pinned llama.cpp CPU capture; serial and parallel providers have independent row parity tests."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.rmsnorm.output",
+        "producer": "rmsnorm",
+        "logical_layout": "token_major",
+        "axis_names": ["token", "channel"]
+      }
+    }
+  },
   "kernels": {
+    "attn_norm": "rmsnorm_forward_llama_production",
+    "post_attention_norm": "rmsnorm_forward_llama_production",
+    "ffn_norm": "rmsnorm_forward_llama_production",
+    "post_ffn_norm": "rmsnorm_forward_llama_production",
+    "final_rmsnorm": "rmsnorm_forward_llama_production",
     "geglu": "geglu_forward_ggml_native",
     "rope_qk": "rope_forward_qk_split_direct",
     "rope_q": "rope_forward_q_gemma4",

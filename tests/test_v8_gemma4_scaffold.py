@@ -49,8 +49,11 @@ class Gemma3RopeMetadataTests(unittest.TestCase):
         )
         self.assertEqual(ggml_geglu["selection"]["status"], "candidate")
         gemma4 = _load_builtin_template_doc("gemma4")
-        self.assertNotEqual(gemma4.get("kernels", {}).get("attn_norm"),
-                            "rmsnorm_forward_llama_production")
+        for op in ("attn_norm", "post_attention_norm", "ffn_norm",
+                   "post_ffn_norm", "final_rmsnorm"):
+            with self.subTest(op=op):
+                self.assertEqual(gemma4["kernels"][op],
+                                 "rmsnorm_forward_llama_production")
         self.assertEqual(gemma4["kernels"]["geglu"], "geglu_forward_ggml_native")
 
     def test_artifact_spm_algorithm_is_not_overridden_by_family(self):
