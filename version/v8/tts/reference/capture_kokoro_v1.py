@@ -36,7 +36,8 @@ PROSODY_BRANCH_HOOKS = tuple(
 DECODER_HOOKS = (
     "decoder.F0_conv", "decoder.N_conv", "decoder.asr_res",
     "decoder.encode.norm1", "decoder.encode.conv1",
-    "decoder.encode.norm2", "decoder.encode.conv2", "decoder.encode",
+    "decoder.encode.norm2", "decoder.encode.conv2",
+    "decoder.encode.conv1x1", "decoder.encode",
     *(f"decoder.decode.{index}" for index in range(4)),
 )
 
