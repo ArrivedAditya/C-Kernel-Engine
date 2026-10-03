@@ -28,10 +28,12 @@ enum CKModelCapabilityV8 {
     CK_MODEL_CAP_XRAY_KV                 = UINT64_C(1) << 14,
     CK_MODEL_CAP_GENERATION_POLICY       = UINT64_C(1) << 15,
     /* Serialized state switching only; this does not imply batched arithmetic. */
-    CK_MODEL_CAP_SEQUENCE_STATE_SWITCH   = UINT64_C(1) << 16
+    CK_MODEL_CAP_SEQUENCE_STATE_SWITCH   = UINT64_C(1) << 16,
+    /* Generated M=2 projection work with sequence-local attention/KV. */
+    CK_MODEL_CAP_BATCH_DECODE_TWO_ROWS   = UINT64_C(1) << 17
 };
 
-#define CK_MODEL_CAP_V8_KNOWN_MASK ((UINT64_C(1) << 17) - UINT64_C(1))
+#define CK_MODEL_CAP_V8_KNOWN_MASK ((UINT64_C(1) << 18) - UINT64_C(1))
 
 enum CKGenerationFlagsV8 {
     CK_GENERATION_FLAG_TIMESTAMPS = 1u << 0
@@ -82,6 +84,26 @@ typedef int (*ck_model_sequence_state_create_v8_fn)(void *arena, size_t arena_by
                                                     uint64_t *handle_out);
 typedef int (*ck_model_sequence_state_activate_v8_fn)(uint64_t handle);
 typedef int (*ck_model_sequence_state_destroy_v8_fn)(uint64_t handle);
+
+/* Optional when CK_MODEL_CAP_BATCH_DECODE_TWO_ROWS is set. The first version
+ * accepts two distinct sequence handles with one token each. row_offset and
+ * token_count reserve explicit packed-row geometry for future mixed steps;
+ * unsupported values fail before either sequence advances. Caller owns
+ * distinct output vectors and one 64-byte-aligned workspace for the call.
+ * Calls remain serialized with all other model operations. */
+typedef struct CKModelBatchDecodeRowV8 {
+    uint64_t sequence_handle;
+    int32_t token;
+    int32_t position;
+    uint32_t row_offset;
+    uint32_t token_count;
+    float *logits;
+} CKModelBatchDecodeRowV8;
+
+typedef int (*ck_model_batch_decode_workspace_v8_fn)(size_t *bytes, size_t *alignment);
+typedef int (*ck_model_decode_batch2_v8_fn)(const CKModelBatchDecodeRowV8 *rows,
+                                             size_t count, void *workspace,
+                                             size_t workspace_bytes);
 
 #ifdef __cplusplus
 }

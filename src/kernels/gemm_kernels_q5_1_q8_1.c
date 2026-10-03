@@ -155,6 +155,37 @@ static inline void dot_q5_1_q8_1_block_m4_avx2(
     }
 }
 
+/* Two decode rows share each unpacked weight block. Keep a separate FP32
+ * accumulator per row and the same ascending block reduction as GEMV. */
+static inline void dot_q5_1_q8_1_block_m2_avx2(
+        const block_q5_1 *w, const block_q8_1 *x0,
+        const block_q8_1 *x1, float out[2]) {
+    uint32_t qh;
+    memcpy(&qh, w->qh, sizeof(qh));
+    const __m128i packed = _mm_loadu_si128((const __m128i *)(const void *)w->qs);
+    const __m128i mask = _mm_set1_epi8(0x0f);
+    const __m128i lo = _mm_or_si128(_mm_and_si128(packed, mask),
+                                    ck_q51_high_bits_16_avx2(qh));
+    const __m128i hi = _mm_or_si128(_mm_and_si128(_mm_srli_epi16(packed, 4), mask),
+                                    ck_q51_high_bits_16_avx2(qh >> 16));
+    const __m256i q5 = _mm256_inserti128_si256(_mm256_castsi128_si256(lo), hi, 1);
+    const float wd = CK_FP16_TO_FP32(w->d);
+    const float wm = CK_FP16_TO_FP32(w->m);
+    const block_q8_1 *rows[2] = {x0, x1};
+    for (int row = 0; row < 2; ++row) {
+        const __m256i q8 = _mm256_loadu_si256((const __m256i *)(const void *)rows[row]->qs);
+#if defined(__AVXVNNI__)
+        const __m256i sumi = _mm256_dpbusd_epi32(_mm256_setzero_si256(), q5, q8);
+#else
+        const __m256i prod = _mm256_maddubs_epi16(q5, q8);
+        const __m256i sumi = _mm256_madd_epi16(prod, _mm256_set1_epi16(1));
+#endif
+        const float xd = CK_FP16_TO_FP32(rows[row]->d);
+        const float xs = CK_FP16_TO_FP32(rows[row]->s);
+        out[row] = (wd * xd) * (float)ck_q51_hsum256_epi32(sumi) + wm * xs;
+    }
+}
+
 static inline void dot_q5_1_q8_1_block_m8_avx2(
         const block_q5_1 *w,
         const block_q8_1 *const rows[8],
@@ -359,6 +390,37 @@ void gemm_nt_q5_1_q8_1(const float *A,
             }
             c_row[n] = sum + (bias ? bias[n] : 0.0f);
         }
+    }
+}
+
+void gemm_nt_q5_1_q8_1_m2(const float *A, const void *B,
+                          const float *bias, float *C, int M, int N, int K)
+{
+    if (!A || !B || !C || M != 2 || N <= 0 || K <= 0 || (K % QK5_1) != 0)
+        return;
+    const int blocks_per_row = K / QK5_1;
+    if (blocks_per_row > CK_Q51_STACK_Q8_BLOCKS) return;
+    block_q8_1 x[2][CK_Q51_STACK_Q8_BLOCKS];
+    quantize_row_q8_1_scalar(A, x[0], K);
+    quantize_row_q8_1_scalar(A + K, x[1], K);
+    const block_q5_1 *weights = (const block_q5_1 *)B;
+    for (int n = 0; n < N; ++n) {
+        const block_q5_1 *w = weights + (size_t)n * (size_t)blocks_per_row;
+        float sums[2] = {0.0f, 0.0f};
+        for (int b = 0; b < blocks_per_row; ++b) {
+#if defined(__AVX2__)
+            float partial[2];
+            dot_q5_1_q8_1_block_m2_avx2(w + b, x[0] + b, x[1] + b, partial);
+            sums[0] += partial[0];
+            sums[1] += partial[1];
+#else
+            sums[0] += dot_q5_1_q8_1_block(w + b, x[0] + b);
+            sums[1] += dot_q5_1_q8_1_block(w + b, x[1] + b);
+#endif
+        }
+        const float add = bias ? bias[n] : 0.0f;
+        C[n] = sums[0] + add;
+        C[(size_t)N + n] = sums[1] + add;
     }
 }
 

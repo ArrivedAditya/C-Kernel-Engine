@@ -180,6 +180,12 @@ def _emit_runtime_capability_api(
     sequence_config.update(layout_config)  # Match codegen_core_v8.generate.
     if not encoder_only and resolve_sequence_state_contract(layout_obj, sequence_config):
         capabilities.append("CK_MODEL_CAP_SEQUENCE_STATE_SWITCH")
+        from batch_decode_contract_v8 import resolve_two_row_batch_contract
+        if (
+            codegen_core_v8._infer_logits_layout(sequence_config, layout_obj) == "last"
+            and resolve_two_row_batch_contract(operations, layout_obj, sequence_config)
+        ):
+            capabilities.append("CK_MODEL_CAP_BATCH_DECODE_TWO_ROWS")
     if buffers:
         capabilities.append("CK_MODEL_CAP_NAMED_ACTIVATIONS")
     if not encoder_only:
@@ -2766,6 +2772,13 @@ def main(argv: list[str] | None = None) -> int:
         if generation_policy_api:
             code += "\n\n" + generation_policy_api
 
+    if "CK_EXPORT int ck_model_decode_batch2(" in code:
+        # The compiled batch entry attests the exact generated source prefix.
+        # The appended identity function is excluded to avoid a self-hash.
+        import hashlib
+        source_digest = hashlib.sha256(code.encode("utf-8")).hexdigest()
+        code += ("\n\nCK_EXPORT const char *ck_model_generated_source_sha256(void) {\n"
+                 f'    return "{source_digest}";\n' + "}\n")
     args.output.write_text(code, encoding="utf-8")
     if args.granular_report is not None:
         args.granular_report.parent.mkdir(parents=True, exist_ok=True)

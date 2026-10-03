@@ -2452,8 +2452,11 @@ version/v8/scripts/ck_serve_v8.py "$RUN_DIR" --run "$RUN_DIR" \
         generation-tagged state IDs use caller-owned, 64-byte-aligned KV arenas. The ABI
         reports the required bytes; the caller budgets and retains each arena through
         retirement. KV contents and positions survive state switches. Recurrent, encoder,
-        and multimodal layouts do not advertise this capability. HTTP remains single-flight;
-        this is neither batched decode nor continuous batching. Named KV pointer lookup
+        and multimodal layouts do not advertise this capability. An additional generated
+        entry now admits two one-token rows for KV-only layouts
+        with a declared Q5_1/Q8_1 two-row provider. It shares the first layer's Q/K
+        projections while attention and the remaining layers retain separate state.
+        HTTP remains single-flight, so this is not continuous batching. Named KV pointer lookup
         follows the active state, while its bump-arena offset is unavailable and returns
         <code>-1</code> for a non-default state.
         Run <code>python3 version/v8/scripts/certify_sequence_state_v8.py --run RUN_DIR</code>
@@ -2461,6 +2464,18 @@ version/v8/scripts/ck_serve_v8.py "$RUN_DIR" --run "$RUN_DIR" \
         passed eight exact finite-logit comparisons, including reset isolation and slot reuse.
         The retained report hashes the library, weights, layout, and config. Concurrent calls,
         recurrent state, cancellation, and throughput remain untested.
+    </p>
+    <p>
+        Run <code>python3 version/v8/scripts/certify_batch_decode_v8.py --bundle BUNDLE --generated-source MODEL_C</code>
+        for an identified eligible artifact. The retained Gemma3-270M Q5_K_M report
+        records seven exact full-logit and KV comparisons across unequal prompts,
+        swapped rows, slot reuse, and rejection/recovery cases, including an alias into a third
+        live sequence arena. Compiler admission checks crossing values, exact base pointers,
+        and the selected provider binding. Certification verifies loaded model, engine, and
+        tokenizer mappings plus the loaded generated-source digest. CI compiles and executes
+        a tiny generated-entry fixture. Timings are not a matched speedup measurement.
+        Recurrent Qwen, larger models, mixed prefill/decode,
+        and HTTP scheduling require separate certification.
     </p>
 </div>
 

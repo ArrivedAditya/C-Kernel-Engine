@@ -21,6 +21,49 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def verified_loaded_symbol_backing(
+    library: ctypes.CDLL, symbol: str, expected_path: Path,
+) -> dict[str, str]:
+    """Identify bytes backing an executable native symbol, not its loader filename."""
+    try:
+        address = ctypes.cast(getattr(library, symbol), ctypes.c_void_p).value
+        maps = Path("/proc/self/maps").read_text(encoding="utf-8")
+    except (AttributeError, OSError, TypeError, ValueError) as exc:
+        raise ValueError(f"cannot inspect loaded symbol {symbol}") from exc
+    if not address:
+        raise ValueError(f"loaded symbol has no address: {symbol}")
+    matching = []
+    for line in maps.splitlines():
+        fields = line.split(maxsplit=5)
+        if len(fields) != 6 or "x" not in fields[1] or not fields[5].startswith("/"):
+            continue
+        lo, hi = (int(part, 16) for part in fields[0].split("-", 1))
+        if lo <= address < hi:
+            matching.append(fields)
+    if len(matching) != 1:
+        raise ValueError(f"loaded symbol has no unique executable mapping: {symbol}")
+    fields = matching[0]
+    mapped = fields[5]
+    if mapped.endswith(" (deleted)") or Path(mapped).resolve() != expected_path.resolve():
+        raise ValueError(f"loaded symbol backing path changed: {symbol}")
+    try:
+        with Path(mapped).open("rb") as stream:
+            backing = os.fstat(stream.fileno())
+            device = f"{os.major(backing.st_dev):02x}:{os.minor(backing.st_dev):02x}"
+            if fields[3].lower() != device or int(fields[4]) != backing.st_ino:
+                raise ValueError(f"loaded symbol backing file was replaced: {symbol}")
+            digest = hashlib.sha256()
+            for part in iter(lambda: stream.read(4 * 1024 * 1024), b""):
+                digest.update(part)
+            current = Path(mapped).stat()
+            if current.st_dev != backing.st_dev or current.st_ino != backing.st_ino:
+                raise ValueError(f"loaded symbol backing file was replaced: {symbol}")
+    except OSError as exc:
+        raise ValueError(f"cannot read loaded symbol backing file: {symbol}") from exc
+    return {"method": "symbol_mapping_dev_inode_sha256", "symbol": symbol,
+            "sha256": digest.hexdigest()}
+
+
 def contract_identity(document: dict[str, Any]) -> str:
     payload = {key: value for key, value in document.items() if key != "identity"}
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()

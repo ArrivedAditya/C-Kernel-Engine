@@ -583,6 +583,8 @@ void gemm_nt_q4_1(const float *A, const void *B, const float *bias, float *C, in
 void gemm_nt_q5_0(const float *A, const void *B, const float *bias, float *C, int M, int N, int K);
 void gemm_nt_q5_1(const float *A, const void *B, const float *bias, float *C, int M, int N, int K);
 void gemm_nt_q5_1_q8_1(const float *A, const void *B, const float *bias, float *C, int M, int N, int K);
+/* Exactly two rows; each packed Q5_1 weight block is reused for both rows. */
+void gemm_nt_q5_1_q8_1_m2(const float *A, const void *B, const float *bias, float *C, int M, int N, int K);
 void gemm_nt_q5_1_q8_1_ref(const void *A_q8, const void *B, const float *bias, float *C, int M, int N, int K);
 void gemm_nt_q5_k(const float *A, const void *B, const float *bias, float *C, int M, int N, int K);
 void gemm_nt_q5_k_q8_k(const void *A_q8, const void *B, const float *bias, float *C, int M, int N, int K);

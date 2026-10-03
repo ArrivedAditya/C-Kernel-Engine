@@ -2929,6 +2929,9 @@ def emit_decode_function(
     profile: bool = False,
     dump: bool = False,
     scale_embeddings_sqrt_dim: bool = False,
+    function_name: str = "ck_decode",
+    store_token: bool = True,
+    advance_position: bool = True,
 ) -> str:
     """Emit the decode function with all ops unrolled."""
     config = config or {}
@@ -2939,7 +2942,7 @@ def emit_decode_function(
 /* ============================================================================
  * DECODE - Unrolled from IR Lower
  * ============================================================================ */
-static void ck_decode(CKModel *model, int32_t token) {
+static void __CK_DECODE_FUNCTION__(CKModel *model, int32_t token) {
     uint8_t *MEM = (uint8_t*)model->bump;
     uint8_t *ACT = (uint8_t*)model->activations;
     (void)ACT;
@@ -2979,6 +2982,7 @@ static void ck_decode(CKModel *model, int32_t token) {
     ck_dump_set_token(model->pos);
     #endif
 """
+    prologue = prologue.replace("__CK_DECODE_FUNCTION__", function_name)
     prologue = prologue.replace(
         "int debug_outproj_fp32 = debug_outproj_env ? (atoi(debug_outproj_env) != 0) : 0;",
         f"int debug_outproj_fp32 = debug_outproj_env ? (atoi(debug_outproj_env) != 0) : {debug_outproj_default};",
@@ -3048,8 +3052,11 @@ static void ck_decode(CKModel *model, int32_t token) {
             pass
     if profile:
         lines.append("    CK_PROFILE_VARS();")
-    lines.append(f"    /* Store token at offset {token_offset} (from layout) */")
-    lines.append(f"    *(int32_t*)({token_base} + {token_offset}) = token;")
+    if store_token:
+        lines.append(f"    /* Store token at offset {token_offset} (from layout) */")
+        lines.append(f"    *(int32_t*)({token_base} + {token_offset}) = token;")
+    else:
+        lines.append("    (void)token;")
     lines.append("")
 
     vision_dump_mode = None
@@ -3098,8 +3105,9 @@ static void ck_decode(CKModel *model, int32_t token) {
             embed_scale_emitted = True
         lines.append("")
 
-    lines.append("    model->pos++;")
-    lines.append("    if (!model->bridge_has_explicit_positions) model->rope_pos++;")
+    if advance_position:
+        lines.append("    model->pos++;")
+        lines.append("    if (!model->bridge_has_explicit_positions) model->rope_pos++;")
     lines.append("}")
     return "\n".join(lines)
 
@@ -4352,6 +4360,24 @@ static void _ck_profile_dump(void) {
             scale_embeddings_sqrt_dim=scale_embeddings_sqrt_dim,
         )
     )
+
+    if logits_stride == 0:
+        from batch_decode_contract_v8 import resolve_two_row_batch_contract
+        from batch_decode_codegen_v8 import emit_two_row_batch_api
+
+        batch_contract = resolve_two_row_batch_contract(ops, layout, config)
+        if batch_contract:
+            parts.append(emit_decode_function(
+                ops[:batch_contract["prefix_len"]], token_offset, token_base,
+                config=config, scale_embeddings_sqrt_dim=scale_embeddings_sqrt_dim,
+                function_name="ck_batch_decode_prefix", advance_position=False,
+            ))
+            parts.append(emit_decode_function(
+                ops[batch_contract["suffix_start"]:], token_offset, token_base,
+                config=config, function_name="ck_batch_decode_suffix",
+                store_token=False,
+            ))
+            parts.append(emit_two_row_batch_api(batch_contract))
 
     return "\n".join(parts)
 
