@@ -38,6 +38,41 @@ EXPECTED_TOOLS = ('read_file', 'edit', 'run_shell_command')
 LOADED_IDENTITY_SCHEMA = 'cke.loaded_serving_identity.v1'
 
 
+def _wait_for_client(process: subprocess.Popen, timeout: int, on_ready=None) -> int:
+    """Wait for Qwen Code and reap its separate process group on interruption."""
+    class Interrupted(Exception):
+        def __init__(self, signum: int):
+            self.signum = signum
+
+    def on_signal(signum, _frame):
+        raise Interrupted(signum)
+
+    previous_term = signal.signal(signal.SIGTERM, on_signal)
+    previous_int = signal.signal(signal.SIGINT, on_signal)
+    try:
+        if on_ready is not None:
+            on_ready()
+        try:
+            return process.wait(timeout=timeout)
+        except (subprocess.TimeoutExpired, Interrupted) as exc:
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.wait()
+            return 124 if isinstance(exc, subprocess.TimeoutExpired) else 128 + exc.signum
+    finally:
+        signal.signal(signal.SIGTERM, previous_term)
+        signal.signal(signal.SIGINT, previous_int)
+
+
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -446,16 +481,7 @@ def run(args: argparse.Namespace) -> dict:
     with (run_dir / 'events.jsonl').open('wb') as output, (run_dir / 'stderr.log').open('wb') as errors:
         process = subprocess.Popen(cmd, cwd=run_dir, env=env, stdout=output,
                                    stderr=errors, start_new_session=True)
-        try:
-            exit_code = process.wait(timeout=args.timeout)
-        except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGTERM)
-            try:
-                process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
-                process.wait()
-            exit_code = 124
+        exit_code = _wait_for_client(process, args.timeout)
     try:
         session_path = _session_file(args.qwen_bin, run_dir, session_id)
         shutil.copyfile(session_path, run_dir / 'session.jsonl')
