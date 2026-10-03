@@ -180,6 +180,12 @@ def _emit_runtime_capability_api(
     sequence_config.update(layout_config)  # Match codegen_core_v8.generate.
     if not encoder_only and resolve_sequence_state_contract(layout_obj, sequence_config):
         capabilities.append("CK_MODEL_CAP_SEQUENCE_STATE_SWITCH")
+        from batch_decode_contract_v8 import resolve_two_row_batch_contract
+        if (
+            codegen_core_v8._infer_logits_layout(sequence_config, layout_obj) == "last"
+            and resolve_two_row_batch_contract(operations, layout_obj, sequence_config)
+        ):
+            capabilities.append("CK_MODEL_CAP_BATCH_DECODE_TWO_ROWS")
     if buffers:
         capabilities.append("CK_MODEL_CAP_NAMED_ACTIVATIONS")
     if not encoder_only:

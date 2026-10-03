@@ -1,0 +1,73 @@
+{
+  "schema": "cke.generated-batch-decode-v1",
+  "status": "pass",
+  "scope": "two_rows_shared_first_layer_qk_kv_only_not_continuous_batching",
+  "capabilities": 217215,
+  "compiled_context_length": 1024,
+  "vocab_size": 262144,
+  "full_logit_and_kv_comparisons": [
+    {
+      "sequence": "a",
+      "step": 2,
+      "max_absolute_logit_error": 0.0,
+      "exact_logits": true,
+      "exact_kv": true
+    },
+    {
+      "sequence": "b",
+      "step": 1,
+      "max_absolute_logit_error": 0.0,
+      "exact_logits": true,
+      "exact_kv": true
+    },
+    {
+      "sequence": "b",
+      "step": 2,
+      "max_absolute_logit_error": 0.0,
+      "exact_logits": true,
+      "exact_kv": true
+    },
+    {
+      "sequence": "a",
+      "step": 3,
+      "max_absolute_logit_error": 0.0,
+      "exact_logits": true,
+      "exact_kv": true
+    },
+    {
+      "sequence": "a",
+      "step": 4,
+      "max_absolute_logit_error": 0.0,
+      "exact_logits": true,
+      "exact_kv": true
+    },
+    {
+      "sequence": "a",
+      "step": 5,
+      "max_absolute_logit_error": 0.0,
+      "exact_logits": true,
+      "exact_kv": true
+    },
+    {
+      "sequence": "c",
+      "step": 0,
+      "max_absolute_logit_error": 0.0,
+      "exact_logits": true,
+      "exact_kv": true
+    }
+  ],
+  "batch_step_total_ms": 75.484,
+  "isolated_decode_total_ms": 102.545,
+  "timing_scope": "diagnostic_nonmatched_workloads_no_speedup_claim",
+  "kv_bytes_per_sequence": 37748736,
+  "batch_workspace_bytes": 5258240,
+  "artifacts": {
+    "libmodel.so": "4938e324667eaabd1a0d1e70c3243a9cb1661c346fcb286a31a64b2041804771",
+    "libckernel_engine.so": "841f5b5222c0d6c0b508d7029c7136204d47c53176ed5e934f6bdf4f35d834ef",
+    "libckernel_tokenizer.so": "8c7ff175a64d23f10e17b2f7c349325582d9c8af65845ab2cd002b1385b2b2d2",
+    "weights.bump": "b45ef259c089a697139ac14ff0dcb914e126cffff4adc01177f20b3d95b8cea8",
+    "layout_decode.json": "05115f8f6e54e79092ae15eaca2b457b8b770d26a8c404b58671c49a5371020d",
+    "config.json": "cb8125e7964d3b18c83fc8d0251c4ecda8ee7314acaa899265ef81fc4772815e"
+  },
+  "generated_source_sha256": "a2baa1841b723673b0c6e7e49fdbc2ef193fa9474a3a5219b0719887b841d7e5"
+}

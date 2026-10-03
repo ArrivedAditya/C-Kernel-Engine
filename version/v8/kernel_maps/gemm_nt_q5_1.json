@@ -2,6 +2,13 @@
   "id": "gemm_nt_q5_1",
   "op": "gemm",
   "operation_interface": "gemm.fp32_activation.q5_1_weight.fp32_output.v1",
+  "batch_decode_two_rows": {
+    "decode_function": "gemv_q5_1_q8_1",
+    "function": "gemm_nt_q5_1_q8_1_m2",
+    "max_input_dim": 8192,
+    "numerical_contract": "q5_1_weight_q8_1_internal_fp32_output",
+    "rows": 2
+  },
   "selection": {
     "status": "production",
     "priority": 200,
