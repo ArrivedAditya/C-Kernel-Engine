@@ -470,7 +470,9 @@ def _verify_encoder_prefix_report(
     }
 
 
-def _load_llama_dump_dir(dump_dir: Path) -> list[Any]:
+def _load_llama_dump_dir(
+    dump_dir: Path, *, post_layer_embedding_layers: frozenset[int] = frozenset()
+) -> list[Any]:
     index_path = dump_dir / "index.json"
     if not index_path.exists():
         return []
@@ -561,6 +563,11 @@ def _load_llama_dump_dir(dump_dir: Path) -> list[Any]:
             -1,
             str(row.get("base_name", row.get("name", ""))),
         )
+        if norm_layer in post_layer_embedding_layers:
+            if norm_op == "pe_in":
+                norm_op = "layer_out"
+            elif norm_op == "layer_out":
+                norm_op = "gemma4_per_layer_embed"
         occurrence = int(row.get("occurrence", 0) or 0)
         base_name = str(row.get("base_name", row.get("name", "")))
         token_id = int(row.get("token_id", 0) or 0)
@@ -675,6 +682,7 @@ _LLAMA_SEMANTIC_DUMP_NAMES = {
     "attn_out": "attn_gated",
     "after_attn": "attn_residual",
     "layer_out": "l_out",
+    "gemma4_per_layer_embed": "l_out",
     "post_attn_norm": "attn_post_norm",
     "mlp_gate": "ffn_gate",
     "mlp_up": "ffn_up",
@@ -683,7 +691,10 @@ _LLAMA_SEMANTIC_DUMP_NAMES = {
 }
 
 
-def _resolve_llama_dump_names(dump_names: str, *, layer_count: int) -> str:
+def _resolve_llama_dump_names(
+    dump_names: str, *, layer_count: int,
+    post_layer_embedding_layers: frozenset[int] = frozenset(),
+) -> str:
     """Resolve circuit boundary names to exact llama.cpp graph tensor names.
 
     A layer input is an edge rather than a llama.cpp graph node: layer zero
@@ -727,13 +738,38 @@ def _resolve_llama_dump_names(dump_names: str, *, layer_count: int) -> str:
                 )
             if semantic_name == "layer_input":
                 append("model.input_embed" if layer_id == 0 else f"l_out-{layer_id - 1}")
+            elif semantic_name == "layer_out" and layer_id in post_layer_embedding_layers:
+                append(f"pe_in-{layer_id}")
+            elif semantic_name == "gemma4_per_layer_embed" and layer_id not in post_layer_embedding_layers:
+                raise ValueError(
+                    f"requested post-layer embedding checkpoint is absent from decode IR layer {layer_id}"
+                )
             else:
                 append(f"{_LLAMA_SEMANTIC_DUMP_NAMES[semantic_name]}-{layer_id}")
     return ",".join(expanded)
 
 
+def _post_layer_embedding_layers(runtime: dict[str, Any]) -> frozenset[int]:
+    layout_path = runtime.get("decode_layout_path")
+    if layout_path is None:
+        return frozenset()
+    ir_path = Path(layout_path).with_name("ir1_decode.json")
+    if not ir_path.is_file():
+        raise RuntimeError(f"decode IR required for checkpoint alignment is missing: {ir_path}")
+    payload = json.loads(ir_path.read_text(encoding="utf-8"))
+    ops = payload.get("ops") if isinstance(payload, dict) else None
+    if not isinstance(ops, list):
+        raise RuntimeError(f"decode IR has no operation inventory: {ir_path}")
+    return frozenset(
+        int(op["layer"])
+        for op in ops
+        if isinstance(op, dict) and op.get("op") == "gemma4_per_layer_embed"
+    )
+
+
 def _augment_layer_input_aliases(
-    dumps: list[Any], *, layer_count: int, alias_after_attn: bool = False
+    dumps: list[Any], *, layer_count: int, alias_after_attn: bool = False,
+    post_layer_embedding_layers: frozenset[int] = frozenset(),
 ) -> list[Any]:
     """Expose the graph edge feeding each decoder layer as ``layer_input``."""
     out: list[Any] = []
@@ -757,7 +793,10 @@ def _augment_layer_input_aliases(
         )
         out.append(normalized)
         seen.add((layer_id, op_name, int(normalized.token_id)))
-        if op_name != "layer_out" or layer_id + 1 >= int(layer_count):
+        final_edge = (
+            "gemma4_per_layer_embed" if layer_id in post_layer_embedding_layers else "layer_out"
+        )
+        if op_name != final_edge or layer_id + 1 >= int(layer_count):
             continue
         alias_key = (layer_id + 1, "layer_input", int(normalized.token_id))
         if alias_key in seen:
@@ -831,7 +870,9 @@ def _apply_requested_oracle_attention_semantics(
     return out
 
 
-def _ck_dump_filter_names(dump_names: str) -> str:
+def _ck_dump_filter_names(
+    dump_names: str, *, post_layer_embedding_layers: frozenset[int] = frozenset()
+) -> str:
     """Expand llama.cpp callback names to the equivalent CK dump names."""
     expanded: list[str] = []
     seen: set[str] = set()
@@ -844,11 +885,24 @@ def _ck_dump_filter_names(dump_names: str) -> str:
         if canonical_name == "layer_input":
             # Only layer zero has a distinct input tensor. Every later input is
             # exactly the preceding layer_out edge and is aliased after load.
-            candidates = (
-                ["layer_input-0", "layer_out"]
-                if layer_id < 0
-                else (["layer_input-0"] if layer_id == 0 else [f"layer_out-{layer_id - 1}"])
-            )
+            if layer_id < 0:
+                candidates = ["layer_input-0", "layer_out"]
+                if post_layer_embedding_layers:
+                    candidates.append("gemma4_per_layer_embed")
+            elif layer_id == 0:
+                candidates = ["layer_input-0"]
+            else:
+                previous = layer_id - 1
+                edge = (
+                    "gemma4_per_layer_embed"
+                    if previous in post_layer_embedding_layers else "layer_out"
+                )
+                candidates = [f"{edge}-{previous}"]
+        elif (
+            raw_name.startswith("l_out-")
+            and layer_id in post_layer_embedding_layers
+        ):
+            candidates = [f"gemma4_per_layer_embed-{layer_id}"]
         else:
             candidates = [raw_name, canonical_filter]
         # llama.cpp reuses Qcur/Kcur for projection, Q/K normalization, and
@@ -1753,7 +1807,12 @@ def _capture_dump_compare(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     runtime_config = dict((runtime.get("manifest") or {}).get("config") or {})
     layer_count = int(runtime_config.get("num_layers", 0) or 0)
-    llama_dump_names = _resolve_llama_dump_names(dump_names, layer_count=layer_count)
+    post_layer_embedding_layers = _post_layer_embedding_layers(runtime)
+    llama_dump_names = _resolve_llama_dump_names(
+        dump_names,
+        layer_count=layer_count,
+        post_layer_embedding_layers=post_layer_embedding_layers,
+    )
     semantic_names = {
         re.sub(r"-\d+$", "", item.strip())
         for item in str(dump_names).split(",")
@@ -1785,7 +1844,9 @@ def _capture_dump_compare(
         dump_dir=llama_dump_dir,
         dump_names=llama_dump_names,
     )
-    ck_dump_names = _ck_dump_filter_names(dump_names)
+    ck_dump_names = _ck_dump_filter_names(
+        dump_names, post_layer_embedding_layers=post_layer_embedding_layers
+    )
     old_ck_op_filter = os.environ.get("CK_PARITY_OP_FILTER")
     if ck_dump_names:
         os.environ["CK_PARITY_OP_FILTER"] = ck_dump_names
@@ -1833,7 +1894,9 @@ def _capture_dump_compare(
 
     ck_dump_path = ck_dump_dir / "dump.bin"
     ck_dumps = parity_test_v7.read_dump_file(ck_dump_path)
-    llama_dumps = _load_llama_dump_dir(llama_dump_dir)
+    llama_dumps = _load_llama_dump_dir(
+        llama_dump_dir, post_layer_embedding_layers=post_layer_embedding_layers
+    )
     llama_dumps = _apply_requested_oracle_attention_semantics(
         llama_dumps, semantic_names
     )
@@ -1841,11 +1904,13 @@ def _capture_dump_compare(
         ck_dumps,
         layer_count=layer_count,
         alias_after_attn="after_attn" in semantic_names,
+        post_layer_embedding_layers=post_layer_embedding_layers,
     )
     llama_dumps = _augment_layer_input_aliases(
         llama_dumps,
         layer_count=layer_count,
         alias_after_attn="after_attn" in semantic_names,
+        post_layer_embedding_layers=post_layer_embedding_layers,
     )
     tokens_before_count = len(list(tokens_before or []))
     ck_prompt_start_token = None

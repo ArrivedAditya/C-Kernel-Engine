@@ -303,6 +303,104 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "outside decoder layers"):
             decoder_parity_v8._resolve_llama_dump_names("layer_out-5", layer_count=5)
 
+    def test_post_layer_embedding_boundaries_follow_resolved_ir(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="v8_decoder_ir_boundary_") as tmpdir:
+            tmp = Path(tmpdir)
+            ir_path = tmp / "ir1_decode.json"
+            runtime = {"decode_layout_path": tmp / "layout_decode.json"}
+            with self.assertRaisesRegex(RuntimeError, "decode IR required"):
+                decoder_parity_v8._post_layer_embedding_layers(runtime)
+            ir_path.write_text(
+                json.dumps({"ops": [
+                    {"op": "layer_out", "layer": 0},
+                    {"op": "gemma4_per_layer_embed", "layer": 0},
+                    {"op": "layer_out", "layer": 1},
+                ]}),
+                encoding="utf-8",
+            )
+            layers = decoder_parity_v8._post_layer_embedding_layers(runtime)
+
+        self.assertEqual(layers, frozenset({0}))
+        self.assertEqual(
+            decoder_parity_v8._resolve_llama_dump_names(
+                "layer_out-0,gemma4_per_layer_embed-0,layer_input-1,layer_out-1",
+                layer_count=2,
+                post_layer_embedding_layers=layers,
+            ),
+            "pe_in-0,l_out-0,l_out-1",
+        )
+        self.assertEqual(
+            decoder_parity_v8._ck_dump_filter_names(
+                "layer_input-1", post_layer_embedding_layers=layers
+            ),
+            "gemma4_per_layer_embed-0",
+        )
+        self.assertEqual(
+            decoder_parity_v8._ck_dump_filter_names(
+                "l_out-0", post_layer_embedding_layers=layers
+            ),
+            "gemma4_per_layer_embed-0",
+        )
+        with self.assertRaisesRegex(ValueError, "absent from decode IR"):
+            decoder_parity_v8._resolve_llama_dump_names(
+                "gemma4_per_layer_embed-1",
+                layer_count=2,
+                post_layer_embedding_layers=layers,
+            )
+
+        dump = decoder_parity_v8.parity_test_v7.ParityDump
+        before = np.array([10.0, 20.0], dtype=np.float32)
+        after = np.array([30.0, 40.0], dtype=np.float32)
+        rows = decoder_parity_v8._augment_layer_input_aliases(
+            [dump(0, "layer_out", before, 3, "fp32"),
+             dump(0, "gemma4_per_layer_embed", after, 3, "fp32")],
+            layer_count=2,
+            post_layer_embedding_layers=layers,
+        )
+        self.assertEqual(
+            [(row.layer_id, row.op_name) for row in rows],
+            [(0, "layer_out"), (0, "gemma4_per_layer_embed"), (1, "layer_input")],
+        )
+        self.assertIs(rows[-1].data, after)
+
+    def test_llama_post_layer_embedding_dump_keeps_distinct_stages(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="v8_decoder_llama_stages_") as tmpdir:
+            tmp = Path(tmpdir)
+            entries = []
+            for name, value in (("pe_in-0", 1.0), ("l_out-0", 2.0)):
+                stem = f"{name}-token-000003-occ-000"
+                (tmp / f"{stem}.bin").write_bytes(np.array([value], dtype=np.float32).tobytes())
+                entries.append({
+                    "name": stem, "base_name": name, "token_id": 3,
+                    "occurrence": 0, "dtype": 0, "rank": 1,
+                    "shape": [1], "elem_count": 1, "nbytes": 4,
+                })
+            (tmp / "index.json").write_text(
+                "".join(json.dumps(row) + "\n" for row in entries), encoding="utf-8"
+            )
+            gemma = decoder_parity_v8._load_llama_dump_dir(
+                tmp, post_layer_embedding_layers=frozenset({0})
+            )
+            ordinary = decoder_parity_v8._load_llama_dump_dir(tmp)
+
+        self.assertEqual([row.op_name for row in gemma],
+                         ["layer_out", "gemma4_per_layer_embed"])
+        self.assertEqual([row.op_name for row in ordinary], ["pe_in", "layer_out"])
+
+        dump = decoder_parity_v8.parity_test_v7.ParityDump
+        ck = [
+            dump(0, "layer_out", np.array([1.0], dtype=np.float32), 3, "fp32"),
+            dump(0, "gemma4_per_layer_embed", np.array([2.0], dtype=np.float32), 3, "fp32"),
+        ]
+        aligned = decoder_parity_v8._compare_dump_sets(
+            ck, gemma, atol=0.0, rtol=0.0, pass_filter="all"
+        )
+        wrong_edge = decoder_parity_v8._compare_dump_sets(
+            ck, ordinary, atol=0.0, rtol=0.0, pass_filter="all"
+        )
+        self.assertEqual(aligned["summary"]["pass"], 2)
+        self.assertGreater(wrong_edge["summary"]["fail"], 0)
+
     def test_resolve_llama_dump_names_maps_recurrent_mlp_boundaries(self) -> None:
         self.assertEqual(
             decoder_parity_v8._resolve_llama_dump_names(
