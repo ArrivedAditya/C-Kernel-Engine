@@ -3023,15 +3023,24 @@ def _load_prebuilt_decoder_runtime(
     prefill_layout = _load_layout(required["prefill_layout_path"])
 
     def context_limit(config: dict[str, Any], source: str, *, optional: bool = False) -> int | None:
-        value = next(
-            (config[key] for key in ("context_length", "context_len", "max_seq_len") if key in config),
-            None,
-        )
-        if value is None and optional:
+        aliases = ("context_length", "context_len", "max_seq_len")
+        present = [(key, config[key]) for key in aliases if key in config]
+        if not present and optional:
             return None
-        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        if not present:
             raise RuntimeError(f"prebuilt decoder {source} has no positive context limit")
-        return value
+        for key, value in present:
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise RuntimeError(
+                    f"prebuilt decoder {source} has invalid {key}: expected a positive integer"
+                )
+        limit = present[0][1]
+        if any(value != limit for _, value in present[1:]):
+            raise RuntimeError(
+                f"prebuilt decoder {source} has conflicting context limits: "
+                + ", ".join(f"{key}={value}" for key, value in present)
+            )
+        return limit
 
     context_length = context_limit(cfg, "decode layout")
     prefill_context = context_limit(

@@ -2489,6 +2489,33 @@ class V8NativeBridgeHostTests(unittest.TestCase):
                     load_runtime.assert_called_once_with(runtime)
                     run_decoder.assert_not_called()
 
+    def test_invalid_prebuilt_context_fails_before_encoder_or_decoder_init(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime = Path(tmpdir) / "decoder"
+            with mock.patch.object(
+                bridge_runner_v8, "_load_prebuilt_decoder_runtime",
+                side_effect=RuntimeError("prebuilt decoder model manifest has invalid context_length"),
+            ), mock.patch.object(
+                bridge_runner_v8, "_ensure_engine_lib"
+            ) as ensure_engine, mock.patch.object(
+                bridge_runner_v8, "_prepare_encoder_runtime"
+            ) as prepare_encoder, mock.patch.object(
+                bridge_runner_v8, "_run_encoder"
+            ) as run_encoder, mock.patch.object(
+                bridge_runner_v8, "_run_decoder"
+            ) as run_decoder:
+                with self.assertRaisesRegex(RuntimeError, "invalid context_length"):
+                    bridge_runner_v8.main([
+                        "--decoder-runtime", str(runtime),
+                        "--encoder-gguf", str(Path(tmpdir) / "encoder.gguf"),
+                        "--workdir", str(Path(tmpdir) / "work"),
+                        "--prompt", "Describe the image.",
+                    ])
+                ensure_engine.assert_not_called()
+                prepare_encoder.assert_not_called()
+                run_encoder.assert_not_called()
+                run_decoder.assert_not_called()
+
     def test_prebuilt_decoder_rejects_loaded_context_mismatch(self) -> None:
         runtime = {
             "runtime_dir": Path("/unused"),
