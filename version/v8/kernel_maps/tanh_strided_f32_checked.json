@@ -1,0 +1,190 @@
+{
+  "id": "tanh_strided_f32_checked",
+  "op": "tanh_strided_checked",
+  "operation_interface": "activation.tanh.checked.strided.fp32.v1",
+  "variant": "scalar_libm_strided_checked",
+  "selection": {
+    "status": "candidate",
+    "priority": 100,
+    "equivalence_group": "tanh_strided_f32_checked",
+    "phases": [
+      "prefill"
+    ]
+  },
+  "quant": {
+    "weight": "none",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {
+      "name": "input",
+      "dtype": "fp32",
+      "shape": [
+        "R",
+        "C"
+      ],
+      "layout": "row_major_strided",
+      "placement": "local",
+      "access": "read",
+      "storage_class": "activation",
+      "consumption": "required"
+    }
+  ],
+  "weights": [],
+  "outputs": [
+    {
+      "name": "output",
+      "dtype": "fp32",
+      "shape": [
+        "R",
+        "C"
+      ],
+      "layout": "row_major_strided",
+      "placement": "local",
+      "access": "write",
+      "storage_class": "activation",
+      "consumption": "required"
+    }
+  ],
+  "scratch": [],
+  "dims": [
+    "input_elements",
+    "input_stride",
+    "output_elements",
+    "output_stride",
+    "rows",
+    "columns"
+  ],
+  "impl": {
+    "function": "tanh_strided_f32_checked",
+    "c_declaration": "int tanh_strided_f32_checked(const float *input, size_t input_elements, size_t input_stride, float *output, size_t output_elements, size_t output_stride, size_t rows, size_t columns);",
+    "sources": [
+      "src/kernels/strided_unary_checked.c"
+    ]
+  },
+  "modes": {
+    "inference": true,
+    "training": false,
+    "backward": false
+  },
+  "numerical_capabilities": [
+    {
+      "contract_id": "tanh_strided_f32_checked_system_tanhf",
+      "status": "validated",
+      "phases": [
+        "prefill"
+      ],
+      "function": "tanh_strided_f32_checked",
+      "explicit_selector": true,
+      "implementation": {
+        "isa_dispatch": "scalar",
+        "threading": {
+          "runtime": "serial",
+          "work_partition": [
+            "serial"
+          ],
+          "dispatch": [
+            "inline"
+          ],
+          "reduction_order_effect": "none"
+        }
+      },
+      "arithmetic": {
+        "partial_accumulator": "none",
+        "merge_order": "none",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false,
+        "split_strategy": "serial"
+      }
+    }
+  ],
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {
+        "name": "input",
+        "source": "activation:input",
+        "cast": "const float*",
+        "ports": [
+          "input:input"
+        ]
+      },
+      {
+        "name": "input_elements",
+        "source": "runtime:tanh_input_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "input_stride",
+        "source": "runtime:tanh_input_stride",
+        "value_type": "size_t"
+      },
+      {
+        "name": "output",
+        "source": "output:output",
+        "cast": "float*",
+        "ports": [
+          "output:output"
+        ]
+      },
+      {
+        "name": "output_elements",
+        "source": "runtime:tanh_output_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "output_stride",
+        "source": "runtime:tanh_output_stride",
+        "value_type": "size_t"
+      },
+      {
+        "name": "rows",
+        "source": "runtime:tanh_rows",
+        "value_type": "size_t"
+      },
+      {
+        "name": "columns",
+        "source": "runtime:tanh_columns",
+        "value_type": "size_t"
+      }
+    ]
+  },
+  "tests": {
+    "unit": [
+      "tests/test_v8_audio_tanh_checked_oracle.py",
+      "tests/test_v8_audio_source_projection_generated.py"
+    ],
+    "oracle": "Independent PyTorch tanh with finite, stride, bounds, and generated composition cases"
+  },
+  "notes": "Reusable FP32 tanhf pointwise provider. No reduction, heap, or scratch. Checks all used inputs before writing, rejects overlap and insufficient capacities, and leaves padding untouched. Inference only; libm/backend version is recorded for live-oracle comparison.",
+  "call_constant_contract": {
+    "shape_symbols": {
+      "R": "tanh_rows",
+      "C": "tanh_columns"
+    },
+    "buffer_spans": [
+      {
+        "pointer": "input",
+        "elements": "tanh_input_elements",
+        "rows": "tanh_rows",
+        "width": "tanh_columns",
+        "element_bytes": 4,
+        "stride": "tanh_input_stride",
+        "physical_row_stride": true
+      },
+      {
+        "pointer": "output",
+        "elements": "tanh_output_elements",
+        "rows": "tanh_rows",
+        "width": "tanh_columns",
+        "element_bytes": 4,
+        "stride": "tanh_output_stride",
+        "physical_row_stride": true
+      }
+    ]
+  },
+  "constraints": {
+    "notes": "Rows and columns positive; physical spans checked; finite input; disjoint input/output; output unchanged on rejection."
+  }
+}

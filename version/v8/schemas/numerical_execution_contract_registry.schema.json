@@ -101,6 +101,7 @@
             "audio_istft_mag_phase",
             "audio_stft_mag_phase_checked",
             "audio_harmonic_source_checked",
+            "tanh",
             "layout_transform",
             "multimodal_position_builder",
             "multimodal_prefix_insert",

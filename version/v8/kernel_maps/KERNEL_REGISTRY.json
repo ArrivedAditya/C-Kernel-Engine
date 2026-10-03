@@ -5,7 +5,7 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "version/v8/kernel_maps",
     "counts": {
-      "total": 409,
+      "total": 410,
       "by_op": {
         "add_backward": 1,
         "add_stream": 2,
@@ -160,6 +160,7 @@
         "ssm_conv1d": 4,
         "ssm_conv1d_backward": 1,
         "swiglu": 5,
+        "tanh_strided_checked": 1,
         "tokenizer": 1,
         "transpose_strided_checked": 1,
         "unweighted_rmsnorm": 1,
@@ -17963,11 +17964,12 @@
       "tests": {
         "unit": [
           "tests/test_v8_audio_harmonic_source_oracle.py",
-          "tests/test_v8_audio_harmonic_source_generated.py"
+          "tests/test_v8_audio_harmonic_source_generated.py",
+          "tests/test_v8_audio_source_projection_generated.py"
         ],
         "oracle": "Direct pinned Kokoro 0.9.4 / PyTorch 2.8 full-model SineGen hook with captured Gaussian excitation"
       },
-      "notes": "Explicit Gaussian input isolates source mathematics; this map does not provide a native RNG or claim complete stochastic source execution. The pinned reference's initial phase draw is discarded by midpoint downsampling in this nonpulse path. Native source RNG, linear/tanh merge, STFT and connected generator joins remain separate operations.",
+      "notes": "Explicit Gaussian input isolates source mathematics; this map does not provide a native RNG or claim complete stochastic source execution. The pinned reference's initial phase draw is discarded by midpoint downsampling in this nonpulse path. Generated linear/tanh merge now consumes this output; native RNG, STFT and generator joins remain separate operations.",
       "name": "audio_harmonic_source_checked_f32",
       "_source_file": "audio_harmonic_source_checked_f32.json"
     },
@@ -44431,9 +44433,10 @@
           "tests/test_v8_kokoro_generated_albert_layer.py",
           "tests/test_v8_kokoro_generated_encoder.py",
           "tests/test_v8_kokoro_generated_decoder_encode.py",
-          "tests/test_v8_kokoro_generated_decoder_complete.py"
+          "tests/test_v8_kokoro_generated_decoder_complete.py",
+          "tests/test_v8_audio_source_projection_generated.py"
         ],
-        "oracle": "Independent PyTorch torch.nn.functional.linear at small, pinned Kokoro projection and Q/K/V shapes, and direct full-model decoder style hooks; checked strided rows, bounded per-call capacities, and connected generated graphs"
+        "oracle": "Independent PyTorch torch.nn.functional.linear at small, pinned Kokoro projection and Q/K/V shapes, and direct full-model decoder style and source hooks; checked strided rows, bounded per-call capacities, and connected generated graphs"
       },
       "notes": "Reusable checked linear operator for inference only; Kokoro ALBERT projection is one consumer. FP64 accumulation is deliberately distinct from PyTorch's FP32 reduction and uses an explicit numerical tolerance. Pinned first Kokoro ALBERT FFN projection at [36,2048] to [36,768] differs from PyTorch 2.8 FP32 by 3.814697265625e-5 on oracle-fed inputs while matching independently executed FP64 arithmetic exactly. Its new composition fixture declares its own 5e-5 absolute projection/residual bound and keeps normalized outputs at 1e-5; existing projection/QKV bounds remain unchanged. If a tighter PyTorch-dispatch match is required, add a separately named reduction provider/contract rather than modifying this FP64 provider.",
       "name": "linear_rows_checked_f32",
@@ -74431,6 +74434,198 @@
       "notes": "PyTorch BF16 SwiGLU provider. Unlike the llama.cpp FP32 provider, this stores the SiLU intermediate and final product as BF16.",
       "name": "swiglu_forward_pytorch_bf16_storage",
       "_source_file": "swiglu_forward_pytorch_bf16_storage.json"
+    },
+    {
+      "id": "tanh_strided_f32_checked",
+      "op": "tanh_strided_checked",
+      "operation_interface": "activation.tanh.checked.strided.fp32.v1",
+      "variant": "scalar_libm_strided_checked",
+      "selection": {
+        "status": "candidate",
+        "priority": 100,
+        "equivalence_group": "tanh_strided_f32_checked",
+        "phases": [
+          "prefill"
+        ]
+      },
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "input",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "C"
+          ],
+          "layout": "row_major_strided",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "C"
+          ],
+          "layout": "row_major_strided",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "input_elements",
+        "input_stride",
+        "output_elements",
+        "output_stride",
+        "rows",
+        "columns"
+      ],
+      "impl": {
+        "function": "tanh_strided_f32_checked",
+        "c_declaration": "int tanh_strided_f32_checked(const float *input, size_t input_elements, size_t input_stride, float *output, size_t output_elements, size_t output_stride, size_t rows, size_t columns);",
+        "sources": [
+          "src/kernels/strided_unary_checked.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "tanh_strided_f32_checked_system_tanhf",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "tanh_strided_f32_checked",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "none",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "serial"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "input",
+            "source": "activation:input",
+            "cast": "const float*",
+            "ports": [
+              "input:input"
+            ]
+          },
+          {
+            "name": "input_elements",
+            "source": "runtime:tanh_input_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "input_stride",
+            "source": "runtime:tanh_input_stride",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output",
+            "source": "output:output",
+            "cast": "float*",
+            "ports": [
+              "output:output"
+            ]
+          },
+          {
+            "name": "output_elements",
+            "source": "runtime:tanh_output_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output_stride",
+            "source": "runtime:tanh_output_stride",
+            "value_type": "size_t"
+          },
+          {
+            "name": "rows",
+            "source": "runtime:tanh_rows",
+            "value_type": "size_t"
+          },
+          {
+            "name": "columns",
+            "source": "runtime:tanh_columns",
+            "value_type": "size_t"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "tests/test_v8_audio_tanh_checked_oracle.py",
+          "tests/test_v8_audio_source_projection_generated.py"
+        ],
+        "oracle": "Independent PyTorch tanh with finite, stride, bounds, and generated composition cases"
+      },
+      "notes": "Reusable FP32 tanhf pointwise provider. No reduction, heap, or scratch. Checks all used inputs before writing, rejects overlap and insufficient capacities, and leaves padding untouched. Inference only; libm/backend version is recorded for live-oracle comparison.",
+      "call_constant_contract": {
+        "shape_symbols": {
+          "R": "tanh_rows",
+          "C": "tanh_columns"
+        },
+        "buffer_spans": [
+          {
+            "pointer": "input",
+            "elements": "tanh_input_elements",
+            "rows": "tanh_rows",
+            "width": "tanh_columns",
+            "element_bytes": 4,
+            "stride": "tanh_input_stride",
+            "physical_row_stride": true
+          },
+          {
+            "pointer": "output",
+            "elements": "tanh_output_elements",
+            "rows": "tanh_rows",
+            "width": "tanh_columns",
+            "element_bytes": 4,
+            "stride": "tanh_output_stride",
+            "physical_row_stride": true
+          }
+        ]
+      },
+      "constraints": {
+        "notes": "Rows and columns positive; physical spans checked; finite input; disjoint input/output; output unchanged on rejection."
+      },
+      "name": "tanh_strided_f32_checked",
+      "_source_file": "tanh_strided_f32_checked.json"
     },
     {
       "id": "tokenizer_bpe_trie",

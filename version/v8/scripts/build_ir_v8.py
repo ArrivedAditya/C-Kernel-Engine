@@ -1896,6 +1896,10 @@ OP_DATAFLOW = {
         "inputs": {"input": "external:linear_input"},
         "outputs": {"output": {"slot": "linear_output", "dtype": "fp32"}},
     },
+    "tanh_strided_checked": {
+        "inputs": {"input": "external:tanh_input"},
+        "outputs": {"output": {"slot": "tanh_output", "dtype": "fp32"}},
+    },
     "embedding_three_table_layer_norm": {
         "inputs": {"word_ids": "external:word_ids", "type_ids": "external:type_ids"},
         "outputs": {"output": {"slot": "embedding_output", "dtype": "fp32"}},
@@ -4528,6 +4532,7 @@ TEMPLATE_TO_KERNEL_OP = {
     "audio_concat_channels_checked": "audio_concat_channels_checked",
     "attention_full_token_major_checked": "attention_full_token_major_checked",
     "linear_rows_checked": "linear_rows_checked",
+    "tanh_strided_checked": "tanh_strided_checked",
     "embedding_three_table_layer_norm": "embedding_three_table_layer_norm",
     "embedding_lookup_checked": "embedding_lookup_checked",
     "audio_duration_logits_to_frames": "audio_duration_logits_to_frames",
@@ -9247,6 +9252,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         "audio_istft_mag_phase": None,
         "audio_harmonic_source_checked": None,
         "audio_stft_mag_phase_checked": None,
+        "tanh_strided_checked": None,
         # Ops with quantized weights - look up in quant_summary
         "patch_proj": ["patch_emb"],
         "patch_proj_aux": ["patch_emb_aux"],
@@ -12580,6 +12586,7 @@ TEMPLATE_OP_WEIGHTS = {
     "audio_istft_mag_phase": [],
     "audio_harmonic_source_checked": [],
     "audio_stft_mag_phase_checked": [],
+    "tanh_strided_checked": [],
     # Header (tokenizer is metadata, not model weights)
     "audio_wav_decode": [],
     "audio_pcm_decode": [],
