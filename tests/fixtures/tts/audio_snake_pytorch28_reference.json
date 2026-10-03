@@ -1,0 +1,19 @@
+{
+  "schema": "cke.audio.snake.pytorch_reference.v1",
+  "formula": "x + (1 / alpha) * sin(alpha * x)^2",
+  "torch": "2.8.0+cpu",
+  "torch_git_version": "a1cb3cc05d46d198467bebbb6e8fba50a325d4e7",
+  "fixture_sha256": "188911820cb8579ce2d1c26ebc3042c7feb61116979a9baedbcfbfa3e77117f4",
+  "array_sha256": {
+    "case0_input": "e216325487abcc64bf4d369818845e20c33b05d8ee8a873be83e29a64442fcd2",
+    "case0_alpha": "60a457dfa37f1799dc2703d29f9398ab37d21ee8ba7f168dfed8dc04c663f146",
+    "case0_output": "5f0e059d619bd838e917ee8bb56a55a6402a5501feb054769bb4c431b94a0cf9",
+    "case1_input": "9212607c7ec051cbd94dd9a872069ef814ddd1e7d8d7de9841182cc93e768ddd",
+    "case1_alpha": "969873c31f216c7ffb33873241cade5cd6a0f25898991738e03749018620dd29",
+    "case1_output": "fff43ef0868fa83320839eff23aa96abeaedc01e148da84d0d2a14aa64f66ec0",
+    "case2_input": "5b433c366e0533d2fcc3a614ae831b39b6f920012f99863e6d50880333862c87",
+    "case2_alpha": "343e973b1327d40ede95a5980b5ff21b85d49c4c6ad2164fa7984eb3c373b22c",
+    "case2_output": "6c4653d5ff7e5a7b8b091cd1afb4537907e2de6f123fdd77970d6f658acae930"
+  },
+  "generator": "version/v8/tts/reference/build_audio_snake_reference.py"
+}

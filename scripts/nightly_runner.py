@@ -960,6 +960,14 @@ TEST_SUITES = {
         "Checked Strided Tanh NumPy and PyTorch Oracles", "kernels",
         ROOT / "tests" / "test_v8_audio_tanh_checked_oracle.py",
     ),
+    "tts_audio_snake_checked": TestSuite(
+        "Checked Channelwise Snake PyTorch Oracles", "kernels",
+        ROOT / "tests" / "test_v8_audio_snake_checked_oracle.py",
+    ),
+    "tts_audio_snake_generated": TestSuite(
+        "Checked Channelwise Snake Normal-Compiler Generated Graph", "inference",
+        ROOT / "tests" / "test_v8_audio_snake_generated.py",
+    ),
     "tts_audio_source_projection_generated": TestSuite(
         "Kokoro Generated Harmonic Source Linear Tanh Projection", "inference",
         ROOT / "tests" / "test_v8_audio_source_projection_generated.py",
