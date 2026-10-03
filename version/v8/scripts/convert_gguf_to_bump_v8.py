@@ -4548,6 +4548,7 @@ def main() -> None:
                 "image_std": [float(v) for v in image_std[:3]],
                 "image_min_pixels": int(image_min_pixels),
                 "image_max_pixels": int(image_max_pixels),
+                "image_resize_rounding_policy": "half_away_from_zero",
                 "preproc_image_size": int(preproc_image_size),
                 "spatial_merge_size": int(spatial_merge_size),
                 "spatial_merge_factor": int(spatial_merge_factor),
