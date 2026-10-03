@@ -195,6 +195,22 @@ class AudioStftMagnitudePhaseTest(unittest.TestCase):
             window = archive['window'].copy()
             expected_magnitude = archive['magnitude'][0]
             expected_phase = archive['phase'][0]
+            source_conv_weight = archive['source_conv_weight'].copy()
+            source_conv_bias = archive['source_conv_bias'].copy()
+            expected_source_conv = archive['first_source_conv'][0]
+        def source_convolution(channels):
+            padded = np.pad(channels, ((0, 0), (3, 3)))
+            windows = np.lib.stride_tricks.sliding_window_view(
+                padded, 12, axis=1)[:, ::6, :]
+            rows = windows.transpose(1, 0, 2).reshape(-1, 22 * 12)
+            return ((rows @ source_conv_weight.reshape(256, -1).T).T +
+                    source_conv_bias[:, None])
+        reference_channels = np.concatenate(
+            (expected_magnitude, expected_phase), axis=0)
+        reconstructed_reference = source_convolution(reference_channels)
+        reference_conv_error = np.abs(reconstructed_reference -
+                                      expected_source_conv)
+        self.assertLessEqual(float(reference_conv_error.max()), 5e-5)
         for run, _ in self.calls:
             status, output, _, arguments, _ = self.invoke(
                 run, samples, 20, 5, stride_extra=0)
@@ -209,6 +225,17 @@ class AudioStftMagnitudePhaseTest(unittest.TestCase):
                 (output[11:] - expected_phase))))
             self.assertLessEqual(float(angular.max()), 3e-4)
             mismatches = np.argwhere(phase_error > 1.)
+            source_conv_error = np.abs(source_convolution(output) -
+                                       expected_source_conv)
+            worst_conv = np.unravel_index(np.argmax(source_conv_error),
+                                         source_conv_error.shape)
+            isolated = output.copy()
+            for bin_index, frame_index in mismatches:
+                isolated[11 + bin_index, frame_index] = expected_phase[
+                    bin_index, frame_index]
+            isolated_error = np.abs(source_convolution(isolated) -
+                                    expected_source_conv)
+            self.assertLessEqual(float(isolated_error.max()), 5e-5)
             print('CKE_NUMERICAL_CASE ' + json.dumps({
                 'case_id': 'kokoro.source-stft.raw-phase-diagnostic',
                 'name': 'pinned-window raw phase before source convolution',
@@ -219,6 +246,11 @@ class AudioStftMagnitudePhaseTest(unittest.TestCase):
                 'max_magnitude_error': float(magnitude_error.max()),
                 'max_raw_phase_error': float(phase_error.max()),
                 'phase_branch_cut_mismatches': mismatches.tolist(),
+                'max_reference_conv_reconstruction_error':
+                    float(reference_conv_error.max()),
+                'max_source_conv_error': float(source_conv_error[worst_conv]),
+                'worst_source_conv_index': list(map(int, worst_conv)),
+                'max_after_oracle_phase_isolation': float(isolated_error.max()),
                 'reason': 'source-convolution parity remains unresolved'}))
 
     def test_live_pytorch_when_available(self):

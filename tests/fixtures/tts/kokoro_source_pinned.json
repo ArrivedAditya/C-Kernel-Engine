@@ -21,7 +21,9 @@
   "capture_manifest_sha256": "2aaad5470b535a8ccfb9428a57075d10b6c22f2d09779053758b7723f3df7bca",
   "effective_weight_sha256": {
     "waveform_decoder.generator.m_source.l_linear.weight": "04ddcf828712b77936b58288099f64bf1107e5f3ed2411aef759795244f37056",
-    "waveform_decoder.generator.m_source.l_linear.bias": "a193edba12b1f46bc8236999c04d7f902ed733d54d627476dc062e2583fd1847"
+    "waveform_decoder.generator.m_source.l_linear.bias": "a193edba12b1f46bc8236999c04d7f902ed733d54d627476dc062e2583fd1847",
+    "waveform_decoder.generator.noise_convs.0.weight": "15b12bdc09106232a15f4dc470e3113fa18ed249cf8ac14de6e00975a6f15cb0",
+    "waveform_decoder.generator.noise_convs.0.bias": "23254250f429e60c5ad96210aa7f35a80effe5b021f1231d7c0dc171c675e96e"
   },
   "array_sha256": {
     "f0": "ae57333dc727899284ca3b21c06efd7049ea4cb08822e59b26da78375cf0b5a8",
@@ -33,9 +35,11 @@
     "phase": "1f1e539a1f5f633b23268fd0a3f790b4e8a46e593e5f46360486137ba3fa6605",
     "first_source_conv": "fe76703557376309193018fafeaf920d0edbcdad7b1de46b2c38c8d4d2469bc7",
     "linear_weight": "04ddcf828712b77936b58288099f64bf1107e5f3ed2411aef759795244f37056",
-    "linear_bias": "a193edba12b1f46bc8236999c04d7f902ed733d54d627476dc062e2583fd1847"
+    "linear_bias": "a193edba12b1f46bc8236999c04d7f902ed733d54d627476dc062e2583fd1847",
+    "source_conv_weight": "15b12bdc09106232a15f4dc470e3113fa18ed249cf8ac14de6e00975a6f15cb0",
+    "source_conv_bias": "23254250f429e60c5ad96210aa7f35a80effe5b021f1231d7c0dc171c675e96e"
   },
-  "fixture_sha256": "fd0df42d48bc9e2b532ac851ded682148e90c9f87c863bb4b41f13cf6294ac47",
+  "fixture_sha256": "b9af46fab1c8353102146a359cc58b48552dcde40eee01f0f46b91a8c7df4bad",
   "input_text": "Read this assistant response aloud.",
   "valid_f0_frames": 206,
   "valid_source_samples": 61800,

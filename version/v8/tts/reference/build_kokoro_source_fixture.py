@@ -23,6 +23,8 @@ CAPTURES = {
 WEIGHTS = {
     'linear_weight': 'waveform_decoder.generator.m_source.l_linear.weight',
     'linear_bias': 'waveform_decoder.generator.m_source.l_linear.bias',
+    'source_conv_weight': 'waveform_decoder.generator.noise_convs.0.weight',
+    'source_conv_bias': 'waveform_decoder.generator.noise_convs.0.bias',
 }
 
 
