@@ -149,6 +149,27 @@
       "position_transform": null,
       "description": "Checked FP32 strided tanhf. Libm result may vary by host; finite preflight and padding preservation are exact."
     },
+    "audio_snake_scalar_libm_sinf_fp32_v1": {
+      "operator_family": "snake",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "fp32", "output": "fp32"},
+      "compute": {
+        "input": "fp32", "weight": "fp32", "accumulator": "fp32",
+        "contraction": "disabled",
+        "evaluation_order": "per_channel_then_frame_alpha_multiply_system_sinf_square_reciprocal_multiply_add"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": ["pointwise_product", "sine", "square_product", "reciprocal", "pointwise_sum", "output_store"]
+      },
+      "reduction": {"kind": "none", "order": "none", "partial_accumulator": "none", "merge_order": "none"},
+      "threading": {
+        "work_partition": "serial", "split_strategy": "serial",
+        "deterministic": true, "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Checked channelwise FP32 Snake x + sin(alpha*x)^2/alpha with nonzero finite alpha, separate scaled-square FP32 rounding, system sinf, and two-pass finite validation. Independent PyTorch 2.8 fixture error is at most 2.39e-7 locally; cross-libm bitwise equality is not claimed."
+    },
     "layernorm_rows_checked_fp32_ggml_chunked_contracted_param_epsilon": {
       "status": "validated",
       "operator_family": "layernorm",

@@ -102,6 +102,7 @@
             "audio_stft_mag_phase_checked",
             "audio_harmonic_source_checked",
             "tanh",
+            "snake",
             "layout_transform",
             "multimodal_position_builder",
             "multimodal_prefix_insert",
@@ -265,6 +266,9 @@
                 "enum": [
                   "input_load",
                   "weighted_product",
+                  "pointwise_product",
+                  "pointwise_sum",
+                  "sine",
                   "reduction_update",
                   "partial_store",
                   "activation_intermediate_store",
