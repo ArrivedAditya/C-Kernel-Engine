@@ -55,6 +55,9 @@ GENERATOR_RESIDUAL_PREFIX_HOOKS = (
     "decoder.generator.noise_res.0.adain1.0.fc",
     "decoder.generator.noise_res.0.adain1.0",
     "decoder.generator.noise_res.0.convs1.0",
+    "decoder.generator.noise_res.0.adain2.0.fc",
+    "decoder.generator.noise_res.0.adain2.0",
+    "decoder.generator.noise_res.0.convs2.0",
 )
 
 
@@ -228,6 +231,16 @@ def main() -> int:
         capture_tensor(inputs[0], "decoder_generator_noise_res_0_snake0",
                        out_dir, record["tensors"])
     hooks.append(first_source_conv.register_forward_pre_hook(capture_first_source_snake))
+    second_source_conv = modules["decoder.generator.noise_res.0.convs2.0"]
+    def capture_second_source_snake(_module, inputs):
+        capture_tensor(inputs[0], "decoder_generator_noise_res_0_snake1",
+                       out_dir, record["tensors"])
+    hooks.append(second_source_conv.register_forward_pre_hook(capture_second_source_snake))
+    next_pair = modules["decoder.generator.noise_res.0.adain1.1"]
+    def capture_first_pair_sum(_module, inputs):
+        capture_tensor(inputs[0], "decoder_generator_noise_res_0_pair0_output",
+                       out_dir, record["tensors"])
+    hooks.append(next_pair.register_forward_pre_hook(capture_first_pair_sum))
     stft = model.decoder.generator.stft
     capture_tensor(stft.window, "generator_stft_window", out_dir,
                    record["tensors"])
@@ -305,6 +318,10 @@ def main() -> int:
             raise RuntimeError(f"pinned residual prefix checkpoint not reached: {name}")
     if "decoder_generator_noise_res_0_snake0" not in record["tensors"]:
         raise RuntimeError("pinned first source Snake input was not captured")
+    for key in ("decoder_generator_noise_res_0_snake1",
+                "decoder_generator_noise_res_0_pair0_output"):
+        if key not in record["tensors"]:
+            raise RuntimeError(f"pinned first source residual pair checkpoint not reached: {key}")
     record["fine_predictor_hooks"] = list(FINE_PREDICTOR_HOOKS)
     record["prosody_branch_hooks"] = list(PROSODY_BRANCH_HOOKS)
     record["decoder_hooks"] = list(DECODER_HOOKS)

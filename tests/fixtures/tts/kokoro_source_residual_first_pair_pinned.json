@@ -1,0 +1,58 @@
+{
+  "scope": "direct pinned full-model first source residual pair",
+  "model_pin": "e8a90b41091c3c5b70375c47cc959799920fa4d6",
+  "code_pin": "dfb907a02bba8152ca444717ca5d78747ccb4bec",
+  "oracle": "pinned full KModel forward and pre-convolution hooks",
+  "environment": {
+    "kokoro": "0.9.4",
+    "misaki": "0.9.4",
+    "torch": "2.8.0+cpu",
+    "transformers": "5.17.0",
+    "spacy": "3.8.16",
+    "num2words": "0.5.14",
+    "phonemizer-fork": "3.3.2",
+    "espeakng-loader": "0.2.4"
+  },
+  "asset_sha256": {
+    "config.json": "5abb01e2403b072bf03d04fde160443e209d7a0dad49a423be15196b9b43c17f",
+    "kokoro-v1_0.pth": "496dba118d1a58f5f3db2efc88dbdc216e0483fc89fe6e47ee1f2c53f18ad1e4",
+    "voices/af_heart.pt": "0ab5709b8ffab19bfd849cd11d98f75b60af7733253ad0d67b12382a102cb4ff"
+  },
+  "capture_manifest_sha256": "2944ea84b30fccb07383c708cd247230e2ef51982a68e82f86462ab9597ee178",
+  "source_tensor_sha256": {
+    "style1": "34a065daaf00c8bcae90771187be67506b94d3b1f6873d7133243f2ebab71412",
+    "norm1": "a765ae98a87beb8fb66559ecb8a85b4afd0508eb7b9059f2c2374db4c3437be3",
+    "snake1": "5f9f914614ead7bcdbfc8a849fe3a06cfc34902f3a3d3b1abec2d8379f679528",
+    "conv1": "8659cc52b39c96dc14ddca6e7e83f06164040df2a62b6d495738f263a638688c",
+    "pair0": "74c6cee1b2338239e31833732be4133622432fdeca4334622f8253dde2bbd633"
+  },
+  "effective_weight_sha256": {
+    "waveform_decoder.generator.noise_res.0.adain2.0.fc.weight": "0a2470bb292edd0d5a138537f280591e7e5830aca6cafcdafb40acf8dc5333aa",
+    "waveform_decoder.generator.noise_res.0.adain2.0.fc.bias": "3757d3c579be60ec122121445051717bcef7c7cf2ed59e9e7bc6ee28bee94132",
+    "waveform_decoder.generator.noise_res.0.adain2.0.norm.weight": "893a106828fbdb9521e1d868c985aab7ad2ae2f606edc55329265a5e7676006c",
+    "waveform_decoder.generator.noise_res.0.adain2.0.norm.bias": "5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef",
+    "waveform_decoder.generator.noise_res.0.alpha2.0": "a697724fe4722624998d7d64f404711f0a2a15fff2548347d3f11ef9af7a5fc6",
+    "waveform_decoder.generator.noise_res.0.convs2.0.weight": "7413fbe4e517df72c8b3ffcfd801e50dfa421d6e7b3a32260f9de9e2a26a70f1",
+    "waveform_decoder.generator.noise_res.0.convs2.0.bias": "744c791193785370fe8b070d1c6d92cbe26f364e694558a781691b54b4212984"
+  },
+  "transformations": {
+    "alpha": "waveform_decoder.generator.noise_res.0.alpha2.0 [1,256,1] \u2192 canonical contiguous [256]; no value change"
+  },
+  "array_sha256": {
+    "style1": "3b323c4750f741b07a6887d3ec932734286ff94acbe6d0217d28872780aea429",
+    "norm1": "4c1af1b965c11b8f508d4aa4f346c6344375cff46aa59b8ab02f82de46dfb6ea",
+    "snake1": "29bc87f2fc5148893b56be8969f70740f568faacb04ad6bd16cc8c3a189be638",
+    "conv1": "2b8c265cdbbb17f27cc92c00e4d7a5529536790dd86237adda9c51534f235a16",
+    "pair0": "935e2cb0764172484c71311d5920454b289d6aaa10c199c230af7b5c40613934",
+    "style_weight": "0a2470bb292edd0d5a138537f280591e7e5830aca6cafcdafb40acf8dc5333aa",
+    "style_bias": "3757d3c579be60ec122121445051717bcef7c7cf2ed59e9e7bc6ee28bee94132",
+    "norm_weight": "893a106828fbdb9521e1d868c985aab7ad2ae2f606edc55329265a5e7676006c",
+    "norm_bias": "5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef",
+    "alpha": "a697724fe4722624998d7d64f404711f0a2a15fff2548347d3f11ef9af7a5fc6",
+    "conv_weight": "7413fbe4e517df72c8b3ffcfd801e50dfa421d6e7b3a32260f9de9e2a26a70f1",
+    "conv_bias": "744c791193785370fe8b070d1c6d92cbe26f364e694558a781691b54b4212984"
+  },
+  "fixture_sha256": "6c931aa2556e08d09c3dbf6d44f464a5335f26b1c66bb6a14b7a0baf889d0bb3",
+  "input_text": "Read this assistant response aloud.",
+  "valid_frames": 2060
+}

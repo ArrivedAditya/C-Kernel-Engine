@@ -246,7 +246,7 @@
       "tests/test_v8_kokoro_generated_prosody_complete.py",
       "tests/test_v8_kokoro_generated_decoder_encode.py",
       "tests/test_v8_kokoro_generated_decoder_complete.py",
-      "tests/test_v8_kokoro_source_residual_prefix.py"
+      "tests/test_v8_kokoro_source_residual_prefix.py", "tests/test_v8_kokoro_source_residual_first_pair.py"
     ],
     "oracle": "Independent torch.nn.functional.instance_norm CPU, committed PyTorch 2.13 fixture and optional live comparison; fixture-versus-live and native-versus-live reported separately"
   },
