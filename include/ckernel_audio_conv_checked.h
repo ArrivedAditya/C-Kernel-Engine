@@ -30,6 +30,19 @@ int audio_conv1d_checked_channel_major_f32(
     size_t input_channels, size_t output_channels, size_t input_frames,
     size_t kernel_size, size_t stride, size_t padding, size_t output_frames);
 
+/* Same channel/kernel FMA order with explicit tap dilation. The effective
+ * kernel width is 1 + (kernel_size - 1) * dilation. Scratch and output
+ * preservation follow the checked Conv1D contract above. */
+int audio_conv1d_dilated_checked_channel_major_f32(
+    const float *input, size_t input_elements, size_t input_stride,
+    const float *weight, size_t weight_elements,
+    const float *bias, size_t bias_elements,
+    float *output, size_t output_elements, size_t output_stride,
+    float *scratch, size_t scratch_elements,
+    size_t input_channels, size_t output_channels, size_t input_frames,
+    size_t kernel_size, size_t stride, size_t padding, size_t dilation,
+    size_t output_frames);
+
 #ifdef __cplusplus
 }
 #endif

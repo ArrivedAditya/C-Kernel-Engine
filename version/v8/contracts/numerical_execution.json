@@ -41,6 +41,17 @@
       "position_transform": null,
       "description": "Checked strided FP32 channel-major Conv1D with effective weight-normalized weights supplied by importer. Caller-owned staged output; no heap, global threadpool, or output commit on rejection. Pinned PyTorch 2.8 conv0 maximum absolute difference 1.1921e-5."
     },
+    "audio_conv1d_dilated_checked_scalar_fma_fp32": {
+      "operator_family": "audio_conv1d",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "fp32", "output": "fp32"},
+      "compute": {"input": "fp32", "weight": "fp32", "accumulator": "fp32", "contraction": "enabled", "evaluation_order": "ascending_output_channel_frame_input_channel_dilated_kernel_fmaf"},
+      "rounding": {"mode": "rne", "points": ["input_load", "reduction_update", "output_store"]},
+      "reduction": {"kind": "dot_product", "order": "ascending_k", "partial_accumulator": "fp32", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Checked FP32 channel-major dilated Conv1D with explicit tap dilation, importer-supplied effective weights, caller-owned staged output, and unchanged output on rejection. Pinned PyTorch 2.8 synthetic maximum absolute error is 3.34e-6 at 256 channels."
+    },
     "transpose_strided_f32_checked_exact_fp32": {
       "operator_family": "layout_transform",
       "status": "validated",
