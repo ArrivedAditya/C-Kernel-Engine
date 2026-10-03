@@ -119,12 +119,15 @@ def main(argv: list[str] | None = None) -> int:
         raise RuntimeError("no valid stops selected")
 
     config = report["config"]
-    image_size = int(config["image_size"])
+    image_height = int(config.get("image_height", config.get("image_size", 0)))
+    image_width = int(config.get("image_width", config.get("image_size", 0)))
+    if image_height <= 0 or image_width <= 0:
+        raise RuntimeError(f"invalid encoder image shape: height={image_height} width={image_width}")
     if args.image_path is not None:
-        image_report = npv8._load_image_file(args.image_path.resolve(), image_size, image_size)
+        image_report = npv8._load_image_file(args.image_path.resolve(), image_height, image_width, config)
         planar = image_report["planar"]
     else:
-        _, planar = npv8._build_test_image(image_size, image_size, args.image_mode)
+        _, planar = npv8._build_test_image(image_height, image_width, args.image_mode)
     weights_bump = Path(report["weights_bump"])
     manifest_map = args.output_dir / "weights_manifest.map"
     image_buf = offsets["image_input"]
