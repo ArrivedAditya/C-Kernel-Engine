@@ -8,6 +8,7 @@ possibly interrupted task. Every invocation gets a new disposable directory.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -78,7 +79,9 @@ def _validate(config: dict) -> dict:
 
 
 def _identity_status(client: dict, report: dict) -> str:
-    if client["adapter"] == "qwen_code":
+    if report.get("schema") == "cke.http_lifecycle_acceptance.v1":
+        before, after = report.get("identity_before"), report.get("identity_after")
+    elif client["adapter"] == "qwen_code":
         observed = report.get("identity", {})
         before, after = observed.get("before"), observed.get("after")
     else:
@@ -220,6 +223,58 @@ def run(config: dict, root: Path) -> dict:
     return summary
 
 
+def reassess(root: Path) -> dict:
+    """Re-evaluate retained reports without repeating any client/tool action."""
+    config = _validate(json.loads((root / "config.json").read_text()))
+    original_bytes = (root / "summary.json").read_bytes()
+    original = json.loads(original_bytes)
+    if original.get("schema") != SCHEMA or original.get("status") == "incomplete":
+        raise ValueError("matrix must have a completed summary before reassessment")
+    clients = {client["name"]: client for client in config["clients"]}
+    rows = []
+    for prior in original.get("steps", []):
+        if not isinstance(prior, dict) or prior.get("client") not in clients:
+            raise ValueError("matrix contains an unknown client step")
+        client = clients[prior["client"]]
+        report_path = Path(prior.get("report", "")).resolve()
+        if not report_path.is_relative_to(root.resolve()):
+            raise ValueError("matrix report path escapes its output directory")
+        try:
+            report = json.loads(report_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            report = None
+        kind = prior.get("kind")
+        expected_schema = ("cke.http_lifecycle_acceptance.v1" if kind != "task" else
+                           "cke.serving_harness_acceptance.v1" if client["adapter"] == "qwen_code" else
+                           "cke.gemma_antigravity_acceptance.v1")
+        valid = (isinstance(report, dict) and report.get("schema") == expected_schema
+                 and report.get("model") == client["model"])
+        row = dict(prior)
+        row["report_schema_status"] = "pass" if valid else "missing_or_invalid"
+        row["loaded_identity_status"] = (_identity_status(client, report) if valid else "missing")
+        if kind == "task" and client["adapter"] == "qwen_code":
+            row["task_status"] = (report or {}).get("result", {}).get("status", "missing")
+            row["client_certification_status"] = (report or {}).get("certification", {}).get("status", "missing")
+        elif kind == "task":
+            row["task_status"] = (report or {}).get("status", "missing")
+        else:
+            row["http_suite_status"] = (report or {}).get("status", "missing")
+        row["status"] = ("pass" if row.get("exit_code") == 0 and not row.get("timed_out")
+                         and valid and row["loaded_identity_status"] == "pass"
+                         and row.get("task_status", row.get("http_suite_status")) == "pass"
+                         and row.get("client_certification_status", "pass") == "pass"
+                         else "fail")
+        rows.append(row)
+    result = {"schema": SCHEMA, "source_summary_sha256": hashlib.sha256(original_bytes).hexdigest(),
+              "reassessed_at_unix": time.time(), "reassessment_source_commit": _source_commit(),
+              "steps": rows,
+              "status": "pass" if (len(rows) == len(config["clients"]) * (config["attempts"] + 3)
+                                    and all(row["status"] == "pass" for row in rows)) else "fail"}
+    with (root / "reassessment.json").open("x") as output:
+        output.write(json.dumps(result, indent=2) + "\n")
+    return result
+
+
 def _source_commit() -> str | None:
     try:
         return subprocess.run(["git", "rev-parse", "HEAD"], cwd=Path(__file__).resolve().parent,
@@ -230,15 +285,27 @@ def _source_commit() -> str | None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", type=Path, required=True)
-    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--config", type=Path)
+    parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--reassess-dir", type=Path,
+                        help="Re-evaluate completed retained reports without invoking clients")
     args = parser.parse_args()
     try:
-        config = json.loads(args.config.read_text())
-        summary = run(config, args.output_dir.resolve())
+        if args.reassess_dir is not None:
+            if args.config is not None or args.output_dir is not None:
+                parser.error("reassessment uses only --reassess-dir")
+            path = args.reassess_dir.resolve()
+            summary = reassess(path)
+            result_path = path / "reassessment.json"
+        else:
+            if args.config is None or args.output_dir is None:
+                parser.error("new runs require --config and --output-dir")
+            config = json.loads(args.config.read_text())
+            summary = run(config, args.output_dir.resolve())
+            result_path = args.output_dir.resolve() / "summary.json"
     except (OSError, ValueError, TypeError) as exc:
         parser.error(str(exc))
-    print(json.dumps({"summary": str(args.output_dir.resolve() / "summary.json"),
+    print(json.dumps({"summary": str(result_path),
                       "status": summary["status"], "steps": len(summary["steps"])}))
     return 0 if summary["status"] == "pass" else 1
 

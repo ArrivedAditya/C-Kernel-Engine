@@ -1879,7 +1879,12 @@ python3 server/gemma_antigravity_acceptance.py \
 # placeholder hashes with the intended bundle/session identities.
 python3 server/harness_repeatability.py \
   --config /path/to/local-serving-matrix.json \
-  --output-dir /path/to/new-matrix-run</pre>
+  --output-dir /path/to/new-matrix-run
+
+# If reporting logic changes, reassess completed retained reports without
+# repeating any harness tool or native generation:
+python3 server/harness_repeatability.py \
+  --reassess-dir /path/to/completed-matrix-run</pre>
     </div>
     <p class="mini-note">The output directory must be new. It retains the exact
         configuration, stdout/stderr, every individual HTTP and harness report,
@@ -1898,7 +1903,9 @@ python3 server/harness_repeatability.py \
         the Qwen probe consumed 262K input. After a runner
         timeout, the matrix stops submitting work to that endpoint because native
         completion is not yet proven. The suite records failures without silently
-        retrying edits or commands. The small Gemma artifact has only 2,048 tokens
+        retrying edits or commands. Reassessment writes a separate immutable
+        <code>reassessment.json</code>, pins the original summary hash, and never
+        replays a task. The small Gemma artifact has only 2,048 tokens
         of compiled context and uses an explicit 256-token output cap; this matrix
         is bounded workflow evidence, not a larger-context or unattended-reliability
         claim. Repeat with a separately built and identified larger-context artifact

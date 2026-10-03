@@ -1,4 +1,5 @@
 """The repeatability coordinator retains failures without inventing certification."""
+import json
 from pathlib import Path
 
 import pytest
@@ -81,6 +82,16 @@ def test_identity_is_independent_of_task_success():
     assert matrix._identity_status(client, report) == "fail"
 
 
+def test_http_report_uses_its_own_identity_fields():
+    client = _config()["clients"][0]
+    identity = {"model": "qwen-test", "serving_identity": HASH,
+                "session_library_sha256": HASH}
+    report = {"schema": "cke.http_lifecycle_acceptance.v1",
+              "identity_before": identity, "identity_after": identity,
+              "status": "pass"}
+    assert matrix._identity_status(client, report) == "pass"
+
+
 def test_successful_child_exit_cannot_certify_wrong_report_schema(tmp_path, monkeypatch):
     import sys
 
@@ -95,3 +106,25 @@ def test_successful_child_exit_cannot_certify_wrong_report_schema(tmp_path, monk
     assert row["exit_code"] == 0
     assert row["status"] == "fail"
     assert row["report_schema_status"] == "missing_or_invalid"
+
+
+def test_reassessment_uses_retained_reports_without_replaying_tasks(tmp_path):
+    root = tmp_path / "matrix"
+    root.mkdir()
+    (root / "config.json").write_text(json.dumps(_config()))
+    identity = {"model": "qwen-test", "serving_identity": HASH,
+                "session_library_sha256": HASH}
+    report_path = root / "http-report.json"
+    report_path.write_text(json.dumps({
+        "schema": "cke.http_lifecycle_acceptance.v1", "model": "qwen-test",
+        "identity_before": identity, "identity_after": identity, "status": "pass"}))
+    original = {"schema": matrix.SCHEMA, "status": "fail", "steps": [{
+        "client": "qwen-control", "kind": "plain-chat", "report": str(report_path),
+        "exit_code": 0, "timed_out": False, "status": "fail"}]}
+    (root / "summary.json").write_text(json.dumps(original))
+    result = matrix.reassess(root)
+    assert result["steps"][0]["status"] == "pass"
+    assert result["steps"][0]["loaded_identity_status"] == "pass"
+    assert result["status"] == "fail"  # Other required steps are still missing.
+    assert json.loads((root / "summary.json").read_text()) == original
+    assert (root / "reassessment.json").is_file()
