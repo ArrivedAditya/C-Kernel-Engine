@@ -956,6 +956,11 @@ TEST_SUITES = {
         "Kokoro Generated Harmonic Source Linear Tanh Projection", "inference",
         ROOT / "tests" / "test_v8_audio_source_projection_generated.py",
     ),
+    "tts_kokoro_generated_f0_source": TestSuite(
+        "Kokoro Generated F0 to Harmonic Source Projection", "inference",
+        ROOT / "tests" / "test_v8_kokoro_generated_f0_source.py",
+        timeout_sec=300,
+    ),
     "tts_checked_text_ops_generated": TestSuite(
         "Model-Neutral Checked Conv1D, Transpose, and Activation Graph", "inference",
         ROOT / "tests" / "test_v8_checked_text_ops_generated.py",
