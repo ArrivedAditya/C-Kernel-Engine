@@ -296,6 +296,7 @@ def _run_llama_capture(
     dump_dir: Path | None = None,
     dump_names: str | None = None,
     no_repack: bool = False,
+    flash_attention: str = "disabled",
 ) -> dict[str, Any]:
     helper = compare_first_token_logits_v7.ensure_llama_helper()
     if dump_dir is not None:
@@ -319,6 +320,8 @@ def _run_llama_capture(
             str(prefix_decode_mode),
             "--decode-mode",
             str(decode_mode),
+            "--flash-attn",
+            str(flash_attention),
             "--logits-out",
             str(logits_path),
         ]
@@ -361,6 +364,11 @@ def _run_llama_capture(
         meta = json.loads(payload)
         if not isinstance(meta, dict) or not meta.get("ok"):
             raise RuntimeError(f"llama_token_replay returned invalid payload: {payload}")
+        if flash_attention == "enabled" and meta.get("flash_attention_mode") != "enabled":
+            raise RuntimeError(
+                "llama.cpp did not execute requested flash attention; "
+                f"actual={meta.get('flash_attention_mode', 'unknown')}"
+            )
         n_vocab = int(meta.get("n_vocab", 0))
         logits = np.fromfile(logits_path, dtype=np.float32)
         if logits.size != n_vocab:
@@ -1741,6 +1749,7 @@ def _capture_dump_compare(
     ck_strict_parity: bool = True,
     llama_prefix_decode_mode: str = "batched",
     llama_decode_mode: str = "sequential",
+    llama_flash_attention: str = "disabled",
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     runtime_config = dict((runtime.get("manifest") or {}).get("config") or {})
     layer_count = int(runtime_config.get("num_layers", 0) or 0)
@@ -1772,6 +1781,7 @@ def _capture_dump_compare(
         prefix_text_pos=prefix_text_pos,
         prefix_decode_mode=str(llama_prefix_decode_mode),
         decode_mode=str(llama_decode_mode),
+        flash_attention=str(llama_flash_attention),
         dump_dir=llama_dump_dir,
         dump_names=llama_dump_names,
     )
@@ -1943,6 +1953,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--ctx-len", type=int, default=None)
     ap.add_argument("--top-k", type=int, default=16)
     ap.add_argument("--threads", type=int, default=0)
+    ap.add_argument(
+        "--llama-flash-attention", choices=("disabled", "auto", "enabled"), default="disabled",
+        help="Oracle attention implementation; use enabled for CKE FP16 flash-provider comparisons",
+    )
     ap.add_argument("--require-top1-match", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--min-topk-overlap", type=float, default=0.50)
     ap.add_argument("--max-abs-threshold", type=float, default=1.0e9)
@@ -2089,6 +2103,7 @@ def main(argv: list[str] | None = None) -> int:
         prefix_grid=resolved_prefix_grid,
         prefix_row_dim=int(prefix_row_dim),
         prefix_text_pos=resolved_prefix_text_pos,
+        flash_attention=str(args.llama_flash_attention),
     )
     if separate_prefixes and hashlib.sha256(llama_prefix_path.read_bytes()).hexdigest() != llama_prefix_sha256:
         raise RuntimeError("separate llama prefix changed during capture")
@@ -2122,6 +2137,7 @@ def main(argv: list[str] | None = None) -> int:
             prefix_grid=resolved_prefix_grid,
             prefix_text_pos=resolved_prefix_text_pos,
             prefix_decode_policy=prefix_decode_policy,
+            llama_flash_attention=str(args.llama_flash_attention),
             ck_strict_parity=bool(args.ck_strict_parity),
         )
     else:
@@ -2168,6 +2184,8 @@ def main(argv: list[str] | None = None) -> int:
         "prompt_tokens_after_image": [int(tok) for tok in token_ids_after],
         "multimodal_prompt_segmented": bool(prompt_meta.get("uses_image_chunks")),
         "prefix_decode_policy": prefix_decode_policy,
+        "llama_flash_attention_requested": str(args.llama_flash_attention),
+        "llama_flash_attention_actual": str(ll["meta"].get("flash_attention_mode", "unknown")),
         "prefix": {
             "source": prefix_source,
             "tokens": int(prefix_tokens),
