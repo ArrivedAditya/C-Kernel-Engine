@@ -504,6 +504,17 @@
       "position_transform": null,
       "description": "Centered reflect-padded forward STFT with caller-supplied periodic-Hann window and trigonometric tables; output rows are magnitude then phase. The exact-real Nyquist bin uses positive-zero imaginary phase. Direct DFT and FFT can still choose opposite +/-pi signs at reflection-symmetric frame zero."
     },
+    "audio_harmonic_source_wide_cumsum_linear_phase_fp32": {
+      "operator_family": "audio_harmonic_source_checked",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "none", "output": "fp32"},
+      "compute": {"input": "fp32", "weight": "none", "accumulator": "fp64", "contraction": "disabled", "evaluation_order": "ascending_frame_harmonic_wide_cumsum_then_linear_phase_interpolation_then_sine_uv_gaussian_add"},
+      "rounding": {"mode": "rne", "points": ["input_load", "reduction_update", "reduction_finalize", "activation_intermediate_store", "output_store"]},
+      "reduction": {"kind": "composite", "order": "stage_ordered", "partial_accumulator": "fp64", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Frame-rate F0 is nearest-expanded with upsample >= 4; this excludes the pinned nonpulse initial-phase draw from midpoint downsampling. Harmonic phase uses an FP64 prefix sum stored to FP32, then align-corners-false linear interpolation and scalar sine. Gaussian excitation is an explicit input, not an internal RNG."
+    },
     "hyper_stream_expand_exact_fp32": {
       "operator_family": "hyper_stream_expand",
       "status": "validated",

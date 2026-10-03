@@ -1,0 +1,54 @@
+{
+  "oracle": "pinned kokoro.istftnet.SineGen.forward",
+  "torch": "2.8.0+cpu",
+  "reference_code_sha256": "66515cb3369d1c0bbb2015ad7293d019fb1f80fefcb2d56e70e73b6b146af11c",
+  "cases": [
+    {
+      "name": "single_voiced",
+      "frames": 1,
+      "upsample": 4,
+      "harmonics": 2,
+      "seed": 104
+    },
+    {
+      "name": "uv_transitions",
+      "frames": 5,
+      "upsample": 4,
+      "harmonics": 3,
+      "seed": 205
+    },
+    {
+      "name": "longer_mixed",
+      "frames": 7,
+      "upsample": 6,
+      "harmonics": 4,
+      "seed": 306
+    },
+    {
+      "name": "long_unvoiced",
+      "frames": 9,
+      "upsample": 8,
+      "harmonics": 2,
+      "seed": 407
+    }
+  ],
+  "array_sha256": {
+    "single_voiced_f0": "814e223b91cb65a962256b15f351f22ac7bcbb3c2b82d2a4b3ecf174db8de764",
+    "single_voiced_gaussian": "54c21385ccf2574ea1980676bec3cd70abb385fd4fdc94159c8bc56088df77ca",
+    "single_voiced_output": "1ce7adf87fa697f655e1bce4493daa4fec4e5074de4ec24a5c18284fce6ddf7f",
+    "single_voiced_uv": "f6bb1294da2f78cd935b01c7656280df5eaa0439e9d97bc03775825a41a508e4",
+    "uv_transitions_f0": "783d9edca3bb2c624d5d042e035a9ba446afe26e684ace12c03d933ce803c0ec",
+    "uv_transitions_gaussian": "905c7674c5a0632e0f9cc45f13f85efb7dbf21d7a889dec94125ec79fe952c64",
+    "uv_transitions_output": "acf51cf35977948fb4130f5dcef960a834a17a6381c333da411d31d2bcd67495",
+    "uv_transitions_uv": "b593f32e03e2a8fb193277c170c84eaafce3c6903c9947ddacd234c4c8a4d31c",
+    "longer_mixed_f0": "e1621e9cb9d488a960326a0e0e9b2babc16ce0b9a67482697105d316c09ff16f",
+    "longer_mixed_gaussian": "ab6010e8ec978dd9e2d19fdaa423bcb8bb5eaa49b8d239fb96b1bd2c71446710",
+    "longer_mixed_output": "f7f479bd2157477df5e9dda6ac068c8531c8cc1402d033124bc6d42a311bcab9",
+    "longer_mixed_uv": "1b5ab0f72fe10284065cca88a4a0a82d823eb3a7b7cc3f1e5fa9a30c0d3df25e",
+    "long_unvoiced_f0": "51017bce6ebf5ecaec46c7b180baed9ad150954fe36dfa9a28e413e6d82ac4ff",
+    "long_unvoiced_gaussian": "fc4efeed6142a1822d8e35c660f0434fa2c92bc9d60982a2807ec813124a5f0e",
+    "long_unvoiced_output": "0d8a987295727b773a061e38e8d34634c8899475d31eba7d820d142b5d0038a7",
+    "long_unvoiced_uv": "8e5b004d6aa7d8ee93453ae275b4af0c22487e254531a0c7b0a3be05c8f4fe29"
+  },
+  "fixture_sha256": "448a2da527b736dadc8d18465633d945745ab89ab77544bfbf4c1a6e9ab706fc"
+}

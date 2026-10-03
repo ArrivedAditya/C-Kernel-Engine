@@ -18,9 +18,11 @@ def digest(data):
 
 def main():
     samples = np.random.default_rng(871).normal(0, .05, 60).astype(np.float32)
+    window = torch.hann_window(20, periodic=True)
     spectrum = torch.stft(torch.from_numpy(samples), 20, 5, 20,
-        window=torch.hann_window(20, periodic=True), return_complex=True)
+        window=window, return_complex=True)
     arrays = {'samples': samples,
+              'window': window.numpy(),
               'magnitude': torch.abs(spectrum).numpy(),
               'phase': torch.angle(spectrum).numpy()}
     OUT.parent.mkdir(parents=True, exist_ok=True)

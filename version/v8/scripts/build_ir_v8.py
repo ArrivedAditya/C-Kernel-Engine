@@ -1931,6 +1931,15 @@ OP_DATAFLOW = {
         "inputs": {"magnitude": "external:audio_magnitude", "phase": "external:audio_phase"},
         "outputs": {"output": {"slot": "audio_waveform", "dtype": "fp32"}},
     },
+    "audio_harmonic_source_checked": {
+        "inputs": {"f0": "external:audio_f0", "gaussian": "external:audio_gaussian"},
+        "outputs": {"output": {"slot": "audio_harmonics", "dtype": "fp32"}},
+    },
+    "audio_stft_mag_phase_checked": {
+        "inputs": {"samples": "external:audio_samples", "window": "external:audio_window",
+                   "cos_table": "external:audio_cos_table", "sin_table": "external:audio_sin_table"},
+        "outputs": {"output": {"slot": "audio_magnitude_phase", "dtype": "fp32"}},
+    },
     # Header ops
     "audio_wav_decode": {
         "inputs": {"wav_bytes": "external:audio_wav_bytes"},
@@ -4518,6 +4527,8 @@ TEMPLATE_TO_KERNEL_OP = {
     "audio_duration_expand": "audio_duration_expand",
     "runtime_copy_valid": "runtime_copy_valid",
     "audio_istft_mag_phase": "audio_istft_mag_phase",
+    "audio_harmonic_source_checked": "audio_harmonic_source_checked",
+    "audio_stft_mag_phase_checked": "audio_stft_mag_phase_checked",
     # Header ops
     "audio_wav_decode": "audio_wav_decode",
     "audio_pcm_decode": "audio_pcm_decode",
@@ -9225,6 +9236,8 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         "audio_duration_expand": None,
         "runtime_copy_valid": None,
         "audio_istft_mag_phase": None,
+        "audio_harmonic_source_checked": None,
+        "audio_stft_mag_phase_checked": None,
         # Ops with quantized weights - look up in quant_summary
         "patch_proj": ["patch_emb"],
         "patch_proj_aux": ["patch_emb_aux"],
@@ -12556,6 +12569,8 @@ TEMPLATE_OP_WEIGHTS = {
     "audio_duration_expand": [],
     "runtime_copy_valid": [],
     "audio_istft_mag_phase": [],
+    "audio_harmonic_source_checked": [],
+    "audio_stft_mag_phase_checked": [],
     # Header (tokenizer is metadata, not model weights)
     "audio_wav_decode": [],
     "audio_pcm_decode": [],
