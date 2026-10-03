@@ -77,6 +77,12 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
                 return decoder_parity_v8._verify_encoder_prefix_report(report_path, ck, llama, 4, 3)
 
             self.assertEqual(verify(report)["input_provenance"], report["input_provenance"])
+            alternate_roles = copy.deepcopy(report)
+            alternate_roles["ck_resolved_output"] = "bridge_embeddings"
+            alternate_roles["llama_reference_output"] = "projected_image_embeddings"
+            alternate_roles["decoder_prefix_exports"]["ck_output_role"] = "bridge_embeddings"
+            alternate_roles["decoder_prefix_exports"]["oracle_output_role"] = "projected_image_embeddings"
+            self.assertEqual(verify(alternate_roles)["input_provenance"], report["input_provenance"])
             for change in (
                 {"status": "fail"},
                 {"input_provenance": "shared_processed_tensor"},
