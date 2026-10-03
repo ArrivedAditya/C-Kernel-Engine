@@ -1288,6 +1288,90 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
             self.assertEqual(report["prefix"]["grid"], [2, 3])
             self.assertEqual(report["prefix"]["text_pos"], 7)
 
+    def test_main_separate_prefixes_are_labeled_and_geometry_checked(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="v8_decoder_own_prefix_") as tmpdir:
+            tmp = Path(tmpdir)
+            ck_prefix = tmp / "ck.f32"
+            llama_prefix = tmp / "llama.f32"
+            ck_prefix.write_bytes(array("f", [1.0, 2.0, 3.0, 4.0]).tobytes())
+            llama_prefix.write_bytes(array("f", [4.0, 3.0, 2.0, 1.0]).tobytes())
+            report_path = tmp / "report.json"
+
+            class FakeTokenizer:
+                def encode(self, text: str) -> list[int]:
+                    return [1, 2]
+
+                def decode(self, ids: list[int], skip_special: bool = False) -> str:
+                    return ",".join(str(x) for x in ids)
+
+            runtime = {
+                "embed_dim": 2,
+                "vocab_size": 4,
+                "so_path": tmp / "libdecoder_v8.so",
+                "c_path": tmp / "decoder_v8.c",
+            }
+            llama_result = {
+                "meta": {"ok": True, "n_vocab": 4, "token_count": 2,
+                         "prefix_token_count": 2, "topk": [{"id": 1, "logit": 0.95}]},
+                "logits": np.array([0.0, 1.0, 0.1, -0.5], dtype=np.float32),
+            }
+            with mock.patch.object(decoder_parity_v8.bridge_runner_v8, "_prepare_decoder_runtime", return_value=runtime), \
+                 mock.patch.object(decoder_parity_v8.bridge_runner_v8, "_run_decoder", return_value={"vocab_size": 4, "logits": array("f", [0.1, 0.9, 0.2, -0.4])}) as run_decoder, \
+                 mock.patch.object(decoder_parity_v8.GGUFTokenizer, "from_gguf", return_value=FakeTokenizer()), \
+                 mock.patch.object(decoder_parity_v8, "_run_llama_capture", return_value=llama_result) as run_llama:
+                argv = [
+                    "--gguf", str(tmp / "decoder.gguf"), "--workdir", str(tmp / "work"),
+                    "--tokens", "1,2", "--prefix-f32", str(ck_prefix),
+                    "--llama-prefix-f32", str(llama_prefix), "--prefix-row-dim", "2",
+                    "--json-out", str(report_path),
+                ]
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(decoder_parity_v8.main(argv), 4)
+                self.assertEqual(run_llama.call_args.kwargs["prefix_path"], llama_prefix)
+                self.assertEqual(list(run_decoder.call_args.args[1]), [1.0, 2.0, 3.0, 4.0])
+                report = json.loads(report_path.read_text(encoding="utf-8"))
+                self.assertEqual(report["status"], "incomplete")
+                self.assertFalse(report["pass"])
+                self.assertTrue(report["diagnostic_comparison_pass"])
+                self.assertEqual(report["prefix_input_scope"], "separate_files_unverified_producers")
+                self.assertNotEqual(
+                    report["prefix_input_identity"]["ck_sha256"],
+                    report["prefix_input_identity"]["llama_sha256"],
+                )
+                llama_prefix.write_bytes(array("f", [1.0, 2.0]).tobytes())
+                run_llama.reset_mock()
+                run_decoder.reset_mock()
+                with self.assertRaisesRegex(ValueError, "separate prefix geometry mismatch"):
+                    decoder_parity_v8.main(argv)
+                run_llama.assert_not_called()
+                run_decoder.assert_not_called()
+                with self.assertRaisesRegex(ValueError, "different files"):
+                    decoder_parity_v8.main([
+                        *argv[:argv.index("--llama-prefix-f32") + 1], str(ck_prefix),
+                        *argv[argv.index("--prefix-row-dim"):],
+                    ])
+                llama_prefix.write_bytes(array("f", [4.0, 3.0, 2.0, 1.0]).tobytes())
+
+                def change_oracle_prefix(*_args, **_kwargs):
+                    llama_prefix.write_bytes(array("f", [4.0, 3.0, 2.0, 1.1]).tobytes())
+                    return llama_result
+
+                run_llama.side_effect = change_oracle_prefix
+                with self.assertRaisesRegex(RuntimeError, "changed during capture"):
+                    decoder_parity_v8.main(argv)
+                run_decoder.assert_not_called()
+                llama_prefix.write_bytes(array("f", [4.0, 3.0, 2.0, 1.0]).tobytes())
+                run_llama.side_effect = None
+                run_llama.return_value = {
+                    **llama_result,
+                    "logits": np.array([2.0, 0.0, 0.1, -0.5], dtype=np.float32),
+                }
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(decoder_parity_v8.main(argv), 3)
+                report = json.loads(report_path.read_text(encoding="utf-8"))
+                self.assertEqual(report["status"], "fail")
+                self.assertFalse(report["diagnostic_comparison_pass"])
+
     def test_main_passes_ctx_len_into_decoder_runtime_prep(self) -> None:
         with tempfile.TemporaryDirectory(prefix="v8_decoder_ctx_len_") as tmpdir:
             tmp = Path(tmpdir)
