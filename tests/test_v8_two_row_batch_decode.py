@@ -72,6 +72,18 @@ def _fixture() -> tuple[list[dict], dict, dict]:
     return ops, layout, {"vocab_size": 64}
 
 
+def _avx2_available() -> bool:
+    if platform.machine().lower() not in {"x86_64", "amd64"}:
+        return False
+    try:
+        cpuinfo = Path("/proc/cpuinfo").read_text()
+    except OSError:
+        return False
+    return any(line.startswith(("flags", "Features")) and
+               "avx2" in line.partition(":")[2].split()
+               for line in cpuinfo.splitlines())
+
+
 class BatchContractTests(unittest.TestCase):
     def test_compiled_generated_entry_and_nonparticipating_arena(self) -> None:
         contract = resolve_two_row_batch_contract(*_fixture())
@@ -221,11 +233,16 @@ int main(void) {
             with self.subTest(change=change):
                 self.assertIsNone(resolve_two_row_batch_contract(bad_ops, bad_layout, config))
 
-    def test_m2_kernel_matches_two_independent_quantized_gemvs(self) -> None:
+    def test_m2_kernel_portable(self) -> None:
+        self._check_m2_kernel([[]])
+
+    def test_m2_kernel_avx2(self) -> None:
+        if not _avx2_available():
+            self.skipTest("AVX2 is unavailable on this runner")
+        self._check_m2_kernel([["-mavx2"]])
+
+    def _check_m2_kernel(self, modes: list[list[str]]) -> None:
         source = ROOT / "src/kernels/gemm_kernels_q5_1_q8_1.c"
-        modes = [[]]
-        if platform.machine().lower() in {"x86_64", "amd64"}:
-            modes.append(["-mavx2"])
         for flags in modes:
             with self.subTest(flags=flags), tempfile.TemporaryDirectory() as directory:
                 library = Path(directory) / "libq51.so"
