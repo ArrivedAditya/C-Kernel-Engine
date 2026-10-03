@@ -15,15 +15,16 @@
   "numerical_capabilities": [{"contract_id": "runtime_copy_valid_exact_fp32", "status": "validated", "phases": ["prefill"], "function": "ck_runtime_copy_valid_f32", "explicit_selector": true, "implementation": {"isa_dispatch": "scalar", "threading": {"runtime": "serial", "work_partition": ["serial"], "dispatch": ["inline"], "reduction_order_effect": "none"}}, "arithmetic": {"partial_accumulator": "none", "merge_order": "none", "deterministic": true, "thread_count_changes_arithmetic_order": false, "split_strategy": "independent_outputs"}}],
   "call_abi": {"version": 1, "params": [
     {"name": "input", "source": "activation:input", "cast": "const float*", "ports": ["input:input"]},
-    {"name": "input_elements", "source": "runtime:expanded_elements"},
-    {"name": "channels", "source": "runtime:channels"},
-    {"name": "valid_frames", "source": "runtime:expanded_frames"},
-    {"name": "input_stride", "source": "runtime:expanded_stride"},
+    {"name": "input_elements", "source": "runtime:expanded_elements", "value_type": "size_t"},
+    {"name": "channels", "source": "runtime:channels", "value_type": "size_t"},
+    {"name": "valid_frames", "source": "runtime:expanded_frames", "value_type": "size_t"},
+    {"name": "input_stride", "source": "runtime:expanded_stride", "value_type": "size_t"},
     {"name": "output", "source": "output:output", "cast": "float*", "ports": ["output:output"]},
-    {"name": "output_elements", "source": "runtime:output_elements"},
-    {"name": "output_stride", "source": "runtime:output_stride"}
+    {"name": "output_elements", "source": "runtime:output_elements", "value_type": "size_t"},
+    {"name": "output_stride", "source": "runtime:output_stride", "value_type": "size_t"}
   ]},
   "constraints": {"notes": "Only valid columns are read and written. Input/output are disjoint. Zero valid length is a no-write success."},
-  "tests": {"unit": ["tests/test_v8_runtime_extent_kernel.py"], "oracle": "Python exact strided-copy construction with untouched padding and invalid-capacity cases"},
-  "notes": "No allocation or hidden stack workspace. Inference only."
+  "tests": {"unit": ["tests/test_v8_runtime_extent_kernel.py", "tests/test_v8_runtime_extent_affine_generated.py"], "oracle": "Python exact strided-copy construction with untouched padding and invalid-capacity cases"},
+  "notes": "No allocation or hidden stack workspace. Inference only.",
+  "call_constant_contract": {"shape_symbols":{},"buffer_spans":[{"pointer":"input","elements":"expanded_elements","rows":"channels","width":"expanded_frames","element_bytes":4,"stride":"expanded_stride","physical_row_stride":true},{"pointer":"output","elements":"output_elements","rows":"channels","width":"expanded_frames","element_bytes":4,"stride":"output_stride","physical_row_stride":true}]}
 }

@@ -1,12 +1,12 @@
 {
-  "id": "runtime_extent_scale_i32",
-  "op": "runtime_extent_scale",
-  "operation_interface": "runtime.extent.scale_checked.i32.v1",
+  "id": "runtime_extent_affine_i32",
+  "op": "runtime_extent_affine",
+  "operation_interface": "runtime.extent.affine_checked.i32.v1",
   "variant": "scalar_checked_i32",
   "selection": {
     "status": "candidate",
     "priority": 100,
-    "equivalence_group": "runtime_extent_scale_i32",
+    "equivalence_group": "runtime_extent_affine_i32",
     "phases": [
       "prefill"
     ]
@@ -36,11 +36,12 @@
   "dims": [
     "source_extent",
     "factor",
+    "offset",
     "capacity"
   ],
   "impl": {
-    "function": "ck_runtime_scale_i32_checked",
-    "c_declaration": "int ck_runtime_scale_i32_checked(size_t source_extent, size_t factor, size_t capacity, int32_t *valid_extent);",
+    "function": "ck_runtime_affine_i32_checked",
+    "c_declaration": "int ck_runtime_affine_i32_checked(size_t source_extent, size_t factor, size_t offset, size_t capacity, int32_t *valid_extent);",
     "sources": [
       "src/kernels/runtime_extent.c"
     ]
@@ -52,12 +53,12 @@
   },
   "numerical_capabilities": [
     {
-      "contract_id": "runtime_extent_scale_checked_i32",
+      "contract_id": "runtime_extent_affine_checked_i32",
       "status": "validated",
       "phases": [
         "prefill"
       ],
-      "function": "ck_runtime_scale_i32_checked",
+      "function": "ck_runtime_affine_i32_checked",
       "explicit_selector": true,
       "implementation": {
         "isa_dispatch": "scalar",
@@ -86,17 +87,22 @@
     "params": [
       {
         "name": "source_extent",
-        "source": "runtime:extent_scale_source",
+        "source": "runtime:extent_affine_source",
         "value_type": "size_t"
       },
       {
         "name": "factor",
-        "source": "runtime:extent_scale_factor",
+        "source": "runtime:extent_affine_factor",
+        "value_type": "size_t"
+      },
+      {
+        "name": "offset",
+        "source": "runtime:extent_affine_offset",
         "value_type": "size_t"
       },
       {
         "name": "capacity",
-        "source": "runtime:extent_scale_capacity",
+        "source": "runtime:extent_affine_capacity",
         "value_type": "size_t"
       },
       {
@@ -110,19 +116,17 @@
     ]
   },
   "constraints": {
-    "notes": "Source extent is nonnegative; factor is positive. Result must fit int32 and declared capacity. Output remains untouched on failure."
+    "notes": "Checked nonnegative source_extent * positive factor + nonnegative offset, bounded by int32 and declared capacity. Failure leaves output untouched."
   },
   "tests": {
     "unit": [
-      "tests/test_v8_runtime_extent_scale.py",
-      "tests/test_v8_prosody_upsample_generated.py",
-      "tests/test_v8_kokoro_generated_prosody_complete.py",
-      "tests/test_v8_kokoro_generated_generator_stage0.py",
-      "tests/test_v8_kokoro_generated_source_stft_conv.py"
+      "tests/test_v8_runtime_extent_affine.py",
+      "tests/test_v8_kokoro_generated_source_stft_conv.py",
+      "tests/test_v8_runtime_extent_affine_generated.py"
     ],
-    "oracle": "Python arbitrary-precision multiplication and generated producer-to-consumer circuit"
+    "oracle": "Python arbitrary-precision affine arithmetic and generated producer-to-consumer circuit"
   },
-  "notes": "Generic checked value-dependent extent producer. Caller-owned output scalar, no allocation or scratch. Inference only.",
+  "notes": "Generic checked value-dependent affine extent producer. Caller-owned output scalar, no allocation or scratch. Inference only.",
   "call_constant_contract": {
     "shape_symbols": {},
     "buffer_spans": []

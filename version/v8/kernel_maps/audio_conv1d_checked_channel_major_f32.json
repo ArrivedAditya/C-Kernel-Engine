@@ -272,7 +272,8 @@
       "tests/test_v8_kokoro_generated_prosody_complete.py",
       "tests/test_v8_kokoro_generated_decoder_ingress.py",
       "tests/test_v8_kokoro_generated_decoder_encode.py",
-      "tests/test_v8_kokoro_generated_decoder_complete.py"
+      "tests/test_v8_kokoro_generated_decoder_complete.py",
+      "tests/test_v8_kokoro_generated_source_stft_conv.py"
     ],
     "oracle": "Pinned PyTorch 2.8 text encoder, independent NumPy/PyTorch primitives"
   },

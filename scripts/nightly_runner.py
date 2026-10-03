@@ -899,6 +899,14 @@ TEST_SUITES = {
         "Checked Runtime Extent Scale", "kernels",
         ROOT / "tests" / "test_v8_runtime_extent_scale.py",
     ),
+    "tts_runtime_extent_affine": TestSuite(
+        "Checked Runtime Extent Affine", "kernels",
+        ROOT / "tests" / "test_v8_runtime_extent_affine.py",
+    ),
+    "tts_runtime_extent_affine_generated": TestSuite(
+        "Model-Neutral Generated Affine Extent and Consumer", "inference",
+        ROOT / "tests" / "test_v8_runtime_extent_affine_generated.py",
+    ),
     "tts_prosody_upsample_generated": TestSuite(
         "Model-Neutral Generated A-to-2A Upsampling Graph", "inference",
         ROOT / "tests" / "test_v8_prosody_upsample_generated.py",
@@ -959,6 +967,11 @@ TEST_SUITES = {
     "tts_kokoro_generated_f0_source": TestSuite(
         "Kokoro Generated F0 to Harmonic Source Projection", "inference",
         ROOT / "tests" / "test_v8_kokoro_generated_f0_source.py",
+        timeout_sec=300,
+    ),
+    "tts_kokoro_generated_source_stft_conv": TestSuite(
+        "Kokoro Generated Source STFT and First Convolution", "inference",
+        ROOT / "tests" / "test_v8_kokoro_generated_source_stft_conv.py",
         timeout_sec=300,
     ),
     "tts_checked_text_ops_generated": TestSuite(
