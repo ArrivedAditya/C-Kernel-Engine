@@ -1,0 +1,48 @@
+{
+  "id": "audio_harmonic_source_checked_f32",
+  "op": "audio_harmonic_source_checked",
+  "operation_interface": "audio.harmonic_source.frame_f0.gaussian.fp32.v1",
+  "variant": "scalar_nonpulse_linear_phase_checked",
+  "selection": {"status": "candidate", "priority": 100, "equivalence_group": "audio_harmonic_source_wide_cumsum_linear_phase_fp32", "phases": ["prefill"]},
+  "quant": {"weight": "none", "activation": "fp32", "output": "fp32"},
+  "inputs": [
+    {"name": "f0", "dtype": "fp32", "shape": ["F"], "layout": "frame_contiguous", "placement": "local", "access": "read", "storage_class": "activation", "consumption": "required"},
+    {"name": "gaussian", "dtype": "fp32", "shape": ["S", "H"], "layout": "sample_harmonic_contiguous", "placement": "local", "access": "read", "storage_class": "activation", "consumption": "required"}
+  ],
+  "weights": [],
+  "outputs": [{"name": "output", "dtype": "fp32", "shape": ["S", "H"], "layout": "sample_harmonic_contiguous", "placement": "local", "access": "write", "storage_class": "activation", "consumption": "required"}],
+  "scratch": [{"name": "phase_scratch", "dtype": "fp32", "shape": ["Q"], "layout": "contiguous", "placement": "local", "access": "read_write", "storage_class": "scratch", "consumption": "required", "lifetime": "kernel_call", "alignment": 4, "size_bytes": "4 * Q", "size_resolution": "required"}],
+  "dims": ["f0_capacity", "gaussian_capacity", "output_capacity", "scratch_capacity", "frames", "upsample", "harmonics"],
+  "constraints": {"notes": "Frame F0 is nearest-expanded by upsample; nonpulse phase is cumsum of wrapped harmonic frequency with align_corners=false linear interpolation. Caller supplies independent Gaussian samples. samples=frames*upsample <= 2^24, Q=frames*harmonics+samples*harmonics, all capacities and overlaps checked before output writes."},
+  "impl": {"function": "audio_harmonic_source_checked_f32", "c_declaration": "int audio_harmonic_source_checked_f32(const float *f0, size_t f0_capacity, const float *gaussian, size_t gaussian_capacity, float *output, size_t output_capacity, float *phase_scratch, size_t scratch_capacity, size_t frames, size_t upsample, size_t harmonics, float sample_rate, float voiced_threshold, float sine_amp, float noise_std);", "sources": ["src/kernels/audio_harmonic_source_checked.c"]},
+  "modes": {"inference": true, "training": false, "backward": false},
+  "numerical_capabilities": [{"contract_id": "audio_harmonic_source_wide_cumsum_linear_phase_fp32", "status": "validated", "phases": ["prefill"], "function": "audio_harmonic_source_checked_f32", "explicit_selector": true, "implementation": {"isa_dispatch": "scalar", "threading": {"runtime": "serial", "work_partition": ["serial"], "dispatch": ["inline"], "reduction_order_effect": "contract_defined"}}, "arithmetic": {"partial_accumulator": "fp64", "merge_order": "none", "deterministic": true, "thread_count_changes_arithmetic_order": false, "split_strategy": "serial"}}],
+  "call_abi": {"version": 1, "params": [
+    {"name": "f0", "source": "activation:f0", "cast": "const float*", "ports": ["input:f0"]},
+    {"name": "f0_capacity", "source": "runtime:source_f0_capacity", "value_type": "size_t"},
+    {"name": "gaussian", "source": "activation:gaussian", "cast": "const float*", "ports": ["input:gaussian"]},
+    {"name": "gaussian_capacity", "source": "runtime:source_gaussian_capacity", "value_type": "size_t"},
+    {"name": "output", "source": "output:output", "cast": "float*", "ports": ["output:output"]},
+    {"name": "output_capacity", "source": "runtime:source_output_capacity", "value_type": "size_t"},
+    {"name": "phase_scratch", "source": "scratch:phase_scratch", "cast": "float*"},
+    {"name": "scratch_capacity", "source": "runtime:source_scratch_capacity", "value_type": "size_t"},
+    {"name": "frames", "source": "runtime:source_frames", "value_type": "size_t"},
+    {"name": "upsample", "source": "dim:upsample"},
+    {"name": "harmonics", "source": "dim:harmonics"},
+    {"name": "sample_rate", "source": "param:sample_rate"},
+    {"name": "voiced_threshold", "source": "param:voiced_threshold"},
+    {"name": "sine_amp", "source": "param:sine_amp"},
+    {"name": "noise_std", "source": "param:noise_std"}
+  ]},
+  "call_constant_contract": {
+    "shape_symbols": {"F": "source_frames", "Q": "source_scratch_capacity"},
+    "buffer_spans": [
+      {"pointer": "f0", "elements": "source_f0_capacity", "rows": 1, "width": "source_frames", "element_bytes": 4},
+      {"pointer": "gaussian", "elements": "source_gaussian_capacity", "rows": 1, "width": "source_gaussian_capacity", "element_bytes": 4},
+      {"pointer": "output", "elements": "source_output_capacity", "rows": 1, "width": "source_output_capacity", "element_bytes": 4},
+      {"pointer": "phase_scratch", "elements": "source_scratch_capacity", "rows": 1, "width": "source_scratch_capacity", "element_bytes": 4}
+    ]
+  },
+  "tests": {"unit": ["tests/test_v8_audio_harmonic_source_oracle.py", "tests/test_v8_audio_harmonic_source_generated.py"], "oracle": "Direct pinned Kokoro 0.9.4 / PyTorch 2.8 full-model SineGen hook with captured Gaussian excitation"},
+  "notes": "Explicit Gaussian input isolates source mathematics; this map does not provide a native RNG or claim complete stochastic source execution. The pinned reference's initial phase draw is discarded by midpoint downsampling in this nonpulse path. Native source RNG, linear/tanh merge, STFT and connected generator joins remain separate operations."
+}

@@ -43,7 +43,14 @@ DECODER_HOOKS = (
     "decoder.decode.3.pool", "decoder.decode.3.upsample",
     *(f"decoder.decode.{index}" for index in range(4)),
 )
-GENERATOR_HOOKS = ("decoder.generator.ups.0",)
+GENERATOR_HOOKS = (
+    "decoder.generator.f0_upsamp",
+    "decoder.generator.m_source",
+    "decoder.generator.m_source.l_sin_gen",
+    "decoder.generator.noise_convs.0",
+    "decoder.generator.noise_res.0",
+    "decoder.generator.ups.0",
+)
 
 
 def sha256(path: Path) -> str:
@@ -212,18 +219,58 @@ def main() -> int:
             capture_tensor(output, stem, out_dir, record["tensors"])
         hooks.append(module.register_forward_hook(on_output))
     stft = model.decoder.generator.stft
+    original_transform = stft.transform
     original_inverse = stft.inverse
+    original_rand = torch.rand
+    original_randn_like = torch.randn_like
+    def capture_rand(*shape, **kwargs):
+        value = original_rand(*shape, **kwargs)
+        if tuple(value.shape) == (1, 9):
+            capture_tensor(value, "generator_initial_phase_random", out_dir,
+                           record["tensors"])
+        return value
+    def capture_randn_like(input_value, *random_args, **random_kwargs):
+        value = original_randn_like(input_value, *random_args, **random_kwargs)
+        if value.ndim == 3 and value.shape[0] == 1:
+            if value.shape[-1] == 9:
+                label = "generator_harmonic_gaussian"
+            elif value.shape[-1] == 1:
+                label = "generator_source_gaussian"
+            else:
+                return value
+            capture_tensor(value, label, out_dir, record["tensors"])
+        return value
+    def capture_transform(samples):
+        capture_tensor(samples, "generator_source_samples", out_dir,
+                       record["tensors"])
+        magnitude, phase = original_transform(samples)
+        capture_tensor(magnitude, "generator_source_magnitude", out_dir,
+                       record["tensors"])
+        capture_tensor(phase, "generator_source_phase", out_dir,
+                       record["tensors"])
+        return magnitude, phase
     def capture_inverse(spec, phase):
         capture_tensor(spec, "istft_magnitude", out_dir, record["tensors"])
         capture_tensor(phase, "istft_phase", out_dir, record["tensors"])
         return original_inverse(spec, phase)
+    stft.transform = capture_transform
     stft.inverse = capture_inverse
+    torch.rand = capture_rand
+    torch.randn_like = capture_randn_like
     try:
         output = model(phonemes, voice_row, speed=fixture["speed"], return_output=True)
     finally:
+        stft.transform = original_transform
         stft.inverse = original_inverse
+        torch.rand = original_rand
+        torch.randn_like = original_randn_like
         for hook in hooks:
             hook.remove()
+    for name in ("generator_initial_phase_random", "generator_harmonic_gaussian",
+                 "generator_source_gaussian", "generator_source_samples",
+                 "generator_source_magnitude", "generator_source_phase"):
+        if name not in record["tensors"]:
+            raise RuntimeError(f"pinned source checkpoint not reached: {name}")
     for name in FINE_PREDICTOR_HOOKS:
         stem = name.replace(".", "_")
         if not any(key.startswith(f"{stem}_input") for key in record["tensors"]):
@@ -237,7 +284,8 @@ def main() -> int:
         if name.replace(".", "_") not in record["tensors"]:
             raise RuntimeError(f"pinned decoder checkpoint not reached: {name}")
     for name in GENERATOR_HOOKS:
-        if name.replace(".", "_") not in record["tensors"]:
+        if not any(key.startswith(name.replace(".", "_"))
+                   for key in record["tensors"]):
             raise RuntimeError(f"pinned generator checkpoint not reached: {name}")
     record["fine_predictor_hooks"] = list(FINE_PREDICTOR_HOOKS)
     record["prosody_branch_hooks"] = list(PROSODY_BRANCH_HOOKS)

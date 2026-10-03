@@ -940,6 +940,14 @@ TEST_SUITES = {
         "Checked Audio Magnitude/Phase STFT NumPy and PyTorch Oracles", "kernels",
         ROOT / "tests" / "test_v8_audio_stft_mag_phase_oracle.py",
     ),
+    "tts_audio_harmonic_source": TestSuite(
+        "Checked Harmonic Source Direct Kokoro/PyTorch Oracle", "kernels",
+        ROOT / "tests" / "test_v8_audio_harmonic_source_oracle.py",
+    ),
+    "tts_audio_harmonic_source_generated": TestSuite(
+        "Checked Harmonic Source Normal-Compiler Generated Graph", "inference",
+        ROOT / "tests" / "test_v8_audio_harmonic_source_generated.py",
+    ),
     "tts_checked_text_ops_generated": TestSuite(
         "Model-Neutral Checked Conv1D, Transpose, and Activation Graph", "inference",
         ROOT / "tests" / "test_v8_checked_text_ops_generated.py",

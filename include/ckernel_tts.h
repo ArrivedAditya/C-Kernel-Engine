@@ -128,6 +128,18 @@ int audio_stft_mag_phase_checked_f32(const float *samples, size_t samples_capaci
     float *scratch, size_t scratch_capacity,
     size_t samples_count, size_t n_fft, size_t hop, size_t frames);
 
+/* Frame F0 and explicit Gaussian excitation to sample-major harmonic waves.
+ * Scratch holds frame*harmonic phases plus sample*harmonic staged output;
+ * rejection preserves output. The random stream is supplied by the caller. */
+int audio_harmonic_source_checked_f32(
+    const float *f0, size_t f0_capacity,
+    const float *gaussian, size_t gaussian_capacity,
+    float *output, size_t output_capacity,
+    float *phase_scratch, size_t scratch_capacity,
+    size_t frames, size_t upsample, size_t harmonics,
+    float sample_rate, float voiced_threshold,
+    float sine_amp, float noise_std);
+
 #ifdef __cplusplus
 }
 #endif

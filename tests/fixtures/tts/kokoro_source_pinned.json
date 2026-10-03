@@ -1,0 +1,42 @@
+{
+  "scope": "direct pinned full-model harmonic-source and STFT hooks",
+  "model_pin": "e8a90b41091c3c5b70375c47cc959799920fa4d6",
+  "code_pin": "dfb907a02bba8152ca444717ca5d78747ccb4bec",
+  "oracle": "pinned full KModel forward hooks and captured random draws",
+  "environment": {
+    "kokoro": "0.9.4",
+    "misaki": "0.9.4",
+    "torch": "2.8.0+cpu",
+    "transformers": "5.17.0",
+    "spacy": "3.8.16",
+    "num2words": "0.5.14",
+    "phonemizer-fork": "3.3.2",
+    "espeakng-loader": "0.2.4"
+  },
+  "asset_sha256": {
+    "config.json": "5abb01e2403b072bf03d04fde160443e209d7a0dad49a423be15196b9b43c17f",
+    "kokoro-v1_0.pth": "496dba118d1a58f5f3db2efc88dbdc216e0483fc89fe6e47ee1f2c53f18ad1e4",
+    "voices/af_heart.pt": "0ab5709b8ffab19bfd849cd11d98f75b60af7733253ad0d67b12382a102cb4ff"
+  },
+  "capture_manifest_sha256": "6e0797da9211539aac1c9607e5cfeeaf3af1349f96869ddcca803e869b7d0cd5",
+  "effective_weight_sha256": {
+    "waveform_decoder.generator.m_source.l_linear.weight": "04ddcf828712b77936b58288099f64bf1107e5f3ed2411aef759795244f37056",
+    "waveform_decoder.generator.m_source.l_linear.bias": "a193edba12b1f46bc8236999c04d7f902ed733d54d627476dc062e2583fd1847"
+  },
+  "array_sha256": {
+    "f0": "ae57333dc727899284ca3b21c06efd7049ea4cb08822e59b26da78375cf0b5a8",
+    "gaussian": "8cf54924ca438776b2246fbd7cda298d31ebfce214c8a62c9a96dc20dbecbdee",
+    "sine_waves": "ec2fafbf2f7572e21ae0bc98d2582d3294373cf553f5403b518c7c36031e67f5",
+    "source": "677c757f3a18e1d6c79f7f9f4996f41bac9ee5b8bdf5954ff53a8f3807e1733d",
+    "magnitude": "8d8c8700b9865922a4c80245fdc1502610bc3145ca253e0d38cbb2f5fd4919ba",
+    "phase": "1f1e539a1f5f633b23268fd0a3f790b4e8a46e593e5f46360486137ba3fa6605",
+    "first_source_conv": "fe76703557376309193018fafeaf920d0edbcdad7b1de46b2c38c8d4d2469bc7",
+    "linear_weight": "04ddcf828712b77936b58288099f64bf1107e5f3ed2411aef759795244f37056",
+    "linear_bias": "a193edba12b1f46bc8236999c04d7f902ed733d54d627476dc062e2583fd1847"
+  },
+  "fixture_sha256": "9f2d9c3fc6c35b28bb2f27e14b9b1a56bbb4fc9d3915642ebe89388aa4726d7f",
+  "input_text": "Read this assistant response aloud.",
+  "valid_f0_frames": 206,
+  "valid_source_samples": 61800,
+  "valid_stft_frames": 12361
+}
