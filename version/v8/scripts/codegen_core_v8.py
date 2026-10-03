@@ -850,11 +850,17 @@ def emit_op(
     if op_name == "transpose_kv_to_head_major":
         is_k = op.get("_is_k", True)
         scratch_name = "A_K_SCRATCH" if is_k else "A_V_SCRATCH"
+        bridge = op.get("layout_bridge") or {}
+        num_tokens = int(bridge.get("num_tokens", 0) or 0)
+        num_kv_heads = int(bridge.get("num_kv_heads", 0) or 0)
+        head_dim = int(bridge.get("head_dim", 0) or 0)
+        if num_tokens <= 0 or num_kv_heads <= 0 or head_dim <= 0:
+            raise ValueError(f"layer {layer}: K/V layout bridge has unresolved geometry")
         lines.append(
             f"""    {{
-        const int Hkv = NUM_KV_HEADS;
-        const int D = HEAD_DIM;
-        const int num_tokens = 1;
+        const int Hkv = {num_kv_heads};
+        const int D = {head_dim};
+        const int num_tokens = {num_tokens};
         float *buf = (float*)(model->bump + {scratch_name});
         float *_temp_buf = (float*)(model->bump + A_LAYER_OUTPUT);
         for (int t = 0; t < num_tokens; t++) {{
@@ -2292,8 +2298,11 @@ def emit_op(
     elif op_name == "qk_norm":
         q_expr = _hidden_raw(_hidden_arg("q"))
         k_expr = _hidden_raw(_hidden_arg("k"))
-        q_count = _mul_expr(_hidden_arg("num_heads") or "NUM_HEADS", _hidden_arg("aligned_head_dim", "head_dim") or "HEAD_DIM")
-        k_count = _mul_expr(_hidden_arg("num_kv_heads") or "NUM_KV_HEADS", _hidden_arg("aligned_head_dim", "head_dim") or "HEAD_DIM")
+        tokens = _hidden_arg("num_tokens", "tokens", "rows")
+        if not tokens:
+            raise ValueError("qk_norm capture requires the provider's token extent")
+        q_count = _mul_expr(_hidden_arg("num_heads") or "NUM_HEADS", tokens, _hidden_arg("aligned_head_dim", "head_dim") or "HEAD_DIM")
+        k_count = _mul_expr(_hidden_arg("num_kv_heads") or "NUM_KV_HEADS", tokens, _hidden_arg("aligned_head_dim", "head_dim") or "HEAD_DIM")
         if q_expr and q_count:
             lines.append(f'    ck_debug_export_hidden(model, {layer}, "qk_norm_q", (const float*){q_expr}, {q_count});')
         if k_expr and k_count:

@@ -4169,6 +4169,24 @@ def main() -> None:
                 "dtype": "fp32",
             }, vision_arch)
 
+            if vision_arch == "gemma4_vision":
+                aligned_patch_area = (patch_size * spatial_merge_size) ** 2
+                min_pixels = meta_int("clip.vision.image_min_pixels")
+                max_pixels = meta_int("clip.vision.image_max_pixels")
+                min_pixels = 70 * aligned_patch_area if min_pixels is None else min_pixels
+                max_pixels = 1120 * aligned_patch_area if max_pixels is None else max_pixels
+                if min_pixels <= 0 or max_pixels < min_pixels:
+                    raise GGUFError(
+                        f"invalid Gemma4 vision pixel limits: min={min_pixels} max={max_pixels}"
+                    )
+                vision_config.update({
+                    "image_min_pixels": int(min_pixels),
+                    "image_max_pixels": int(max_pixels),
+                    "image_resize_algorithm": "bicubic",
+                    "image_resize_padding": "none",
+                    "image_resize_rounding_policy": "half_away_from_zero",
+                })
+
             template_data = load_template_for_arch(vision_arch)
             if isinstance(template_data.get("contract"), dict):
                 vision_config["contract"] = copy.deepcopy(template_data["contract"])

@@ -4,6 +4,7 @@ import json
 import sys
 import tempfile
 import unittest
+from array import array
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
@@ -23,6 +24,54 @@ import export_vision_public_summary_v8 as public_summary  # type: ignore  # noqa
 
 
 class NumericParityQwen3VLMmprojV8Tests(unittest.TestCase):
+    def test_gemma4_diagnostic_uses_image_geometry_and_graph_input_scale(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            image = root / "image.ppm"
+            image.write_bytes(b"P6\n512 256\n255\n" + bytes(512 * 256 * 3))
+            config = {
+                "arch": "gemma4_vision",
+                "patch_size": 16,
+                "spatial_merge_size": 3,
+                "image_min_pixels": 161280,
+                "image_max_pixels": 2580480,
+                "image_resize_algorithm": "bicubic",
+                "image_resize_padding": "none",
+                "image_resize_rounding_policy": "half_away_from_zero",
+            }
+            (root / "weights_manifest.runtime.json").write_text(json.dumps({"config": config}))
+            (root / "config.json").write_text(json.dumps(config))
+            (root / "report.json").write_text(json.dumps({"config": config}))
+            self.assertTrue(npv8._apply_qwen3vl_geometry_to_runtime_manifest(root, image, None, None))
+            updated = json.loads((root / "weights_manifest.runtime.json").read_text())["config"]
+            self.assertEqual((updated["image_width"], updated["image_height"]), (576, 288))
+            self.assertFalse(npv8._apply_qwen3vl_geometry_to_runtime_manifest(root, image, None, None))
+            with self.assertRaisesRegex(RuntimeError, "token overrides are unsupported"):
+                npv8._apply_qwen3vl_geometry_to_runtime_manifest(root, image, None, 80)
+        scaled, transform = npv8._canonical_llama_preprocess(array("f", [0.0, 0.5, 1.0]), config)
+        self.assertEqual(transform, "gemma4_graph_scale_bias_2_minus_1")
+        self.assertEqual(list(scaled), [-1.0, 0.0, 1.0])
+
+    def test_gemma4_rejects_raw_qk_projection_against_post_norm_oracle(self) -> None:
+        layout = {"config": {"arch": "gemma4_vision", "num_heads": 2, "head_dim": 2}}
+        values = array("f", [1.0, 2.0, 3.0, 4.0])
+        for selector in ("q_proj@0", "k_proj@0"):
+            with self.subTest(selector=selector):
+                with self.assertRaisesRegex(RuntimeError, "post-QK-normalization"):
+                    npv8._normalize_ck_hidden_dump_tensor_for_llama(values, selector, layout)
+        self.assertEqual(
+            npv8._normalize_ck_hidden_dump_tensor_for_llama(values, "qk_norm_q@0", layout),
+            values,
+        )
+
+    def test_qk_norm_capture_canonicalizes_complete_head_major_extent(self) -> None:
+        layout = {"config": {"arch": "gemma4_vision", "num_heads": 2, "head_dim": 2}}
+        values = array("f", range(12))
+        canonical = npv8._normalize_ck_hidden_dump_tensor_for_llama(values, "qk_norm_q@0", layout)
+        self.assertEqual(list(canonical), [0, 1, 6, 7, 2, 3, 8, 9, 4, 5, 10, 11])
+        attention = npv8._normalize_ck_hidden_dump_tensor_for_llama(values, "attn_pregate@0", layout)
+        self.assertEqual(list(attention), list(canonical))
+
     def test_smart_resize_half_step_matches_independent_oracle_geometry(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             image = Path(tmpdir) / "square.ppm"
@@ -130,7 +179,7 @@ class NumericParityQwen3VLMmprojV8Tests(unittest.TestCase):
             image.write_bytes(b"P6\n1 1\n255\n\x00\x00\x00")
             with self.assertRaisesRegex(RuntimeError, "unsupported image resize contract"):
                 npv8._load_image_file(
-                    image, 1, 1, {"image_resize_algorithm": "bicubic", "image_resize_padding": "none"},
+                    image, 1, 1, {"image_resize_algorithm": "bicubic", "image_resize_padding": "edge"},
                 )
 
     def test_activation_runtime_base_uses_aligned_arena_boundary(self) -> None:

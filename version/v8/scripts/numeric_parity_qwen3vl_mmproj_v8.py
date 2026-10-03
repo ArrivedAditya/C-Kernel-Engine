@@ -37,6 +37,7 @@ from vision_bridge_runtime_v8 import (  # type: ignore  # noqa: E402
     try_named_activation_view,
 )
 from run_multimodal_bridge_v8 import (  # type: ignore  # noqa: E402
+    _gemma4_geometry_overrides,
     _load_image_file as _load_bridge_image_file,
     _read_ppm_rgb8,
     _qwen3vl_geometry_overrides,
@@ -143,8 +144,6 @@ def _apply_qwen3vl_geometry_to_runtime_manifest(
 ) -> bool:
     if image_path is None:
         return False
-    if (image_min_tokens is None or int(image_min_tokens) <= 0) and (image_max_tokens is None or int(image_max_tokens) <= 0):
-        return False
     runtime_manifest_path = output_dir / "weights_manifest.runtime.json"
     config_path = output_dir / "config.json"
     report_path = output_dir / "report.json"
@@ -155,12 +154,18 @@ def _apply_qwen3vl_geometry_to_runtime_manifest(
     if not isinstance(cfg, dict):
         cfg = {}
         runtime_manifest["config"] = cfg
-    overrides = _qwen3vl_geometry_overrides(
-        dict(cfg),
-        image_path,
-        image_min_tokens=image_min_tokens,
-        image_max_tokens=image_max_tokens,
-    )
+    if cfg.get("arch") == "gemma4_vision":
+        if image_min_tokens is not None or image_max_tokens is not None:
+            raise RuntimeError("Gemma4 geometry uses packaged pixel limits; token overrides are unsupported here")
+        overrides = _gemma4_geometry_overrides(dict(cfg), image_path)
+    else:
+        if (image_min_tokens is None or int(image_min_tokens) <= 0) and (image_max_tokens is None or int(image_max_tokens) <= 0):
+            return False
+        overrides = _qwen3vl_geometry_overrides(
+            dict(cfg), image_path,
+            image_min_tokens=image_min_tokens,
+            image_max_tokens=image_max_tokens,
+        )
     changed = any(cfg.get(k) != v for k, v in overrides.items())
     if not changed:
         return False
@@ -835,12 +840,17 @@ def _normalize_ck_hidden_dump_tensor_for_llama(
     layout: dict[str, Any],
 ) -> array:
     base_name, _ = _parse_named_dump_selector(selector)
-    if base_name not in {"q_proj", "k_proj", "v_proj", "rope_q", "rope_k", "attn_out_head_major"}:
-        return data
     config_obj = layout.get("config") if isinstance(layout, dict) else None
     config = config_obj if isinstance(config_obj, dict) else {}
+    if config.get("arch") == "gemma4_vision" and base_name in {"q_proj", "k_proj"}:
+        raise RuntimeError(
+            "Gemma4 llama.cpp Qcur/Kcur captures are post-QK-normalization; "
+            "compare qk_norm_q/qk_norm_k, not raw q_proj/k_proj"
+        )
+    if base_name not in {"q_proj", "k_proj", "v_proj", "qk_norm_q", "qk_norm_k", "rope_q", "rope_k", "attn_pregate", "attn_out_head_major"}:
+        return data
     head_dim = _config_int(config, "head_dim", "aligned_head_dim", "rotary_dim")
-    if base_name in {"q_proj", "rope_q", "attn_out_head_major"}:
+    if base_name in {"q_proj", "qk_norm_q", "rope_q", "attn_pregate", "attn_out_head_major"}:
         heads = _config_int(config, "num_heads", "vision_num_heads")
     else:
         heads = _config_int(config, "num_kv_heads", "vision_num_kv_heads", "num_heads", "vision_num_heads")
@@ -853,6 +863,7 @@ def _normalize_output_name(name: str | None) -> str:
 
 
 _CK_HIDDEN_EXPORT_OUTPUTS = {
+    "attn_pregate",
     "after_attn",
     "after_attn_last",
     "after_attn_residual",
@@ -1187,6 +1198,13 @@ def _preprocess_parity_pass(metrics: dict[str, float]) -> bool:
     return all(math.isfinite(value) for value in metrics.values()) and metrics["max_abs"] <= 1.0e-6
 
 
+def _canonical_llama_preprocess(values: array, config: dict[str, Any]) -> tuple[array, str]:
+    if config.get("arch") == "gemma4_vision":
+        # The pinned Gemma4 graph applies this transform after mtmd preprocessing.
+        return array("f", (2.0 * value - 1.0 for value in values)), "gemma4_graph_scale_bias_2_minus_1"
+    return values, "identity"
+
+
 def _sample_diffs(ref: array, got: array, count: int = 8) -> list[dict[str, float]]:
     heap: list[tuple[float, int, float, float]] = []
     for idx, (a, b) in enumerate(zip(ref, got)):
@@ -1513,6 +1531,7 @@ def main(argv: list[str] | None = None) -> int:
             shim_so, args.gguf, source_rgb, source_width, source_height,
             args.image_min_tokens, args.image_max_tokens,
         )
+        llama_canonical, llama_input_transform = _canonical_llama_preprocess(llama_interleaved, config)
         same_geometry = (llama_width, llama_height) == (width, height)
         preprocess_evidence = {
             "shared_boundary": "decoded_rgb8",
@@ -1523,7 +1542,9 @@ def main(argv: list[str] | None = None) -> int:
             "geometry_matches": same_geometry,
             "ck_f32_sha256": hashlib.sha256(array("f", interleaved).tobytes()).hexdigest(),
             "llama_f32_sha256": hashlib.sha256(llama_interleaved.tobytes()).hexdigest(),
-            "pixel_metrics": _metrics(llama_interleaved, array("f", interleaved)) if same_geometry else None,
+            "llama_encoder_input_transform": llama_input_transform,
+            "llama_encoder_input_f32_sha256": hashlib.sha256(llama_canonical.tobytes()).hexdigest(),
+            "pixel_metrics": _metrics(llama_canonical, array("f", interleaved)) if same_geometry else None,
         }
         preprocess_evidence["verdict"] = (
             "pass" if same_geometry and _preprocess_parity_pass(preprocess_evidence["pixel_metrics"]) else "fail"
