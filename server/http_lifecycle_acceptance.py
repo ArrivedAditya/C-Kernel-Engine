@@ -389,6 +389,49 @@ def run_plain_chat(expected_reply: str, identity: dict, cases: list[dict]) -> No
                       "reason": "bundle declares an output protocol"})
 
 
+def run_budget_boundary(identity: dict, cases: list[dict]) -> None:
+    """Reject a request beyond the declared capacity, then serve another.
+
+    A configured output cap changes an oversized reservation into a smaller
+    effective allowance. In that mode test an explicitly configured rendered
+    byte limit; it is separate from the model's token-context boundary.
+    """
+    effective = identity.get("effective_serving") or {}
+    capacity = effective.get("active_context_limit")
+    if type(capacity) is not int or capacity <= 1:
+        raise RuntimeError("loaded runtime has no valid context capacity")
+    if effective.get("request_output_cap") is None:
+        mode = "output_reservation"
+        prompt = "hello"
+        allowance = capacity
+    else:
+        byte_cap = effective.get("request_prompt_byte_cap")
+        if type(byte_cap) is not int or not 1 <= byte_cap <= 262144:
+            raise RuntimeError("capped output requires an explicit, bounded prompt byte cap for this probe")
+        mode = "rendered_byte_limit"
+        prompt = "x" * (byte_cap + 1)
+        allowance = 1
+    response = request("POST", "/responses", payload={
+        "model": MODEL, "input": prompt, "max_output_tokens": allowance,
+    })
+    try:
+        error_code = response.json().get("error", {}).get("code")
+    except ValueError:
+        error_code = None
+    row = {"label": "context-boundary", "mode": mode, "http_status": response.status_code,
+           "error_code": error_code, "input_bytes": len(prompt.encode()),
+           "requested_output_tokens": allowance, "compiled_capacity": capacity}
+    cases.append(row)
+    expected_status, expected_error = (
+        (400, "context_length_exceeded") if mode == "output_reservation" else
+        (413, "prompt_bytes_limit_exceeded"))
+    if response.status_code != expected_status or error_code != expected_error:
+        raise RuntimeError(f"context-boundary: overflow was not rejected: {row}")
+    row["counted_token_exceedance_proven"] = error_code == "context_length_exceeded"
+    row["byte_limit_proven"] = error_code == "prompt_bytes_limit_exceeded"
+    row["followup"] = followup("context-boundary-followup")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--endpoint", required=True, help="Local HTTP base URL ending in /v1")
@@ -397,7 +440,8 @@ def main() -> int:
     parser.add_argument("--expected-session-library-sha256", required=True)
     parser.add_argument("--output", type=Path, required=True, help="New JSON report path")
     parser.add_argument("--prefill-lines", type=int, default=1500)
-    parser.add_argument("--suite", choices=("lifecycle", "plain-chat"), default="lifecycle")
+    parser.add_argument("--suite", choices=("lifecycle", "plain-chat", "budget-boundary"),
+                        default="lifecycle")
     parser.add_argument("--expected-reply", default="hello",
                         help="Exact one-word reply for the plain-chat suite")
     args = parser.parse_args()
@@ -446,6 +490,8 @@ def main() -> int:
                         model=MODEL)
         if args.suite == "plain-chat":
             run_plain_chat(args.expected_reply, report["identity_before"], report["cases"])
+        elif args.suite == "budget-boundary":
+            run_budget_boundary(report["identity_before"], report["cases"])
         else:
             long_prompt = "Test data follows.\n" + "alpha beta gamma delta\n" * PREFILL_LINES
             report["cases"].append(run_cancel(

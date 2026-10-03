@@ -290,6 +290,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--request-output-cap", type=int, default=None,
         help="Explicit server maximum for each request's output allowance; default rejects oversized requests",
     )
+    parser.add_argument(
+        "--request-prompt-byte-cap", type=int, default=None,
+        help="Optional rendered-prompt UTF-8 byte limit, independent of model token capacity",
+    )
 
     sampler = parser.add_argument_group(
         "sampling (server-level defaults; request body overrides)"
@@ -551,6 +555,7 @@ def main(argv: list[str] | None = None) -> int:
         top_p=args.top_p,
         max_tokens=args.max_tokens,
         request_output_cap=args.request_output_cap,
+        request_prompt_byte_cap=args.request_prompt_byte_cap,
         stop_on_text=list(dict.fromkeys([
             *(resolved_serving.get("stop_text", []) if resolved_serving else []),
             *args.stop_on_text,
