@@ -1859,6 +1859,17 @@ def _calc_qwen_vl_smart_resize(
     return int(w_bar), int(h_bar)
 
 
+def _qwen_vl_resize_rounding_policy(config: dict[str, Any]) -> str:
+    policy = config.get("image_resize_rounding_policy")
+    if policy not in ("ties_to_even", "half_away_from_zero"):
+        raise ValueError(
+            "Qwen vision image_resize_rounding_policy is missing or invalid; "
+            "regenerate the encoder artifact with the current converter, or explicitly "
+            "migrate its config after verifying the source processor's rounding rule"
+        )
+    return policy
+
+
 def _coerce_float_triplet(values: Any, default: list[float]) -> list[float]:
     if isinstance(values, (list, tuple)) and len(values) >= 3:
         out: list[float] = []
@@ -2043,7 +2054,7 @@ def _qwen3vl_geometry_overrides(
         max_pixels = int(image_max_tokens) * patch_area
     if max_pixels < min_pixels:
         max_pixels = min_pixels
-    rounding_policy = str(config.get("image_resize_rounding_policy", "ties_to_even"))
+    rounding_policy = _qwen_vl_resize_rounding_policy(config)
     image_width, image_height = _calc_qwen_vl_smart_resize(
         int(source_width),
         int(source_height),
@@ -2623,6 +2634,8 @@ def _load_prebuilt_encoder_runtime(runtime_dir: Path) -> dict[str, Any]:
         raise RuntimeError(f"prebuilt encoder runtime is incomplete: missing={missing}")
     layout = _load_layout(required["layout_path"])
     config = dict(layout.get("config", {}) or {})
+    if str(config.get("model") or config.get("arch") or "").lower() == "qwen3_vl_vision":
+        _qwen_vl_resize_rounding_policy(config)
     return {
         "gguf": None,
         "runtime_dir": runtime_dir,
@@ -3360,6 +3373,10 @@ def _run_encoder(
     gemm_schedule: str = "auto",
 ) -> dict[str, Any]:
     encoder_t0 = time.perf_counter()
+    layout = _load_layout(Path(runtime["layout_path"]))
+    layout_cfg = dict(layout.get("config", {}) or {})
+    if str(layout_cfg.get("model") or layout_cfg.get("arch") or "").lower() == "qwen3_vl_vision":
+        _qwen_vl_resize_rounding_policy(layout_cfg)
     memory_evidence = {"before_load": _memory_snapshot()}
     weight_storage = _runtime_weight_storage_evidence(runtime)
     if bool(weight_storage["memory_backed"]) and int(weight_storage["size_bytes"]) >= 1 << 30:
@@ -3395,14 +3412,12 @@ def _run_encoder(
     memory_evidence["after_init"] = _memory_snapshot()
     try:
         _log_progress("encoder: init done")
-        layout = _load_layout(runtime["layout_path"])
         offsets = _load_activation_offsets(runtime["layout_path"])
         bridge = resolve_vision_bridge_contract(layout, offsets, prefer_total_output=True)
         image_buf = offsets["image_input"]
         base_ptr = int(lib.ck_model_get_base_ptr())
         if base_ptr == 0:
             raise RuntimeError("encoder base ptr is null")
-        layout_cfg = dict(layout.get("config", {}) or {})
         image_height = int(layout_cfg.get("image_height", layout_cfg.get("image_size", 0)) or 0)
         image_width = int(layout_cfg.get("image_width", layout_cfg.get("image_size", 0)) or 0)
         if image_height <= 0 or image_width <= 0:
