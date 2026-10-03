@@ -74,7 +74,7 @@ def test_timeout_stops_reusing_that_endpoint(tmp_path, monkeypatch):
 def test_identity_is_independent_of_task_success():
     client = _config()["clients"][0]
     identity = {"model": "qwen-test", "serving_identity": HASH,
-                "session_library_sha256": HASH}
+                "session_library_sha256": HASH, "server_instance_id": "first"}
     report = {"identity": {"before": identity, "after": identity},
               "result": {"status": "fail"}}
     assert matrix._identity_status(client, report) == "pass"
@@ -85,7 +85,7 @@ def test_identity_is_independent_of_task_success():
 def test_http_report_uses_its_own_identity_fields():
     client = _config()["clients"][0]
     identity = {"model": "qwen-test", "serving_identity": HASH,
-                "session_library_sha256": HASH}
+                "session_library_sha256": HASH, "server_instance_id": "first"}
     report = {"schema": "cke.http_lifecycle_acceptance.v1",
               "identity_before": identity, "identity_after": identity,
               "status": "pass"}
@@ -113,7 +113,7 @@ def test_reassessment_uses_retained_reports_without_replaying_tasks(tmp_path):
     root.mkdir()
     (root / "config.json").write_text(json.dumps(_config()))
     identity = {"model": "qwen-test", "serving_identity": HASH,
-                "session_library_sha256": HASH}
+                "session_library_sha256": HASH, "server_instance_id": "first"}
     report_path = root / "http-report.json"
     report_path.write_text(json.dumps({
         "schema": "cke.http_lifecycle_acceptance.v1", "model": "qwen-test",
@@ -128,3 +128,15 @@ def test_reassessment_uses_retained_reports_without_replaying_tasks(tmp_path):
     assert result["status"] == "fail"  # Other required steps are still missing.
     assert json.loads((root / "summary.json").read_text()) == original
     assert (root / "reassessment.json").is_file()
+
+
+def test_matrix_rejects_server_restart_between_passed_steps(tmp_path, monkeypatch):
+    def fake_step(client, kind, directory):
+        return {"client": client["name"], "kind": kind, "status": "pass",
+                "timed_out": False,
+                "server_instance_id": "second" if directory.name == "task-02" else "first"}
+
+    monkeypatch.setattr(matrix, "_run_step", fake_step)
+    result = matrix.run(_config(), tmp_path / "matrix")
+    assert result["status"] == "fail"
+    assert result["steps"][-1]["server_instance_continuity_status"] == "fail"

@@ -82,11 +82,16 @@ def _identity_status(client: dict, report: dict) -> str:
     if report.get("schema") == "cke.http_lifecycle_acceptance.v1":
         before, after = report.get("identity_before"), report.get("identity_after")
     elif client["adapter"] == "qwen_code":
-        observed = report.get("identity", {})
+        observed = report.get("identity") or {}
+        if not isinstance(observed, dict):
+            return "missing"
         before, after = observed.get("before"), observed.get("after")
     else:
         before, after = report.get("identity_before"), report.get("identity_after")
     if not isinstance(before, dict):
+        return "missing"
+    instance = before.get("server_instance_id")
+    if not isinstance(instance, str) or not instance:
         return "missing"
     for identity in (before, after):
         if not isinstance(identity, dict):
@@ -96,6 +101,19 @@ def _identity_status(client: dict, report: dict) -> str:
                 or identity.get("model") != client["model"]):
             return "fail"
     return "pass" if before == after else "fail"
+
+
+def _server_instance(client: dict, report: dict | None) -> str | None:
+    if not isinstance(report, dict):
+        return None
+    if report.get("schema") == "cke.http_lifecycle_acceptance.v1":
+        before = report.get("identity_before")
+    elif client["adapter"] == "qwen_code":
+        observed = report.get("identity") or {}
+        before = observed.get("before") if isinstance(observed, dict) else None
+    else:
+        before = report.get("identity_before")
+    return before.get("server_instance_id") if isinstance(before, dict) else None
 
 
 def _command(client: dict, kind: str, directory: Path) -> tuple[list[str], Path, int]:
@@ -166,7 +184,8 @@ def _run_step(client: dict, kind: str, directory: Path) -> dict:
            "started_at_unix": started, "elapsed_seconds": round(time.time() - started, 3),
            "exit_code": exit_code, "timed_out": timed_out,
            "report_schema_status": "pass" if report_valid else "missing_or_invalid",
-           "loaded_identity_status": _identity_status(client, report) if report else "missing"}
+           "loaded_identity_status": _identity_status(client, report) if report else "missing",
+           "server_instance_id": _server_instance(client, report)}
     if kind == "task" and client["adapter"] == "qwen_code":
         row["task_status"] = (report or {}).get("result", {}).get("status", "missing")
         row["client_certification_status"] = (report or {}).get("certification", {}).get("status", "missing")
@@ -202,6 +221,7 @@ def run(config: dict, root: Path) -> dict:
     summary = {"schema": SCHEMA, "started_at_unix": time.time(),
                "source_commit": _source_commit(), "steps": [], "status": "incomplete"}
     _save(summary, root)
+    instances: dict[str, str] = {}
     for client in config["clients"]:
         for kind in ("plain-chat", "budget-boundary", "lifecycle",
                      *(["task"] * config["attempts"])):
@@ -209,6 +229,15 @@ def run(config: dict, root: Path) -> dict:
                         for row in summary["steps"]) + 1
             directory = root / client["name"] / f"{kind}-{count:02d}"
             row = _run_step(client, kind, directory)
+            instance = row.get("server_instance_id")
+            previous = instances.get(client["name"])
+            row["server_instance_continuity_status"] = (
+                "pass" if isinstance(instance, str) and instance
+                and (previous is None or previous == instance) else "fail")
+            if row["server_instance_continuity_status"] != "pass":
+                row["status"] = "fail"
+            if previous is None and isinstance(instance, str) and instance:
+                instances[client["name"]] = instance
             summary["steps"].append(row)
             _save(summary, root)
             if row["timed_out"]:
@@ -232,6 +261,7 @@ def reassess(root: Path) -> dict:
         raise ValueError("matrix must have a completed summary before reassessment")
     clients = {client["name"]: client for client in config["clients"]}
     rows = []
+    instances: dict[str, str] = {}
     for prior in original.get("steps", []):
         if not isinstance(prior, dict) or prior.get("client") not in clients:
             raise ValueError("matrix contains an unknown client step")
@@ -252,6 +282,14 @@ def reassess(root: Path) -> dict:
         row = dict(prior)
         row["report_schema_status"] = "pass" if valid else "missing_or_invalid"
         row["loaded_identity_status"] = (_identity_status(client, report) if valid else "missing")
+        row["server_instance_id"] = _server_instance(client, report if valid else None)
+        instance = row["server_instance_id"]
+        previous = instances.get(client["name"])
+        row["server_instance_continuity_status"] = (
+            "pass" if isinstance(instance, str) and instance
+            and (previous is None or previous == instance) else "fail")
+        if previous is None and isinstance(instance, str) and instance:
+            instances[client["name"]] = instance
         if kind == "task" and client["adapter"] == "qwen_code":
             row["task_status"] = (report or {}).get("result", {}).get("status", "missing")
             row["client_certification_status"] = (report or {}).get("certification", {}).get("status", "missing")
@@ -261,6 +299,7 @@ def reassess(root: Path) -> dict:
             row["http_suite_status"] = (report or {}).get("status", "missing")
         row["status"] = ("pass" if row.get("exit_code") == 0 and not row.get("timed_out")
                          and valid and row["loaded_identity_status"] == "pass"
+                         and row["server_instance_continuity_status"] == "pass"
                          and row.get("task_status", row.get("http_suite_status")) == "pass"
                          and row.get("client_certification_status", "pass") == "pass"
                          else "fail")

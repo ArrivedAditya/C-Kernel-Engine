@@ -1737,6 +1737,21 @@ qwen --bare \
         response. The SDK's external OpenAI-compatible configuration must name
         this local endpoint and the loaded model. No cloud fallback or model-name
         substitution is part of this test.</p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre># Run an already resolved, self-contained Gemma tools bundle on Ryzen.
+# Verify serving.json selects the tools variant before starting; do not
+# silently replace the publisher template at request time.
+GEMMA_RUN_DIR=/path/to/identified/gemma4-tools-bundle
+python3 version/v8/scripts/ck_serve_v8.py "$GEMMA_RUN_DIR" \
+  --run "$GEMMA_RUN_DIR" --no-build --model-name gemma4-e4b-q4km-tools \
+  --host 127.0.0.1 --port 18205 --request-output-cap 256
+
+# On the harness machine, tunnel the localhost-only endpoint from Ryzen.
+ssh -N -L 127.0.0.1:18215:127.0.0.1:18205 ryzen
+# GET http://127.0.0.1:18215/v1/cke/loaded-identity and confirm the expected
+# model, gemma4_dsl_v1 protocol, effective cap and artifact hashes.</pre>
+    </div>
     <p class="mini-note">On the isolated 2,048-token tools bundle, Antigravity SDK
         0.1.20 connected directly to CKE with <code>--request-output-cap 256</code>
         and completed a file read, two-file answer, exact HTML edit plus validator,
@@ -1890,7 +1905,9 @@ python3 server/harness_repeatability.py \
         configuration, stdout/stderr, every individual HTTP and harness report,
         disposable workspaces, and an incrementally written summary. A failed
         task remains failed even when the loaded identity matched; a passed task
-        does not inherit a missing protocol or recovery result. The HTTP suites
+        does not inherit a missing protocol or recovery result. The matrix also
+        rejects a changed server-instance ID between attempts, even if the same
+        bundle is reloaded. The HTTP suites
         test multi-turn and output-limit behavior, context-budget rejection with
         a successful follow-up, cancellation, disconnect, and timeout recovery.
         For an uncapped runtime, the context probe tests an oversized output
