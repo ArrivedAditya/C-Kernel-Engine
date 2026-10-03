@@ -115,6 +115,40 @@
       "position_transform": null,
       "description": "Checked FP32 LeakyReLU with explicit slope and strides; finite input/output preflight; padding untouched."
     },
+    "tanh_strided_f32_checked_system_tanhf": {
+      "operator_family": "tanh",
+      "status": "validated",
+      "storage": {
+        "input": "fp32",
+        "weight": "none",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "none",
+        "accumulator": "fp32",
+        "contraction": "disabled",
+        "evaluation_order": "independent_system_tanhf_per_element"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": ["output_store"]
+      },
+      "reduction": {
+        "kind": "none",
+        "order": "none",
+        "partial_accumulator": "none",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "serial",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Checked FP32 strided tanhf. Libm result may vary by host; finite preflight and padding preservation are exact."
+    },
     "layernorm_rows_checked_fp32_ggml_chunked_contracted_param_epsilon": {
       "status": "validated",
       "operator_family": "layernorm",

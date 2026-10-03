@@ -43,6 +43,6 @@
       {"pointer": "phase_scratch", "elements": "source_scratch_capacity", "rows": 1, "width": "source_scratch_capacity", "element_bytes": 4}
     ]
   },
-  "tests": {"unit": ["tests/test_v8_audio_harmonic_source_oracle.py", "tests/test_v8_audio_harmonic_source_generated.py"], "oracle": "Direct pinned Kokoro 0.9.4 / PyTorch 2.8 full-model SineGen hook with captured Gaussian excitation"},
-  "notes": "Explicit Gaussian input isolates source mathematics; this map does not provide a native RNG or claim complete stochastic source execution. The pinned reference's initial phase draw is discarded by midpoint downsampling in this nonpulse path. Native source RNG, linear/tanh merge, STFT and connected generator joins remain separate operations."
+  "tests": {"unit": ["tests/test_v8_audio_harmonic_source_oracle.py", "tests/test_v8_audio_harmonic_source_generated.py", "tests/test_v8_audio_source_projection_generated.py"], "oracle": "Direct pinned Kokoro 0.9.4 / PyTorch 2.8 full-model SineGen hook with captured Gaussian excitation"},
+  "notes": "Explicit Gaussian input isolates source mathematics; this map does not provide a native RNG or claim complete stochastic source execution. The pinned reference's initial phase draw is discarded by midpoint downsampling in this nonpulse path. Generated linear/tanh merge now consumes this output; native RNG, STFT and generator joins remain separate operations."
 }

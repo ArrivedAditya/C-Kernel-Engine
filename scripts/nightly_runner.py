@@ -948,6 +948,14 @@ TEST_SUITES = {
         "Checked Harmonic Source Normal-Compiler Generated Graph", "inference",
         ROOT / "tests" / "test_v8_audio_harmonic_source_generated.py",
     ),
+    "tts_audio_tanh_checked": TestSuite(
+        "Checked Strided Tanh NumPy and PyTorch Oracles", "kernels",
+        ROOT / "tests" / "test_v8_audio_tanh_checked_oracle.py",
+    ),
+    "tts_audio_source_projection_generated": TestSuite(
+        "Kokoro Generated Harmonic Source Linear Tanh Projection", "inference",
+        ROOT / "tests" / "test_v8_audio_source_projection_generated.py",
+    ),
     "tts_checked_text_ops_generated": TestSuite(
         "Model-Neutral Checked Conv1D, Transpose, and Activation Graph", "inference",
         ROOT / "tests" / "test_v8_checked_text_ops_generated.py",
