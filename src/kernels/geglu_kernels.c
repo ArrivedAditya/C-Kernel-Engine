@@ -52,6 +52,21 @@ void geglu_forward_exact(const float *x, float *out, int tokens, int dim)
     }
 }
 
+void geglu_forward_quick(const float *x, float *out, int tokens, int dim)
+{
+    if (!x || !out || tokens <= 0 || dim <= 0) return;
+    const size_t inner_dim = (size_t)dim * 2u;
+    /* Ascending compaction also permits input and output to alias. */
+    for (int t = 0; t < tokens; ++t) {
+        const float *row = x + (size_t)t * inner_dim;
+        float *dst = out + (size_t)t * (size_t)dim;
+        for (int d = 0; d < dim; ++d) {
+            const float gate = row[d];
+            dst[d] = (gate * (1.0f / (1.0f + expf(-1.702f * gate)))) * row[dim + d];
+        }
+    }
+}
+
 void geglu_forward_fp32(const float *x, float *out, int tokens, int dim)
 {
     if (!x || !out || tokens <= 0 || dim <= 0) {
