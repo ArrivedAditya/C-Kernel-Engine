@@ -12428,7 +12428,8 @@
           "tests/test_v8_kokoro_generated_prosody_norm.py",
           "tests/test_v8_kokoro_generated_prosody_first_block.py",
           "tests/test_v8_kokoro_generated_prosody_complete.py",
-          "tests/test_v8_kokoro_generated_decoder_encode.py"
+          "tests/test_v8_kokoro_generated_decoder_encode.py",
+          "tests/test_v8_kokoro_generated_decoder_complete.py"
         ],
         "oracle": "Independent torch.nn.functional.instance_norm CPU, committed PyTorch 2.13 fixture and optional live comparison; fixture-versus-live and native-versus-live reported separately"
       },
@@ -13405,7 +13406,8 @@
         "unit": [
           "tests/test_v8_audio_concat_channels_checked.py",
           "tests/test_v8_audio_concat_channels_generated.py",
-          "tests/test_v8_kokoro_generated_decoder_ingress.py"
+          "tests/test_v8_kokoro_generated_decoder_ingress.py",
+          "tests/test_v8_kokoro_generated_decoder_complete.py"
         ],
         "oracle": "Independent NumPy concatenate(axis=0), exact FP32 copy"
       },
@@ -14339,7 +14341,8 @@
           "tests/test_v8_kokoro_generated_prosody_first_block.py",
           "tests/test_v8_kokoro_generated_prosody_complete.py",
           "tests/test_v8_kokoro_generated_decoder_ingress.py",
-          "tests/test_v8_kokoro_generated_decoder_encode.py"
+          "tests/test_v8_kokoro_generated_decoder_encode.py",
+          "tests/test_v8_kokoro_generated_decoder_complete.py"
         ],
         "oracle": "Pinned PyTorch 2.8 text encoder, independent NumPy/PyTorch primitives"
       },
@@ -14959,7 +14962,8 @@
         "unit": [
           "tests/test_v8_audio_prosody_upsample_oracle.py",
           "tests/test_v8_prosody_upsample_generated.py",
-          "tests/test_v8_kokoro_generated_prosody_complete.py"
+          "tests/test_v8_kokoro_generated_prosody_complete.py",
+          "tests/test_v8_kokoro_generated_decoder_complete.py"
         ],
         "oracle": "Pinned PyTorch 2.8 F.conv_transpose1d(groups=channels), committed small and production-shape fixtures"
       },
@@ -19942,7 +19946,8 @@
           "tests/test_v8_checked_scaled_sum_generated.py",
           "tests/test_v8_kokoro_generated_prosody_first_block.py",
           "tests/test_v8_kokoro_generated_prosody_complete.py",
-          "tests/test_v8_kokoro_generated_decoder_encode.py"
+          "tests/test_v8_kokoro_generated_decoder_encode.py",
+          "tests/test_v8_kokoro_generated_decoder_complete.py"
         ],
         "oracle": "Independent NumPy FP32 sum then multiply; synthetic generated-C fixture; pinned full-model PyTorch hooks for F0/noise and decoder residual blocks"
       },
@@ -21340,7 +21345,8 @@
         "unit": [
           "tests/test_v8_audio_prosody_upsample_oracle.py",
           "tests/test_v8_prosody_upsample_generated.py",
-          "tests/test_v8_kokoro_generated_prosody_complete.py"
+          "tests/test_v8_kokoro_generated_prosody_complete.py",
+          "tests/test_v8_kokoro_generated_decoder_complete.py"
         ],
         "oracle": "Pinned PyTorch 2.8 F.interpolate(mode=nearest), exact element copy"
       },
@@ -43238,7 +43244,8 @@
           "tests/test_v8_kokoro_generated_text_encoder.py",
           "tests/test_v8_kokoro_generated_prosody_first_block.py",
           "tests/test_v8_kokoro_generated_prosody_complete.py",
-          "tests/test_v8_kokoro_generated_decoder_encode.py"
+          "tests/test_v8_kokoro_generated_decoder_encode.py",
+          "tests/test_v8_kokoro_generated_decoder_complete.py"
         ],
         "oracle": "Pinned PyTorch 2.8 text encoder, independent NumPy/PyTorch primitives"
       },
@@ -43543,7 +43550,8 @@
           "tests/test_v8_kokoro_generated_qkv.py",
           "tests/test_v8_kokoro_generated_albert_layer.py",
           "tests/test_v8_kokoro_generated_encoder.py",
-          "tests/test_v8_kokoro_generated_decoder_encode.py"
+          "tests/test_v8_kokoro_generated_decoder_encode.py",
+          "tests/test_v8_kokoro_generated_decoder_complete.py"
         ],
         "oracle": "Independent PyTorch torch.nn.functional.linear at small, pinned Kokoro projection and Q/K/V shapes, and direct full-model decoder style hooks; checked strided rows, bounded per-call capacities, and connected generated graphs"
       },

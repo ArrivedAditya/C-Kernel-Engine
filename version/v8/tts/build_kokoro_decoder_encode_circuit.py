@@ -36,57 +36,53 @@ def style(name, prefix, channels):
          'bias': f'{prefix}.fc.bias'})
 
 
-def build_circuit():
-    graph = ingress_circuit()
-    graph['name'] = 'kokoro_decoder_encode_bounded'
-    graph['native_entry']['function'] = 'ck_kokoro_decoder_encode_bounded'
-    graph['contract']['runtime_invariants'].update(
-        generated_decoder_encode=True, complete_decoder=False,
-        complete_waveform=False)
-    graph['activation_buffers']['decoder_style'] = {'shape': [STYLE]}
-    graph['activation_bindings']['decoder_style'] = 'decoder_style'
+def decoder_residual_block_ops(stem, source, prefix, input_channels,
+                               output_channels):
+    """Declare one non-upsampling AdainResBlk1d; caller owns graph edges."""
     ops = []
     add = ops.append
-    add(style('decoder_encode_norm0_style', f'{PREFIX}.norm1',
-              INPUT_CHANNELS))
-    add(norm('decoder_encode_norm0', 'decoder_joined',
-             'decoder_encode_norm0_style', f'{PREFIX}.norm1',
-             INPUT_CHANNELS, FRAMES, 'expanded_frames'))
-    add(activation('decoder_encode_act0', 'decoder_encode_norm0',
-                   INPUT_CHANNELS, FRAMES, 'expanded_frames'))
-    add(convolution('decoder_encode_conv0', 'decoder_encode_act0',
-        f'{PREFIX}.conv1', INPUT_CHANNELS, OUTPUT_CHANNELS,
+    add(style(f'{stem}_norm0_style', f'{prefix}.norm1', input_channels))
+    add(norm(f'{stem}_norm0', source,
+             f'{stem}_norm0_style', f'{prefix}.norm1',
+             input_channels, FRAMES, 'expanded_frames'))
+    add(activation(f'{stem}_act0', f'{stem}_norm0',
+                   input_channels, FRAMES, 'expanded_frames'))
+    add(convolution(f'{stem}_conv0', f'{stem}_act0',
+        f'{prefix}.conv1', input_channels, output_channels,
         FRAMES, 3, 'expanded_frames'))
-    add(style('decoder_encode_norm1_style', f'{PREFIX}.norm2',
-              OUTPUT_CHANNELS))
-    add(norm('decoder_encode_norm1', 'decoder_encode_conv0',
-             'decoder_encode_norm1_style', f'{PREFIX}.norm2',
-             OUTPUT_CHANNELS, FRAMES, 'expanded_frames'))
-    add(activation('decoder_encode_act1', 'decoder_encode_norm1',
-                   OUTPUT_CHANNELS, FRAMES, 'expanded_frames'))
-    add(convolution('decoder_encode_conv1', 'decoder_encode_act1',
-        f'{PREFIX}.conv2', OUTPUT_CHANNELS, OUTPUT_CHANNELS,
+    add(style(f'{stem}_norm1_style', f'{prefix}.norm2', output_channels))
+    add(norm(f'{stem}_norm1', f'{stem}_conv0',
+             f'{stem}_norm1_style', f'{prefix}.norm2',
+             output_channels, FRAMES, 'expanded_frames'))
+    add(activation(f'{stem}_act1', f'{stem}_norm1',
+                   output_channels, FRAMES, 'expanded_frames'))
+    add(convolution(f'{stem}_conv1', f'{stem}_act1',
+        f'{prefix}.conv2', output_channels, output_channels,
         FRAMES, 3, 'expanded_frames'))
-    add(convolution('decoder_encode_shortcut', 'decoder_joined',
-        f'{PREFIX}.conv1x1', INPUT_CHANNELS, OUTPUT_CHANNELS,
+    add(convolution(f'{stem}_shortcut', source,
+        f'{prefix}.conv1x1', input_channels, output_channels,
         FRAMES, 1, 'expanded_frames', zero_bias=True))
-    add(declared('decoder_encode_output',
+    add(declared(f'{stem}_output',
         'audio_scaled_sum_strided_checked',
         'audio_scaled_sum_strided_f32_checked',
-        {'left': 'decoder_encode_conv1',
-         'right': 'decoder_encode_shortcut'},
-        'decoder_encode_output', [OUTPUT_CHANNELS, FRAMES],
-        {'R': OUTPUT_CHANNELS, 'C': FRAMES,
+        {'left': f'{stem}_conv1',
+         'right': f'{stem}_shortcut'},
+        f'{stem}_output', [output_channels, FRAMES],
+        {'R': output_channels, 'C': FRAMES,
          'scale': 1.0 / math.sqrt(2.0), 'call_constants': {
-            'sum_left_elements': OUTPUT_CHANNELS * FRAMES,
+            'sum_left_elements': output_channels * FRAMES,
             'sum_left_stride': FRAMES,
-            'sum_right_elements': OUTPUT_CHANNELS * FRAMES,
+            'sum_right_elements': output_channels * FRAMES,
             'sum_right_stride': FRAMES,
-            'sum_output_elements': OUTPUT_CHANNELS * FRAMES,
+            'sum_output_elements': output_channels * FRAMES,
             'sum_output_stride': FRAMES,
-            'sum_rows': OUTPUT_CHANNELS}},
+            'sum_rows': output_channels}},
         None, ('expanded_frames',),
         {'sum_columns': 'expanded_frames'}))
+    return ops
+
+
+def add_decoder_block(graph, block_name, ops):
     for item, shape in ops:
         name = item['id']
         graph['activation_buffers'][name] = {'shape': shape}
@@ -102,12 +98,26 @@ def build_circuit():
                 'axis_names': ['channel'] if style_tensor else
                               ['channel', 'frame'],
                 'storage_dtype': 'fp32'}]}
-    graph['sequence'].append('decoder_encode')
-    graph['block_types']['decoder_encode'] = {
+    graph['sequence'].append(block_name)
+    graph['block_types'][block_name] = {
         'sequence': ['header', 'body', 'footer'],
         'header': [], 'body': {'type': 'dense',
                               'ops': [item for item, _ in ops]},
         'footer': []}
+
+
+def build_circuit():
+    graph = ingress_circuit()
+    graph['name'] = 'kokoro_decoder_encode_bounded'
+    graph['native_entry']['function'] = 'ck_kokoro_decoder_encode_bounded'
+    graph['contract']['runtime_invariants'].update(
+        generated_decoder_encode=True, complete_decoder=False,
+        complete_waveform=False)
+    graph['activation_buffers']['decoder_style'] = {'shape': [STYLE]}
+    graph['activation_bindings']['decoder_style'] = 'decoder_style'
+    add_decoder_block(graph, 'decoder_encode', decoder_residual_block_ops(
+        'decoder_encode', 'decoder_joined', PREFIX,
+        INPUT_CHANNELS, OUTPUT_CHANNELS))
     return graph
 
 

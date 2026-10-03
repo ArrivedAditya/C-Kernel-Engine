@@ -38,6 +38,9 @@ DECODER_HOOKS = (
     "decoder.encode.norm1", "decoder.encode.conv1",
     "decoder.encode.norm2", "decoder.encode.conv2",
     "decoder.encode.conv1x1", "decoder.encode",
+    *(f"decoder.decode.{index}.{part}" for index in range(4)
+      for part in ("norm1", "conv1", "norm2", "conv2", "conv1x1")),
+    "decoder.decode.3.pool", "decoder.decode.3.upsample",
     *(f"decoder.decode.{index}" for index in range(4)),
 )
 
@@ -89,6 +92,7 @@ def main() -> int:
     parser.add_argument("--model-dir", type=Path, required=True,
                         help="Local pinned HF snapshot containing config, weights and voice")
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--text", help="Additional oracle utterance; same pinned assets and reference versions")
     parser.add_argument("--preprocess-only", action="store_true")
     args = parser.parse_args()
 
@@ -122,7 +126,8 @@ def main() -> int:
     torch.set_num_threads(1)
     torch.manual_seed(fixture["torch_seed"])
     pipeline = KPipeline(lang_code="a", repo_id=PIN["model"]["repository"], model=False, trf=False)
-    segments = list(pipeline(fixture["text"], model=False))
+    input_text = args.text if args.text is not None else fixture["text"]
+    segments = list(pipeline(input_text, model=False))
     if len(segments) != 1 or not segments[0].phonemes:
         raise RuntimeError(f"expected one nonempty Kokoro segment, got {len(segments)}")
     phonemes = segments[0].phonemes
@@ -145,6 +150,8 @@ def main() -> int:
                 "num2words", "phonemizer-fork", "espeakng-loader")},
         },
         "assets": {str(path.relative_to(model_dir)): sha256(path) for path in required},
+        "input_text": input_text,
+        "input_text_override": args.text is not None,
         "graphemes": segments[0].graphemes,
         "phonemes": phonemes,
         "phoneme_codepoints": [f"U+{ord(char):04X}" for char in phonemes],
@@ -195,6 +202,9 @@ def main() -> int:
             stem = label.replace(".", "_")
             if label == "decoder":
                 capture_tensor(_inputs, "decoder_input", out_dir, record["tensors"])
+            if label.startswith("decoder.decode.") and label.count(".") == 2:
+                capture_tensor(_inputs, f"{stem}_input", out_dir,
+                               record["tensors"])
             if label in FINE_PREDICTOR_HOOKS:
                 capture_tensor(_inputs, f"{stem}_input", out_dir, record["tensors"])
                 stem += "_output"
