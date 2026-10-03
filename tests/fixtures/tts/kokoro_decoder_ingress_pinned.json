@@ -1,0 +1,53 @@
+{
+  "scope": "direct pinned full-model decoder ingress hooks and effective weights",
+  "model_pin": "e8a90b41091c3c5b70375c47cc959799920fa4d6",
+  "code_pin": "dfb907a02bba8152ca444717ca5d78747ccb4bec",
+  "oracle": "pinned full KModel forward hooks",
+  "environment": {
+    "kokoro": "0.9.4",
+    "misaki": "0.9.4",
+    "torch": "2.8.0+cpu",
+    "transformers": "5.17.0",
+    "spacy": "3.8.16",
+    "num2words": "0.5.14",
+    "phonemizer-fork": "3.3.2",
+    "espeakng-loader": "0.2.4"
+  },
+  "asset_sha256": {
+    "config.json": "5abb01e2403b072bf03d04fde160443e209d7a0dad49a423be15196b9b43c17f",
+    "kokoro-v1_0.pth": "496dba118d1a58f5f3db2efc88dbdc216e0483fc89fe6e47ee1f2c53f18ad1e4",
+    "voices/af_heart.pt": "0ab5709b8ffab19bfd849cd11d98f75b60af7733253ad0d67b12382a102cb4ff"
+  },
+  "capture_manifest_sha256": "267242d66090dcb69c8fbe2122a46a0873ffbe0aac5d7e2237ffef7a39e4d91e",
+  "source_tensor_sha256": {
+    "decoder_input_0": "2d5bf603c11488e5f1aa3118e1d712de0be81269969b5267dcedf1870a579a24",
+    "decoder_F0_conv": "de6706999e9e74b373643b19c94273f17019179d0057ffdd32f5968957c645a5",
+    "decoder_N_conv": "158ec3e259f16303b832821605d15a687e7d7748d72d94741678c742d387393d",
+    "decoder_asr_res": "2517b96a523d678957635e5de0a7ddcf0d3baaa1fc126b71ba777a62bf4f5576",
+    "decoder_encode": "69305c189ec8234ee131fb48f1d59fabf70f31d810327fc998e9526aa1316023"
+  },
+  "effective_weight_sha256": {
+    "waveform_decoder.F0_conv.weight": "217ee44b111098cb73726685fbff15ccf4e87823b38783593a0cbf63ca40d3be",
+    "waveform_decoder.F0_conv.bias": "f1fc54d216250130a82bc263d2412e99d258ec7b235dcf5d3627cccd4a128ac0",
+    "waveform_decoder.N_conv.weight": "41e5207b6fae95814aff599eb25e47879e687844f763b162499515d6b41b7cdf",
+    "waveform_decoder.N_conv.bias": "a6723e40359e04e6bf77f726edca21e1c3707a106e93ef311de8d33f3c663fe1",
+    "waveform_decoder.asr_res.0.weight": "ae85ef65567b832a86517ce44bbfc28e05d207ef8dfb0a60a99c04224d8a07df",
+    "waveform_decoder.asr_res.0.bias": "cb4b1f1f8178ebd086d09081df7e58ef9ab30f9e9ee51061ed1f7ec95b3f7c99"
+  },
+  "array_sha256": {
+    "decoder_input_0": "febf42e48eab06040d8ceb3def1eade3e0c4027b394757b3798e7aa8959a2ace",
+    "decoder_F0_conv": "d9e46e830d41d481100452eaeca788eec778c380ab056a0052501e70ddddb2db",
+    "decoder_N_conv": "6de904d89bb210430ed6dcda044104af25ecd258bcbee7f648a6f47880c5842b",
+    "decoder_asr_res": "cb0540852a5c83ff11f6337f8400491f2115ed99c6b650b5446648c0af4d49bf",
+    "decoder_encode": "2b7f751967ef74e028f339a1712e73d778b5fee4b156c794637e728a7a6d1733",
+    "waveform_decoder.F0_conv.weight": "217ee44b111098cb73726685fbff15ccf4e87823b38783593a0cbf63ca40d3be",
+    "waveform_decoder.F0_conv.bias": "f1fc54d216250130a82bc263d2412e99d258ec7b235dcf5d3627cccd4a128ac0",
+    "waveform_decoder.N_conv.weight": "41e5207b6fae95814aff599eb25e47879e687844f763b162499515d6b41b7cdf",
+    "waveform_decoder.N_conv.bias": "a6723e40359e04e6bf77f726edca21e1c3707a106e93ef311de8d33f3c663fe1",
+    "waveform_decoder.asr_res.0.weight": "ae85ef65567b832a86517ce44bbfc28e05d207ef8dfb0a60a99c04224d8a07df",
+    "waveform_decoder.asr_res.0.bias": "cb4b1f1f8178ebd086d09081df7e58ef9ab30f9e9ee51061ed1f7ec95b3f7c99"
+  },
+  "fixture_sha256": "9683b330b447160608693f92907c97b3613561d68e26cadea9fd4d7fdb23deb7",
+  "valid_frames": 103,
+  "upsampled_frames": 206
+}

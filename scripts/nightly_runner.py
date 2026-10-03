@@ -900,6 +900,19 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_kokoro_generated_prosody_complete.py",
         timeout_sec=300,
     ),
+    "tts_audio_concat_channels": TestSuite(
+        "TTS Checked Channel-Major Concatenation NumPy Oracle", "kernels",
+        ROOT / "tests" / "test_v8_audio_concat_channels_checked.py",
+    ),
+    "tts_audio_concat_channels_generated": TestSuite(
+        "Model-Neutral Generated Checked Channel Join", "inference",
+        ROOT / "tests" / "test_v8_audio_concat_channels_generated.py",
+    ),
+    "tts_kokoro_generated_decoder_ingress": TestSuite(
+        "Kokoro Connected Generated Decoder Ingress", "inference",
+        ROOT / "tests" / "test_v8_kokoro_generated_decoder_ingress.py",
+        timeout_sec=300,
+    ),
     "tts_checked_text_ops_generated": TestSuite(
         "Model-Neutral Checked Conv1D, Transpose, and Activation Graph", "inference",
         ROOT / "tests" / "test_v8_checked_text_ops_generated.py",

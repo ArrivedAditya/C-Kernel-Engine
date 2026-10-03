@@ -3913,6 +3913,17 @@
       "position_transform": null,
       "description": "Checked channel-major two-input sum followed by FP32 scale over valid columns with independently declared physical strides. No FMA, heap or scratch. Rejects nonfinite values and results before writes; leaves padding untouched. Inference only."
     },
+    "audio_concat_channels_exact_copy_fp32": {
+      "operator_family": "audio_concat_channels_checked",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "none", "output": "fp32"},
+      "compute": {"input": "fp32", "weight": "none", "accumulator": "fp32", "contraction": "disabled", "evaluation_order": "validate_all_geometry_capacities_aliasing_and_logical_finiteness_then_ascending_left_channels_then_ascending_right_channels_copy_valid_frames"},
+      "rounding": {"mode": "none", "points": ["input_load", "output_store"]},
+      "reduction": {"kind": "none", "order": "none", "partial_accumulator": "none", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Exact FP32 channel-major concatenation with physical strides and runtime-valid frames. Checks all inputs before any write, preserves padding, rejects output aliasing, uses no heap or scratch. Inference only; backward is unsupported."
+    },
     "audio_adain_instance_norm_biased_channel_fp64_stats_fp32_affine": {
       "operator_family": "audio_adain_instance_norm",
       "status": "validated",
