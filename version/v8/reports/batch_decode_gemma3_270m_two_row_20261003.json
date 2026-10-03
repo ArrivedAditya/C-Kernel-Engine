@@ -56,16 +56,16 @@
       "exact_kv": true
     }
   ],
-  "batch_step_total_ms": 54.064,
-  "isolated_decode_total_ms": 87.834,
+  "batch_step_total_ms": 54.685,
+  "isolated_decode_total_ms": 85.973,
   "timing_scope": "diagnostic_nonmatched_workloads_no_speedup_claim",
   "kv_bytes_per_sequence": 37748736,
   "batch_workspace_bytes": 20480,
   "artifacts": {
-    "libmodel.so": "a7de93362ee7707b2dea10ede8a186dc3848d6cbb1d80055545d27f103a08418",
+    "libmodel.so": "a1d5cb81b1ff927e10d2f2a59dc1f6ad7fcb7b97ef6e5c2f021254a5e4f9837a",
     "libckernel_engine.so": "841f5b5222c0d6c0b508d7029c7136204d47c53176ed5e934f6bdf4f35d834ef",
     "libckernel_tokenizer.so": "8c7ff175a64d23f10e17b2f7c349325582d9c8af65845ab2cd002b1385b2b2d2",
-    "weights.bump": "b45ef259c089a697139ac14ff0dcb914e126cffff4adc01177f20b3d95b8cea8",
+    "weights.bump": "5365c57ca4994df4cabf92980f525d0eea853f3499adf8b9ea38e6c3062c8155",
     "layout_decode.json": "05115f8f6e54e79092ae15eaca2b457b8b770d26a8c404b58671c49a5371020d",
     "config.json": "cb8125e7964d3b18c83fc8d0251c4ecda8ee7314acaa899265ef81fc4772815e"
   },
@@ -73,7 +73,7 @@
     "libmodel.so": {
       "method": "symbol_mapping_dev_inode_sha256",
       "symbol": "ck_model_decode_batch2",
-      "sha256": "a7de93362ee7707b2dea10ede8a186dc3848d6cbb1d80055545d27f103a08418"
+      "sha256": "a1d5cb81b1ff927e10d2f2a59dc1f6ad7fcb7b97ef6e5c2f021254a5e4f9837a"
     },
     "libckernel_engine.so": {
       "method": "symbol_mapping_dev_inode_sha256",
@@ -86,6 +86,6 @@
       "sha256": "8c7ff175a64d23f10e17b2f7c349325582d9c8af65845ab2cd002b1385b2b2d2"
     }
   },
-  "loaded_generated_source_prefix_sha256": "c984b9d9ebe2beb90a0312e81b0a95a88ba3ed2afdee042954d7b8ef03a46992",
-  "generated_source_sha256": "3d17d9f63585b1d3c2ca12fa0caf355b78f37a8117e58d71bbc1eaefd2716786"
+  "loaded_generated_source_prefix_sha256": "80b2a121738c75272925810aa054fc298e3921157f7a1bd093f554961bd7c7f1",
+  "generated_source_sha256": "1e6e7c83eb5b5c2562eb0a9ea12fdfbcc0ed6a244acfd69df879185658ae79ae"
 }
