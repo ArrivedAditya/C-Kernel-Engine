@@ -502,7 +502,7 @@
       "reduction": {"kind": "dot_product", "order": "ascending_k", "partial_accumulator": "fp64", "merge_order": "none"},
       "threading": {"work_partition": "serial", "split_strategy": "independent_outputs", "deterministic": true, "thread_count_changes_arithmetic_order": false},
       "position_transform": null,
-      "description": "Centered reflect-padded forward STFT with caller-supplied periodic-Hann window and trigonometric tables; output rows are magnitude then phase. Phase comparison is circular at the +/-pi branch cut."
+      "description": "Centered reflect-padded forward STFT with caller-supplied periodic-Hann window and trigonometric tables; output rows are magnitude then phase. The exact-real Nyquist bin uses positive-zero imaginary phase. Direct DFT and FFT can still choose opposite +/-pi signs at reflection-symmetric frame zero."
     },
     "hyper_stream_expand_exact_fp32": {
       "operator_family": "hyper_stream_expand",

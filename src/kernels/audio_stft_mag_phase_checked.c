@@ -82,6 +82,10 @@ int audio_stft_mag_phase_checked_f32(const float *samples, size_t samples_capaci
                 real += value * cos_table[bin * n_fft + tap];
                 imag += value * sin_table[bin * n_fft + tap];
             }
+            /* The Nyquist bin of a real-input even FFT has exactly zero
+             * imaginary part. Trig-table roundoff otherwise flips +pi to
+             * -pi, which is not interchangeable for downstream convolutions. */
+            if (bin == bins - 1) imag = 0.0;
             const float magnitude = (float)hypot(real, imag);
             const float phase = (float)atan2(imag, real);
             if (!isfinite(magnitude) || !isfinite(phase))

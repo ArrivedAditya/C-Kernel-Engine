@@ -180,6 +180,10 @@ class AudioStftMagnitudePhaseTest(unittest.TestCase):
         self.assertLess(np.max(np.abs(actual_magnitude - magnitude)), 2e-5)
         angular = np.angle(np.exp(1j * (actual_phase - phase)))
         self.assertLess(np.max(np.abs(angular[magnitude > 1e-5]), initial=0), 3e-5)
+        # These phase channels are later convolved, so raw interior values
+        # matter in addition to circular agreement. Frame zero is reflection
+        # symmetric and retains a small FFT branch-cut sign discrepancy.
+        self.assertLess(np.max(np.abs(actual_phase[:, 1:] - phase[:, 1:])), 3e-5)
 
     def test_live_pytorch_when_available(self):
         try:
@@ -221,6 +225,8 @@ class AudioStftMagnitudePhaseTest(unittest.TestCase):
                 (output[11:, :13] - arrays['phase'])))
             mask = arrays['magnitude'] > 1e-5
             self.assertLess(np.max(np.abs(angular[mask]), initial=0), 3e-5)
+            self.assertLess(np.max(np.abs(output[11:, 1:13] -
+                arrays['phase'][:, 1:])), 3e-5)
 
 
 if __name__ == '__main__':
