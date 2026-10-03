@@ -35,6 +35,8 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
+from .gemma_tool_protocol import GemmaToolSyntaxError, parse_gemma_tool_calls
+
 import anyio
 from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
@@ -62,6 +64,7 @@ from .schemas.response import CreateResponseRequest
 from .session_v8 import (
     CK_SESSION_REQUEST_RAW_PROMPT,
     SessionBusyError,
+    SessionError,
     stop_reason_name,
     truncate_stop_markers,
 )
@@ -706,7 +709,7 @@ def _has_tool_support(
         and any(isinstance(value, str) and value.strip() for value in chat_templates.values())
     )
     return has_template and tool_protocol in {
-        "tagged_json", "bare_json", "qwen_xml", "qwen_code_xml", "qwen_code_xml_raw_v2",
+        "tagged_json", "bare_json", "qwen_xml", "qwen_code_xml", "qwen_code_xml_raw_v2", "gemma4_dsl_v1",
     }
 
 
@@ -718,6 +721,7 @@ _TOOL_SYNTAX_JSON = "json"
 _TOOL_SYNTAX_QWEN_XML = "qwen_xml"
 _TOOL_SYNTAX_QWEN_CODE_XML = "qwen_code_xml"
 _TOOL_SYNTAX_QWEN_CODE_XML_RAW_V2 = "qwen_code_xml_raw_v2"
+_TOOL_SYNTAX_GEMMA4_DSL_V1 = "gemma4_dsl_v1"
 _TOOL_SYNTAX_NONE = "none"
 
 
@@ -738,6 +742,8 @@ def _tool_syntax_for_protocol(protocol: str | None) -> str:
         return _TOOL_SYNTAX_QWEN_CODE_XML
     if protocol == "qwen_code_xml_raw_v2":
         return _TOOL_SYNTAX_QWEN_CODE_XML_RAW_V2
+    if protocol == "gemma4_dsl_v1":
+        return _TOOL_SYNTAX_GEMMA4_DSL_V1
     raise ValueError(f"unsupported tool protocol {protocol!r}")
 
 
@@ -770,6 +776,40 @@ def _split_generated_thinking(text: str, generation_prefix: str) -> tuple[str, s
     return "".join(thinking).strip(), "".join(answer).strip()
 
 
+def _gemma_template_tool(tool: Any) -> dict[str, Any]:
+    """Adapt the common function tool to the publisher's nested Jinja input."""
+    parameters = getattr(tool, "parameters", None)
+    if not isinstance(parameters, dict) or parameters.get("type") != "object":
+        raise ValueError("Gemma tool declarations require object parameters")
+
+    def property_shape(source: dict[str, Any]) -> dict[str, Any]:
+        result = dict(source)
+        result.setdefault("description", "")
+        result.setdefault("enum", [])
+        result.setdefault("nullable", False)
+        result.setdefault("required", [])
+        result.setdefault("properties", {})
+        result.setdefault("items", {})
+        if isinstance(result["properties"], dict):
+            result["properties"] = {
+                key: property_shape(value) if isinstance(value, dict) else value
+                for key, value in result["properties"].items()
+            }
+        if isinstance(result["items"], dict) and result["items"]:
+            result["items"] = property_shape(result["items"])
+        return result
+
+    name = getattr(tool, "name", None)
+    if not isinstance(name, str) or not name:
+        raise ValueError("Gemma tool declaration requires a function name")
+    normalized = property_shape(parameters)
+    return {"type": "function", "function": {
+        "name": name,
+        "description": getattr(tool, "description", None) or "",
+        "parameters": normalized,
+    }}
+
+
 def _render_with_chat_templates(
     chat_template: str | None,
     chat_templates: dict[str, str] | None,
@@ -780,6 +820,7 @@ def _render_with_chat_templates(
     *, add_generation_prompt: bool = True,
     renderer_tokens: dict[str, str] | None = None,
     render_time: datetime | None = None,
+    tool_protocol: str | None = None,
 ) -> str | None:
     tmpl_str = _select_template(
         chat_template,
@@ -799,7 +840,10 @@ def _render_with_chat_templates(
             messages = [{"role": "system", "content": instructions}, *messages]
         tools = None
         if body is not None and getattr(body, "tools", None):
-            tools = [t.model_dump() for t in body.tools]
+            if tool_protocol == _TOOL_SYNTAX_GEMMA4_DSL_V1:
+                tools = [_gemma_template_tool(t) for t in body.tools]
+            else:
+                tools = [t.model_dump() for t in body.tools]
 
         def _raise_exception(message: str = "") -> None:
             raise ValueError(str(message))
@@ -835,7 +879,7 @@ _TOOL_SCHEMA_TYPES = {"string", "integer", "number", "boolean", "object", "array
 _TOOL_SCHEMA_KEYS = {
     "type", "properties", "required", "additionalProperties", "items",
     "enum", "description", "title", "default", "minimum", "maximum",
-    "minLength", "maxLength",
+    "minLength", "maxLength", "$schema",
 }
 
 
@@ -846,6 +890,11 @@ def _validate_tool_schema_subset(schema: Any, path: str = "parameters") -> None:
     unsupported = set(schema) - _TOOL_SCHEMA_KEYS
     if unsupported:
         raise ValueError(f"{path} has unsupported schema keywords: {', '.join(sorted(unsupported))}")
+    if "$schema" in schema and (
+        not (path == "parameters" or path.endswith(" parameters"))
+        or schema["$schema"] != "https://json-schema.org/draft/2020-12/schema"
+    ):
+        raise ValueError(f"{path} has unsupported $schema declaration")
     kind = schema.get("type")
     kinds = kind if isinstance(kind, list) else [kind]
     if kind is not None and (
@@ -1020,6 +1069,11 @@ def _extract_tool_calls_from_text(
     if tool_syntax == _TOOL_SYNTAX_QWEN_CODE_XML_RAW_V2 and stripped.startswith("<tool_call"):
         return [], "malformed", "qwen_code_xml_raw_v2 requires a function_calls envelope"
     candidates: list[str | dict[str, Any]] = []
+    if tool_syntax == _TOOL_SYNTAX_GEMMA4_DSL_V1:
+        try:
+            candidates = parse_gemma_tool_calls(text)
+        except GemmaToolSyntaxError as exc:
+            return [], "malformed", f"malformed Gemma tool call: {exc}"
     if tool_syntax == _TOOL_SYNTAX_QWEN_CODE_XML and stripped.startswith("<function_calls"):
         try:
             if "<!" in stripped:
@@ -1245,6 +1299,8 @@ def _strip_tool_json_from_text(
         start = stripped.find("<function_calls")
         if start >= 0:
             return stripped[:start].strip()
+    if tool_syntax == _TOOL_SYNTAX_GEMMA4_DSL_V1:
+        return ""
     if tool_syntax in {_TOOL_SYNTAX_TOOL_CALL_JSON, _TOOL_SYNTAX_QWEN_XML, _TOOL_SYNTAX_QWEN_CODE_XML}:
         remaining = re.sub(
             r"<tool_call>.*?</tool_call>", "", text, flags=re.DOTALL | re.IGNORECASE
@@ -1419,6 +1475,8 @@ def create_app(
     temperature: float = 0.7,
     top_p: float = 1.0,
     max_tokens: int = 512,
+    request_output_cap: int | None = None,
+    request_prompt_byte_cap: int | None = None,
     stop_on_text: Sequence[str] = (),
     stop_at_eos: bool = False,
     flags: int = 0,
@@ -1447,6 +1505,17 @@ def create_app(
                 "normal chat serving requires a nonempty native Jinja template; "
                 "enable untemplated raw serving explicitly"
             )
+
+    if request_output_cap is not None and (
+        not isinstance(request_output_cap, int) or isinstance(request_output_cap, bool)
+        or request_output_cap <= 0
+        or (context_length is not None and request_output_cap >= context_length)
+    ):
+        raise ValueError("request_output_cap must be positive and below loaded context capacity")
+    if request_prompt_byte_cap is not None and (
+        type(request_prompt_byte_cap) is not int or request_prompt_byte_cap <= 0
+    ):
+        raise ValueError("request_prompt_byte_cap must be a positive byte count")
 
     router = APIRouter()
     if loaded_identity is not None and loaded_identity.get("schema") != "cke.loaded_serving_identity.v1":
@@ -1485,6 +1554,10 @@ def create_app(
         "stop_on_text": stop_markers,
         "stop_at_eos": stop_at_eos,
     }
+    if request_output_cap is not None:
+        effective_serving["request_output_cap"] = request_output_cap
+    if request_prompt_byte_cap is not None:
+        effective_serving["request_prompt_byte_cap"] = request_prompt_byte_cap
 
     def _conversation_echo(body) -> dict[str, Any] | None:
         conv = body.conversation
@@ -1597,6 +1670,11 @@ def create_app(
         tok_limit = (
             body.max_output_tokens if body.max_output_tokens is not None else max_tokens
         )
+        if request_output_cap is not None:
+            tok_limit = min(tok_limit, request_output_cap)
+        # The response records the effective allowance. A capped request still
+        # reports incomplete if generation actually exhausts this allowance.
+        body.max_output_tokens = tok_limit
         temperature_eff = (
             body.temperature if body.temperature is not None else temperature
         )
@@ -1617,12 +1695,14 @@ def create_app(
                     effective_thinking,
                     renderer_tokens=renderer_tokens,
                     render_time=render_time,
+                    tool_protocol=declared_tool_protocol,
                 )
                 without_prefix = _render_with_chat_templates(
                     chat_template, chat_templates, messages, body, chat_contract,
                     effective_thinking, add_generation_prompt=False,
                     renderer_tokens=renderer_tokens,
                     render_time=render_time,
+                    tool_protocol=declared_tool_protocol,
                 )
                 if jinja_rendered is not None and without_prefix is not None:
                     if not jinja_rendered.startswith(without_prefix):
@@ -1665,6 +1745,16 @@ def create_app(
                 prompt = f"{body.instructions}\n{prompt}".strip()
             if not prompt.strip():
                 prompt = "Hello"
+        if request_prompt_byte_cap is not None:
+            rendered_bytes = len(prompt.encode("utf-8"))
+            if rendered_bytes > request_prompt_byte_cap:
+                raise _harness_error(
+                    413,
+                    f"rendered prompt has {rendered_bytes} bytes, exceeding the "
+                    f"configured input byte cap {request_prompt_byte_cap}",
+                    err_type="invalid_request_error",
+                    code="prompt_bytes_limit_exceeded",
+                )
         if context_length is not None:
             if tok_limit >= context_length:
                 raise _harness_error(
@@ -1677,7 +1767,22 @@ def create_app(
                 )
             count_tokens = getattr(session, "count_tokens", None)
             if callable(count_tokens):
-                prompt_tokens = count_tokens(prompt)
+                try:
+                    prompt_tokens = count_tokens(prompt)
+                except SessionBusyError as exc:
+                    raise _harness_error(
+                        429, "Session busy: another request is in progress. Retry later.",
+                        err_type="rate_limit_error", code="rate_limit_exceeded",
+                        retry_after=_FLIGHT_WAIT_SECONDS,
+                    ) from exc
+                except SessionError as exc:
+                    # The v8 ABI currently folds tokenizer capacity, internal
+                    # errors and allocation failures into one runtime status.
+                    # Do not misclassify that status as a bad user prompt.
+                    raise _harness_error(
+                        500, "native tokenizer failed while counting the rendered prompt",
+                        err_type="server_error", code="native_tokenization_failed",
+                    ) from exc
                 if prompt_tokens + tok_limit > context_length:
                     available = max(0, context_length - prompt_tokens)
                     raise _harness_error(
@@ -3036,6 +3141,10 @@ def create_live_app_from_run_dir(
     chat_template, chat_templates, contract = load_manifest_templates(run_dir)
     resolved = load_resolved_serving(run_dir)
     renderer_tokens = resolved_renderer_tokens(run_dir, resolved) if resolved is not None else None
+    if resolved is not None:
+        kwargs["stop_on_text"] = list(dict.fromkeys([
+            *resolved.get("stop_text", []), *kwargs.get("stop_on_text", ()),
+        ]))
     if not chat_template and not kwargs.get("allow_untemplated", False):
         raise ValueError(
             f"normal chat serving requires {run_dir / 'chat_template.jinja'} "

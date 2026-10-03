@@ -1,0 +1,15 @@
+{
+  "oracle": "torch.stft; torch.abs; torch.angle",
+  "torch": "2.8.0+cpu",
+  "n_fft": 20,
+  "hop": 5,
+  "center": true,
+  "pad_mode": "reflect",
+  "window": "periodic Hann",
+  "array_sha256": {
+    "samples": "9bf9d24fb8c28cf74c66503be59cd4939302d5b378f444ca5cf677f24c2addf0",
+    "magnitude": "744ac2ef252cc76148eb2e24bc7f7c0f91f7c405e286467b3cda4783ad520124",
+    "phase": "da480abf2179fc27362c4228c0dd75c42861e4bcfe7ebfd8a35bf304ac634839"
+  },
+  "fixture_sha256": "b848dd4e17c7d93f8dd2de852f174ad52176e80f87a057f23e0ea122366aca0a"
+}

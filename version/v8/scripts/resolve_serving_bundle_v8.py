@@ -74,6 +74,8 @@ def _verify_compilation_lineage(run_dir: Path, circuit: dict, *, allow_serving_u
     are retained for diagnostics; relocated bundles validate their local bytes.
     """
     manifest = _json(run_dir / "weights_manifest.json")
+    if manifest.get("model") is not None and manifest["model"] != circuit.get("name"):
+        raise ValueError("compiled manifest model does not match serving circuit")
     compiled = manifest.get("template")
     if not isinstance(compiled, dict):
         raise ValueError("missing compiled circuit snapshot; rebuild before metadata upgrade")
@@ -127,9 +129,18 @@ def resolve_serving_bundle(run_dir: Path, circuit_path: Path, *, variant: str | 
     spec = profile.get("variants", {}).get(selected)
     if not isinstance(spec, dict) or spec.get("output_protocol") not in PROTOCOLS:
         raise ValueError(f"unsupported serving variant: {selected}")
+    stop_text = spec.get("stop_text", [])
+    if (not isinstance(stop_text, list) or any(not isinstance(item, str) or not item for item in stop_text)
+            or len(set(stop_text)) != len(stop_text)):
+        raise ValueError(f"invalid serving stop_text for variant: {selected}")
     config = _json(run_dir / "config.json")
-    if config.get("model") != circuit.get("name"):
+    # GGUF conversion uses model_type/model_name; only some runtime configs
+    # declare a canonical model key. The retained compiled manifest and its
+    # verified circuit snapshot are the authoritative identity in both cases.
+    if config.get("model") is not None and config["model"] != circuit.get("name"):
         raise ValueError("circuit does not match runtime configuration")
+    if config.get("model") is None and _json(run_dir / "weights_manifest.json").get("model") != circuit.get("name"):
+        raise ValueError("circuit does not match compiled manifest model")
     lineage = _verify_compilation_lineage(run_dir, circuit, allow_serving_update=allow_serving_update)
     publisher = _publisher_templates(run_dir)
     assets: dict[str, dict] = {}
@@ -175,6 +186,7 @@ def resolve_serving_bundle(run_dir: Path, circuit_path: Path, *, variant: str | 
     capacity = _json(run_dir / "layout_decode.json").get("config", {}).get("context_length")
     document = {"schema": SCHEMA, "profile_id": profile.get("id"), "profile_ref": profile_ref, "variant": selected,
                 "renderer": profile["renderer"], "output_protocol": spec["output_protocol"],
+                "stop_text": stop_text,
                 "input_modalities": profile["input_modalities"], "context_capacity": capacity,
                 "assets": assets, "compilation_lineage": lineage, "certification": "NOT_TESTED"}
     document["identity"] = contract_identity(document)

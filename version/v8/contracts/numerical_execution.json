@@ -404,6 +404,40 @@
       "position_transform": null,
       "description": "Checked depthwise transposed Conv1D with staged caller-owned scratch and ascending input-frame/tap FP32 FMA accumulation. Output commits only after finite validation."
     },
+    "audio_conv_transpose1d_dense_input_frame_tap_fma_fp32": {
+      "operator_family": "audio_conv_transpose1d_dense",
+      "status": "validated",
+      "storage": {
+        "input": "fp32",
+        "weight": "fp32",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "fp32",
+        "accumulator": "fp32",
+        "contraction": "enabled",
+        "evaluation_order": "ascending_input_channel_then_input_frame_then_kernel_tap_fmaf_into_bias_initialized_output"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": ["input_load", "reduction_update", "output_store"]
+      },
+      "reduction": {
+        "kind": "sum",
+        "order": "ascending_index",
+        "partial_accumulator": "fp32",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Checked group-one dense transposed Conv1D with [I,O,K] weights, caller-owned scratch and output-preserving rejection. FP32 FMA uses ascending input-channel/frame/tap order."
+    },
     "runtime_extent_sum_checked_i32": {
       "operator_family": "runtime_extent_sum",
       "status": "validated",
@@ -458,6 +492,17 @@
       "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},
       "position_transform": null,
       "description": "Reconstructs a real signal from frame-major one-sided magnitude and phase with ascending-bin direct IDFT, periodic Hann overlap-add, window-square normalization, and centered trim."
+    },
+    "audio_stft_mag_phase_direct_f64_accum_fp32": {
+      "operator_family": "audio_stft_mag_phase_checked",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "none", "output": "fp32"},
+      "compute": {"input": "fp32", "weight": "none", "accumulator": "fp64", "contraction": "disabled", "evaluation_order": "reflect_center_then_window_then_ascending_tap_real_imag_double_sum_then_hypot_atan2"},
+      "rounding": {"mode": "rne", "points": ["input_load", "fft_projection", "output_store"]},
+      "reduction": {"kind": "dot_product", "order": "ascending_k", "partial_accumulator": "fp64", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "independent_outputs", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Centered reflect-padded forward STFT with caller-supplied periodic-Hann window and trigonometric tables; output rows are magnitude then phase. The exact-real Nyquist bin uses positive-zero imaginary phase. Direct DFT and FFT can still choose opposite +/-pi signs at reflection-symmetric frame zero."
     },
     "hyper_stream_expand_exact_fp32": {
       "operator_family": "hyper_stream_expand",
@@ -3912,6 +3957,17 @@
       "threading": {"work_partition": "serial", "split_strategy": "independent_outputs", "deterministic": true, "thread_count_changes_arithmetic_order": false},
       "position_transform": null,
       "description": "Checked channel-major two-input sum followed by FP32 scale over valid columns with independently declared physical strides. No FMA, heap or scratch. Rejects nonfinite values and results before writes; leaves padding untouched. Inference only."
+    },
+    "audio_concat_channels_exact_copy_fp32": {
+      "operator_family": "audio_concat_channels_checked",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "none", "output": "fp32"},
+      "compute": {"input": "fp32", "weight": "none", "accumulator": "fp32", "contraction": "disabled", "evaluation_order": "validate_all_geometry_capacities_aliasing_and_logical_finiteness_then_ascending_left_channels_then_ascending_right_channels_copy_valid_frames"},
+      "rounding": {"mode": "none", "points": ["input_load", "output_store"]},
+      "reduction": {"kind": "none", "order": "none", "partial_accumulator": "none", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Exact FP32 channel-major concatenation with physical strides and runtime-valid frames. Checks all inputs before any write, preserves padding, rejects output aliasing, uses no heap or scratch. Inference only; backward is unsupported."
     },
     "audio_adain_instance_norm_biased_channel_fp64_stats_fp32_affine": {
       "operator_family": "audio_adain_instance_norm",

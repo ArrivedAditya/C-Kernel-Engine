@@ -1,0 +1,83 @@
+{
+  "id": "audio_concat_channels_checked_f32",
+  "op": "audio_concat_channels_checked",
+  "operation_interface": "audio.concat.channels.checked.fp32.v1",
+  "variant": "scalar_copy_strided",
+  "selection": {
+    "status": "candidate",
+    "priority": 100,
+    "equivalence_group": "audio_concat_channels_checked_f32",
+    "phases": ["prefill"]
+  },
+  "quant": {"weight": "fp32", "activation": "fp32", "output": "fp32"},
+  "inputs": [
+    {"name": "left", "dtype": "fp32", "shape": ["L", "T"],
+     "layout": "channel_major_left_stride", "placement": "local", "access": "read",
+     "storage_class": "activation", "consumption": "required"},
+    {"name": "right", "dtype": "fp32", "shape": ["R", "T"],
+     "layout": "channel_major_right_stride", "placement": "local", "access": "read",
+     "storage_class": "activation", "consumption": "required"}
+  ],
+  "weights": [],
+  "outputs": [
+    {"name": "output", "dtype": "fp32", "shape": ["O", "T"],
+     "layout": "channel_major_output_stride", "placement": "local", "access": "write",
+     "storage_class": "activation", "consumption": "required"}
+  ],
+  "scratch": [],
+  "dims": ["left_elements", "left_stride", "right_elements", "right_stride",
+           "output_elements", "output_stride", "left_channels", "right_channels", "output_channels", "frames"],
+  "impl": {
+    "function": "audio_concat_channels_checked_f32",
+    "c_declaration": "int audio_concat_channels_checked_f32(const float *left, size_t left_elements, size_t left_stride, const float *right, size_t right_elements, size_t right_stride, float *output, size_t output_elements, size_t output_stride, size_t left_channels, size_t right_channels, size_t output_channels, size_t frames);",
+    "sources": ["src/kernels/audio_concat_channels_checked.c"]
+  },
+  "modes": {"inference": true, "training": false, "backward": false},
+  "numerical_capabilities": [
+    {"contract_id": "audio_concat_channels_exact_copy_fp32", "status": "validated",
+     "phases": ["prefill"], "function": "audio_concat_channels_checked_f32",
+     "explicit_selector": true,
+     "implementation": {"isa_dispatch": "scalar", "threading": {
+       "runtime": "serial", "work_partition": ["serial"], "dispatch": ["inline"],
+       "reduction_order_effect": "none"}},
+     "arithmetic": {"partial_accumulator": "none", "merge_order": "none",
+       "deterministic": true, "thread_count_changes_arithmetic_order": false,
+       "split_strategy": "serial"}}
+  ],
+  "call_abi": {"version": 1, "params": [
+    {"name": "left", "source": "activation:left", "cast": "const float*", "ports": ["input:left"]},
+    {"name": "left_elements", "source": "runtime:concat_left_elements", "value_type": "size_t"},
+    {"name": "left_stride", "source": "runtime:concat_left_stride", "value_type": "size_t"},
+    {"name": "right", "source": "activation:right", "cast": "const float*", "ports": ["input:right"]},
+    {"name": "right_elements", "source": "runtime:concat_right_elements", "value_type": "size_t"},
+    {"name": "right_stride", "source": "runtime:concat_right_stride", "value_type": "size_t"},
+    {"name": "output", "source": "output:output", "cast": "float*", "ports": ["output:output"]},
+    {"name": "output_elements", "source": "runtime:concat_output_elements", "value_type": "size_t"},
+    {"name": "output_stride", "source": "runtime:concat_output_stride", "value_type": "size_t"},
+    {"name": "left_channels", "source": "runtime:concat_left_channels", "value_type": "size_t"},
+    {"name": "right_channels", "source": "runtime:concat_right_channels", "value_type": "size_t"},
+    {"name": "output_channels", "source": "runtime:concat_output_channels", "value_type": "size_t"},
+    {"name": "frames", "source": "runtime:concat_frames", "value_type": "size_t"}
+  ]},
+  "call_constant_contract": {
+    "shape_symbols": {"L": "concat_left_channels", "R": "concat_right_channels", "O": "concat_output_channels",
+                      "T": "concat_frames"},
+    "buffer_spans": [
+      {"pointer": "left", "elements": "concat_left_elements", "rows": "concat_left_channels",
+       "width": "concat_frames", "element_bytes": 4, "stride": "concat_left_stride",
+       "physical_row_stride": true},
+      {"pointer": "right", "elements": "concat_right_elements", "rows": "concat_right_channels",
+       "width": "concat_frames", "element_bytes": 4, "stride": "concat_right_stride",
+       "physical_row_stride": true},
+      {"pointer": "output", "elements": "concat_output_elements", "rows": "concat_output_channels",
+       "width": "concat_frames", "element_bytes": 4, "stride": "concat_output_stride",
+       "physical_row_stride": true}
+    ]
+  },
+  "tests": {"unit": ["tests/test_v8_audio_concat_channels_checked.py",
+                     "tests/test_v8_audio_concat_channels_generated.py",
+                     "tests/test_v8_kokoro_generated_decoder_ingress.py",
+                     "tests/test_v8_kokoro_generated_decoder_complete.py"],
+            "oracle": "Independent NumPy concatenate(axis=0), exact FP32 copy"},
+  "notes": "O=L+R. Checked channel-major join copies only valid frames; padding stays untouched. No scratch, allocation, state, reduction, or supported backward path. No aliasing with output."
+}

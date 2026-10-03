@@ -9,7 +9,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-PROTOCOLS = frozenset({"none", "tagged_json", "bare_json", "qwen_xml", "qwen_code_xml", "qwen_code_xml_raw_v2"})
+PROTOCOLS = frozenset({"none", "tagged_json", "bare_json", "qwen_xml", "qwen_code_xml", "qwen_code_xml_raw_v2", "gemma4_dsl_v1"})
 SCHEMA = "cke.resolved_serving.v1"
 
 
@@ -74,13 +74,26 @@ def load_resolved_serving(run_dir: Path, *, document: dict[str, Any] | None = No
         declaration = circuit.get("serving", {})
         if declaration.get("schema") != "cke.circuit_serving.v1" or declaration.get("profile_ref") != doc.get("profile_ref"):
             raise ValueError("serving circuit/profile ownership mismatch")
-        if config.get("model") != circuit.get("name"):
+        if config.get("model") is not None and config["model"] != circuit.get("name"):
             raise ValueError("serving circuit does not match runtime configuration")
+        if config.get("model") is None:
+            manifest_asset = assets.get("weights_manifest.json")
+            if manifest_asset is None:
+                raise ValueError("serving circuit has no compiled manifest identity")
+            manifest = json.loads(bundle_path(run_dir, manifest_asset["path"]).read_bytes())
+            if manifest.get("model") != circuit.get("name"):
+                raise ValueError("serving circuit does not match compiled manifest model")
         if profile.get("schema") != "cke.serving_profile.v1" or profile.get("id") != doc.get("profile_id"):
             raise ValueError("serving profile identity mismatch")
         variant = profile.get("variants", {}).get(doc.get("variant"))
         if not isinstance(variant, dict) or variant.get("output_protocol") != doc["output_protocol"]:
             raise ValueError("serving variant/protocol mismatch")
+        if doc.get("stop_text", []) != variant.get("stop_text", []):
+            raise ValueError("serving variant/stop policy mismatch")
+        stop_text = doc.get("stop_text", [])
+        if (not isinstance(stop_text, list) or any(not isinstance(item, str) or not item for item in stop_text)
+                or len(set(stop_text)) != len(stop_text)):
+            raise ValueError("invalid serving stop policy")
         if profile.get("renderer") != doc["renderer"] or profile.get("input_modalities") != doc["input_modalities"]:
             raise ValueError("serving profile capabilities mismatch")
         capacity = layout.get("config", {}).get("context_length")

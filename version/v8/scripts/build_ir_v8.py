@@ -1848,6 +1848,10 @@ OP_DATAFLOW = {
         "inputs": {"input": "external:audio_features"},
         "outputs": {"output": {"slot": "transposed_convolution_output", "dtype": "fp32"}},
     },
+    "audio_conv_transpose1d_dense_checked": {
+        "inputs": {"input": "external:audio_features"},
+        "outputs": {"output": {"slot": "transposed_convolution_output", "dtype": "fp32"}},
+    },
     "transpose_strided_checked": {
         "inputs": {"input": "external:features"},
         "outputs": {"output": {"slot": "transposed_features", "dtype": "fp32"}},
@@ -1879,6 +1883,10 @@ OP_DATAFLOW = {
     "audio_scaled_sum_strided_checked": {
         "inputs": {"left": "external:left", "right": "external:right"},
         "outputs": {"output": {"slot": "scaled_sum", "dtype": "fp32"}},
+    },
+    "audio_concat_channels_checked": {
+        "inputs": {"left": "external:left", "right": "external:right"},
+        "outputs": {"output": {"slot": "channel_concat", "dtype": "fp32"}},
     },
     "attention_full_token_major_checked": {
         "inputs": {"query": "external:query", "key": "external:key", "value": "external:value"},
@@ -2878,6 +2886,7 @@ def _generate_tokenizer_c_code(tokenizer_type: str, vocab_size: int, num_merges:
     if tokenizer_type == "bpe":
         add_bos = None
         add_eos = None
+        add_space_prefix = None
         unk_id = None
         bos_id = None
         eos_id = None
@@ -2885,6 +2894,7 @@ def _generate_tokenizer_c_code(tokenizer_type: str, vocab_size: int, num_merges:
         if special_tokens:
             add_bos = special_tokens.get("add_bos_token")
             add_eos = special_tokens.get("add_eos_token")
+            add_space_prefix = special_tokens.get("add_space_prefix")
             unk_id = special_tokens.get("unk_token_id")
             bos_id = special_tokens.get("bos_token_id")
             eos_id = special_tokens.get("eos_token_id")
@@ -2908,7 +2918,7 @@ def _generate_tokenizer_c_code(tokenizer_type: str, vocab_size: int, num_merges:
                 "            " + (str(pad_id) if pad_id is not None else "-1") + ");"
             )
         pretokenizer = str((tokenizer_contract or {}).get("pretokenizer") or "").strip().lower()
-        if add_bos is not None or add_eos is not None or pretokenizer:
+        if add_bos is not None or add_eos is not None or add_space_prefix is not None or pretokenizer:
             pretokenizer_enum = {
                 "unicode_split_isolated": "CK_BPE_PRETOKENIZER_UNICODE_SPLIT_ISOLATED",
             }.get(pretokenizer, "CK_BPE_PRETOKENIZER_GPT2")
@@ -2922,6 +2932,7 @@ def _generate_tokenizer_c_code(tokenizer_type: str, vocab_size: int, num_merges:
                     "            cfg.space_prefix_style = CK_SPACE_PREFIX_AUTO;",
                     f"            cfg.pretokenizer = {pretokenizer_enum};",
                     "            ck_true_bpe_set_config(g_model->tokenizer, &cfg);",
+                    f"            ck_true_bpe_set_suppress_dummy_prefix(g_model->tokenizer, {'true' if add_space_prefix is False else 'false'});",
                     "        }",
                 ]
             )
@@ -4487,6 +4498,7 @@ TEMPLATE_TO_KERNEL_OP = {
     "audio_conv1d_checked": "audio_conv1d_checked",
     "audio_upsample_nearest_checked": "audio_upsample_nearest_checked",
     "audio_conv_transpose1d_depthwise_checked": "audio_conv_transpose1d_depthwise_checked",
+    "audio_conv_transpose1d_dense_checked": "audio_conv_transpose1d_dense_checked",
     "transpose_strided_checked": "transpose_strided_checked",
     "leaky_relu_strided_checked": "leaky_relu_strided_checked",
     "feature_concat_broadcast_rows": "feature_concat_broadcast_rows",
@@ -4495,6 +4507,7 @@ TEMPLATE_TO_KERNEL_OP = {
     "audio_adain_instance_norm": "audio_adain_instance_norm",
     "audio_scaled_residual_add": "audio_scaled_residual_add",
     "audio_scaled_sum_strided_checked": "audio_scaled_sum_strided_checked",
+    "audio_concat_channels_checked": "audio_concat_channels_checked",
     "attention_full_token_major_checked": "attention_full_token_major_checked",
     "linear_rows_checked": "linear_rows_checked",
     "embedding_three_table_layer_norm": "embedding_three_table_layer_norm",
@@ -9199,6 +9212,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         "audio_adaptive_layer_norm": ["projection_weight", "projection_bias"],
         "audio_adain_instance_norm": ["norm_weight", "norm_bias"],
         "audio_scaled_sum_strided_checked": None,
+        "audio_concat_channels_checked": None,
         "attention_full_token_major_checked": None,
         "linear_rows_checked": ["weight", "bias"],
         "embedding_three_table_layer_norm": ["word", "position", "token_type", "gamma", "beta"],
@@ -9207,6 +9221,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         "runtime_extent_scale": None,
         "audio_upsample_nearest_checked": None,
         "audio_conv_transpose1d_depthwise_checked": ["weight", "bias"],
+        "audio_conv_transpose1d_dense_checked": ["weight", "bias"],
         "audio_duration_expand": None,
         "runtime_copy_valid": None,
         "audio_istft_mag_phase": None,
@@ -12529,6 +12544,7 @@ TEMPLATE_OP_WEIGHTS = {
     "audio_adaptive_layer_norm": ["projection_weight", "projection_bias"],
     "audio_adain_instance_norm": ["norm_weight", "norm_bias"],
     "audio_scaled_sum_strided_checked": [],
+    "audio_concat_channels_checked": [],
     "linear_rows_checked": ["weight", "bias"],
     "embedding_three_table_layer_norm": ["word", "position", "token_type", "gamma", "beta"],
     "audio_duration_logits_to_frames": [],
@@ -12536,6 +12552,7 @@ TEMPLATE_OP_WEIGHTS = {
     "runtime_extent_scale": [],
     "audio_upsample_nearest_checked": [],
     "audio_conv_transpose1d_depthwise_checked": ["weight", "bias"],
+    "audio_conv_transpose1d_dense_checked": ["weight", "bias"],
     "audio_duration_expand": [],
     "runtime_copy_valid": [],
     "audio_istft_mag_phase": [],

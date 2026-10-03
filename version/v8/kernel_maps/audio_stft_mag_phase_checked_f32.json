@@ -1,0 +1,42 @@
+{
+  "id": "audio_stft_mag_phase_checked_f32",
+  "op": "audio_stft_mag_phase_checked",
+  "operation_interface": "audio.stft.magnitude_phase.centered_reflect_hann.fp32.v1",
+  "variant": "scalar_direct_dft_channel_major_checked",
+  "selection": {"status": "candidate", "priority": 100, "equivalence_group": "audio_stft_mag_phase_direct_f64_accum_fp32", "phases": ["prefill"]},
+  "quant": {"weight": "none", "activation": "fp32", "output": "fp32"},
+  "inputs": [
+    {"name": "samples", "dtype": "fp32", "shape": ["N"], "layout": "contiguous", "placement": "local", "access": "read", "storage_class": "activation", "consumption": "required"},
+    {"name": "window", "dtype": "fp32", "shape": ["FFT"], "layout": "contiguous", "placement": "local", "access": "read", "storage_class": "activation", "consumption": "required"},
+    {"name": "cos_table", "dtype": "fp32", "shape": ["B", "FFT"], "layout": "bin_tap", "placement": "local", "access": "read", "storage_class": "activation", "consumption": "required"},
+    {"name": "sin_table", "dtype": "fp32", "shape": ["B", "FFT"], "layout": "bin_tap", "placement": "local", "access": "read", "storage_class": "activation", "consumption": "required"}
+  ],
+  "weights": [],
+  "outputs": [{"name": "output", "dtype": "fp32", "shape": ["2*B", "F"], "layout": "channel_major_output_stride", "placement": "local", "access": "write", "storage_class": "activation", "consumption": "required"}],
+  "scratch": [{"name": "scratch", "dtype": "fp32", "shape": ["Q"], "layout": "contiguous", "placement": "local", "access": "read_write", "storage_class": "scratch", "consumption": "required", "lifetime": "kernel_call", "alignment": 4, "size_bytes": "4 * Q", "size_resolution": "required"}],
+  "dims": ["samples_capacity", "window_capacity", "table_capacity", "output_capacity", "output_stride", "scratch_capacity", "samples_count", "n_fft", "hop", "frames"],
+  "constraints": {"notes": "Even n_fft, samples_count > n_fft/2, frames = floor(samples_count/hop)+1; reflect centering and periodic Hann. Output/scratch disjoint; validation and staging preserve output on rejection. Caller supplies table values and scratch of at least 2*(n_fft/2+1)*frames FP32 elements."},
+  "impl": {"function": "audio_stft_mag_phase_checked_f32", "c_declaration": "int audio_stft_mag_phase_checked_f32(const float *samples, size_t samples_capacity, const float *window, size_t window_capacity, const float *cos_table, const float *sin_table, size_t table_capacity, float *output, size_t output_capacity, size_t output_stride, float *scratch, size_t scratch_capacity, size_t samples_count, size_t n_fft, size_t hop, size_t frames);", "sources": ["src/kernels/audio_stft_mag_phase_checked.c"]},
+  "modes": {"inference": true, "training": false, "backward": false},
+  "numerical_capabilities": [{"contract_id": "audio_stft_mag_phase_direct_f64_accum_fp32", "status": "validated", "phases": ["prefill"], "function": "audio_stft_mag_phase_checked_f32", "explicit_selector": true, "implementation": {"isa_dispatch": "scalar", "threading": {"runtime": "serial", "work_partition": ["serial"], "dispatch": ["inline"], "reduction_order_effect": "contract_defined"}}, "arithmetic": {"partial_accumulator": "fp64", "merge_order": "none", "deterministic": true, "thread_count_changes_arithmetic_order": false, "split_strategy": "independent_outputs"}}],
+  "call_abi": {"version": 1, "params": [
+    {"name": "samples", "source": "activation:samples", "cast": "const float*", "ports": ["input:samples"]},
+    {"name": "samples_capacity", "source": "runtime:stft_samples_capacity", "value_type": "size_t"},
+    {"name": "window", "source": "activation:window", "cast": "const float*", "ports": ["input:window"]},
+    {"name": "window_capacity", "source": "runtime:stft_window_capacity", "value_type": "size_t"},
+    {"name": "cos_table", "source": "activation:cos_table", "cast": "const float*", "ports": ["input:cos_table"]},
+    {"name": "sin_table", "source": "activation:sin_table", "cast": "const float*", "ports": ["input:sin_table"]},
+    {"name": "table_capacity", "source": "runtime:stft_table_capacity", "value_type": "size_t"},
+    {"name": "output", "source": "output:output", "cast": "float*", "ports": ["output:output"]},
+    {"name": "output_capacity", "source": "runtime:stft_output_capacity", "value_type": "size_t"},
+    {"name": "output_stride", "source": "runtime:stft_output_stride", "value_type": "size_t"},
+    {"name": "scratch", "source": "scratch:scratch", "cast": "float*"},
+    {"name": "scratch_capacity", "source": "runtime:stft_scratch_capacity", "value_type": "size_t"},
+    {"name": "samples_count", "source": "runtime:stft_samples_count", "value_type": "size_t"},
+    {"name": "n_fft", "source": "dim:n_fft"},
+    {"name": "hop", "source": "dim:hop"},
+    {"name": "frames", "source": "runtime:stft_frames", "value_type": "size_t"}
+  ]},
+  "tests": {"unit": ["tests/test_v8_audio_stft_mag_phase_oracle.py"], "oracle": "NumPy rfft, committed pinned PyTorch 2.8 fixture and optional live torch.stft with angular phase comparison"},
+  "notes": "Magnitude parity is pointwise. The exact-real Nyquist bin uses positive-zero imaginary phase, which agrees with pinned PyTorch 2.8 on the tested source geometry. Phase is circular at +/-pi, and direct DFT can still choose the opposite raw sign at reflection-symmetric frame zero. Since Kokoro convolves raw phase channels, a model-level source-branch capture is required before asserting connected parity. Caller supplies table values; this map does not claim they are generated by the model circuit."
+}

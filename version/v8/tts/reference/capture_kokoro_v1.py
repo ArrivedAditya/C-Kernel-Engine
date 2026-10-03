@@ -33,6 +33,17 @@ PROSODY_BRANCH_HOOKS = tuple(
     f"predictor.{branch}.{index}"
     for branch in ("F0", "N") for index in range(3)
 )
+DECODER_HOOKS = (
+    "decoder.F0_conv", "decoder.N_conv", "decoder.asr_res",
+    "decoder.encode.norm1", "decoder.encode.conv1",
+    "decoder.encode.norm2", "decoder.encode.conv2",
+    "decoder.encode.conv1x1", "decoder.encode",
+    *(f"decoder.decode.{index}.{part}" for index in range(4)
+      for part in ("norm1", "conv1", "norm2", "conv2", "conv1x1")),
+    "decoder.decode.3.pool", "decoder.decode.3.upsample",
+    *(f"decoder.decode.{index}" for index in range(4)),
+)
+GENERATOR_HOOKS = ("decoder.generator.ups.0",)
 
 
 def sha256(path: Path) -> str:
@@ -82,6 +93,7 @@ def main() -> int:
     parser.add_argument("--model-dir", type=Path, required=True,
                         help="Local pinned HF snapshot containing config, weights and voice")
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--text", help="Additional oracle utterance; same pinned assets and reference versions")
     parser.add_argument("--preprocess-only", action="store_true")
     args = parser.parse_args()
 
@@ -115,7 +127,8 @@ def main() -> int:
     torch.set_num_threads(1)
     torch.manual_seed(fixture["torch_seed"])
     pipeline = KPipeline(lang_code="a", repo_id=PIN["model"]["repository"], model=False, trf=False)
-    segments = list(pipeline(fixture["text"], model=False))
+    input_text = args.text if args.text is not None else fixture["text"]
+    segments = list(pipeline(input_text, model=False))
     if len(segments) != 1 or not segments[0].phonemes:
         raise RuntimeError(f"expected one nonempty Kokoro segment, got {len(segments)}")
     phonemes = segments[0].phonemes
@@ -138,6 +151,8 @@ def main() -> int:
                 "num2words", "phonemizer-fork", "espeakng-loader")},
         },
         "assets": {str(path.relative_to(model_dir)): sha256(path) for path in required},
+        "input_text": input_text,
+        "input_text_override": args.text is not None,
         "graphemes": segments[0].graphemes,
         "phonemes": phonemes,
         "phoneme_codepoints": [f"U+{ord(char):04X}" for char in phonemes],
@@ -174,18 +189,23 @@ def main() -> int:
         "predictor.duration_proj", "predictor.shared", "predictor.F0_proj",
         "predictor.N_proj", "text_encoder", "decoder", "decoder.generator",
         "decoder.generator.conv_post",
-    ) + FINE_PREDICTOR_HOOKS + PROSODY_BRANCH_HOOKS
+    ) + FINE_PREDICTOR_HOOKS + PROSODY_BRANCH_HOOKS + DECODER_HOOKS + GENERATOR_HOOKS
     modules = dict(model.named_modules())
     hooks = []
     for name in module_names:
         module = modules.get(name)
         if module is None:
-            if name in FINE_PREDICTOR_HOOKS + PROSODY_BRANCH_HOOKS:
+            if name in FINE_PREDICTOR_HOOKS + PROSODY_BRANCH_HOOKS + DECODER_HOOKS + GENERATOR_HOOKS:
                 raise RuntimeError(f"pinned predictor checkpoint module missing: {name}")
             record.setdefault("unavailable_hooks", []).append(name)
             continue
         def on_output(_module, _inputs, output, label=name):
             stem = label.replace(".", "_")
+            if label == "decoder":
+                capture_tensor(_inputs, "decoder_input", out_dir, record["tensors"])
+            if label.startswith("decoder.decode.") and label.count(".") == 2:
+                capture_tensor(_inputs, f"{stem}_input", out_dir,
+                               record["tensors"])
             if label in FINE_PREDICTOR_HOOKS:
                 capture_tensor(_inputs, f"{stem}_input", out_dir, record["tensors"])
                 stem += "_output"
@@ -213,8 +233,16 @@ def main() -> int:
     for name in PROSODY_BRANCH_HOOKS:
         if name.replace(".", "_") not in record["tensors"]:
             raise RuntimeError(f"pinned prosody block checkpoint not reached: {name}")
+    for name in DECODER_HOOKS:
+        if name.replace(".", "_") not in record["tensors"]:
+            raise RuntimeError(f"pinned decoder checkpoint not reached: {name}")
+    for name in GENERATOR_HOOKS:
+        if name.replace(".", "_") not in record["tensors"]:
+            raise RuntimeError(f"pinned generator checkpoint not reached: {name}")
     record["fine_predictor_hooks"] = list(FINE_PREDICTOR_HOOKS)
     record["prosody_branch_hooks"] = list(PROSODY_BRANCH_HOOKS)
+    record["decoder_hooks"] = list(DECODER_HOOKS)
+    record["generator_hooks"] = list(GENERATOR_HOOKS)
     capture_tensor(output.pred_dur, "predicted_duration", out_dir, record["tensors"])
     durations = output.pred_dur.detach().cpu().reshape(-1).to(torch.int64)
     if len(durations) != len(ids) or (durations < 1).any():

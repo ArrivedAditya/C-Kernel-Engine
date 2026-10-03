@@ -140,6 +140,7 @@ struct CKTrueBPE {
 
     /* Configuration */
     CKBPEConfig config;
+    bool suppress_dummy_prefix;
 
     /* String buffer for token operations */
     char *str_buffer;
@@ -563,6 +564,10 @@ void ck_true_bpe_set_config(CKTrueBPE *bpe, const CKBPEConfig *config) {
     bpe->config = *config;
 }
 
+void ck_true_bpe_set_suppress_dummy_prefix(CKTrueBPE *bpe, bool suppress) {
+    if (bpe) bpe->suppress_dummy_prefix = suppress;
+}
+
 int ck_true_bpe_add_special_token(CKTrueBPE *bpe, const char *token, int32_t id) {
     if (!bpe || !token || id < 0) return -1;
 
@@ -785,7 +790,8 @@ static int preprocess_text(const CKTrueBPE *bpe, const char *text, int text_len,
     }
 
     /* For SentencePiece, add ▁ at start */
-    if (style == CK_SPACE_PREFIX_SPM && text_len > 0 && text[0] != ' ') {
+    if (style == CK_SPACE_PREFIX_SPM && !bpe->suppress_dummy_prefix &&
+        text_len > 0 && text[0] != ' ') {
         if (out_len + 3 > out_max) return -1;
         out[out_len++] = (char)0xE2;
         out[out_len++] = (char)0x96;
@@ -1477,8 +1483,12 @@ int ck_true_bpe_encode(CKTrueBPE *bpe, const char *text, int text_len, int32_t *
 
     int out_idx = 0;
 
-    /* Add BOS token if configured */
-    if (bpe->config.add_bos && bpe->bos_id >= 0) {
+    /* A publisher template may already spell out BOS. Do not prepend it a
+     * second time when it is the first exact special token in the prompt. */
+    int leading_special = match_special_token(bpe, text, text_len, 0);
+    bool explicit_bos = leading_special >= 0 &&
+        bpe->special_tokens[leading_special].id == bpe->bos_id;
+    if (bpe->config.add_bos && bpe->bos_id >= 0 && !explicit_bos) {
         if (out_idx >= max_ids) return -1;
         ids[out_idx++] = bpe->bos_id;
     }

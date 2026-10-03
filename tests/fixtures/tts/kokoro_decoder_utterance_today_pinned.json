@@ -1,0 +1,59 @@
+{
+  "scope": "additional direct pinned full-model decoder utterance",
+  "input_text": "Read this assistant response today.",
+  "phonemes": "\u0279\u02c8id \u00f0\u026as \u0259s\u02c8\u026ast\u1d4ant \u0279\u0259sp\u02c8\u0251ns t\u0259d\u02c8A.",
+  "model_pin": "e8a90b41091c3c5b70375c47cc959799920fa4d6",
+  "code_pin": "dfb907a02bba8152ca444717ca5d78747ccb4bec",
+  "environment": {
+    "kokoro": "0.9.4",
+    "misaki": "0.9.4",
+    "torch": "2.8.0+cpu",
+    "transformers": "5.17.0",
+    "spacy": "3.8.16",
+    "num2words": "0.5.14",
+    "phonemizer-fork": "3.3.2",
+    "espeakng-loader": "0.2.4"
+  },
+  "asset_sha256": {
+    "config.json": "5abb01e2403b072bf03d04fde160443e209d7a0dad49a423be15196b9b43c17f",
+    "kokoro-v1_0.pth": "496dba118d1a58f5f3db2efc88dbdc216e0483fc89fe6e47ee1f2c53f18ad1e4",
+    "voices/af_heart.pt": "0ab5709b8ffab19bfd849cd11d98f75b60af7733253ad0d67b12382a102cb4ff"
+  },
+  "capture_manifest_sha256": "ca7eec6c662b9c5ad7a0eafe7851b947fe616eeaf7b042a1081d082f798b64e7",
+  "source_tensor_sha256": {
+    "predictor_style": "8662a8fe8789aceeb09086c6985dc14b01458cdc1224ce9a88bbfc15bad7db17",
+    "decoder_style": "64b7bd32bdbe96ddfa68adc2adc67bbac60a6aba4bfcc6d71245815010d5487b",
+    "predicted_duration": "b3116d84d3b5e088bbdb07ff5142b19e63ef716f749c7b3cec8d571d9b54dc48",
+    "decoder_decode_0": "43a4d37d9e0a196b0aaaf15f09dd6f5391c3bd7b705360d57404110a7c915901",
+    "decoder_decode_1": "769f456c4ee84cee60a2f558e1107b5cd51b134389a20d9d3a54ec3473d892ab",
+    "decoder_decode_2": "85c9ca3cdfab83430a439275656d82071eb3f7ffbf18c2943e99783a7c930612",
+    "decoder_decode_3": "d20c293e220801f5b58fc942c308176de903817eb48125f5ef16c8f408d4af82",
+    "decoder_decode_3_norm1": "8a8e26b834d6fdb2b7cf3472d12a5d78489e3229b76da852d9e02ea19a49eafa",
+    "decoder_decode_3_pool": "038d8ab50c90710bb868242931f63b4cff4e7146549cf321e5a5a19a26480ddc",
+    "decoder_decode_3_conv1": "ed6586cd3bbc92d86fab3e73b26131d65636b08074354ea42a363ca133e0412b",
+    "decoder_decode_3_norm2": "b2571708c49b70755f44e77859e07c5b004a14e57a932a37edeea34e699e0a13",
+    "decoder_decode_3_conv2": "8276a8599b80d9de6113bf1bf677d11b3bce12b6f8a4ea7357551d71baab17ae",
+    "decoder_decode_3_upsample": "a2aeebd0ecd9b43e63a02227e58faa055feaa5a7d1f543073750acbdb9339509",
+    "decoder_decode_3_conv1x1": "df824cacc5ece494704ac4d1d09201822a1291e766f9509d2782b892a11dc5d4"
+  },
+  "array_sha256": {
+    "word_ids": "65770cc1d20bd11cf8b218c4ae6f01974877df3d11cf83d932a970c35b5fe9ec",
+    "predictor_style": "cb40b42394ace4e2ef7c9e16950cd0da3a360a6cd16d2d6a5df4746756a69337",
+    "decoder_style": "ec9518045009b676f9cdc1fd05ce82c3fb8d4a777be4df9c7ae722eb3f12ee87",
+    "predicted_duration": "7027f4d2b613927bdd9998f5c07383e259680db37a0779aa1c1d40f3902fd408",
+    "decoder_decode_0": "e0241d10c23d01f9185cac4a29a5726ce51b0809d4ee7be741eba59aaab846b6",
+    "decoder_decode_1": "1cab84b49c1ae646d3a576d274e5f380d8838a3bea480987c1d23b9d574fc839",
+    "decoder_decode_2": "173f93b7c7722cfbf1b2dc978b4859d2fa649fe72af5bddb37bd69a71c147780",
+    "decoder_decode_3": "3073cee38df40346e0d2df1cb502046f67eb338ac6088f0495a53fc6eb774ce0",
+    "decoder_decode_3_norm1": "ae9338d2b90648cac30ed6b419eea03424f71cdb886b396b5731905221e91070",
+    "decoder_decode_3_pool": "f25d56cc72aa02b6b3e2e3b6c0b24ba90c630f97c34f3118826ad3b1451bd3f2",
+    "decoder_decode_3_conv1": "249cf63323deb5ff0307305c32f70d0fb86ef7388aa7d6507d74e23cce2a1d5d",
+    "decoder_decode_3_norm2": "66a0335326ae6f9bacfa76d7c72afe84ec399414f852f24d20ceb1836e3bf119",
+    "decoder_decode_3_conv2": "68c399cd8fcf086f890ad7085828f565fbab9f8d07b02310802474ec0c7d9481",
+    "decoder_decode_3_upsample": "0b90651ce8026cbe232467178eb570a1bac5acc685da21a9de3be745bb1d40a4",
+    "decoder_decode_3_conv1x1": "fef5b047409e502fd26f2963d5303a97676742b9bee3ee53a4e4a508d21584ff"
+  },
+  "fixture_sha256": "1f5aa691617315f5f04f1c1704ed84d2942d067a1654833eddfe308823e9b161",
+  "valid_frames": 101,
+  "upsampled_frames": 202
+}

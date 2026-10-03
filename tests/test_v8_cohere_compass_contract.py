@@ -333,6 +333,7 @@ class CohereCompassContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             runtime = Path(directory)
             manifest = {
+                "config": {"context_length": 4096},
                 "special_tokens": {"bos_token_id": 2, "eos_token_id": 3},
                 "template": build_ir_v8._load_builtin_template_doc(
                     "cohere_compass_text"
@@ -370,10 +371,68 @@ class CohereCompassContractTests(unittest.TestCase):
             self.assertEqual(loaded["embed_dim"], 16)
             self.assertEqual(loaded["input_embed_dim"], 64)
             self.assertEqual(loaded["num_deepstack_layers"], 3)
+            self.assertEqual(loaded["context_length"], 2048)
+            self.assertEqual(loaded["model_context_limit"], 4096)
             with self.assertRaisesRegex(RuntimeError, "context is too small"):
                 bridge._load_prebuilt_decoder_runtime(
                     runtime, required_context=4096
                 )
+            (runtime / "layout_prefill.json").write_text(
+                json.dumps({"config": {**layout["config"], "context_length": 1024}}),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(RuntimeError, "prefill/decode context mismatch"):
+                bridge._load_prebuilt_decoder_runtime(runtime)
+            (runtime / "layout_prefill.json").write_text(
+                json.dumps(layout), encoding="utf-8"
+            )
+            manifest["config"]["context_length"] = 1024
+            (runtime / "weights_manifest.json").write_text(
+                json.dumps(manifest), encoding="utf-8"
+            )
+            with self.assertRaisesRegex(RuntimeError, "exceeds the model manifest"):
+                bridge._load_prebuilt_decoder_runtime(runtime)
+
+            manifest["config"] = {"context_length": 4096, "max_seq_len": 4096}
+            (runtime / "weights_manifest.json").write_text(
+                json.dumps(manifest), encoding="utf-8"
+            )
+            for source, path, document in (
+                ("model manifest", runtime / "weights_manifest.json", manifest),
+                ("prefill layout", runtime / "layout_prefill.json", layout),
+                ("decode layout", runtime / "layout_decode.json", layout),
+            ):
+                original_config = dict(document["config"])
+                for bad_value in (None, True, False, "2048", 2048.0, 0, -1):
+                    with self.subTest(source=source, bad_value=bad_value):
+                        document["config"] = {**original_config, "context_len": bad_value}
+                        path.write_text(json.dumps(document), encoding="utf-8")
+                        with self.assertRaisesRegex(RuntimeError, f"{source} has invalid context_len"):
+                            bridge._load_prebuilt_decoder_runtime(runtime)
+                with self.subTest(source=source, conflict=True):
+                    document["config"] = {**original_config, "max_seq_len": 1024}
+                    path.write_text(json.dumps(document), encoding="utf-8")
+                    with self.assertRaisesRegex(RuntimeError, f"{source} has conflicting context limits"):
+                        bridge._load_prebuilt_decoder_runtime(runtime)
+                document["config"] = original_config
+                path.write_text(json.dumps(document), encoding="utf-8")
+            self.assertEqual(
+                bridge._load_prebuilt_decoder_runtime(runtime)["model_context_limit"],
+                4096,
+            )
+            manifest["config"] = {"context_length": None}
+            (runtime / "weights_manifest.json").write_text(
+                json.dumps(manifest), encoding="utf-8"
+            )
+            with self.assertRaisesRegex(RuntimeError, "model manifest has invalid context_length"):
+                bridge._load_prebuilt_decoder_runtime(runtime)
+            manifest["config"] = {}
+            (runtime / "weights_manifest.json").write_text(
+                json.dumps(manifest), encoding="utf-8"
+            )
+            self.assertIsNone(
+                bridge._load_prebuilt_decoder_runtime(runtime)["model_context_limit"]
+            )
 
     def test_bridge_preflights_decoder_context_before_encoder_execution(self) -> None:
         planned_bridge = {"embed_dim": 8192, "used_nbytes": 8240 * 8192 * 4}
@@ -393,7 +452,10 @@ class CohereCompassContractTests(unittest.TestCase):
             requested=8192,
             slack_tokens=3072,
         )
-        self.assertEqual(required_context, 8702)
+        # The requested context is a floor: preflight must also reserve the
+        # requested continuation after the text and visual prefix.
+        self.assertEqual(required_context, 462 + 8240 + 3072)
+        self.assertGreater(required_context, 8192)
 
         main_source = inspect.getsource(bridge.main)
         self.assertLess(

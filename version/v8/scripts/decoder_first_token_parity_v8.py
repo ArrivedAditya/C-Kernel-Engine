@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import math
@@ -376,6 +377,80 @@ def _materialize_llama_prefix(
     resolved.parent.mkdir(parents=True, exist_ok=True)
     resolved.write_bytes(prefix_embeddings.tobytes())
     return resolved
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _verify_encoder_prefix_report(
+    report_path: Path, ck_prefix: Path, llama_prefix: Path,
+    prefix_tokens: int, prefix_row_dim: int,
+) -> dict[str, Any]:
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    if not isinstance(report, dict) or report.get("status") != "complete":
+        raise ValueError("encoder prefix report is not complete")
+    preprocess = report.get("preprocess_evidence")
+    if (report.get("input_provenance") != "independently_preprocessed_from_shared_decoded_rgb8"
+            or not isinstance(preprocess, dict) or preprocess.get("verdict") != "pass"
+            or report.get("strict_mtmd_oracle") is not False):
+        raise ValueError("encoder prefix report does not prove independent preprocessing and native execution")
+    for name in ("row_slices", "feature_slices"):
+        slices = report.get(name)
+        if not isinstance(slices, dict) or set(slices) != {"ck", "llama"} or any(
+            value is not None for value in slices.values()
+        ):
+            raise ValueError(f"encoder prefix report has partial {name}")
+    exports = report.get("decoder_prefix_exports")
+    if not isinstance(exports, dict) or exports.get("contract") != "cke.decoder_prefix_f32.v1":
+        raise ValueError("encoder prefix report lacks decoder-prefix exports")
+    for report_key, export_key in (("ck_resolved_output", "ck_output_role"),
+                                   ("llama_reference_output", "oracle_output_role")):
+        role = exports.get(export_key)
+        if not isinstance(role, str) or not role or report.get(report_key) != role:
+            raise ValueError(f"encoder prefix report has inconsistent {export_key}")
+    grid = exports.get("grid")
+    if (type(exports.get("tokens")) is not int or type(exports.get("row_dim")) is not int
+            or exports["tokens"] != prefix_tokens or exports["row_dim"] != prefix_row_dim
+            or not isinstance(grid, list) or len(grid) != 2
+            or any(type(value) is not int or value <= 0 for value in grid)
+            or grid[0] * grid[1] != prefix_tokens):
+        raise ValueError("encoder prefix report geometry disagrees with decoder inputs")
+    expected_values = prefix_tokens * prefix_row_dim
+    raw_values = report.get("raw_num_values")
+    if (not isinstance(raw_values, dict)
+            or any(type(raw_values.get(role)) is not int or raw_values[role] != expected_values
+                   for role in ("ck", "llama"))):
+        raise ValueError("encoder prefix report has incomplete tensor extents")
+    for role, path in (("ck", ck_prefix), ("llama", llama_prefix)):
+        identity = exports.get(role)
+        if (not isinstance(identity, dict)
+                or identity.get("path") != str(path.resolve())
+                or type(identity.get("size_bytes")) is not int
+                or identity["size_bytes"] != expected_values * 4
+                or identity.get("sha256") != _sha256_file(path)):
+            raise ValueError(f"encoder prefix report {role} export identity mismatch")
+    identities = report.get("artifact_identity")
+    required = {"mmproj_gguf", "ck_model_library", "ck_generated_source",
+                "ck_engine_library", "ck_weights", "llama_shim_library", "llama_mtmd_library"}
+    if not isinstance(identities, dict) or not required.issubset(identities):
+        raise ValueError("encoder prefix report lacks runtime artifact identities")
+    for name, identity in identities.items():
+        if not isinstance(identity, dict) or not isinstance(identity.get("path"), str):
+            raise ValueError(f"encoder prefix report has invalid {name} identity")
+        artifact = Path(identity["path"])
+        if (not artifact.is_file() or identity.get("size_bytes") != artifact.stat().st_size
+                or identity.get("sha256") != _sha256_file(artifact)):
+            raise ValueError(f"encoder prefix report {name} artifact changed")
+    return {
+        "report_sha256": _sha256_file(report_path),
+        "input_provenance": report["input_provenance"],
+        "artifact_hashes": {name: identity["sha256"] for name, identity in identities.items()},
+    }
 
 
 def _load_llama_dump_dir(dump_dir: Path) -> list[Any]:
@@ -1845,6 +1920,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--tokens-before", type=str, default=None, help="Optional comma-separated token IDs that must appear before the multimodal prefix")
     ap.add_argument("--tokens-after", type=str, default=None, help="Optional comma-separated token IDs that must appear after the multimodal prefix")
     ap.add_argument("--prefix-f32", type=Path, default=None, help="Optional float32 prefix embeddings for ck_model_forward_mixed")
+    ap.add_argument("--llama-prefix-f32", type=Path, default=None, help="Optional separately produced llama.cpp prefix; requires a CKE prefix and compares full image-to-logit behavior, not decoder arithmetic alone")
+    ap.add_argument("--encoder-prefix-report", type=Path, default=None, help="Optional encoder capture report binding separate prefix files to their producer artifacts")
     ap.add_argument("--prefix-row-dim", type=int, default=None, help="Optional explicit row width for --prefix-f32 (for example qwen3vl n_embd_inp)")
     ap.add_argument("--prefix-grid-x", type=int, default=None, help="Optional explicit multimodal prefix grid width")
     ap.add_argument("--prefix-grid-y", type=int, default=None, help="Optional explicit multimodal prefix grid height")
@@ -1869,6 +1946,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--ck-strict-parity", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--json-out", type=Path, default=None, help="Optional explicit JSON report path")
     args = ap.parse_args(argv)
+
+    if args.llama_prefix_f32 is not None and args.dump_dir is not None:
+        ap.error("--dump-dir is not a decoder-arithmetic comparison with separate prefixes")
+    if args.encoder_prefix_report is not None and args.llama_prefix_f32 is None:
+        ap.error("--encoder-prefix-report requires --llama-prefix-f32")
 
     if int(args.threads) > 0:
         os.environ["CK_NUM_THREADS"] = str(int(args.threads))
@@ -1920,6 +2002,30 @@ def main(argv: list[str] | None = None) -> int:
         int(decoder_runtime.get("input_embed_dim", 0) or 0),
         int(args.prefix_row_dim) if args.prefix_row_dim is not None else None,
     )
+    separate_prefixes = args.llama_prefix_f32 is not None
+    if separate_prefixes:
+        if resolved_prefix_path is None or int(args.synthetic_prefix_tokens) > 0:
+            raise ValueError("--llama-prefix-f32 requires a real CKE --prefix-f32 or bridge prefix dump")
+        llama_prefix_path = args.llama_prefix_f32.resolve()
+        if llama_prefix_path == resolved_prefix_path:
+            raise ValueError("separate prefix inputs must use different files")
+        _, llama_prefix_tokens, llama_prefix_row_dim, _ = _load_prefix_embeddings(
+            llama_prefix_path, 0, int(decoder_runtime["embed_dim"]),
+            int(decoder_runtime.get("input_embed_dim", 0) or 0), int(prefix_row_dim),
+        )
+        if (llama_prefix_tokens, llama_prefix_row_dim) != (prefix_tokens, prefix_row_dim):
+            raise ValueError(
+                "separate prefix geometry mismatch: "
+                f"CKE=({prefix_tokens}, {prefix_row_dim}) "
+                f"llama=({llama_prefix_tokens}, {llama_prefix_row_dim})"
+            )
+        llama_prefix_sha256 = hashlib.sha256(llama_prefix_path.read_bytes()).hexdigest()
+    prefix_provenance = (
+        _verify_encoder_prefix_report(
+            args.encoder_prefix_report.resolve(), resolved_prefix_path,
+            llama_prefix_path, prefix_tokens, prefix_row_dim,
+        ) if args.encoder_prefix_report is not None else None
+    )
     total_prompt_tokens = len(token_ids_before) + len(token_ids_after)
     resolved_ctx_len = max(requested_ctx_len, int(prefix_tokens) + total_prompt_tokens, 1)
     if resolved_ctx_len != requested_ctx_len:
@@ -1930,12 +2036,13 @@ def main(argv: list[str] | None = None) -> int:
             context_override=resolved_ctx_len,
         )
     memory_contract = _verify_runtime_memory_contracts(decoder_runtime)
-    llama_prefix_path = _materialize_llama_prefix(
-        prefix_embeddings,
-        prefix_tokens,
-        workdir,
-        prefix_path=resolved_prefix_path,
-    )
+    if not separate_prefixes:
+        llama_prefix_path = _materialize_llama_prefix(
+            prefix_embeddings,
+            prefix_tokens,
+            workdir,
+            prefix_path=resolved_prefix_path,
+        )
 
     bridge_grid_x = None if bridge_report is None or bridge_report.get("prefix_grid_x") is None else int(bridge_report.get("prefix_grid_x"))
     bridge_grid_y = None if bridge_report is None or bridge_report.get("prefix_grid_y") is None else int(bridge_report.get("prefix_grid_y"))
@@ -1969,6 +2076,8 @@ def main(argv: list[str] | None = None) -> int:
         prefix_row_dim=int(prefix_row_dim),
         prefix_text_pos=resolved_prefix_text_pos,
     )
+    if separate_prefixes and hashlib.sha256(llama_prefix_path.read_bytes()).hexdigest() != llama_prefix_sha256:
+        raise RuntimeError("separate llama prefix changed during capture")
     position_contract = _build_multimodal_position_contract(
         tokens_before_count=len(token_ids_before),
         prefix_tokens=int(prefix_tokens),
@@ -2022,8 +2131,9 @@ def main(argv: list[str] | None = None) -> int:
     passed = bool(top1_ok and overlap_ok and max_abs_ok)
 
     report = {
-        "status": "pass" if passed else "fail",
-        "pass": passed,
+        "status": ("incomplete" if passed else "fail") if separate_prefixes else ("pass" if passed else "fail"),
+        "pass": passed and not separate_prefixes,
+        "diagnostic_comparison_pass": passed if separate_prefixes else None,
         "gguf_path": str(gguf_path),
         "workdir": str(workdir),
         "decoder_runtime": {
@@ -2051,6 +2161,19 @@ def main(argv: list[str] | None = None) -> int:
             "llama_position_count": int(ll["meta"].get("prefix_position_count", prefix_tokens)),
             "llama_start_pos": int(ll["meta"].get("prefix_start_pos", len(token_ids_before))),
         },
+        "prefix_input_scope": (
+            "independent_preprocess_report_bound" if prefix_provenance is not None else
+            "separate_files_unverified_producers" if separate_prefixes else "shared_prefix"
+        ),
+        "prefix_provenance": prefix_provenance,
+        "prefix_input_identity": {
+            "ck_sha256": hashlib.sha256(prefix_embeddings.tobytes()).hexdigest(),
+            "llama_sha256": llama_prefix_sha256 if separate_prefixes else (
+                hashlib.sha256(llama_prefix_path.read_bytes()).hexdigest()
+                if llama_prefix_path is not None else None
+            ),
+            "llama_path": str(llama_prefix_path) if separate_prefixes else None,
+        },
         "position_contract": position_contract,
         "ctx_len": int(resolved_ctx_len),
         "requested_ctx_len": int(requested_ctx_len),
@@ -2073,9 +2196,13 @@ def main(argv: list[str] | None = None) -> int:
         },
         "compare": cmp,
         "notes": [
-            "This is decoder-only parity: identical token IDs into llama.cpp and the generated v8 runtime.",
+            "Separate prefix files compare image-to-logit behavior; their producers are not verified by this report, and this is not decoder-arithmetic parity."
+            if separate_prefixes else
+            "This is decoder-only parity: identical token IDs and prefix into llama.cpp and the generated v8 runtime.",
             "prefix_tokens=0 isolates text-decoder parity before the encoder->decoder bridge is introduced.",
             "When a bridge report is provided, the parity tool replays the exact segmented multimodal prompt: text-before + image prefix + text-after.",
+            "Separate prefix files require independent producer provenance before a numerical or vision certification verdict."
+            if separate_prefixes else
             "That validates decoder first-token logits under the real multimodal bridge contract; encoder/preprocessing parity still must be checked separately.",
         ],
     }
@@ -2085,7 +2212,7 @@ def main(argv: list[str] | None = None) -> int:
     json_out.parent.mkdir(parents=True, exist_ok=True)
     json_out.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(json.dumps(report, indent=2))
-    return 0 if passed else 3
+    return (4 if passed else 3) if separate_prefixes else (0 if passed else 3)
 
 
 if __name__ == "__main__":

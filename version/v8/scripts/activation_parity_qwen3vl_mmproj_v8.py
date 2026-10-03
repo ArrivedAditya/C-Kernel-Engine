@@ -368,6 +368,26 @@ def _run_llama_encoder_with_dump(
         _restore_env_var("CK_LLAMA_PARITY_LAYER", old_layer)
 
 
+def _prepare_capture_image(
+    config: dict[str, Any], image_path: Path | None, image_mode: str,
+) -> tuple[dict[str, Any], list[float], list[float]]:
+    height = int(config.get("image_height", config.get("image_size", 0)))
+    width = int(config.get("image_width", config.get("image_size", 0)))
+    if height <= 0 or width <= 0:
+        raise RuntimeError(f"invalid encoder image shape: height={height} width={width}")
+    if image_path is not None:
+        image_report = npv8._load_image_file(image_path.resolve(), height, width, config)
+        return image_report, image_report["interleaved"], image_report["planar"]
+    interleaved, planar = npv8._build_test_image(height, width, image_mode)
+    return {
+        "image_source": "synthetic",
+        "image_mode": image_mode,
+        "image_path": None,
+        "source_image_size": [width, height],
+        "preprocess": "synthetic_generator",
+    }, interleaved, planar
+
+
 def _summarize_results(results: list[dict[str, Any]]) -> dict[str, Any]:
     summary = {
         "total": len(results),
@@ -469,23 +489,11 @@ def main(argv: list[str] | None = None) -> int:
     }
 
     config = report["config"]
-    height = int(config.get("image_height", config.get("image_size")))
-    width = int(config.get("image_width", config.get("image_size")))
-    if height <= 0 or width <= 0:
-        raise RuntimeError(f"invalid encoder image shape in generated config: height={height} width={width}")
-    if args.image_path is not None:
-        image_report = npv8._load_image_file(args.image_path.resolve(), height, width)
-        interleaved = image_report["interleaved"]
-        planar = image_report["planar"]
-    else:
-        interleaved, planar = npv8._build_test_image(height, width, args.image_mode)
-        image_report = {
-            "image_source": "synthetic",
-            "image_mode": args.image_mode,
-            "image_path": None,
-            "source_image_size": [width, height],
-            "preprocess": "synthetic_generator",
-        }
+    image_report, interleaved, planar = _prepare_capture_image(
+        config, args.image_path, args.image_mode,
+    )
+    height = int(config.get("image_height", config.get("image_size", 0)))
+    width = int(config.get("image_width", config.get("image_size", 0)))
 
     ck_dump_dir = output_dir / "ck_parity_dumps"
     llama_dump_dir = output_dir / "llama_parity_dumps"

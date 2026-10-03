@@ -341,6 +341,7 @@ def _apply_vision_numerics_profile(
                 f"--vision-numerics={profile} is only valid for a vision encoder"
             )
         return
+    config["image_resize_rounding_policy"] = "ties_to_even"
     if profile == "pytorch_exact":
         config["vision_patch_frontend"] = "integrated_temporal2"
         config["vision_patch_projection_reduction_policy"] = (

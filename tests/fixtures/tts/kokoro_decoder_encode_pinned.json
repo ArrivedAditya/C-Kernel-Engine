@@ -1,0 +1,72 @@
+{
+  "scope": "direct pinned full-model decoder encode hooks and effective weights",
+  "model_pin": "e8a90b41091c3c5b70375c47cc959799920fa4d6",
+  "code_pin": "dfb907a02bba8152ca444717ca5d78747ccb4bec",
+  "oracle": "pinned full KModel forward hooks",
+  "environment": {
+    "kokoro": "0.9.4",
+    "misaki": "0.9.4",
+    "torch": "2.8.0+cpu",
+    "transformers": "5.17.0",
+    "spacy": "3.8.16",
+    "num2words": "0.5.14",
+    "phonemizer-fork": "3.3.2",
+    "espeakng-loader": "0.2.4"
+  },
+  "asset_sha256": {
+    "config.json": "5abb01e2403b072bf03d04fde160443e209d7a0dad49a423be15196b9b43c17f",
+    "kokoro-v1_0.pth": "496dba118d1a58f5f3db2efc88dbdc216e0483fc89fe6e47ee1f2c53f18ad1e4",
+    "voices/af_heart.pt": "0ab5709b8ffab19bfd849cd11d98f75b60af7733253ad0d67b12382a102cb4ff"
+  },
+  "capture_manifest_sha256": "4e2dfb9adf51010ed65072f1a0ce3d000f9a7ae5ff3fae222005fafeaa96c4ab",
+  "source_tensor_sha256": {
+    "decoder_style": "64b7bd32bdbe96ddfa68adc2adc67bbac60a6aba4bfcc6d71245815010d5487b",
+    "decoder_encode_norm1": "7393de85dac2a52be73ef6955663aed74b16808c2aea74c18cfc670c90655e33",
+    "decoder_encode_conv1": "14b467d8aac7d5ff60baabd33c58d9f8451177121e3ccc02d21b963cf2a18cd9",
+    "decoder_encode_norm2": "fef16dc2a38a05265a4196f251eff3d2aa2139653dcb28a71d8cb452ab893be0",
+    "decoder_encode_conv2": "da59d0a2caaed2dc0813c882e171f5dc7a861e326dd8251f661d1b1e557b8457",
+    "decoder_encode_conv1x1": "b92490186e8855a8a63856a198f840a892b9ccd185874e33aa74309b0fbcd8df",
+    "decoder_encode": "69305c189ec8234ee131fb48f1d59fabf70f31d810327fc998e9526aa1316023"
+  },
+  "effective_weight_sha256": {
+    "waveform_decoder.encode.conv1.bias": "471d1d74854d616bf12bad6b10252b7c686d6bca5f129718419f4fc85de9a6a5",
+    "waveform_decoder.encode.conv1.weight": "9df372600a792560a8a2d2c7942e36da07eda949fdabb724d929aef4013e67f9",
+    "waveform_decoder.encode.conv1x1.weight": "77a4720d4e78e2aeafb58a0d259561d7270579ccb7d705a81515a44c6694b4ea",
+    "waveform_decoder.encode.conv2.bias": "8d1da07fa464bcf56e41b422ece0e6caed81b13c7b83817104b9b124751aff7a",
+    "waveform_decoder.encode.conv2.weight": "fc010ad3e59fd01b9bc3078720daa7030483714bc3fc7858510fffead76f04dd",
+    "waveform_decoder.encode.norm1.fc.bias": "0d40d8978b2c64d5a92654490c7f071650dd5f9970f010fb4d2afea45329d4fd",
+    "waveform_decoder.encode.norm1.fc.weight": "5f52765387f500ce0a1e58b6860d68c0c7e588e12f1333450174bd782801872b",
+    "waveform_decoder.encode.norm1.norm.bias": "d5fe696dc1aa5c0a800bf800ce8fc6e26ab622c7dd7de4b9fd0c304fe4036256",
+    "waveform_decoder.encode.norm1.norm.weight": "a0894ca77ee431c328bddd70b5fb99e59370c2171088046b60bc4cde1a36e187",
+    "waveform_decoder.encode.norm2.fc.bias": "4a4728c7a34471726b760acad4f6208746165553e4c194932867604bd565d742",
+    "waveform_decoder.encode.norm2.fc.weight": "a9f5979e63fd6d1801957469740ddc4e8791909182a0fe48890a120eecb4d30d",
+    "waveform_decoder.encode.norm2.norm.bias": "ad7facb2586fc6e966c004d7d1d16b024f5805ff7cb47c7a85dabd8b48892ca7",
+    "waveform_decoder.encode.norm2.norm.weight": "e9bac255f4adc7cb4ada9298e193a5ff66b434d15afabd458505325f29c398c7"
+  },
+  "synthetic_zero_bias": "waveform_decoder.encode.conv1x1.cke_zero_bias",
+  "array_sha256": {
+    "decoder_style": "ec9518045009b676f9cdc1fd05ce82c3fb8d4a777be4df9c7ae722eb3f12ee87",
+    "decoder_encode_norm1": "830a5ebec8f176f0dc5f3eb46a19c1a2e93593b39147887ee5973ac577ad1a77",
+    "decoder_encode_conv1": "286e87d9ce2925c216cd8448b8960a464a07d23397b19693e40a4c4ff83293b9",
+    "decoder_encode_norm2": "5132a5bae3dab08ea7a75f5f434c27e9616349f874f83890b1ff238d401deaed",
+    "decoder_encode_conv2": "7bfccb29a80512a21f55327465f481b4c4ca8a6c7ef9eb71d6f5c49e6c8b1861",
+    "decoder_encode_conv1x1": "9438dc5e7f1588ba1a9e36addd472446debbe0abfc7c4214e60e26c9320a2c4a",
+    "decoder_encode": "2b7f751967ef74e028f339a1712e73d778b5fee4b156c794637e728a7a6d1733",
+    "waveform_decoder.encode.conv1.bias": "471d1d74854d616bf12bad6b10252b7c686d6bca5f129718419f4fc85de9a6a5",
+    "waveform_decoder.encode.conv1.weight": "9df372600a792560a8a2d2c7942e36da07eda949fdabb724d929aef4013e67f9",
+    "waveform_decoder.encode.conv1x1.weight": "77a4720d4e78e2aeafb58a0d259561d7270579ccb7d705a81515a44c6694b4ea",
+    "waveform_decoder.encode.conv2.bias": "8d1da07fa464bcf56e41b422ece0e6caed81b13c7b83817104b9b124751aff7a",
+    "waveform_decoder.encode.conv2.weight": "fc010ad3e59fd01b9bc3078720daa7030483714bc3fc7858510fffead76f04dd",
+    "waveform_decoder.encode.norm1.fc.bias": "0d40d8978b2c64d5a92654490c7f071650dd5f9970f010fb4d2afea45329d4fd",
+    "waveform_decoder.encode.norm1.fc.weight": "5f52765387f500ce0a1e58b6860d68c0c7e588e12f1333450174bd782801872b",
+    "waveform_decoder.encode.norm1.norm.bias": "d5fe696dc1aa5c0a800bf800ce8fc6e26ab622c7dd7de4b9fd0c304fe4036256",
+    "waveform_decoder.encode.norm1.norm.weight": "a0894ca77ee431c328bddd70b5fb99e59370c2171088046b60bc4cde1a36e187",
+    "waveform_decoder.encode.norm2.fc.bias": "4a4728c7a34471726b760acad4f6208746165553e4c194932867604bd565d742",
+    "waveform_decoder.encode.norm2.fc.weight": "a9f5979e63fd6d1801957469740ddc4e8791909182a0fe48890a120eecb4d30d",
+    "waveform_decoder.encode.norm2.norm.bias": "ad7facb2586fc6e966c004d7d1d16b024f5805ff7cb47c7a85dabd8b48892ca7",
+    "waveform_decoder.encode.norm2.norm.weight": "e9bac255f4adc7cb4ada9298e193a5ff66b434d15afabd458505325f29c398c7",
+    "waveform_decoder.encode.conv1x1.cke_zero_bias": "ad7facb2586fc6e966c004d7d1d16b024f5805ff7cb47c7a85dabd8b48892ca7"
+  },
+  "fixture_sha256": "5152af58f9de2c54ec06e16788d64aa62345dd5e1fc549b26cae9cf97e007522",
+  "valid_frames": 103
+}

@@ -401,6 +401,95 @@ def test_prompt_over_budget_400_has_envelope():
     assert resp.json()["error"]["code"] == "context_length_exceeded"
 
 
+@pytest.mark.parametrize("route", ["/v1/responses", "/v1/chat/completions"])
+def test_native_token_count_failure_is_structured_and_recoverable(route):
+    import sys
+    from pathlib import Path
+    from server.session_v8 import SessionError
+
+    scripts = str(Path(__file__).resolve().parents[2] / "version" / "v8" / "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    from ck_serve_v8 import create_app as create_full_app
+
+    class FailingCountSession(FakeSession):
+        def __init__(self):
+            super().__init__()
+            self.fail_count = True
+            self.generate_calls = 0
+
+        def count_tokens(self, text):
+            if self.fail_count:
+                raise SessionError(-7, "native tokenizer failed")
+            return 2
+
+        def generate(self, *args, **kwargs):
+            self.generate_calls += 1
+            return super().generate(*args, **kwargs)
+
+    session = FailingCountSession()
+    client = TestClient(create_full_app(session, model="m", context_length=128,
+                                        allow_untemplated=True))
+    payload = ({"model": "m", "input": "long", "max_output_tokens": 8}
+               if route.endswith("responses") else
+               {"model": "m", "messages": [{"role": "user", "content": "long"}],
+                "max_tokens": 8})
+    rejected = client.post(route, json=payload)
+    assert rejected.status_code == 500, rejected.text
+    assert rejected.json()["error"]["code"] == "native_tokenization_failed"
+    assert session.generate_calls == 0
+    session.fail_count = False
+    recovered = client.post(route, json=payload)
+    assert recovered.status_code == 200, recovered.text
+    assert session.generate_calls == 1
+
+
+@pytest.mark.parametrize("route", ["/v1/responses", "/v1/chat/completions"])
+def test_busy_token_count_keeps_busy_status(route):
+    from server.session_v8 import SessionBusyError
+
+    class BusySession(FakeSession):
+        def count_tokens(self, text):
+            raise SessionBusyError(-6, "session busy")
+
+    from version.v8.scripts.ck_serve_v8 import create_app as create_full_app
+    client = TestClient(create_full_app(BusySession(), model="m", context_length=128,
+                                        allow_untemplated=True))
+    payload = ({"model": "m", "input": "hello", "max_output_tokens": 8}
+               if route.endswith("responses") else
+               {"model": "m", "messages": [{"role": "user", "content": "hello"}],
+                "max_tokens": 8})
+    response = client.post(route, json=payload)
+    assert response.status_code == 429, response.text
+    assert response.json()["error"]["code"] == "rate_limit_exceeded"
+    assert int(response.headers["Retry-After"]) >= 1
+
+
+@pytest.mark.parametrize("route", ["/v1/responses", "/v1/chat/completions"])
+def test_explicit_rendered_byte_cap_rejects_before_native_work(route):
+    class CountingSession(FakeSession):
+        def __init__(self):
+            super().__init__()
+            self.count_calls = 0
+
+        def count_tokens(self, text):
+            self.count_calls += 1
+            return 2
+
+    from version.v8.scripts.ck_serve_v8 import create_app as create_full_app
+    session = CountingSession()
+    client = TestClient(create_full_app(session, model="m", context_length=128,
+                                        request_prompt_byte_cap=8, allow_untemplated=True))
+    payload = ({"model": "m", "input": "a" * 9, "max_output_tokens": 8}
+               if route.endswith("responses") else
+               {"model": "m", "messages": [{"role": "user", "content": "a" * 9}],
+                "max_tokens": 8})
+    response = client.post(route, json=payload)
+    assert response.status_code == 413, response.text
+    assert response.json()["error"]["code"] == "prompt_bytes_limit_exceeded"
+    assert session.count_calls == 0
+
+
 def test_unknown_call_id_400_has_envelope_and_detail():
     client = TestClient(create_app(FakeSession(), model="m"))
     resp = client.post(

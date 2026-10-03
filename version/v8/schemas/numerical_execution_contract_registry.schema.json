@@ -84,6 +84,7 @@
             "audio_adaptive_layer_norm",
             "audio_adain_instance_norm",
             "audio_scaled_sum_strided_checked",
+            "audio_concat_channels_checked",
             "audio_relative_attention",
             "audio_scaled_residual_add",
             "audio_relu",
@@ -98,6 +99,7 @@
             "runtime_extent_sum",
             "runtime_copy_valid",
             "audio_istft_mag_phase",
+            "audio_stft_mag_phase_checked",
             "layout_transform",
             "multimodal_position_builder",
             "multimodal_prefix_insert",
@@ -117,7 +119,8 @@
             "yarn_rope_init",
             "runtime_extent_scale",
             "audio_upsample_nearest",
-            "audio_conv_transpose1d_depthwise"
+            "audio_conv_transpose1d_depthwise",
+            "audio_conv_transpose1d_dense"
           ]
         },
         "status": {

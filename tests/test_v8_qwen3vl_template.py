@@ -698,6 +698,7 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
             cfg = {
                 "patch_size": 16,
                 "spatial_merge_size": 2,
+                "image_resize_rounding_policy": "half_away_from_zero",
                 "image_min_pixels": 1024 * 16 * 16 * 2 * 2,
                 "image_max_pixels": 4096 * 16 * 16 * 2 * 2,
             }
@@ -713,6 +714,41 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
             self.assertEqual(out["vision_merged_tokens"], 128)
             self.assertEqual(out["image_resize_algorithm"], "bicubic")
             self.assertEqual(out["image_resize_padding"], "center_ceil")
+
+    def test_qwen_vision_legacy_resize_config_requires_explicit_migration(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="v8_qwen3vl_legacy_geometry_") as td:
+            image_path = Path(td) / "square.ppm"
+            image_path.write_bytes(b"P6\n144 144\n255\n" + bytes(144 * 144 * 3))
+            config = {"patch_size": 16, "spatial_merge_size": 2}
+            with self.assertRaisesRegex(ValueError, "regenerate the encoder artifact"):
+                run_multimodal_bridge_v8._qwen3vl_geometry_overrides(config, image_path)
+            for invalid in (None, "", "unknown", True):
+                with self.subTest(invalid=invalid):
+                    config["image_resize_rounding_policy"] = invalid
+                    with self.assertRaisesRegex(ValueError, "image_resize_rounding_policy"):
+                        run_multimodal_bridge_v8._qwen3vl_geometry_overrides(config, image_path)
+            config["image_resize_rounding_policy"] = "half_away_from_zero"
+            self.assertEqual(
+                run_multimodal_bridge_v8._qwen3vl_geometry_overrides(config, image_path)["image_width"],
+                160,
+            )
+
+    def test_qwen_vl_smart_resize_rounding_follows_declared_source(self) -> None:
+        resize = run_multimodal_bridge_v8._calc_qwen_vl_smart_resize
+        self.assertEqual(resize(143, 143, 32, 1, 1024 * 1024), (128, 128))
+        self.assertEqual(resize(144, 144, 32, 1, 1024 * 1024), (128, 128))
+        self.assertEqual(resize(145, 145, 32, 1, 1024 * 1024), (160, 160))
+        self.assertEqual(resize(208, 80, 32, 1, 1024 * 1024), (192, 64))
+        self.assertEqual(
+            resize(144, 144, 32, 1, 1024 * 1024, rounding_policy="half_away_from_zero"),
+            (160, 160),
+        )
+        self.assertEqual(
+            resize(208, 80, 32, 1, 1024 * 1024, rounding_policy="half_away_from_zero"),
+            (224, 96),
+        )
+        with self.assertRaisesRegex(ValueError, "rounding policy"):
+            resize(144, 144, 32, 1, 1024 * 1024, rounding_policy="unknown")
 
     def test_qwen3vl_decoder_declares_bridge_generation_contract(self) -> None:
         doc = build_ir_v8._load_builtin_template_doc("qwen3vl")

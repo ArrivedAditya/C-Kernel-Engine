@@ -3,14 +3,51 @@
 import argparse
 import io
 import json
+import os
+import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
 
 from server import qwen_harness_acceptance as acceptance
 from server.qwen_harness_acceptance import EXPECTED_HTML, evaluate
+
+
+def test_outer_termination_reaps_qwen_client_process_group(tmp_path):
+    """A coordinator timeout must not leave a detached Qwen process running."""
+    pid_file = tmp_path / 'child.pid'
+    ready_file = tmp_path / 'ready.txt'
+    done_file = tmp_path / 'done.txt'
+    source = (
+        'import subprocess,sys; from pathlib import Path; '
+        'from server.qwen_harness_acceptance import _wait_for_client; '
+        'p=subprocess.Popen([sys.executable,"-c","import time;time.sleep(60)"], '
+        'start_new_session=True); Path(sys.argv[1]).write_text(str(p.pid)); '
+        'Path(sys.argv[3]).write_text(str(_wait_for_client(p,60, '
+        'lambda: Path(sys.argv[2]).write_text("ready"))))'
+    )
+    runner = subprocess.Popen([sys.executable, '-c', source, str(pid_file),
+                               str(ready_file), str(done_file)])
+    child_pid = None
+    try:
+        deadline = time.monotonic() + 5
+        while not ready_file.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert ready_file.exists()
+        child_pid = int(pid_file.read_text())
+        os.kill(runner.pid, signal.SIGTERM)
+        assert runner.wait(timeout=5) == 0
+        assert done_file.read_text() == str(128 + signal.SIGTERM)
+        assert not Path(f'/proc/{child_pid}').exists()
+    finally:
+        if runner.poll() is None:
+            runner.kill()
+            runner.wait()
+        if child_pid is not None and Path(f'/proc/{child_pid}').exists():
+            os.killpg(child_pid, signal.SIGKILL)
 
 
 SESSION = '7e218e94-5a31-4ccb-a284-130c935bdd79'

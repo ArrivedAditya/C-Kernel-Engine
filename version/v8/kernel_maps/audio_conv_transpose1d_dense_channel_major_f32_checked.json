@@ -1,0 +1,340 @@
+{
+  "id": "audio_conv_transpose1d_dense_channel_major_f32_checked",
+  "op": "audio_conv_transpose1d_dense_checked",
+  "operation_interface": "audio.conv_transpose1d.dense.checked.channel_major.fp32.v1",
+  "variant": "scalar_fma_checked_strided",
+  "selection": {
+    "status": "candidate",
+    "priority": 100,
+    "equivalence_group": "audio_conv_transpose1d_dense_input_frame_tap_fma_fp32",
+    "phases": [
+      "prefill"
+    ]
+  },
+  "quant": {
+    "weight": "fp32",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {
+      "name": "input",
+      "dtype": "fp32",
+      "shape": [
+        "I",
+        "T"
+      ],
+      "layout": "channel_major_input_stride",
+      "placement": "local",
+      "access": "read",
+      "storage_class": "activation",
+      "consumption": "required"
+    }
+  ],
+  "weights": [
+    {
+      "name": "weight",
+      "dtype": "fp32",
+      "shape": [
+        "I",
+        "O",
+        "K"
+      ],
+      "layout": "input_output_kernel",
+      "placement": "local",
+      "access": "read",
+      "storage_class": "weight",
+      "consumption": "required"
+    },
+    {
+      "name": "bias",
+      "dtype": "fp32",
+      "shape": [
+        "O"
+      ],
+      "layout": "contiguous",
+      "placement": "local",
+      "access": "read",
+      "storage_class": "weight",
+      "consumption": "required"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "output",
+      "dtype": "fp32",
+      "shape": [
+        "O",
+        "U"
+      ],
+      "layout": "channel_major_output_stride",
+      "placement": "local",
+      "access": "write",
+      "storage_class": "activation",
+      "consumption": "required"
+    }
+  ],
+  "scratch": [
+    {
+      "name": "scratch",
+      "dtype": "fp32",
+      "shape": [
+        "Q"
+      ],
+      "layout": "contiguous",
+      "placement": "local",
+      "access": "read_write",
+      "storage_class": "scratch",
+      "consumption": "required",
+      "lifetime": "kernel_call",
+      "alignment": 4,
+      "size_bytes": "4 * Q",
+      "size_resolution": "required"
+    }
+  ],
+  "dims": [
+    "input_elements",
+    "input_stride",
+    "weight_elements",
+    "bias_elements",
+    "output_elements",
+    "output_stride",
+    "scratch_elements",
+    "input_channels",
+    "output_channels",
+    "input_frames",
+    "kernel_size",
+    "stride",
+    "padding",
+    "output_padding",
+    "output_frames"
+  ],
+  "impl": {
+    "function": "audio_conv_transpose1d_dense_channel_major_f32_checked",
+    "c_declaration": "int audio_conv_transpose1d_dense_channel_major_f32_checked(const float *input, size_t input_elements, size_t input_stride, const float *weight, size_t weight_elements, const float *bias, size_t bias_elements, float *output, size_t output_elements, size_t output_stride, float *scratch, size_t scratch_elements, size_t input_channels, size_t output_channels, size_t input_frames, size_t kernel_size, size_t stride, size_t padding, size_t output_padding, size_t output_frames);",
+    "sources": [
+      "src/kernels/audio_conv_transpose_dense_checked.c"
+    ]
+  },
+  "modes": {
+    "inference": true,
+    "training": false,
+    "backward": false
+  },
+  "numerical_capabilities": [
+    {
+      "contract_id": "audio_conv_transpose1d_dense_input_frame_tap_fma_fp32",
+      "status": "validated",
+      "phases": [
+        "prefill"
+      ],
+      "function": "audio_conv_transpose1d_dense_channel_major_f32_checked",
+      "explicit_selector": true,
+      "implementation": {
+        "isa_dispatch": "scalar",
+        "threading": {
+          "runtime": "serial",
+          "work_partition": [
+            "serial"
+          ],
+          "dispatch": [
+            "inline"
+          ],
+          "reduction_order_effect": "contract_defined"
+        }
+      },
+      "arithmetic": {
+        "partial_accumulator": "fp32",
+        "merge_order": "none",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false,
+        "split_strategy": "independent_outputs"
+      }
+    }
+  ],
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {
+        "name": "input",
+        "source": "activation:input",
+        "cast": "const float*",
+        "ports": [
+          "input:input"
+        ]
+      },
+      {
+        "name": "input_elements",
+        "source": "runtime:dense_deconv_input_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "input_stride",
+        "source": "runtime:dense_deconv_input_stride",
+        "value_type": "size_t"
+      },
+      {
+        "name": "weight",
+        "source": "weight:weight",
+        "cast": "const float*",
+        "ports": [
+          "weight:weight"
+        ]
+      },
+      {
+        "name": "weight_elements",
+        "source": "runtime:dense_deconv_weight_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "bias",
+        "source": "weight:bias",
+        "cast": "const float*",
+        "ports": [
+          "weight:bias"
+        ]
+      },
+      {
+        "name": "bias_elements",
+        "source": "runtime:dense_deconv_bias_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "output",
+        "source": "output:output",
+        "cast": "float*",
+        "ports": [
+          "output:output"
+        ]
+      },
+      {
+        "name": "output_elements",
+        "source": "runtime:dense_deconv_output_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "output_stride",
+        "source": "runtime:dense_deconv_output_stride",
+        "value_type": "size_t"
+      },
+      {
+        "name": "scratch",
+        "source": "scratch:scratch",
+        "cast": "float*"
+      },
+      {
+        "name": "scratch_elements",
+        "source": "runtime:dense_deconv_scratch_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "input_channels",
+        "source": "runtime:dense_deconv_input_channels",
+        "value_type": "size_t"
+      },
+      {
+        "name": "output_channels",
+        "source": "runtime:dense_deconv_output_channels",
+        "value_type": "size_t"
+      },
+      {
+        "name": "input_frames",
+        "source": "runtime:dense_deconv_input_frames",
+        "value_type": "size_t"
+      },
+      {
+        "name": "kernel_size",
+        "source": "runtime:dense_deconv_kernel_size",
+        "value_type": "size_t"
+      },
+      {
+        "name": "stride",
+        "source": "runtime:dense_deconv_stride",
+        "value_type": "size_t"
+      },
+      {
+        "name": "padding",
+        "source": "runtime:dense_deconv_padding",
+        "value_type": "size_t"
+      },
+      {
+        "name": "output_padding",
+        "source": "runtime:dense_deconv_output_padding",
+        "value_type": "size_t"
+      },
+      {
+        "name": "output_frames",
+        "source": "runtime:dense_deconv_output_frames",
+        "value_type": "size_t"
+      }
+    ]
+  },
+  "call_constant_contract": {
+    "shape_symbols": {
+      "I": "dense_deconv_input_channels",
+      "O": "dense_deconv_output_channels",
+      "T": "dense_deconv_input_frames",
+      "K": "dense_deconv_kernel_size",
+      "U": "dense_deconv_output_frames",
+      "Q": "dense_deconv_scratch_elements"
+    },
+    "buffer_spans": [
+      {
+        "pointer": "input",
+        "elements": "dense_deconv_input_elements",
+        "rows": "dense_deconv_input_channels",
+        "width": "dense_deconv_input_frames",
+        "element_bytes": 4,
+        "stride": "dense_deconv_input_stride",
+        "physical_row_stride": true
+      },
+      {
+        "pointer": "weight",
+        "elements": "dense_deconv_weight_elements",
+        "rows": "dense_deconv_input_channels",
+        "width": "dense_deconv_kernel_size",
+        "element_bytes": 4,
+        "exact_elements_product": [
+          "dense_deconv_input_channels",
+          "dense_deconv_output_channels",
+          "dense_deconv_kernel_size"
+        ]
+      },
+      {
+        "pointer": "bias",
+        "elements": "dense_deconv_bias_elements",
+        "rows": "dense_deconv_output_channels",
+        "width": 1,
+        "element_bytes": 4,
+        "exact_elements_product": [
+          "dense_deconv_output_channels"
+        ]
+      },
+      {
+        "pointer": "output",
+        "elements": "dense_deconv_output_elements",
+        "rows": "dense_deconv_output_channels",
+        "width": "dense_deconv_output_frames",
+        "element_bytes": 4,
+        "stride": "dense_deconv_output_stride",
+        "physical_row_stride": true
+      },
+      {
+        "pointer": "scratch",
+        "elements": "dense_deconv_scratch_elements",
+        "rows": "dense_deconv_output_channels",
+        "width": "dense_deconv_output_frames",
+        "element_bytes": 4
+      }
+    ]
+  },
+  "tests": {
+    "unit": [
+      "tests/test_v8_audio_dense_deconv_oracle.py",
+      "tests/test_v8_audio_dense_deconv_generated.py",
+      "tests/test_v8_kokoro_generated_generator_stage0.py"
+    ],
+    "oracle": "Independent committed PyTorch 2.12.1 and optional live F.conv_transpose1d(groups=1) comparisons; the first Kokoro main upsampling stage also has direct pinned full-model PyTorch 2.8 hook comparisons"
+  },
+  "notes": "Group-one dense ConvTranspose1D with [I,O,K] weights, explicit geometry, caller-owned output/scratch and output-preserving rejection. FP32 FMA in input-channel, input-frame, tap order. Model-neutral generated composition and Kokoro first-generator main upsampling stage have generated-entry evidence against direct pinned PyTorch 2.8 hooks. Excitation, source addition, later generator stages and waveform remain unsupported. Inference only."
+}

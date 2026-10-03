@@ -9,6 +9,7 @@ import importlib.util
 import io
 import json
 import re
+import struct
 import subprocess
 import sys
 import tempfile
@@ -421,9 +422,12 @@ class V8NativeBridgeHostTests(unittest.TestCase):
             root = Path(tmpdir)
             selected = root / "selected-engine.so"
             selected.touch()
+            layout_path = root / "layout.json"
+            layout_path.write_text(json.dumps({"config": {"model": "fixture"}}))
             runtime = {
                 "so_path": root / "libencoder_v8.so",
                 "engine_so": str(selected),
+                "layout_path": layout_path,
             }
             sentinel = RuntimeError("loader reached")
             with mock.patch.object(bridge_runner_v8, "_load_encoder_lib", side_effect=sentinel) as loader:
@@ -647,6 +651,34 @@ class V8NativeBridgeHostTests(unittest.TestCase):
 
         self.assertIsNotNone(circuit)
         self.assertEqual(circuit["name"], "cohere_compass")
+
+    def test_prebuilt_qwen_vision_requires_declared_resize_rounding(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="v8_qwen_legacy_runtime_") as tmpdir:
+            runtime = Path(tmpdir)
+            for filename in (
+                "libencoder_v8.so", "libckernel_engine.so", "weights.bump", "weights_manifest.map",
+            ):
+                (runtime / filename).touch()
+            layout_path = runtime / "layout.json"
+            layout_path.write_text(json.dumps({"config": {"model": "qwen3_vl_vision", "embed_dim": 1152}}))
+            with self.assertRaisesRegex(ValueError, "regenerate the encoder artifact"):
+                bridge_runner_v8._load_prebuilt_encoder_runtime(runtime)
+            layout_path.write_text(json.dumps({
+                "config": {
+                    "model": "qwen3_vl_vision", "embed_dim": 1152,
+                    "image_resize_rounding_policy": "half_away_from_zero",
+                },
+            }))
+            self.assertEqual(bridge_runner_v8._load_prebuilt_encoder_runtime(runtime)["embed_dim"], 1152)
+
+    def test_qwen_encoder_execution_rejects_legacy_layout_before_library_load(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="v8_qwen_legacy_encoder_") as tmpdir:
+            layout_path = Path(tmpdir) / "layout.json"
+            layout_path.write_text(json.dumps({"config": {"model": "qwen3_vl_vision"}}))
+            with mock.patch.object(bridge_runner_v8, "_load_encoder_lib") as load_library:
+                with self.assertRaisesRegex(ValueError, "regenerate the encoder artifact"):
+                    bridge_runner_v8._run_encoder({"layout_path": layout_path}, "gradient")
+                load_library.assert_not_called()
 
     def test_unknown_prebuilt_runtime_pair_keeps_safe_fallback(self) -> None:
         with tempfile.TemporaryDirectory(prefix="v8_comp_runtime_unknown_") as tmpdir:
@@ -1340,6 +1372,7 @@ class V8NativeBridgeHostTests(unittest.TestCase):
             fake_logits = array("f", [0.1, 0.9, -0.4, 0.0])
 
             with mock.patch.object(bridge_runner_v8, "_ensure_engine_lib") as ensure_engine, \
+                 mock.patch.object(bridge_runner_v8, "_gguf_declared_context_limit", return_value=4096), \
                  mock.patch.object(bridge_runner_v8, "_prepare_decoder_runtime", return_value=fake_runtime), \
                  mock.patch.object(bridge_runner_v8, "_run_decoder", return_value={"vocab_size": 4, "logits": fake_logits}) as run_decoder, \
                  mock.patch.object(bridge_runner_v8, "_read_gguf_metadata", return_value={"general.architecture": "qwen3vl"}), \
@@ -1410,6 +1443,7 @@ class V8NativeBridgeHostTests(unittest.TestCase):
 
             stdout = io.StringIO()
             with mock.patch.object(bridge_runner_v8, "_ensure_engine_lib"), \
+                 mock.patch.object(bridge_runner_v8, "_gguf_declared_context_limit", return_value=4096), \
                  mock.patch.object(bridge_runner_v8, "_prepare_decoder_runtime", return_value=fake_runtime), \
                  mock.patch.object(bridge_runner_v8, "_run_decoder", return_value=fake_decoder_report), \
                  mock.patch.object(bridge_runner_v8, "_read_gguf_metadata", return_value={"general.architecture": "qwen3vl"}), \
@@ -2304,6 +2338,7 @@ class V8NativeBridgeHostTests(unittest.TestCase):
             fake_logits = array("f", [0.1, 0.9, -0.4, 0.0])
 
             with mock.patch.object(bridge_runner_v8, "_ensure_engine_lib") as ensure_engine, \
+                 mock.patch.object(bridge_runner_v8, "_gguf_declared_context_limit", return_value=4096), \
                  mock.patch.object(bridge_runner_v8, "_prepare_decoder_runtime", return_value=fake_runtime), \
                  mock.patch.object(bridge_runner_v8, "_run_decoder", return_value={"vocab_size": 4, "logits": fake_logits}), \
                  mock.patch.object(bridge_runner_v8.GGUFTokenizer, "from_gguf", return_value=FakeTokenizer()):
@@ -2363,6 +2398,7 @@ class V8NativeBridgeHostTests(unittest.TestCase):
             fake_logits = array("f", [0.1, 0.9, -0.4, 0.0])
 
             with mock.patch.object(bridge_runner_v8, "_ensure_engine_lib") as ensure_engine, \
+                 mock.patch.object(bridge_runner_v8, "_gguf_declared_context_limit", return_value=4096), \
                  mock.patch.object(bridge_runner_v8, "_prepare_decoder_runtime", return_value=fake_runtime) as prepare_decoder, \
                  mock.patch.object(bridge_runner_v8, "_run_decoder", return_value={"vocab_size": 4, "logits": fake_logits}), \
                  mock.patch.object(bridge_runner_v8.GGUFTokenizer, "from_gguf", return_value=FakeTokenizer()):
@@ -2414,6 +2450,125 @@ class V8NativeBridgeHostTests(unittest.TestCase):
             64,
         )
 
+    def test_decoder_context_cap_rejects_image_and_output_overflow(self) -> None:
+        derive = bridge_runner_v8._derive_decoder_context_len
+        self.assertEqual(
+            derive(20, 1024, slack_tokens=16, maximum_context=1060),
+            1060,
+        )
+        with self.assertRaisesRegex(ValueError, "required=1060 limit=1059"):
+            derive(20, 1024, slack_tokens=16, maximum_context=1059)
+        with self.assertRaisesRegex(ValueError, "required=4258 limit=4096"):
+            derive(473, 3657, slack_tokens=128, maximum_context=4096)
+        with self.assertRaisesRegex(ValueError, "required=5000 limit=4096"):
+            derive(20, 1024, requested=5000, maximum_context=4096)
+
+    def test_decoder_context_limit_comes_from_registered_gguf_metadata(self) -> None:
+        def field(key: str, kind: int, payload: bytes) -> bytes:
+            encoded = key.encode("utf-8")
+            return struct.pack("<Q", len(encoded)) + encoded + struct.pack("<I", kind) + payload
+
+        architecture = b"qwen3vl"
+        fields = [
+            field("general.architecture", 8, struct.pack("<Q", len(architecture)) + architecture),
+            field("qwen3vl.context_length", 4, struct.pack("<I", 4096)),
+        ]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            gguf = Path(tmpdir) / "decoder.gguf"
+            gguf.write_bytes(b"GGUF" + struct.pack("<IQQ", 3, 0, len(fields)) + b"".join(fields))
+            self.assertEqual(bridge_runner_v8._gguf_declared_context_limit(gguf), 4096)
+            gguf.write_bytes(b"GGUF" + struct.pack("<IQQ", 3, 0, 1) + fields[0])
+            with self.assertRaisesRegex(ValueError, "positive declared context length"):
+                bridge_runner_v8._gguf_declared_context_limit(gguf)
+            gguf.write_bytes(b"BAD!")
+            with self.assertRaisesRegex(ValueError, "invalid GGUF magic"):
+                bridge_runner_v8._gguf_declared_context_limit(gguf)
+
+    def test_prebuilt_decoder_context_preflight_uses_packaged_capacity(self) -> None:
+        class FakeTokenizer:
+            def encode(self, text: str) -> list[int]:
+                return [11, 22]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime = Path(tmpdir) / "decoder"
+            workdir = Path(tmpdir) / "work"
+            for compiled_limit, operator_limit in ((50, None), (100, 50)):
+                contract = {"context_length": compiled_limit, "model_context_limit": 128}
+                with mock.patch.object(
+                    bridge_runner_v8, "_load_prebuilt_decoder_runtime", return_value=contract
+                ) as load_runtime, mock.patch.object(
+                    bridge_runner_v8, "_load_prebuilt_decoder_tokenizer", return_value=FakeTokenizer()
+                ), mock.patch.object(
+                    bridge_runner_v8, "_infer_prebuilt_composition_circuit", return_value=None
+                ), mock.patch.object(
+                    bridge_runner_v8, "_json_read", return_value={}
+                ), mock.patch.object(
+                    bridge_runner_v8, "_ensure_engine_lib"
+                ), mock.patch.object(
+                    bridge_runner_v8, "_run_decoder"
+                ) as run_decoder:
+                    argv = [
+                        "--decoder-runtime", str(runtime),
+                        "--workdir", str(workdir),
+                        "--prompt", "Describe the image.",
+                        "--synthetic-prefix-tokens", "40",
+                    ]
+                    if operator_limit is not None:
+                        argv.extend(["--decoder-context-cap", str(operator_limit)])
+                    with self.assertRaisesRegex(ValueError, "decoder context exceeds the declared limit"):
+                        bridge_runner_v8.main(argv)
+                    load_runtime.assert_called_once_with(runtime)
+                    run_decoder.assert_not_called()
+
+    def test_invalid_prebuilt_context_fails_before_encoder_or_decoder_init(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime = Path(tmpdir) / "decoder"
+            with mock.patch.object(
+                bridge_runner_v8, "_load_prebuilt_decoder_runtime",
+                side_effect=RuntimeError("prebuilt decoder model manifest has invalid context_length"),
+            ), mock.patch.object(
+                bridge_runner_v8, "_ensure_engine_lib"
+            ) as ensure_engine, mock.patch.object(
+                bridge_runner_v8, "_prepare_encoder_runtime"
+            ) as prepare_encoder, mock.patch.object(
+                bridge_runner_v8, "_run_encoder"
+            ) as run_encoder, mock.patch.object(
+                bridge_runner_v8, "_run_decoder"
+            ) as run_decoder:
+                with self.assertRaisesRegex(RuntimeError, "invalid context_length"):
+                    bridge_runner_v8.main([
+                        "--decoder-runtime", str(runtime),
+                        "--encoder-gguf", str(Path(tmpdir) / "encoder.gguf"),
+                        "--workdir", str(Path(tmpdir) / "work"),
+                        "--prompt", "Describe the image.",
+                    ])
+                ensure_engine.assert_not_called()
+                prepare_encoder.assert_not_called()
+                run_encoder.assert_not_called()
+                run_decoder.assert_not_called()
+
+    def test_prebuilt_decoder_rejects_loaded_context_mismatch(self) -> None:
+        runtime = {
+            "runtime_dir": Path("/unused"),
+            "so_path": Path("/unused/libmodel.so"),
+            "engine_so": Path("/unused/libckernel_engine.so"),
+            "context_length": 64,
+        }
+        library = mock.Mock()
+        library.ck_model_get_context_window.return_value = 32
+        with mock.patch.object(
+            bridge_runner_v8, "_load_decoder_lib", return_value=library
+        ):
+            with self.assertRaisesRegex(RuntimeError, "loaded=32 packaged=64"):
+                bridge_runner_v8._run_decoder(runtime, array("f"), 0, [])
+        library.ck_model_init_with_manifest.assert_not_called()
+        library.ck_model_get_context_window = None
+        with mock.patch.object(
+            bridge_runner_v8, "_load_decoder_lib", return_value=library
+        ):
+            with self.assertRaisesRegex(RuntimeError, "no context-window ABI"):
+                bridge_runner_v8._run_decoder(runtime, array("f"), 0, [])
+
     def test_bridge_runner_encoder_path_delays_dim_check_until_decoder_ready(self) -> None:
         with tempfile.TemporaryDirectory(prefix="v8_native_bridge_encoder_") as tmpdir:
             tmp = Path(tmpdir)
@@ -2460,9 +2615,11 @@ class V8NativeBridgeHostTests(unittest.TestCase):
             fake_logits = array("f", [0.1, 0.9, -0.4, 0.0])
 
             with mock.patch.object(bridge_runner_v8, "_ensure_engine_lib") as ensure_engine, \
+                 mock.patch.object(bridge_runner_v8, "_gguf_declared_context_limit", return_value=4096), \
                  mock.patch.object(bridge_runner_v8, "_prepare_encoder_runtime", return_value=fake_encoder_runtime), \
-                 mock.patch.object(bridge_runner_v8, "_run_encoder", return_value=fake_encoder_report), \
-                 mock.patch.object(bridge_runner_v8, "_prepare_decoder_runtime", return_value=fake_decoder_runtime), \
+                 mock.patch.object(bridge_runner_v8, "_planned_encoder_prefix_tokens", return_value=3), \
+                 mock.patch.object(bridge_runner_v8, "_run_encoder", return_value=fake_encoder_report) as run_encoder, \
+                 mock.patch.object(bridge_runner_v8, "_prepare_decoder_runtime", return_value=fake_decoder_runtime) as prepare_decoder, \
                  mock.patch.object(bridge_runner_v8, "_run_decoder", return_value={"vocab_size": 4, "logits": fake_logits}) as run_decoder, \
                  mock.patch.object(bridge_runner_v8.GGUFTokenizer, "from_gguf", return_value=FakeTokenizer()):
                 with contextlib.redirect_stdout(io.StringIO()):
@@ -2480,9 +2637,21 @@ class V8NativeBridgeHostTests(unittest.TestCase):
                             "2",
                         ]
                     )
+                with self.assertRaisesRegex(ValueError, "decoder context exceeds the declared limit"):
+                    bridge_runner_v8.main(
+                        [
+                            "--decoder-gguf", str(fake_decoder_gguf),
+                            "--encoder-gguf", str(fake_encoder_gguf),
+                            "--workdir", str(workdir),
+                            "--prompt", "Describe the image.",
+                            "--decoder-context-cap", "20",
+                        ]
+                    )
 
             self.assertEqual(rc, 0)
-            ensure_engine.assert_called_once_with(openmp=True)
+            run_encoder.assert_called_once()
+            prepare_decoder.assert_called_once()
+            self.assertEqual(ensure_engine.call_args_list, [mock.call(openmp=True)] * 2)
             _, decoder_kwargs = run_decoder.call_args
             self.assertIsNone(decoder_kwargs["prefix_grid"])
             self.assertEqual(decoder_kwargs["prefix_text_pos"], 3)

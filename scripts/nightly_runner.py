@@ -887,6 +887,14 @@ TEST_SUITES = {
         "TTS Nearest and Depthwise Transposed Conv1D Pinned Oracle", "kernels",
         ROOT / "tests" / "test_v8_audio_prosody_upsample_oracle.py",
     ),
+    "tts_dense_deconv_oracle": TestSuite(
+        "TTS Dense Transposed Conv1D PyTorch Oracle", "kernels",
+        ROOT / "tests" / "test_v8_audio_dense_deconv_oracle.py",
+    ),
+    "tts_dense_deconv_generated": TestSuite(
+        "Model-Neutral Generated Dense Transposed Conv1D Graph", "inference",
+        ROOT / "tests" / "test_v8_audio_dense_deconv_generated.py",
+    ),
     "tts_runtime_extent_scale": TestSuite(
         "Checked Runtime Extent Scale", "kernels",
         ROOT / "tests" / "test_v8_runtime_extent_scale.py",
@@ -899,6 +907,38 @@ TEST_SUITES = {
         "Kokoro Generated Complete F0/Noise Prosody", "inference",
         ROOT / "tests" / "test_v8_kokoro_generated_prosody_complete.py",
         timeout_sec=300,
+    ),
+    "tts_audio_concat_channels": TestSuite(
+        "TTS Checked Channel-Major Concatenation NumPy Oracle", "kernels",
+        ROOT / "tests" / "test_v8_audio_concat_channels_checked.py",
+    ),
+    "tts_audio_concat_channels_generated": TestSuite(
+        "Model-Neutral Generated Checked Channel Join", "inference",
+        ROOT / "tests" / "test_v8_audio_concat_channels_generated.py",
+    ),
+    "tts_kokoro_generated_decoder_ingress": TestSuite(
+        "Kokoro Connected Generated Decoder Ingress", "inference",
+        ROOT / "tests" / "test_v8_kokoro_generated_decoder_ingress.py",
+        timeout_sec=300,
+    ),
+    "tts_kokoro_generated_decoder_encode": TestSuite(
+        "Kokoro Connected Generated First Decoder Block", "inference",
+        ROOT / "tests" / "test_v8_kokoro_generated_decoder_encode.py",
+        timeout_sec=300,
+    ),
+    "tts_kokoro_generated_decoder_complete": TestSuite(
+        "Kokoro Connected Generated Complete Acoustic Decoder", "inference",
+        ROOT / "tests" / "test_v8_kokoro_generated_decoder_complete.py",
+        timeout_sec=300,
+    ),
+    "tts_kokoro_generated_generator_stage0": TestSuite(
+        "Kokoro Connected Generated First Waveform Generator Upsample", "inference",
+        ROOT / "tests" / "test_v8_kokoro_generated_generator_stage0.py",
+        timeout_sec=300,
+    ),
+    "tts_audio_stft_mag_phase": TestSuite(
+        "Checked Audio Magnitude/Phase STFT NumPy and PyTorch Oracles", "kernels",
+        ROOT / "tests" / "test_v8_audio_stft_mag_phase_oracle.py",
     ),
     "tts_checked_text_ops_generated": TestSuite(
         "Model-Neutral Checked Conv1D, Transpose, and Activation Graph", "inference",

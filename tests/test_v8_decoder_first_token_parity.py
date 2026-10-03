@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import contextlib
+import copy
+import hashlib
 import importlib.util
 import io
 import json
@@ -35,6 +37,79 @@ decoder_parity_v8 = _load_module("decoder_first_token_parity_v8_tests", V8_DECOD
 
 
 class V8DecoderFirstTokenParityTests(unittest.TestCase):
+    def test_encoder_prefix_report_binds_complete_independent_exports(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            ck = root / "ck.f32"
+            llama = root / "llama.f32"
+            artifact = root / "model.so"
+            report_path = root / "encoder.json"
+            ck.write_bytes(bytes(48))
+            llama.write_bytes(bytes(range(48)))
+            artifact.write_bytes(b"library")
+
+            def identity(path: Path) -> dict:
+                return {"path": str(path.resolve()), "size_bytes": path.stat().st_size,
+                        "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+
+            names = ("mmproj_gguf", "ck_model_library", "ck_generated_source",
+                     "ck_engine_library", "ck_weights", "llama_shim_library", "llama_mtmd_library")
+            report = {
+                "status": "complete",
+                "input_provenance": "independently_preprocessed_from_shared_decoded_rgb8",
+                "preprocess_evidence": {"verdict": "pass"},
+                "strict_mtmd_oracle": False,
+                "ck_resolved_output": "vision_output",
+                "llama_reference_output": "clip_encode_float_image",
+                "row_slices": {"ck": None, "llama": None},
+                "feature_slices": {"ck": None, "llama": None},
+                "raw_num_values": {"ck": 12, "llama": 12},
+                "decoder_prefix_exports": {"contract": "cke.decoder_prefix_f32.v1",
+                                           "ck_output_role": "vision_output",
+                                           "oracle_output_role": "clip_encode_float_image",
+                                           "tokens": 4, "row_dim": 3, "grid": [2, 2],
+                                           "ck": identity(ck), "llama": identity(llama)},
+                "artifact_identity": {name: identity(artifact) for name in names},
+            }
+
+            def verify(candidate: dict) -> dict:
+                report_path.write_text(json.dumps(candidate), encoding="utf-8")
+                return decoder_parity_v8._verify_encoder_prefix_report(report_path, ck, llama, 4, 3)
+
+            self.assertEqual(verify(report)["input_provenance"], report["input_provenance"])
+            alternate_roles = copy.deepcopy(report)
+            alternate_roles["ck_resolved_output"] = "bridge_embeddings"
+            alternate_roles["llama_reference_output"] = "projected_image_embeddings"
+            alternate_roles["decoder_prefix_exports"]["ck_output_role"] = "bridge_embeddings"
+            alternate_roles["decoder_prefix_exports"]["oracle_output_role"] = "projected_image_embeddings"
+            self.assertEqual(verify(alternate_roles)["input_provenance"], report["input_provenance"])
+            for change in (
+                {"status": "fail"},
+                {"input_provenance": "shared_processed_tensor"},
+                {"preprocess_evidence": "pass"},
+                {"preprocess_evidence": {"verdict": "fail"}},
+                {"strict_mtmd_oracle": True},
+                {"ck_resolved_output": "attention_output"},
+                {"raw_num_values": {"ck": True, "llama": 12}},
+                {"row_slices": {"ck": [0, 1], "llama": None}},
+                {"artifact_identity": {}},
+            ):
+                candidate = copy.deepcopy(report)
+                candidate.update(change)
+                with self.subTest(change=change), self.assertRaises(ValueError):
+                    verify(candidate)
+            stale = copy.deepcopy(report)
+            stale["decoder_prefix_exports"]["ck"]["sha256"] = "0" * 64
+            with self.assertRaisesRegex(ValueError, "export identity"):
+                verify(stale)
+            wrong_role = copy.deepcopy(report)
+            wrong_role["decoder_prefix_exports"]["oracle_output_role"] = "attention_output"
+            with self.assertRaisesRegex(ValueError, "inconsistent oracle_output_role"):
+                verify(wrong_role)
+            artifact.write_bytes(b"stale")
+            with self.assertRaisesRegex(ValueError, "artifact changed"):
+                verify(report)
+
     def test_xray_verifies_planner_memory_contract_without_recomputing_extent(self) -> None:
         with tempfile.TemporaryDirectory(prefix="v8_memory_contract_") as tmpdir:
             root = Path(tmpdir)
@@ -1287,6 +1362,90 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
             report = json.loads(report_path.read_text(encoding="utf-8"))
             self.assertEqual(report["prefix"]["grid"], [2, 3])
             self.assertEqual(report["prefix"]["text_pos"], 7)
+
+    def test_main_separate_prefixes_are_labeled_and_geometry_checked(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="v8_decoder_own_prefix_") as tmpdir:
+            tmp = Path(tmpdir)
+            ck_prefix = tmp / "ck.f32"
+            llama_prefix = tmp / "llama.f32"
+            ck_prefix.write_bytes(array("f", [1.0, 2.0, 3.0, 4.0]).tobytes())
+            llama_prefix.write_bytes(array("f", [4.0, 3.0, 2.0, 1.0]).tobytes())
+            report_path = tmp / "report.json"
+
+            class FakeTokenizer:
+                def encode(self, text: str) -> list[int]:
+                    return [1, 2]
+
+                def decode(self, ids: list[int], skip_special: bool = False) -> str:
+                    return ",".join(str(x) for x in ids)
+
+            runtime = {
+                "embed_dim": 2,
+                "vocab_size": 4,
+                "so_path": tmp / "libdecoder_v8.so",
+                "c_path": tmp / "decoder_v8.c",
+            }
+            llama_result = {
+                "meta": {"ok": True, "n_vocab": 4, "token_count": 2,
+                         "prefix_token_count": 2, "topk": [{"id": 1, "logit": 0.95}]},
+                "logits": np.array([0.0, 1.0, 0.1, -0.5], dtype=np.float32),
+            }
+            with mock.patch.object(decoder_parity_v8.bridge_runner_v8, "_prepare_decoder_runtime", return_value=runtime), \
+                 mock.patch.object(decoder_parity_v8.bridge_runner_v8, "_run_decoder", return_value={"vocab_size": 4, "logits": array("f", [0.1, 0.9, 0.2, -0.4])}) as run_decoder, \
+                 mock.patch.object(decoder_parity_v8.GGUFTokenizer, "from_gguf", return_value=FakeTokenizer()), \
+                 mock.patch.object(decoder_parity_v8, "_run_llama_capture", return_value=llama_result) as run_llama:
+                argv = [
+                    "--gguf", str(tmp / "decoder.gguf"), "--workdir", str(tmp / "work"),
+                    "--tokens", "1,2", "--prefix-f32", str(ck_prefix),
+                    "--llama-prefix-f32", str(llama_prefix), "--prefix-row-dim", "2",
+                    "--json-out", str(report_path),
+                ]
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(decoder_parity_v8.main(argv), 4)
+                self.assertEqual(run_llama.call_args.kwargs["prefix_path"], llama_prefix)
+                self.assertEqual(list(run_decoder.call_args.args[1]), [1.0, 2.0, 3.0, 4.0])
+                report = json.loads(report_path.read_text(encoding="utf-8"))
+                self.assertEqual(report["status"], "incomplete")
+                self.assertFalse(report["pass"])
+                self.assertTrue(report["diagnostic_comparison_pass"])
+                self.assertEqual(report["prefix_input_scope"], "separate_files_unverified_producers")
+                self.assertNotEqual(
+                    report["prefix_input_identity"]["ck_sha256"],
+                    report["prefix_input_identity"]["llama_sha256"],
+                )
+                llama_prefix.write_bytes(array("f", [1.0, 2.0]).tobytes())
+                run_llama.reset_mock()
+                run_decoder.reset_mock()
+                with self.assertRaisesRegex(ValueError, "separate prefix geometry mismatch"):
+                    decoder_parity_v8.main(argv)
+                run_llama.assert_not_called()
+                run_decoder.assert_not_called()
+                with self.assertRaisesRegex(ValueError, "different files"):
+                    decoder_parity_v8.main([
+                        *argv[:argv.index("--llama-prefix-f32") + 1], str(ck_prefix),
+                        *argv[argv.index("--prefix-row-dim"):],
+                    ])
+                llama_prefix.write_bytes(array("f", [4.0, 3.0, 2.0, 1.0]).tobytes())
+
+                def change_oracle_prefix(*_args, **_kwargs):
+                    llama_prefix.write_bytes(array("f", [4.0, 3.0, 2.0, 1.1]).tobytes())
+                    return llama_result
+
+                run_llama.side_effect = change_oracle_prefix
+                with self.assertRaisesRegex(RuntimeError, "changed during capture"):
+                    decoder_parity_v8.main(argv)
+                run_decoder.assert_not_called()
+                llama_prefix.write_bytes(array("f", [4.0, 3.0, 2.0, 1.0]).tobytes())
+                run_llama.side_effect = None
+                run_llama.return_value = {
+                    **llama_result,
+                    "logits": np.array([2.0, 0.0, 0.1, -0.5], dtype=np.float32),
+                }
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(decoder_parity_v8.main(argv), 3)
+                report = json.loads(report_path.read_text(encoding="utf-8"))
+                self.assertEqual(report["status"], "fail")
+                self.assertFalse(report["diagnostic_comparison_pass"])
 
     def test_main_passes_ctx_len_into_decoder_runtime_prep(self) -> None:
         with tempfile.TemporaryDirectory(prefix="v8_decoder_ctx_len_") as tmpdir:

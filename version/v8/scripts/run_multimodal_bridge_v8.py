@@ -1278,33 +1278,43 @@ def _normalize_chat_template_choice(mode: str | None) -> str:
     return _CHAT_TEMPLATE_ALIASES.get(value, value)
 
 
-def _read_gguf_metadata(gguf_path: Path, wanted_keys: set[str]) -> dict[str, Any]:
-    if not wanted_keys:
+def _read_gguf_metadata(
+    gguf_path: Path,
+    wanted_keys: set[str],
+    *,
+    wanted_suffixes: tuple[str, ...] = (),
+    strict: bool = False,
+) -> dict[str, Any]:
+    if not wanted_keys and not wanted_suffixes:
         return {}
     try:
         with open(gguf_path, "rb") as f:
             r = convert_gguf_to_bump_v8.GGUFReader(f)
             magic = r._read_exact(4)
             if magic != b"GGUF":
-                return {}
+                raise ValueError(f"invalid GGUF magic: {gguf_path}")
             version = r.u32()
             if version >= 2:
-                _ = r.u64()
+                n_tensors = r.u64()
                 n_kv = r.u64()
             else:
-                _ = r.u32()
+                n_tensors = r.u32()
                 n_kv = r.u32()
+            if n_tensors > 1_000_000 or n_kv > 1_000_000:
+                raise ValueError(f"GGUF header counts look corrupt: {gguf_path}")
 
             data: dict[str, Any] = {}
             for _ in range(int(n_kv)):
                 key = r.key_str()
                 vtype = r.u32()
-                if key in wanted_keys:
+                if key in wanted_keys or key.endswith(wanted_suffixes):
                     data[key] = convert_gguf_to_bump_v8._gguf_read_value(r, vtype)
                 else:
                     convert_gguf_to_bump_v8._gguf_skip_value(r, vtype)
             return data
     except Exception:
+        if strict:
+            raise
         return {}
 
 
@@ -1811,8 +1821,15 @@ def _run_converter(
     return manifest, manifest_path, bump_path, config_path
 
 
-def _round_by_factor(x: float, factor: int) -> int:
-    return int(round(float(x) / float(factor))) * int(factor)
+def _round_by_factor(x: float, factor: int, rounding_policy: str = "ties_to_even") -> int:
+    scaled = float(x) / float(factor)
+    if rounding_policy == "ties_to_even":
+        rounded = round(scaled)
+    elif rounding_policy == "half_away_from_zero":
+        rounded = math.floor(scaled + 0.5)
+    else:
+        raise ValueError(f"unsupported image resize rounding policy: {rounding_policy}")
+    return int(rounded) * int(factor)
 
 
 def _ceil_by_factor(x: float, factor: int) -> int:
@@ -1823,11 +1840,14 @@ def _floor_by_factor(x: float, factor: int) -> int:
     return int(math.floor(float(x) / float(factor))) * int(factor)
 
 
-def _calc_qwen_vl_smart_resize(width: int, height: int, align_size: int, min_pixels: int, max_pixels: int) -> tuple[int, int]:
+def _calc_qwen_vl_smart_resize(
+    width: int, height: int, align_size: int, min_pixels: int, max_pixels: int,
+    *, rounding_policy: str = "ties_to_even",
+) -> tuple[int, int]:
     if width <= 0 or height <= 0 or align_size <= 0:
         raise ValueError(f"invalid smart-resize inputs width={width} height={height} align={align_size}")
-    w_bar = max(align_size, _round_by_factor(width, align_size))
-    h_bar = max(align_size, _round_by_factor(height, align_size))
+    w_bar = max(align_size, _round_by_factor(width, align_size, rounding_policy))
+    h_bar = max(align_size, _round_by_factor(height, align_size, rounding_policy))
     if h_bar * w_bar > max_pixels:
         beta = math.sqrt(float(width * height) / float(max_pixels))
         w_bar = max(align_size, _floor_by_factor(width / beta, align_size))
@@ -1837,6 +1857,17 @@ def _calc_qwen_vl_smart_resize(width: int, height: int, align_size: int, min_pix
         w_bar = _ceil_by_factor(width * beta, align_size)
         h_bar = _ceil_by_factor(height * beta, align_size)
     return int(w_bar), int(h_bar)
+
+
+def _qwen_vl_resize_rounding_policy(config: dict[str, Any]) -> str:
+    policy = config.get("image_resize_rounding_policy")
+    if policy not in ("ties_to_even", "half_away_from_zero"):
+        raise ValueError(
+            "Qwen vision image_resize_rounding_policy is missing or invalid; "
+            "regenerate the encoder artifact with the current converter, or explicitly "
+            "migrate its config after verifying the source processor's rounding rule"
+        )
+    return policy
 
 
 def _coerce_float_triplet(values: Any, default: list[float]) -> list[float]:
@@ -2023,12 +2054,14 @@ def _qwen3vl_geometry_overrides(
         max_pixels = int(image_max_tokens) * patch_area
     if max_pixels < min_pixels:
         max_pixels = min_pixels
+    rounding_policy = _qwen_vl_resize_rounding_policy(config)
     image_width, image_height = _calc_qwen_vl_smart_resize(
         int(source_width),
         int(source_height),
         int(align_size),
         int(min_pixels),
         int(max_pixels),
+        rounding_policy=rounding_policy,
     )
     if image_width % patch_size != 0 or image_height % patch_size != 0:
         raise RuntimeError(
@@ -2064,6 +2097,7 @@ def _qwen3vl_geometry_overrides(
         "image_max_tokens": int(max_pixels // patch_area),
         "image_resize_algorithm": "bicubic",
         "image_resize_padding": "center_ceil",
+        "image_resize_rounding_policy": rounding_policy,
     }
 
 
@@ -2600,6 +2634,8 @@ def _load_prebuilt_encoder_runtime(runtime_dir: Path) -> dict[str, Any]:
         raise RuntimeError(f"prebuilt encoder runtime is incomplete: missing={missing}")
     layout = _load_layout(required["layout_path"])
     config = dict(layout.get("config", {}) or {})
+    if str(config.get("model") or config.get("arch") or "").lower() == "qwen3_vl_vision":
+        _qwen_vl_resize_rounding_policy(config)
     return {
         "gguf": None,
         "runtime_dir": runtime_dir,
@@ -3010,10 +3046,48 @@ def _load_prebuilt_decoder_runtime(
         )
     decode_layout = _load_layout(required["decode_layout_path"])
     cfg = dict(decode_layout.get("config", {}) or {})
-    context_length = int(
-        cfg.get("context_length", cfg.get("context_len", cfg.get("max_seq_len", 0)))
-        or 0
+    prefill_layout = _load_layout(required["prefill_layout_path"])
+
+    def context_limit(config: dict[str, Any], source: str, *, optional: bool = False) -> int | None:
+        aliases = ("context_length", "context_len", "max_seq_len")
+        present = [(key, config[key]) for key in aliases if key in config]
+        if not present and optional:
+            return None
+        if not present:
+            raise RuntimeError(f"prebuilt decoder {source} has no positive context limit")
+        for key, value in present:
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise RuntimeError(
+                    f"prebuilt decoder {source} has invalid {key}: expected a positive integer"
+                )
+        limit = present[0][1]
+        if any(value != limit for _, value in present[1:]):
+            raise RuntimeError(
+                f"prebuilt decoder {source} has conflicting context limits: "
+                + ", ".join(f"{key}={value}" for key, value in present)
+            )
+        return limit
+
+    context_length = context_limit(cfg, "decode layout")
+    prefill_context = context_limit(
+        dict(prefill_layout.get("config", {}) or {}), "prefill layout"
     )
+    if prefill_context != context_length:
+        raise RuntimeError(
+            "prebuilt decoder prefill/decode context mismatch: "
+            f"prefill={prefill_context} decode={context_length}"
+        )
+    manifest_config = manifest.get("config")
+    if manifest_config is not None and not isinstance(manifest_config, dict):
+        raise RuntimeError("prebuilt decoder manifest config must be an object")
+    model_context_limit = context_limit(
+        manifest_config or {}, "model manifest", optional=True
+    )
+    if model_context_limit is not None and context_length > model_context_limit:
+        raise RuntimeError(
+            "prebuilt decoder compiled context exceeds the model manifest: "
+            f"compiled={context_length} model={model_context_limit}"
+        )
     if required_context is not None and context_length < int(required_context):
         raise RuntimeError(
             "prebuilt decoder context is too small for the requested bridge run: "
@@ -3045,6 +3119,7 @@ def _load_prebuilt_decoder_runtime(
         "input_embed_dim": input_embed_dim,
         "num_deepstack_layers": num_deepstack_layers,
         "context_length": context_length,
+        "model_context_limit": model_context_limit,
         "vocab_size": int(cfg.get("vocab_size", 0) or 0),
     }
 
@@ -3298,6 +3373,10 @@ def _run_encoder(
     gemm_schedule: str = "auto",
 ) -> dict[str, Any]:
     encoder_t0 = time.perf_counter()
+    layout = _load_layout(Path(runtime["layout_path"]))
+    layout_cfg = dict(layout.get("config", {}) or {})
+    if str(layout_cfg.get("model") or layout_cfg.get("arch") or "").lower() == "qwen3_vl_vision":
+        _qwen_vl_resize_rounding_policy(layout_cfg)
     memory_evidence = {"before_load": _memory_snapshot()}
     weight_storage = _runtime_weight_storage_evidence(runtime)
     if bool(weight_storage["memory_backed"]) and int(weight_storage["size_bytes"]) >= 1 << 30:
@@ -3333,14 +3412,12 @@ def _run_encoder(
     memory_evidence["after_init"] = _memory_snapshot()
     try:
         _log_progress("encoder: init done")
-        layout = _load_layout(runtime["layout_path"])
         offsets = _load_activation_offsets(runtime["layout_path"])
         bridge = resolve_vision_bridge_contract(layout, offsets, prefer_total_output=True)
         image_buf = offsets["image_input"]
         base_ptr = int(lib.ck_model_get_base_ptr())
         if base_ptr == 0:
             raise RuntimeError("encoder base ptr is null")
-        layout_cfg = dict(layout.get("config", {}) or {})
         image_height = int(layout_cfg.get("image_height", layout_cfg.get("image_size", 0)) or 0)
         image_width = int(layout_cfg.get("image_width", layout_cfg.get("image_size", 0)) or 0)
         if image_height <= 0 or image_width <= 0:
@@ -3584,6 +3661,18 @@ def _run_decoder(
         lib = _load_decoder_lib(model_so, engine_so=Path(runtime_engine))
     else:
         lib = _load_decoder_lib(model_so)
+    if runtime.get("runtime_dir") is not None:
+        context_query = getattr(lib, "ck_model_get_context_window", None)
+        if context_query is None:
+            raise RuntimeError("prebuilt decoder library has no context-window ABI")
+        context_query.restype = ctypes.c_int
+        loaded_context = int(context_query())
+        packaged_context = int(runtime["context_length"])
+        if loaded_context != packaged_context:
+            raise RuntimeError(
+                "prebuilt decoder library context disagrees with packaged layout: "
+                f"loaded={loaded_context} packaged={packaged_context}"
+            )
     _configure_gemm_schedule(lib, gemm_schedule)
     _log_progress("decoder: init start")
     memory_evidence = {"before_init": _memory_snapshot()}
@@ -4099,12 +4188,41 @@ def _derive_decoder_context_len(
     requested: int | None = None,
     slack_tokens: int = 16,
     minimum_context: int = 32,
+    maximum_context: int | None = None,
 ) -> int:
     needed = max(1, int(prompt_token_count) + max(0, int(prefix_tokens)))
     required = needed + max(1, int(slack_tokens))
+    selected = max(minimum_context, required)
     if requested is not None and int(requested) > 0:
-        return max(int(requested), required)
-    return max(minimum_context, required)
+        selected = max(int(requested), required)
+    if maximum_context is not None and selected > int(maximum_context):
+        raise ValueError(
+            "decoder context exceeds the declared limit: "
+            f"prompt={prompt_token_count} visual_prefix={prefix_tokens} "
+            f"continuation={max(1, int(slack_tokens))} requested={requested} "
+            f"required={selected} limit={maximum_context}"
+        )
+    return selected
+
+
+def _gguf_declared_context_limit(path: Path) -> int:
+    """Read the source model's context contract before allocating a runtime."""
+    gguf = convert_gguf_to_bump_v8
+    metadata = _read_gguf_metadata(
+        path,
+        {"general.architecture"},
+        wanted_suffixes=(".context_length",),
+        strict=True,
+    )
+    architecture = metadata.get("general.architecture")
+    if not isinstance(architecture, str) or not architecture:
+        raise ValueError("decoder GGUF has no general.architecture")
+    gguf.gguf_ck_arch_contract(architecture)
+    key = gguf.gguf_ck_metadata_key(architecture, "context_length") or f"{architecture}.context_length"
+    value = metadata.get(key)
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"decoder GGUF has no positive declared context length at {key!r}")
+    return value
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -4153,6 +4271,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--image-max-tokens", type=int, default=None, help="Maximum merged visual tokens for smart-resized Qwen3-VL images")
     ap.add_argument("--synthetic-prefix-tokens", type=int, default=0, help="Use zero prefix embeddings when a real encoder bridge is unavailable")
     ap.add_argument("--decoder-context-len", type=int, default=None, help="Minimum decoder context length; reserves prompt, visual prefix, and requested generation budget")
+    ap.add_argument(
+        "--decoder-context-cap",
+        type=int,
+        default=None,
+        help="Deployment context cap; requests above this or the GGUF-declared limit fail before encoder execution or decoder allocation",
+    )
     ap.add_argument("--dump-prefix-f32", type=Path, default=None, help="Optional output path for resolved float32 prefix embeddings")
     ap.add_argument("--dump-logits-f32", type=Path, default=None, help="Optional output path for first mixed-prefill logits as float32")
     ap.add_argument("--max-tokens", type=int, default=0, help="Generate up to N tokens after multimodal prefill; 0 reports first-token logits only")
@@ -4189,6 +4313,28 @@ def main(argv: list[str] | None = None) -> int:
         help="Optional vision encoder activation override(s) in op=dtype form, e.g. out_proj=q8",
     )
     args = ap.parse_args(argv)
+    if args.decoder_context_cap is not None and args.decoder_context_cap <= 0:
+        ap.error("--decoder-context-cap must be positive")
+    prebuilt_decoder_contract = (
+        _load_prebuilt_decoder_runtime(args.decoder_runtime)
+        if args.decoder_runtime is not None
+        else None
+    )
+    model_context_limit = (
+        _gguf_declared_context_limit(args.decoder_gguf.resolve())
+        if args.decoder_gguf is not None
+        else prebuilt_decoder_contract["model_context_limit"]
+    )
+    compiled_runtime_limit = (
+        prebuilt_decoder_contract["context_length"]
+        if prebuilt_decoder_contract is not None
+        else None
+    )
+    context_limits = [
+        limit for limit in (model_context_limit, compiled_runtime_limit, args.decoder_context_cap)
+        if limit is not None
+    ]
+    decoder_context_cap = min(context_limits) if context_limits else None
 
     workdir = args.workdir.resolve()
     workdir.mkdir(parents=True, exist_ok=True)
@@ -4358,18 +4504,19 @@ def main(argv: list[str] | None = None) -> int:
         timings["encoder_prepare_ms"] = encoder_prepare_elapsed * 1000.0
         _log_progress(f"encoder runtime prepare done elapsed={encoder_prepare_elapsed:.2f}s")
 
+    planned_prefix_tokens = max(
+        _planned_encoder_prefix_tokens(encoder_runtime) if encoder_runtime is not None else 0,
+        max(0, int(args.synthetic_prefix_tokens)),
+    )
+    planned_decoder_context = _derive_decoder_context_len(
+        prompt_token_count=total_text_prompt_tokens,
+        prefix_tokens=planned_prefix_tokens,
+        requested=args.decoder_context_len,
+        slack_tokens=max(16, int(args.max_tokens or 0)),
+        maximum_context=decoder_context_cap,
+    )
     preflight_decoder_runtime: dict[str, Any] | None = None
     if encoder_runtime is not None and args.decoder_runtime is not None:
-        planned_prefix_tokens = max(
-            _planned_encoder_prefix_tokens(encoder_runtime),
-            max(0, int(args.synthetic_prefix_tokens)),
-        )
-        planned_decoder_context = _derive_decoder_context_len(
-            prompt_token_count=total_text_prompt_tokens,
-            prefix_tokens=planned_prefix_tokens,
-            requested=args.decoder_context_len,
-            slack_tokens=max(16, int(args.max_tokens or 0)),
-        )
         _log_progress(
             "decoder context preflight "
             f"runtime={args.decoder_runtime.resolve()} "
@@ -4406,6 +4553,7 @@ def main(argv: list[str] | None = None) -> int:
         prefix_tokens=decoder_prefix_budget,
         requested=args.decoder_context_len,
         slack_tokens=max(16, int(args.max_tokens or 0)),
+        maximum_context=decoder_context_cap,
     )
     decoder_source_label = (
         f"runtime={args.decoder_runtime.resolve()}"
@@ -4631,6 +4779,15 @@ def main(argv: list[str] | None = None) -> int:
         "decoder_embed_dim": int(decoder_runtime["embed_dim"]),
         "decoder_input_embed_dim": int(decoder_runtime.get("input_embed_dim", decoder_runtime["embed_dim"])),
         "decoder_context_len": int(decoder_context_len),
+        "decoder_context_budget": {
+            "requested_minimum": args.decoder_context_len,
+            "model_limit": model_context_limit,
+            "compiled_runtime_limit": compiled_runtime_limit,
+            "deployment_cap": args.decoder_context_cap,
+            "planned_prefix_tokens": planned_prefix_tokens,
+            "planned_context": planned_decoder_context,
+            "effective_context": decoder_context_len,
+        },
         "prefix_tokens": prefix_tokens,
         "prefix_embed_dim": int(prefix_embed_dim),
         "prefix_grid_x": None if prefix_grid is None else int(prefix_grid[0]),

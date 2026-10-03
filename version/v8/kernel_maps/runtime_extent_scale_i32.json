@@ -116,7 +116,8 @@
     "unit": [
       "tests/test_v8_runtime_extent_scale.py",
       "tests/test_v8_prosody_upsample_generated.py",
-      "tests/test_v8_kokoro_generated_prosody_complete.py"
+      "tests/test_v8_kokoro_generated_prosody_complete.py",
+      "tests/test_v8_kokoro_generated_generator_stage0.py"
     ],
     "oracle": "Python arbitrary-precision multiplication and generated producer-to-consumer circuit"
   },

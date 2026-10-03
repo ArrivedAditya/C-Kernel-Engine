@@ -31,6 +31,7 @@ if str(SCRIPTS) not in sys.path:
 
 frontend = load_module("xray_vision_parity_v8_test", SCRIPTS / "xray_vision_parity_v8.py")
 llama = load_module("xray_qwen3vl_llamacpp_v8_test", SCRIPTS / "xray_qwen3vl_llamacpp_v8.py")
+capture = load_module("activation_parity_qwen3vl_mmproj_v8_test_interface", SCRIPTS / "activation_parity_qwen3vl_mmproj_v8.py")
 xray = load_module("xray_numerical_parity_v8_test_interface", SCRIPTS / "xray_numerical_parity_v8.py")
 torch_compare = load_module(
     "compare_qwen3vl_bf16_vision_hidden_v8_test_interface",
@@ -43,6 +44,24 @@ torch_adapter = load_module(
 
 
 class XRayVisionInterfaceTests(unittest.TestCase):
+    def test_capture_image_uses_rectangular_geometry_and_source_config(self) -> None:
+        config = {
+            "image_height": 256,
+            "image_width": 512,
+            "image_mean": [0.5, 0.5, 0.5],
+            "image_std": [0.25, 0.25, 0.25],
+            "image_resize_algorithm": "bicubic",
+            "image_resize_padding": "center_ceil",
+        }
+        image = ROOT / "version" / "v8" / "test_assets" / "v8_ocr_table.ppm"
+        report, interleaved, planar = capture._prepare_capture_image(config, image, "gradient")
+        self.assertEqual(report["source_image_size"], [512, 256])
+        self.assertEqual(len(interleaved), 512 * 256 * 3)
+        self.assertEqual(len(planar), len(interleaved))
+        with mock.patch.object(capture.npv8, "_load_image_file", wraps=capture.npv8._load_image_file) as loader:
+            capture._prepare_capture_image(config, image, "gradient")
+            loader.assert_called_once_with(image.resolve(), 256, 512, config)
+
     def test_frontend_dispatches_llamacpp_without_owning_backend_arguments(self) -> None:
         with mock.patch.object(frontend.llamacpp_adapter, "main", return_value=7) as adapter:
             result = frontend.dispatch(["--backend", "llamacpp", "--gguf", "model.gguf"])

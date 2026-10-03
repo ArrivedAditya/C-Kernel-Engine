@@ -114,6 +114,20 @@ int audio_istft_mag_phase_f32(
     float *scratch,
     size_t scratch_elements);
 
+/* Centered reflect-padded forward STFT. The caller supplies a periodic Hann
+ * window and unnormalized forward-DFT cosine/sine tables. Output is channel
+ * major [magnitude bins, phase bins] with an explicit frame stride. Scratch
+ * holds 2*(n_fft/2+1)*frames floats; a rejected call preserves output. */
+int audio_stft_mag_phase_plan_f32(size_t samples, size_t n_fft, size_t hop,
+    size_t *frames, size_t *spectral_elements);
+
+int audio_stft_mag_phase_checked_f32(const float *samples, size_t samples_capacity,
+    const float *window, size_t window_capacity,
+    const float *cos_table, const float *sin_table, size_t table_capacity,
+    float *output, size_t output_capacity, size_t output_stride,
+    float *scratch, size_t scratch_capacity,
+    size_t samples_count, size_t n_fft, size_t hop, size_t frames);
+
 #ifdef __cplusplus
 }
 #endif

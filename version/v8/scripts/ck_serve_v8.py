@@ -282,9 +282,17 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                         help="Explicit circuit-linked serving variant to resolve during bundle build")
     parser.add_argument(
         "--tool-protocol",
-        choices=("none", "tagged_json", "bare_json", "qwen_xml", "qwen_code_xml", "qwen_code_xml_raw_v2"),
+        choices=("none", "tagged_json", "bare_json", "qwen_xml", "qwen_code_xml", "qwen_code_xml_raw_v2", "gemma4_dsl_v1"),
         default=None,
         help="Explicit tool output protocol; defaults to a hash-bound tool_protocol.json sidecar or disabled",
+    )
+    parser.add_argument(
+        "--request-output-cap", type=int, default=None,
+        help="Explicit server maximum for each request's output allowance; default rejects oversized requests",
+    )
+    parser.add_argument(
+        "--request-prompt-byte-cap", type=int, default=None,
+        help="Optional rendered-prompt UTF-8 byte limit, independent of model token capacity",
     )
 
     sampler = parser.add_argument_group(
@@ -546,7 +554,12 @@ def main(argv: list[str] | None = None) -> int:
         temperature=args.temperature,
         top_p=args.top_p,
         max_tokens=args.max_tokens,
-        stop_on_text=args.stop_on_text,
+        request_output_cap=args.request_output_cap,
+        request_prompt_byte_cap=args.request_prompt_byte_cap,
+        stop_on_text=list(dict.fromkeys([
+            *(resolved_serving.get("stop_text", []) if resolved_serving else []),
+            *args.stop_on_text,
+        ])),
         stop_at_eos=args.stop_at_eos,
         flags=(
             CK_SESSION_REQUEST_RAW_PROMPT

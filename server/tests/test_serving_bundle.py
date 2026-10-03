@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 from server.live import create_app
 from server.runtime import load_manifest_templates, load_tool_protocol
 from server.serving_bundle import (
-    load_resolved_serving, loaded_serving_identity, resolved_renderer_tokens,
+    contract_identity, load_resolved_serving, loaded_serving_identity, resolved_renderer_tokens,
     verify_loaded_libraries,
 )
 from server.tests.test_native_qwen_jinja_contract import RecordingSession
@@ -80,6 +80,46 @@ def resolve(setup, variant=None, *, allow_serving_update=False):
     return resolver.resolve_serving_bundle(run, circuit, variant=variant, v8_root=source, allow_serving_update=allow_serving_update)
 
 
+def test_gguf_config_uses_verified_manifest_circuit_identity(setup):
+    run, _, _ = setup
+    (run / "config.json").write_text(json.dumps({
+        "model_type": "test-circuit", "model_name": "Publisher Checkpoint Name",
+    }))
+    manifest_path = run / "weights_manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["model"] = "test-circuit"
+    manifest_path.write_text(json.dumps(manifest))
+    ir_stamp = run / ".ck_ir_bundle.json"
+    stamp = json.loads(ir_stamp.read_text())
+    stamp["inputs"]["manifest"] = {
+        "path": str(manifest_path), "size": manifest_path.stat().st_size,
+        "sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+    }
+    ir_stamp.write_text(json.dumps(stamp))
+
+    assert resolve(setup)["variant"] == "publisher"
+    manifest["model"] = "different-circuit"
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="compiled manifest model"):
+        resolve(setup)
+
+
+def test_explicit_config_model_mismatch_still_fails(setup):
+    run, _, _ = setup
+    (run / "config.json").write_text(json.dumps({"model": "different-circuit"}))
+    with pytest.raises(ValueError, match="runtime configuration"):
+        resolve(setup)
+
+
+def test_gguf_config_without_compiled_model_identity_fails(setup):
+    run, _, _ = setup
+    (run / "config.json").write_text(json.dumps({
+        "model_type": "test-circuit", "model_name": "Publisher Checkpoint Name",
+    }))
+    with pytest.raises(ValueError, match="compiled manifest model"):
+        resolve(setup)
+
+
 def test_publisher_default_and_explicit_compat(setup):
     native = resolve(setup)
     assert native["variant"] == "publisher"
@@ -93,6 +133,21 @@ def test_publisher_default_and_explicit_compat(setup):
     assert load_tool_protocol(setup[0], chat, variants) == "qwen_code_xml_raw_v2"
     with pytest.raises(ValueError, match="override conflicts"):
         load_tool_protocol(setup[0], chat + "changed", variants)
+
+
+def test_resolved_stop_policy_is_bound_to_selected_variant(setup):
+    run, _, source = setup
+    profile_path = source / "serving_profiles/qwen_tools_v1.json"
+    profile = json.loads(profile_path.read_text())
+    profile["variants"]["publisher"]["stop_text"] = ["<eos>"]
+    profile_path.write_text(json.dumps(profile))
+    doc = resolve(setup)
+    assert doc["stop_text"] == ["<eos>"]
+    assert load_resolved_serving(run)["stop_text"] == ["<eos>"]
+    doc["stop_text"] = ["<bad>"]
+    doc["identity"] = contract_identity(doc)
+    with pytest.raises(ValueError, match="stop policy mismatch"):
+        load_resolved_serving(run, document=doc)
 
 
 def test_publisher_chat_profile_rejects_tools_before_generation(setup):
