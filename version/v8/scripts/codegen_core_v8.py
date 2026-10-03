@@ -2889,6 +2889,12 @@ def emit_op(
             rows = _get_arg("rows")
             _emit_dump(_get_arg("q"), "q_conv_predelta", _mul_expr(rows, _get_arg("q_dim")))
             _emit_dump(_get_arg("k"), "k_conv_predelta", _mul_expr(rows, _get_arg("k_dim")))
+        elif op_name == "gemma4_per_layer_embed":
+            _emit_dump(
+                _get_arg("hidden", "output", "out"),
+                "gemma4_per_layer_embed",
+                _mul_expr(tokens, embed_dim),
+            )
         elif dump_name:
             out_expr = _get_arg("output", "out", "c", "y", "out_token")
             size_expr = None

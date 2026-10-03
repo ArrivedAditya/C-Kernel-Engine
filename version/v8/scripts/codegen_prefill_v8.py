@@ -1681,6 +1681,12 @@ def emit_prefill_op(
             dump_label = "ffn_inp" if op_instance_idx == 0 else "layer_out" if op_instance_idx == 1 else None
             if dump_label is not None:
                 _emit_dump(_get_arg("output", "out", "c", "y"), dump_label, _mul_expr(tokens, embed_dim_expr))
+        elif op_type == "gemma4_per_layer_embed":
+            _emit_dump(
+                _get_arg("hidden", "output", "out"),
+                "gemma4_per_layer_embed",
+                _mul_expr(tokens, embed_dim_expr),
+            )
         elif dump_name:
             out_expr = _get_arg("output", "out", "c", "y", "out_token")
             size_expr = None

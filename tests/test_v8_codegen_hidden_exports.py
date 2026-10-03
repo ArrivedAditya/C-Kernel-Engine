@@ -1249,7 +1249,11 @@ int main(int argc, char **argv) {
         }
 
         decode = codegen.emit_op(op)
+        decode_dump = codegen.emit_op(op, dump=True)
         prefill = prefill_codegen.emit_prefill_op(op, 61, {"embed_dim": 2560})
+        prefill_dump = prefill_codegen.emit_prefill_op(
+            op, 61, {"embed_dim": 2560}, dump=True
+        )
 
         self.assertIn(
             '"gemma4_per_layer_embed", (const float*)HIDDEN, (1024) * EMBED_DIM',
@@ -1259,6 +1263,16 @@ int main(int argc, char **argv) {
             '"gemma4_per_layer_embed", (const float*)HIDDEN, '
             "(num_tokens) * (EMBED_DIM)",
             prefill,
+        )
+        self.assertIn(
+            'ck_dump_tensor((float*)HIDDEN, 23, "gemma4_per_layer_embed", '
+            "(1024) * (EMBED_DIM));",
+            decode_dump,
+        )
+        self.assertIn(
+            'ck_dump_tensor((float*)HIDDEN, 23, "gemma4_per_layer_embed", '
+            "(num_tokens) * (2560));",
+            prefill_dump,
         )
 
     def test_quantized_projection_exports_full_prefill_extents(self) -> None:
