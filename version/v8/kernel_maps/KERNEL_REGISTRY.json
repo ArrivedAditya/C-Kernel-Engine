@@ -5,7 +5,7 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "version/v8/kernel_maps",
     "counts": {
-      "total": 411,
+      "total": 412,
       "by_op": {
         "add_backward": 1,
         "add_stream": 2,
@@ -74,7 +74,7 @@
         "fused_qkv_block": 1,
         "gated_deltanet": 7,
         "gated_shared_swiglu_expert_mlp": 4,
-        "geglu": 5,
+        "geglu": 6,
         "gelu": 9,
         "gemm": 23,
         "gemm_backward": 1,
@@ -30299,6 +30299,109 @@
       "notes": "Native C table generation; never loads llama.cpp. Ascending in-place compaction. Performance and full-model certification pending.",
       "name": "geglu_forward_ggml_native",
       "_source_file": "geglu_forward_ggml_native.json"
+    },
+    {
+      "id": "geglu_forward_quick",
+      "op": "geglu",
+      "operation_interface": "geglu.fp32_compacting.v1",
+      "variant": "geglu_fp32_quick",
+      "selection": {
+        "status": "production",
+        "priority": 100,
+        "equivalence_group": "geglu_quick_fp32",
+        "phases": [
+          "prefill",
+          "decode"
+        ]
+      },
+      "quant": {
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "x",
+          "dtype": "fp32",
+          "shape": [
+            "tokens",
+            "2*dim"
+          ],
+          "layout": "token_major_contiguous",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required",
+          "desc": "Gate and up rows"
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "out",
+          "dtype": "fp32",
+          "shape": [
+            "tokens",
+            "dim"
+          ],
+          "layout": "token_major_contiguous",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required",
+          "desc": "Compacted GELU-quick(gate) times up"
+        }
+      ],
+      "memory_contract": {
+        "input_output_overlap": "allowed_with_ascending_serial_compaction"
+      },
+      "dims": [
+        "tokens",
+        "dim"
+      ],
+      "params": [],
+      "impl": {
+        "function": "geglu_forward_quick",
+        "c_declaration": "void geglu_forward_quick(const float *x, float *out, int tokens, int dim);",
+        "sources": [
+          "src/kernels/geglu_kernels.c"
+        ]
+      },
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "x",
+            "source": "activation:input",
+            "cast": "const float*",
+            "ports": [
+              "input:x"
+            ]
+          },
+          {
+            "name": "out",
+            "source": "output:output",
+            "cast": "float*",
+            "ports": [
+              "output:out"
+            ]
+          },
+          {
+            "name": "tokens",
+            "source": "dim:seq_len"
+          },
+          {
+            "name": "dim",
+            "source": "dim:intermediate_size"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "tests/test_v8_geglu_quick.py"
+        ],
+        "parity": []
+      },
+      "notes": "GELU-quick(gate) * up, with coefficient 1.702 and ascending in-place compaction.",
+      "name": "geglu_forward_quick",
+      "_source_file": "geglu_forward_quick.json"
     },
     {
       "id": "gelu_erf_bf16_storage",

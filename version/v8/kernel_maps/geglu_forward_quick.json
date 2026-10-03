@@ -1,0 +1,47 @@
+{
+  "id": "geglu_forward_quick",
+  "op": "geglu",
+  "operation_interface": "geglu.fp32_compacting.v1",
+  "variant": "geglu_fp32_quick",
+  "selection": {
+    "status": "production",
+    "priority": 100,
+    "equivalence_group": "geglu_quick_fp32",
+    "phases": ["prefill", "decode"]
+  },
+  "quant": {
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {"name": "x", "dtype": "fp32", "shape": ["tokens", "2*dim"], "layout": "token_major_contiguous", "access": "read", "storage_class": "activation", "consumption": "required", "desc": "Gate and up rows"}
+  ],
+  "weights": [],
+  "outputs": [
+    {"name": "out", "dtype": "fp32", "shape": ["tokens", "dim"], "layout": "token_major_contiguous", "access": "write", "storage_class": "activation", "consumption": "required", "desc": "Compacted GELU-quick(gate) times up"}
+  ],
+  "memory_contract": {
+    "input_output_overlap": "allowed_with_ascending_serial_compaction"
+  },
+  "dims": ["tokens", "dim"],
+  "params": [],
+  "impl": {
+    "function": "geglu_forward_quick",
+    "c_declaration": "void geglu_forward_quick(const float *x, float *out, int tokens, int dim);",
+    "sources": ["src/kernels/geglu_kernels.c"]
+  },
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {"name": "x", "source": "activation:input", "cast": "const float*", "ports": ["input:x"]},
+      {"name": "out", "source": "output:output", "cast": "float*", "ports": ["output:out"]},
+      {"name": "tokens", "source": "dim:seq_len"},
+      {"name": "dim", "source": "dim:intermediate_size"}
+    ]
+  },
+  "tests": {
+    "unit": ["tests/test_v8_geglu_quick.py"],
+    "parity": []
+  },
+  "notes": "GELU-quick(gate) * up, with coefficient 1.702 and ascending in-place compaction."
+}

@@ -70,7 +70,7 @@
     "patch_proj": "gemm_nt_f16",
     "position_embeddings": "position_embeddings_add_gemma4v_xy",
     "layernorm": "layernorm_fp32_exact",
-    "geglu": "geglu_forward_exact",
+    "geglu": "geglu_forward_quick",
     "spatial_merge": "spatial_average_pool_contiguous",
     "projector_prep": "gemma4_vision_projector_prep_forward",
     "projector_fc2": "gemm_nt_f16_clipped",
