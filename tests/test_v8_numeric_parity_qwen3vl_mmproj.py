@@ -23,6 +23,22 @@ import export_vision_public_summary_v8 as public_summary  # type: ignore  # noqa
 
 
 class NumericParityQwen3VLMmprojV8Tests(unittest.TestCase):
+    def test_decoder_prefix_export_requires_complete_decoder_facing_tensors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ck = Path(tmpdir) / "ck.f32"
+            llama = Path(tmpdir) / "llama.f32"
+            ck.write_bytes(bytes(48))
+            llama.write_bytes(bytes(range(48)))
+            config = {"projector_total_out_dim": 3, "merged_grid_x": 2, "merged_grid_y": 2}
+            record = npv8._decoder_prefix_export_record(ck, llama, "vision_output", None, config, 12, 12)
+            self.assertEqual(record["contract"], "cke.decoder_prefix_f32.v1")
+            self.assertEqual((record["tokens"], record["row_dim"]), (4, 3))
+            self.assertEqual(record["ck"]["sha256"], hashlib.sha256(ck.read_bytes()).hexdigest())
+            self.assertIsNone(npv8._decoder_prefix_export_record(ck, llama, "attention_output", None, config, 12, 12))
+            self.assertIsNone(npv8._decoder_prefix_export_record(ck, llama, "vision_output", "internal", config, 12, 12))
+            with self.assertRaisesRegex(RuntimeError, "does not match"):
+                npv8._decoder_prefix_export_record(ck, llama, "vision_output", None, config, 11, 12)
+
     def test_decode_source_rgb8_preserves_ppm_pixels(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             image = Path(tmpdir) / "sample.ppm"
