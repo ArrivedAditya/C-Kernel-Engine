@@ -14,6 +14,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "version" / "v8" / "scripts"))
 import parity_test_v8 as parity
+import xray_numerical_parity_v8 as xray
 
 
 class AttentionParityCaptureTests(unittest.TestCase):
@@ -50,12 +51,38 @@ int main(int argc, char **argv) {
             env = {key: value for key, value in os.environ.items() if not key.startswith("CK_PARITY_")}
             subprocess.run([str(executable), str(directory)], check=True, env=env, capture_output=True)
             dumps = parity.read_dump_file(directory / "dump.bin")
-        self.assertEqual(len(dumps), 1)
-        self.assertEqual(dumps[0].op_name, "kqv_out")
-        np.testing.assert_array_equal(
-            dumps[0].data,
-            np.asarray([0, 1, 100, 101, 10, 11, 110, 111, 20, 21, 120, 121], dtype=np.float32),
-        )
+            self.assertEqual(len(dumps), 1)
+            self.assertEqual(dumps[0].op_name, "kqv_out")
+            mapping = xray.load_json(
+                ROOT / "version" / "v8" / "parity_profiles" / "qwen3vl_llamacpp_q8_v1.json"
+            )["backend_mappings"]["vision.layer.{layer}.attention.output"]
+            self.assertEqual(mapping["capture_tensor"], dumps[0].op_name)
+            self.assertEqual(mapping["logical_layout"], "token_major")
+
+            tensor_path = directory / "attention.f32"
+            dumps[0].data.tofile(tensor_path)
+            entry = {
+                "checkpoint_id": "vision.layer.0.attention.output",
+                "tensor_path": str(tensor_path),
+                "exported_dtype": "fp32",
+                "physical_shape": [3, 2, 2],
+                "physical_axis_names": mapping["axis_names"],
+                "axis_names": ["token", "head", "channel"],
+                "logical_shape": [3, 2, 2],
+            }
+            expected = np.asarray([
+                [[0, 1], [100, 101]],
+                [[10, 11], [110, 111]],
+                [[20, 21], [120, 121]],
+            ], dtype=np.float32)
+            np.testing.assert_array_equal(xray._load_tensor(entry), expected)
+
+            wrong_layout = {
+                **entry,
+                "physical_shape": [2, 3, 2],
+                "physical_axis_names": ["head", "token", "channel"],
+            }
+            self.assertFalse(np.array_equal(xray._load_tensor(wrong_layout), expected))
 
     def test_unequal_extents_cannot_pass_on_matching_prefix(self) -> None:
         reference = parity.ParityDump(0, "kqv_out", np.asarray([1, 2, 3], dtype=np.float32), 0, "fp32")

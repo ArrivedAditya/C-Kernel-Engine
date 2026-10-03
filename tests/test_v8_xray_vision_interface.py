@@ -10,7 +10,6 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "version" / "v8" / "scripts"
 PROFILE = ROOT / "version" / "v8" / "parity_profiles" / "qwen3vl_llamacpp_q8_v1.json"
@@ -87,6 +86,17 @@ class XRayVisionInterfaceTests(unittest.TestCase):
         xray.validate(profile, xray.PROFILE_SCHEMA, "llama profile")
         self.assertEqual(profile["backend"], "llamacpp")
 
+    def test_attention_captures_declare_token_head_channel_order(self) -> None:
+        mappings = xray.load_json(PROFILE)["backend_mappings"]
+        for name in (
+            "q.pre_rope", "k.pre_rope", "v.output", "q.post_rope",
+            "k.post_rope", "attention.output",
+        ):
+            with self.subTest(name=name):
+                mapping = mappings[f"vision.layer.{{layer}}.{name}"]
+                self.assertEqual(mapping["logical_layout"], "token_major")
+                self.assertEqual(mapping["axis_names"], ["token", "head", "channel"])
+
     def test_cohere_compass_profile_is_schema_valid(self) -> None:
         profile = xray.load_json(COHERE_PROFILE)
         xray.validate(profile, xray.PROFILE_SCHEMA, "Cohere Compass profile")
@@ -153,8 +163,11 @@ class XRayVisionInterfaceTests(unittest.TestCase):
         self.assertEqual(result["first_divergence"]["checkpoint_id"], "vision.layer.0.q.pre_rope")
         self.assertEqual(
             result["first_divergence"]["classification"],
-            "KERNEL_IMPLEMENTATION_DIVERGENCE",
+            "OBSERVED_DIVERGENCE",
         )
+        self.assertEqual(result["first_divergence"]["attribution_status"], "unattributed")
+        self.assertEqual(result["first_divergence"]["fix_owner"], "exact_input_control")
+        self.assertEqual(result["next_plan"]["status"], "first_observed_comparable_divergence")
 
     def test_nonzero_passing_checkpoint_prevents_false_downstream_blame(self) -> None:
         profile = xray.load_json(PROFILE)
@@ -272,7 +285,7 @@ class XRayVisionInterfaceTests(unittest.TestCase):
         with mock.patch.object(llama, "run", return_value={"status": "incomplete", "final_report": {}}):
             self.assertNotEqual(llama.main(["--gguf", "model.gguf"]), 0)
 
-    def test_later_incomplete_capture_does_not_erase_prior_divergence_attribution(self) -> None:
+    def test_later_incomplete_capture_does_not_erase_prior_numerical_failure(self) -> None:
         profile = xray.load_json(PROFILE)
         rows = [
             {"layer": int(mapping.get("result_layer", 0)),
@@ -290,9 +303,10 @@ class XRayVisionInterfaceTests(unittest.TestCase):
         self.assertEqual(result["status"], "fail")
         self.assertEqual(result["coverage_status"], "incomplete")
         self.assertEqual(
-            result["first_divergence"]["classification"], "KERNEL_IMPLEMENTATION_DIVERGENCE"
+            result["first_divergence"]["classification"], "OBSERVED_DIVERGENCE"
         )
-        self.assertEqual(result["next_plan"]["status"], "first_divergence_attributed")
+        self.assertEqual(result["first_divergence"]["attribution_status"], "unattributed")
+        self.assertEqual(result["next_plan"]["status"], "first_observed_comparable_divergence")
 
     def test_capture_mode_controls_strict_parity_flag(self) -> None:
         profile = xray.load_json(PROFILE)
