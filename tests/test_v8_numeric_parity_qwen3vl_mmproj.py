@@ -32,6 +32,8 @@ class NumericParityQwen3VLMmprojV8Tests(unittest.TestCase):
             config = {"projector_total_out_dim": 3, "merged_grid_x": 2, "merged_grid_y": 2}
             record = npv8._decoder_prefix_export_record(ck, llama, "vision_output", None, config, 12, 12)
             self.assertEqual(record["contract"], "cke.decoder_prefix_f32.v1")
+            self.assertEqual(record["ck_output_role"], "vision_output")
+            self.assertEqual(record["oracle_output_role"], "clip_encode_float_image")
             self.assertEqual((record["tokens"], record["row_dim"]), (4, 3))
             self.assertEqual(record["ck"]["sha256"], hashlib.sha256(ck.read_bytes()).hexdigest())
             self.assertIsNone(npv8._decoder_prefix_export_record(ck, llama, "attention_output", None, config, 12, 12))

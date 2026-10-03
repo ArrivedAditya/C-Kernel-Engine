@@ -65,6 +65,8 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
                 "feature_slices": {"ck": None, "llama": None},
                 "raw_num_values": {"ck": 12, "llama": 12},
                 "decoder_prefix_exports": {"contract": "cke.decoder_prefix_f32.v1",
+                                           "ck_output_role": "vision_output",
+                                           "oracle_output_role": "clip_encode_float_image",
                                            "tokens": 4, "row_dim": 3, "grid": [2, 2],
                                            "ck": identity(ck), "llama": identity(llama)},
                 "artifact_identity": {name: identity(artifact) for name in names},
@@ -94,6 +96,10 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
             stale["decoder_prefix_exports"]["ck"]["sha256"] = "0" * 64
             with self.assertRaisesRegex(ValueError, "export identity"):
                 verify(stale)
+            wrong_role = copy.deepcopy(report)
+            wrong_role["decoder_prefix_exports"]["oracle_output_role"] = "attention_output"
+            with self.assertRaisesRegex(ValueError, "inconsistent oracle_output_role"):
+                verify(wrong_role)
             artifact.write_bytes(b"stale")
             with self.assertRaisesRegex(ValueError, "artifact changed"):
                 verify(report)

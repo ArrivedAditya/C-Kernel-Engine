@@ -399,9 +399,6 @@ def _verify_encoder_prefix_report(
             or not isinstance(preprocess, dict) or preprocess.get("verdict") != "pass"
             or report.get("strict_mtmd_oracle") is not False):
         raise ValueError("encoder prefix report does not prove independent preprocessing and native execution")
-    if (report.get("ck_resolved_output") != "vision_output"
-            or report.get("llama_reference_output") != "clip_encode_float_image"):
-        raise ValueError("encoder prefix report does not capture decoder-facing outputs")
     for name in ("row_slices", "feature_slices"):
         slices = report.get(name)
         if not isinstance(slices, dict) or set(slices) != {"ck", "llama"} or any(
@@ -411,6 +408,11 @@ def _verify_encoder_prefix_report(
     exports = report.get("decoder_prefix_exports")
     if not isinstance(exports, dict) or exports.get("contract") != "cke.decoder_prefix_f32.v1":
         raise ValueError("encoder prefix report lacks decoder-prefix exports")
+    for report_key, export_key in (("ck_resolved_output", "ck_output_role"),
+                                   ("llama_reference_output", "oracle_output_role")):
+        role = exports.get(export_key)
+        if not isinstance(role, str) or not role or report.get(report_key) != role:
+            raise ValueError(f"encoder prefix report has inconsistent {export_key}")
     grid = exports.get("grid")
     if (type(exports.get("tokens")) is not int or type(exports.get("row_dim")) is not int
             or exports["tokens"] != prefix_tokens or exports["row_dim"] != prefix_row_dim

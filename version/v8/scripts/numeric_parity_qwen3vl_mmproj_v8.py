@@ -125,6 +125,8 @@ def _decoder_prefix_export_record(
         raise RuntimeError("decoder-facing prefix export does not match resolved grid and row width")
     return {
         "contract": "cke.decoder_prefix_f32.v1",
+        "ck_output_role": ck_output,
+        "oracle_output_role": "clip_encode_float_image",
         "tokens": tokens,
         "row_dim": row_dim,
         "grid": list(grid),
