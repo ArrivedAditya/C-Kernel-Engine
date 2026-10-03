@@ -71,43 +71,43 @@
     },
     "vision.layer.{layer}.q.pre_rope": {
       "producer": "split_qkv",
-      "logical_layout": "head_major",
-      "axis_names": ["head", "token", "channel"],
+      "logical_layout": "token_major",
+      "axis_names": ["token", "head", "channel"],
       "capture_tensor": "Qcur",
       "result_tensor": "q_proj"
     },
     "vision.layer.{layer}.k.pre_rope": {
       "producer": "split_qkv",
-      "logical_layout": "head_major",
-      "axis_names": ["head", "token", "channel"],
+      "logical_layout": "token_major",
+      "axis_names": ["token", "head", "channel"],
       "capture_tensor": "Kcur",
       "result_tensor": "k_proj"
     },
     "vision.layer.{layer}.v.output": {
       "producer": "split_qkv",
-      "logical_layout": "head_major",
-      "axis_names": ["head", "token", "channel"],
+      "logical_layout": "token_major",
+      "axis_names": ["token", "head", "channel"],
       "capture_tensor": "Vcur",
       "result_tensor": "v_proj"
     },
     "vision.layer.{layer}.q.post_rope": {
       "producer": "vision_mrope",
-      "logical_layout": "head_major",
-      "axis_names": ["head", "token", "channel"],
+      "logical_layout": "token_major",
+      "axis_names": ["token", "head", "channel"],
       "capture_tensor": "Qcur_rope",
       "result_tensor": "Qcur_rope"
     },
     "vision.layer.{layer}.k.post_rope": {
       "producer": "vision_mrope",
-      "logical_layout": "head_major",
-      "axis_names": ["head", "token", "channel"],
+      "logical_layout": "token_major",
+      "axis_names": ["token", "head", "channel"],
       "capture_tensor": "Kcur_rope",
       "result_tensor": "Kcur_rope"
     },
     "vision.layer.{layer}.attention.output": {
       "producer": "attn",
-      "logical_layout": "head_major",
-      "axis_names": ["head", "token", "channel"],
+      "logical_layout": "token_major",
+      "axis_names": ["token", "head", "channel"],
       "capture_tensor": "kqv_out",
       "result_tensor": "kqv_out"
     },

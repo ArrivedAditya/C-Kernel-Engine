@@ -142,9 +142,8 @@ def normalize_capture_report(
     # Normalize every profile checkpoint in profile order. Normalization does
     # not stop at the first failure: the capture already paid for every dump,
     # and the drift chart needs the full observed progression. Only the first
-    # failure is attributed (first_divergence); later failures are reported as
-    # OBSERVED_DIVERGENCE — they must not be labelled propagated without an
-    # exact-input replay that proves the local kernel passes.
+    # failure is recorded (first_divergence); none of these comparisons alone
+    # establishes whether the local kernel or an upstream input caused it.
     for checkpoint_id, mapping in _active_checkpoints(profile, layer):
         result_layer = int(mapping.get("result_layer", layer))
         result_name = str(mapping["result_tensor"])
@@ -173,8 +172,6 @@ def normalize_capture_report(
                 classification = "MATCH"
             elif bool(row.get("has_nan")) or bool(row.get("has_inf")):
                 classification = "NONFINITE_OUTPUT"
-            elif first_divergence is None and first_incomplete_capture is None:
-                classification = "KERNEL_IMPLEMENTATION_DIVERGENCE"
             else:
                 classification = "OBSERVED_DIVERGENCE"
             comparison = {
@@ -228,12 +225,11 @@ def normalize_capture_report(
                 "control still diverges."
             )
         else:
-            classification = str(first_divergence["classification"])
-            first_divergence["fix_owner"] = xray.FIX_OWNERS.get(
-                classification, "first_divergent_edge"
-            )
-            first_divergence["recommended_action"] = xray.REMEDIATIONS.get(
-                classification, "Inspect the first failing semantic edge."
+            first_divergence["attribution_status"] = "unattributed"
+            first_divergence["fix_owner"] = "exact_input_control"
+            first_divergence["recommended_action"] = (
+                "Replay the first failing operation with identical inputs before "
+                "attributing the mismatch to its selected kernel."
             )
 
     # Capture rows the profile never references (e.g. adapter sweeps at the
@@ -266,7 +262,7 @@ def normalize_capture_report(
             "status": (
                 "first_observed_comparable_divergence"
                 if first_divergence and incomplete_before_divergence
-                else "first_divergence_attributed" if first_divergence
+                else "first_observed_comparable_divergence" if first_divergence
                 else "incomplete_capture" if first_incomplete_capture
                 else "complete"
             ),
