@@ -106,6 +106,35 @@ def _artifact_identity(path: Path) -> dict[str, Any]:
     return {"path": str(path), "size_bytes": path.stat().st_size, "sha256": digest.hexdigest()}
 
 
+def _decoder_prefix_export_record(
+    ck_path: Path | None,
+    llama_path: Path | None,
+    ck_output: str,
+    llama_output: str | None,
+    config: dict[str, Any],
+    ck_values: int,
+    llama_values: int,
+) -> dict[str, Any] | None:
+    if ck_path is None or llama_path is None or ck_output != "vision_output" or llama_output is not None:
+        return None
+    row_dim = int(config.get("projector_total_out_dim", 0) or 0)
+    grid = (int(config.get("merged_grid_x", 0) or 0),
+            int(config.get("merged_grid_y", 0) or 0))
+    tokens = grid[0] * grid[1]
+    if row_dim <= 0 or tokens <= 0 or ck_values != tokens * row_dim or llama_values != tokens * row_dim:
+        raise RuntimeError("decoder-facing prefix export does not match resolved grid and row width")
+    return {
+        "contract": "cke.decoder_prefix_f32.v1",
+        "ck_output_role": ck_output,
+        "oracle_output_role": "clip_encode_float_image",
+        "tokens": tokens,
+        "row_dim": row_dim,
+        "grid": list(grid),
+        "ck": _artifact_identity(ck_path),
+        "llama": _artifact_identity(llama_path),
+    }
+
+
 def _apply_qwen3vl_geometry_to_runtime_manifest(
     output_dir: Path,
     image_path: Path | None,
@@ -1547,6 +1576,10 @@ def main(argv: list[str] | None = None) -> int:
                 values.tofile(f)
 
     raw_num_values = {"ck": len(ck_out), "llama": len(llama_out)}
+    decoder_prefix_exports = _decoder_prefix_export_record(
+        args.dump_ck_f32, args.dump_llama_f32, ck_resolved_output,
+        llama_reference_output, config, len(ck_out), len(llama_out),
+    )
     ck_row_slice = _resolve_row_slice(
         length=len(ck_out),
         side="ck",
@@ -1693,6 +1726,7 @@ def main(argv: list[str] | None = None) -> int:
         "llama_requested_output": _normalize_output_name(args.llama_output_name),
         "llama_reference_output": llama_reference_output or "clip_encode_float_image",
         "raw_num_values": raw_num_values,
+        "decoder_prefix_exports": decoder_prefix_exports,
         "row_slices": {
             "ck": ck_row_slice,
             "llama": llama_row_slice,

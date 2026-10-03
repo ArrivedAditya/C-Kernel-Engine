@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import contextlib
+import copy
+import hashlib
 import importlib.util
 import io
 import json
@@ -35,6 +37,79 @@ decoder_parity_v8 = _load_module("decoder_first_token_parity_v8_tests", V8_DECOD
 
 
 class V8DecoderFirstTokenParityTests(unittest.TestCase):
+    def test_encoder_prefix_report_binds_complete_independent_exports(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            ck = root / "ck.f32"
+            llama = root / "llama.f32"
+            artifact = root / "model.so"
+            report_path = root / "encoder.json"
+            ck.write_bytes(bytes(48))
+            llama.write_bytes(bytes(range(48)))
+            artifact.write_bytes(b"library")
+
+            def identity(path: Path) -> dict:
+                return {"path": str(path.resolve()), "size_bytes": path.stat().st_size,
+                        "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+
+            names = ("mmproj_gguf", "ck_model_library", "ck_generated_source",
+                     "ck_engine_library", "ck_weights", "llama_shim_library", "llama_mtmd_library")
+            report = {
+                "status": "complete",
+                "input_provenance": "independently_preprocessed_from_shared_decoded_rgb8",
+                "preprocess_evidence": {"verdict": "pass"},
+                "strict_mtmd_oracle": False,
+                "ck_resolved_output": "vision_output",
+                "llama_reference_output": "clip_encode_float_image",
+                "row_slices": {"ck": None, "llama": None},
+                "feature_slices": {"ck": None, "llama": None},
+                "raw_num_values": {"ck": 12, "llama": 12},
+                "decoder_prefix_exports": {"contract": "cke.decoder_prefix_f32.v1",
+                                           "ck_output_role": "vision_output",
+                                           "oracle_output_role": "clip_encode_float_image",
+                                           "tokens": 4, "row_dim": 3, "grid": [2, 2],
+                                           "ck": identity(ck), "llama": identity(llama)},
+                "artifact_identity": {name: identity(artifact) for name in names},
+            }
+
+            def verify(candidate: dict) -> dict:
+                report_path.write_text(json.dumps(candidate), encoding="utf-8")
+                return decoder_parity_v8._verify_encoder_prefix_report(report_path, ck, llama, 4, 3)
+
+            self.assertEqual(verify(report)["input_provenance"], report["input_provenance"])
+            alternate_roles = copy.deepcopy(report)
+            alternate_roles["ck_resolved_output"] = "bridge_embeddings"
+            alternate_roles["llama_reference_output"] = "projected_image_embeddings"
+            alternate_roles["decoder_prefix_exports"]["ck_output_role"] = "bridge_embeddings"
+            alternate_roles["decoder_prefix_exports"]["oracle_output_role"] = "projected_image_embeddings"
+            self.assertEqual(verify(alternate_roles)["input_provenance"], report["input_provenance"])
+            for change in (
+                {"status": "fail"},
+                {"input_provenance": "shared_processed_tensor"},
+                {"preprocess_evidence": "pass"},
+                {"preprocess_evidence": {"verdict": "fail"}},
+                {"strict_mtmd_oracle": True},
+                {"ck_resolved_output": "attention_output"},
+                {"raw_num_values": {"ck": True, "llama": 12}},
+                {"row_slices": {"ck": [0, 1], "llama": None}},
+                {"artifact_identity": {}},
+            ):
+                candidate = copy.deepcopy(report)
+                candidate.update(change)
+                with self.subTest(change=change), self.assertRaises(ValueError):
+                    verify(candidate)
+            stale = copy.deepcopy(report)
+            stale["decoder_prefix_exports"]["ck"]["sha256"] = "0" * 64
+            with self.assertRaisesRegex(ValueError, "export identity"):
+                verify(stale)
+            wrong_role = copy.deepcopy(report)
+            wrong_role["decoder_prefix_exports"]["oracle_output_role"] = "attention_output"
+            with self.assertRaisesRegex(ValueError, "inconsistent oracle_output_role"):
+                verify(wrong_role)
+            artifact.write_bytes(b"stale")
+            with self.assertRaisesRegex(ValueError, "artifact changed"):
+                verify(report)
+
     def test_xray_verifies_planner_memory_contract_without_recomputing_extent(self) -> None:
         with tempfile.TemporaryDirectory(prefix="v8_memory_contract_") as tmpdir:
             root = Path(tmpdir)
