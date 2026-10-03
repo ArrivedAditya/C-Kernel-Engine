@@ -245,6 +245,150 @@ def _check_identity(identity: dict, *, expected_serving: str,
         raise RuntimeError("loaded identity has no server instance ID")
 
 
+def _sse_events(body: str) -> list[tuple[str, dict]]:
+    """Parse complete SSE events while ignoring comments and keep-alives."""
+    events = []
+    event = None
+    data = []
+    for line in body.splitlines() + [""]:
+        if not line:
+            if event is not None:
+                if not data:
+                    raise RuntimeError(f"SSE event {event} has no data")
+                payload = json.loads("\n".join(data))
+                if payload.get("type") != event:
+                    raise RuntimeError(f"SSE event {event} has a mismatched type")
+                events.append((event, payload))
+            event, data = None, []
+        elif line.startswith("event: "):
+            event = line[7:]
+        elif line.startswith("data: "):
+            data.append(line[6:])
+    return events
+
+
+def _plain_chat_request(reply: str, label: str, cases: list[dict]) -> None:
+    response = request("POST", "/chat/completions", payload={
+        "model": MODEL, "messages": [{"role": "user", "content": f"Reply with exactly: {reply}"}],
+        "max_tokens": 16, "temperature": 0,
+    })
+    row = {"label": label, "http_status": response.status_code}
+    cases.append(row)
+    if response.status_code != 200:
+        row["error"] = response.text[:300]
+        raise RuntimeError(f"{label}: chat request failed: HTTP {response.status_code}")
+    body = response.json()
+    choices = body.get("choices") or []
+    choice = choices[0] if len(choices) == 1 else {}
+    row.update(output=choice.get("message", {}).get("content"),
+               finish_reason=choice.get("finish_reason"),
+               output_tokens=body.get("usage", {}).get("completion_tokens"))
+    row["protocol_status"] = (choice.get("finish_reason") == "stop"
+                              and isinstance(row["output"], str)
+                              and bool(row["output"])
+                              and (row["output_tokens"] or 0) > 0)
+    row["answer_status"] = row["output"] == reply
+    if not row["protocol_status"] or not row["answer_status"]:
+        raise RuntimeError(f"{label}: incomplete or unexpected answer: {row}")
+
+
+def run_plain_chat(expected_reply: str, identity: dict, cases: list[dict]) -> None:
+    """Exercise both HTTP routes and recovery without assuming a tool protocol."""
+    _plain_chat_request(expected_reply, "chat-completions", cases)
+    streamed = request("POST", "/responses", payload={
+        "model": MODEL, "input": f"Reply with exactly: {expected_reply}",
+        "max_output_tokens": 16, "temperature": 0, "stream": True,
+    })
+    row = {"label": "responses-stream", "http_status": streamed.status_code}
+    cases.append(row)
+    if streamed.status_code != 200:
+        row["error"] = streamed.text[:300]
+        raise RuntimeError(f"responses-stream: HTTP {streamed.status_code}")
+    events = _sse_events(streamed.text)
+    names = [name for name, _ in events]
+    terminal = [(name, payload) for name, payload in events if name in TERMINALS]
+    deltas = [payload.get("delta") for name, payload in events
+              if name == "response.output_text.delta"]
+    completed = terminal[0][1].get("response", {}) if len(terminal) == 1 else {}
+    row.update(events=names, output=completed.get("output_text"),
+               terminal=terminal[0][0] if len(terminal) == 1 else None,
+               output_tokens=completed.get("usage", {}).get("output_tokens"))
+    row["protocol_status"] = (len(terminal) == 1 and names[-1] == "response.completed"
+                              and names[0] == "response.created"
+                              and completed.get("status") == "completed"
+                              and bool(deltas) and "".join(deltas) == row["output"]
+                              and (row["output_tokens"] or 0) > 0)
+    row["answer_status"] = row["output"] == expected_reply
+    if not row["protocol_status"] or not row["answer_status"]:
+        raise RuntimeError(f"responses-stream: incomplete or unexpected answer: {row}")
+
+    multi = request("POST", "/chat/completions", payload={
+        "model": MODEL,
+        "messages": [
+            {"role": "user", "content": "The codeword is cobalt. Acknowledge with okay."},
+            {"role": "assistant", "content": "okay"},
+            {"role": "user", "content": "What was the codeword? Reply with only the word."},
+        ],
+        "max_tokens": 16, "temperature": 0,
+    })
+    row = {"label": "multi-turn", "http_status": multi.status_code}
+    cases.append(row)
+    if multi.status_code != 200:
+        row["error"] = multi.text[:300]
+        raise RuntimeError(f"multi-turn: HTTP {multi.status_code}")
+    multi_body = multi.json()
+    multi_choices = multi_body.get("choices") or []
+    multi_choice = multi_choices[0] if len(multi_choices) == 1 else {}
+    row.update(output=multi_choice.get("message", {}).get("content"),
+               finish_reason=multi_choice.get("finish_reason"),
+               output_tokens=multi_body.get("usage", {}).get("completion_tokens"))
+    row["protocol_status"] = (row["finish_reason"] == "stop"
+                              and isinstance(row["output"], str)
+                              and (row["output_tokens"] or 0) > 0)
+    row["answer_status"] = row["output"] == "cobalt"
+    if not row["protocol_status"] or not row["answer_status"]:
+        raise RuntimeError(f"multi-turn: incomplete or unexpected answer: {row}")
+
+    limited = request("POST", "/responses", payload={
+        "model": MODEL,
+        "input": "Write the integers from 1 to 100, separated by commas. Do not stop early.",
+        "max_output_tokens": 1, "temperature": 0,
+    })
+    row = {"label": "output-limit", "http_status": limited.status_code}
+    cases.append(row)
+    if limited.status_code != 200:
+        row["error"] = limited.text[:300]
+        raise RuntimeError(f"output-limit: HTTP {limited.status_code}")
+    limited_body = limited.json()
+    row.update(status=limited_body.get("status"),
+               incomplete_reason=(limited_body.get("incomplete_details") or {}).get("reason"),
+               output_tokens=limited_body.get("usage", {}).get("output_tokens"))
+    if (row["status"] != "incomplete" or row["incomplete_reason"] != "max_output_tokens"
+            or row["output_tokens"] != 1):
+        raise RuntimeError(f"output-limit: exhaustion was not reported truthfully: {row}")
+
+    if identity.get("output_protocol") == "none":
+        rejected = request("POST", "/chat/completions", payload={
+            "model": MODEL,
+            "messages": [{"role": "user", "content": "Read a file"}],
+            "tools": [{"type": "function", "function": {
+                "name": "read_file", "description": "Read a file",
+                "parameters": {"type": "object", "properties": {"path": {"type": "string"}}},
+            }}],
+            "max_tokens": 8,
+        })
+        code = rejected.json().get("error", {}).get("code")
+        row = {"label": "undeclared-tools", "http_status": rejected.status_code,
+               "error_code": code}
+        cases.append(row)
+        if rejected.status_code != 501 or code != "tool_protocol_undeclared":
+            raise RuntimeError(f"undeclared-tools: rejection contract failed: {row}")
+        _plain_chat_request("recovered", "chat-after-rejection", cases)
+    else:
+        cases.append({"label": "undeclared-tools", "status": "not_applicable",
+                      "reason": "bundle declares an output protocol"})
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--endpoint", required=True, help="Local HTTP base URL ending in /v1")
@@ -253,12 +397,17 @@ def main() -> int:
     parser.add_argument("--expected-session-library-sha256", required=True)
     parser.add_argument("--output", type=Path, required=True, help="New JSON report path")
     parser.add_argument("--prefill-lines", type=int, default=1500)
+    parser.add_argument("--suite", choices=("lifecycle", "plain-chat"), default="lifecycle")
+    parser.add_argument("--expected-reply", default="hello",
+                        help="Exact one-word reply for the plain-chat suite")
     args = parser.parse_args()
     parsed = urlparse(args.endpoint.rstrip("/"))
     if parsed.scheme != "http" or not parsed.hostname or parsed.path != "/v1":
         parser.error("endpoint must be an HTTP URL with /v1 as its path")
     if args.prefill_lines < 1:
         parser.error("prefill-lines must be positive")
+    if not re.fullmatch(r"[A-Za-z]{1,32}", args.expected_reply):
+        parser.error("expected-reply must be one ASCII word of at most 32 letters")
     for label, digest in (
         ("expected-serving-identity", args.expected_serving_identity),
         ("expected-session-library-sha256", args.expected_session_library_sha256),
@@ -282,6 +431,7 @@ def main() -> int:
         "expected_session_library_sha256": args.expected_session_library_sha256,
         "started_at_unix": time.time(),
         "script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "suite": args.suite,
         "prefill_lines": PREFILL_LINES,
         "identity_before": None,
         "identity_after": None, "cases": [], "status": "fail",
@@ -294,15 +444,18 @@ def main() -> int:
                         expected_serving=args.expected_serving_identity,
                         expected_session=args.expected_session_library_sha256,
                         model=MODEL)
-        long_prompt = "Test data follows.\n" + "alpha beta gamma delta\n" * PREFILL_LINES
-        report["cases"].append(run_cancel(
-            "long-input-timed-cancel", long_prompt,
-            wait_for="response.in_progress", delay=3.0))
-        report["cases"].append(run_cancel(
-            "decode", "Count upward forever, one number per line, beginning at one.",
-            wait_for="response.output_text.delta"))
-        report["cases"].append(run_disconnect("stream-disconnect", long_prompt))
-        report["cases"].append(run_client_timeout("client-read-timeout", long_prompt))
+        if args.suite == "plain-chat":
+            run_plain_chat(args.expected_reply, report["identity_before"], report["cases"])
+        else:
+            long_prompt = "Test data follows.\n" + "alpha beta gamma delta\n" * PREFILL_LINES
+            report["cases"].append(run_cancel(
+                "long-input-timed-cancel", long_prompt,
+                wait_for="response.in_progress", delay=3.0))
+            report["cases"].append(run_cancel(
+                "decode", "Count upward forever, one number per line, beginning at one.",
+                wait_for="response.output_text.delta"))
+            report["cases"].append(run_disconnect("stream-disconnect", long_prompt))
+            report["cases"].append(run_client_timeout("client-read-timeout", long_prompt))
         after = request("GET", "/cke/loaded-identity")
         after.raise_for_status()
         report["identity_after"] = after.json()
