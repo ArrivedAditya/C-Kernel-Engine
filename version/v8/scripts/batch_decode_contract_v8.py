@@ -15,10 +15,39 @@ from sequence_state_contract_v8 import resolve_sequence_state_contract
 
 
 _WEIGHT = re.compile(r"^\(const void\*\)\(model->bump \+ (W_[A-Z0-9_]+)\)$")
+_BASE = re.compile(r"^\((?:const )?(?:float|void|int32_t|uint8_t)\*\)\(model->bump \+ (A_[A-Z0-9_]+)\)$")
 
 
 def _args(op: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {arg["name"]: arg for arg in op.get("args", []) if isinstance(arg, dict) and isinstance(arg.get("name"), str)}
+
+
+def _writes(op: dict[str, Any]) -> set[str]:
+    return {str(arg["buffer_ref"]) for arg in op.get("args", [])
+            if isinstance(arg, dict) and str(arg.get("source", "")).startswith("output:")
+            and isinstance(arg.get("buffer_ref"), str)}
+
+
+def _crossing_values(ops: list[dict[str, Any]]) -> set[str]:
+    """Find prefix-produced call buffers read before the suffix overwrites them."""
+    produced = set().union(*(_writes(op) for op in ops[:5])) | {"token_ids"}
+    overwritten: set[str] = set()
+    crossing: set[str] = set()
+    for op in ops[5:]:
+        for arg in op.get("args", []):
+            if not isinstance(arg, dict) or arg.get("buffer_ref") not in produced:
+                continue
+            ref = arg["buffer_ref"]
+            if not str(arg.get("source", "")).startswith("output:") and ref not in overwritten:
+                crossing.add(ref)
+            elif str(arg.get("source", "")).startswith("output:"):
+                overwritten.add(ref)
+    return crossing
+
+
+def _exact_base(arg: dict[str, Any], buffer: dict[str, Any]) -> bool:
+    match = _BASE.fullmatch(str(arg.get("expr", "")))
+    return bool(match and match.group(1) == buffer.get("define"))
 
 
 def resolve_two_row_batch_contract(
@@ -41,7 +70,7 @@ def resolve_two_row_batch_contract(
     if q.get("layer") != k.get("layer") or q.get("function") != k.get("function"):
         return None
     qargs, kargs = _args(q), _args(k)
-    if not all(name in qargs and name in kargs for name in ("x", "y", "W", "M", "K")):
+    if set(qargs) != {"x", "y", "W", "M", "K"} or set(kargs) != set(qargs):
         return None
     if qargs["x"].get("buffer_ref") != kargs["x"].get("buffer_ref"):
         return None
@@ -67,16 +96,47 @@ def resolve_two_row_batch_contract(
     }
     if len(set(refs.values())) != 4 or any(ref not in buffers for ref in refs.values()):
         return None
+    emb, save, norm = (_args(op) for op in ops[:3])
+    if (not {"token_ids", "output", "token_count"} <= emb.keys()
+            or not {"dst", "src", "size"} <= save.keys()
+            or not {"input", "output"} <= norm.keys()
+            or [_writes(op) for op in ops[:3]] != [
+                {refs["input"]}, {refs["residual"]}, {refs["input"]}]
+            or emb["output"].get("buffer_ref") != refs["input"]
+            or save["src"].get("buffer_ref") != refs["input"]
+            or norm["input"].get("buffer_ref") != refs["input"]
+            or norm["output"].get("buffer_ref") != refs["input"]
+            or emb["token_count"].get("expr") != "1"):
+        return None
+    if _crossing_values(ops) != set(refs.values()):
+        return None
+    try:
+        saved_bytes = int(save["size"].get("expr", -1))
+    except (TypeError, ValueError):
+        return None
+    if saved_bytes != input_dim * 4 or saved_bytes % 4:
+        return None
     sizes = {name: input_dim * 4 if name == "input" else
              q_dim * 4 if name == "q" else
              k_dim * 4 if name == "k" else
-             int(buffers[ref].get("size", 0)) for name, ref in refs.items()}
+             saved_bytes for name, ref in refs.items()}
     for name, ref in refs.items():
         row = buffers[ref]
         if row.get("lifetime") != "call" or row.get("mutable") is not True:
             return None
         if int(row.get("size", 0)) < sizes[name] or not re.fullmatch(r"A_[A-Z0-9_]+", str(row.get("define", ""))):
             return None
+    for op in ops:
+        for arg in op.get("args", []):
+            if isinstance(arg, dict) and arg.get("buffer_ref") in refs.values():
+                if not _exact_base(arg, buffers[arg["buffer_ref"]]):
+                    return None
+    for first, left in enumerate(refs.values()):
+        a = buffers[left]
+        for right in list(refs.values())[first + 1:]:
+            b = buffers[right]
+            if int(a["abs_offset"]) < int(b["abs_offset"]) + int(b["size"]) and int(b["abs_offset"]) < int(a["abs_offset"]) + int(a["size"]):
+                return None
     weights = []
     for args in (qargs, kargs):
         match = _WEIGHT.fullmatch(str(args["W"].get("expr", "")))
@@ -89,26 +149,30 @@ def resolve_two_row_batch_contract(
     vocab = config.get("vocab_size")
     if not logits or not isinstance(vocab, int) or logits.get("size") != vocab * 4:
         return None
-    map_root = Path(__file__).resolve().parents[1] / "kernel_maps"
-    matches = []
-    for path in map_root.glob("*.json"):
-        if path.name == "KERNEL_REGISTRY.json":
-            continue
-        # Only explicit two-row bindings participate; normal prefill selection
-        # is not silently reinterpreted as a decode guarantee.
-        raw = path.read_text(encoding="utf-8")
-        if '"batch_decode_two_rows"' not in raw:
-            continue
-        provider = json.loads(raw)
-        binding = provider.get("batch_decode_two_rows") or {}
-        if binding.get("decode_function") == q.get("function") and binding.get("rows") == 2:
-            matches.append(binding)
-    if len(matches) != 1:
+    selected = (q.get("call_abi") or {}).get("kernel_id")
+    if not isinstance(selected, str) or (k.get("call_abi") or {}).get("kernel_id") != selected:
         return None
-    function = matches[0].get("function")
+    registry = json.loads((Path(__file__).resolve().parents[1] / "kernel_maps" / "KERNEL_REGISTRY.json").read_text())
+    providers = {item["id"]: item for item in registry["kernels"]}
+    decode = providers.get(selected, {})
+    batch_id = decode.get("batch_decode_two_rows", {}).get("provider_id")
+    if not isinstance(batch_id, str):
+        return None
+    provider = providers.get(batch_id, {})
+    binding = provider.get("batch_decode_two_rows", {})
+    if (decode.get("impl", {}).get("function") != q.get("function")
+            or decode.get("quant", {}).get("weight") != provider.get("quant", {}).get("weight")
+            or decode.get("quant", {}).get("activation") != provider.get("quant", {}).get("activation")
+            or decode.get("quant", {}).get("output") != provider.get("quant", {}).get("output")
+            or binding.get("decode_provider_id") != selected
+            or binding.get("decode_function") != q.get("function")
+            or binding.get("numerical_contract") != provider.get("numerical_contract")
+            or binding.get("rows") != 2):
+        return None
+    function = binding.get("function")
     if not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", str(function or "")):
         return None
-    max_input_dim = matches[0].get("max_input_dim")
+    max_input_dim = binding.get("max_input_dim")
     if not isinstance(max_input_dim, int) or max_input_dim <= 0 or input_dim > max_input_dim:
         return None
     return {

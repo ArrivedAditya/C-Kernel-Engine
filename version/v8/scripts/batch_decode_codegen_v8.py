@@ -59,20 +59,25 @@ CK_EXPORT int ck_model_decode_batch2(const CKModelBatchDecodeRowV8 *rows,
                                 g_model->bump, g_model->bump_size) != 0 ||
         ck_batch_ranges_overlap(rows[0].logits, output_bytes,
                                 rows[1].logits, output_bytes) != 0) return -2;
+    for (size_t j = 0; j < 3; ++j) {{
+        CKSequenceStateV8 *live = &g_sequence_states[j];
+        if (!live->occupied) continue;
+        if (ck_batch_ranges_overlap(workspace, {total}u, live->kv,
+                                    (size_t)KV_CACHE_SIZE) != 0 ||
+            ck_batch_ranges_overlap(rows, 2 * sizeof(*rows), live->kv,
+                                    (size_t)KV_CACHE_SIZE) != 0 ||
+            ck_batch_ranges_overlap(rows[0].logits, output_bytes, live->kv,
+                                    (size_t)KV_CACHE_SIZE) != 0 ||
+            ck_batch_ranges_overlap(rows[1].logits, output_bytes, live->kv,
+                                    (size_t)KV_CACHE_SIZE) != 0) return -2;
+    }}
     for (size_t i = 0; i < 2; ++i) {{
-        if (ck_batch_ranges_overlap(workspace, {total}u, states[i]->kv,
-                                    (size_t)KV_CACHE_SIZE) != 0 ||
-            ck_batch_ranges_overlap(rows, 2 * sizeof(*rows), states[i]->kv,
-                                    (size_t)KV_CACHE_SIZE) != 0 ||
+        if (
             ck_batch_ranges_overlap(rows[i].logits, output_bytes, rows,
                                     2 * sizeof(*rows)) != 0 ||
             ck_batch_ranges_overlap(rows[i].logits, output_bytes, workspace, {total}u) != 0 ||
             ck_batch_ranges_overlap(rows[i].logits, output_bytes, g_model->bump,
-                                    g_model->bump_size) != 0 ||
-            ck_batch_ranges_overlap(rows[i].logits, output_bytes, states[0]->kv,
-                                    (size_t)KV_CACHE_SIZE) != 0 ||
-            ck_batch_ranges_overlap(rows[i].logits, output_bytes, states[1]->kv,
-                                    (size_t)KV_CACHE_SIZE) != 0) return -2;
+                                    g_model->bump_size) != 0) return -2;
     }}
     uint8_t *base = (uint8_t *)workspace;
     float *inputs = (float *)base;

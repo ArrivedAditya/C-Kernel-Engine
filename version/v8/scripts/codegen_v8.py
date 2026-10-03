@@ -2772,6 +2772,13 @@ def main(argv: list[str] | None = None) -> int:
         if generation_policy_api:
             code += "\n\n" + generation_policy_api
 
+    if "CK_EXPORT int ck_model_decode_batch2(" in code:
+        # The compiled batch entry attests the exact generated source prefix.
+        # The appended identity function is excluded to avoid a self-hash.
+        import hashlib
+        source_digest = hashlib.sha256(code.encode("utf-8")).hexdigest()
+        code += ("\n\nCK_EXPORT const char *ck_model_generated_source_sha256(void) {\n"
+                 f'    return "{source_digest}";\n' + "}\n")
     args.output.write_text(code, encoding="utf-8")
     if args.granular_report is not None:
         args.granular_report.parent.mkdir(parents=True, exist_ok=True)

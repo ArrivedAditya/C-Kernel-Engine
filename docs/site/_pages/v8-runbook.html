@@ -1566,13 +1566,17 @@ version/v8/scripts/ck_serve_v8.py "$RUN_DIR" --run "$RUN_DIR" \
         does not cover concurrent calls, recurrent models, cancellation, or throughput.
     </p>
     <p>
-        Run <code>python3 version/v8/scripts/certify_batch_decode_v8.py --bundle BUNDLE</code>
+        Run <code>python3 version/v8/scripts/certify_batch_decode_v8.py --bundle BUNDLE --generated-source MODEL_C</code>
         against a freshly generated eligible bundle. The retained Gemma3-270M Q5_K_M
         report compares full finite logits and complete KV bytes with isolated prefill/decode:
         seven continuations matched exactly across unequal prompts, swapped row order,
         one-row continuation, retired-slot reuse, pre-step cancellation, capacity rejection,
-        and rejected buffer aliases. The report identifies the generated source and loaded
-        artifacts. Its timings are diagnostic workloads, not a speedup measurement. Recurrent
+        and rejected buffer aliases, including a third live sequence arena. Admission now checks
+        the split's crossing values and exact base-pointer expressions, and binds the M=2 provider
+        to the selected decode kernel map. The report identifies actual loaded model, engine, and
+        tokenizer mappings and checks the generated source against the loaded model's source digest.
+        CI compiles and executes a tiny generated-entry fixture and tests rejection after a loaded
+        library pathname is replaced. Its timings are diagnostic workloads, not a speedup measurement. Recurrent
         Qwen, larger artifacts, simultaneous API calls, and HTTP request scheduling remain
         uncertified for this batch entry.
     </p>

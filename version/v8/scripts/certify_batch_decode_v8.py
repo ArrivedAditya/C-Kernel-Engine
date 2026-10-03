@@ -13,8 +13,12 @@ import ctypes
 import hashlib
 import json
 import math
+import sys
 import time
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+from server.serving_bundle import verified_loaded_symbol_backing
 
 
 CAP_BATCH_TWO_ROWS = 1 << 17
@@ -82,9 +86,10 @@ def _bind(model: ctypes.CDLL) -> None:
         ctypes.POINTER(BatchRow), ctypes.c_size_t, ctypes.c_void_p, ctypes.c_size_t]
     model.ck_model_decode_batch2.restype = ctypes.c_int
     model.ck_model_set_cancel_flag.argtypes = [ctypes.POINTER(ctypes.c_int)]
+    model.ck_model_generated_source_sha256.restype = ctypes.c_char_p
 
 
-def certify(bundle: Path) -> dict:
+def certify(bundle: Path, generated_source: Path) -> dict:
     assets = {name: bundle / name for name in (
         "libmodel.so", "libckernel_engine.so", "libckernel_tokenizer.so",
         "weights.bump", "layout_decode.json", "config.json")}
@@ -95,6 +100,22 @@ def certify(bundle: Path) -> dict:
     if model.ck_model_init(str(assets["weights.bump"]).encode()) != 0:
         raise RuntimeError("generated model initialization failed")
     try:
+        loaded = {}
+        for name, symbol in (("libmodel.so", "ck_model_decode_batch2"),
+                             ("libckernel_engine.so", "gemm_nt_q5_1_q8_1_m2"),
+                             ("libckernel_tokenizer.so", "ck_tokenizer_encode")):
+            identity = verified_loaded_symbol_backing(model, symbol, assets[name])
+            if identity["sha256"] != _sha256(assets[name]):
+                raise AssertionError(f"loaded {name} differs from bundle file")
+            loaded[name] = identity
+        source = generated_source.read_bytes()
+        marker = b'\n\nCK_EXPORT const char *ck_model_generated_source_sha256(void) {\n    return "'
+        prefix, found, tail = source.rpartition(marker)
+        claimed = model.ck_model_generated_source_sha256()
+        if (not found or not claimed or
+                tail != claimed + b'";\n}\n' or
+                hashlib.sha256(prefix).hexdigest().encode() != claimed):
+            raise AssertionError("loaded generated source identity mismatch")
         if not int(model.ck_model_get_capabilities()) & CAP_BATCH_TWO_ROWS:
             raise AssertionError("generated model did not advertise two-row decode")
         vocab = int(model.ck_model_get_vocab_size())
@@ -220,6 +241,18 @@ def certify(bundle: Path) -> dict:
             prefill(TOKENS_A[:2])
             activate("b")
             prefill(TOKENS_B[:1])
+            # The default sequence is a valid participant, but B is an idle
+            # live arena for this probe. Its bytes must never be workspace.
+            idle_kv = kv_digest()
+            idle_outputs = [(ctypes.c_float * vocab)() for _ in range(2)]
+            idle_rows = (BatchRow * 2)(
+                BatchRow(default, TOKENS_C[0], 2, 0, 1, idle_outputs[0]),
+                BatchRow(handles["a"], TOKENS_A[2], 2, 1, 1, idle_outputs[1]),
+            )
+            idle_address = (ctypes.addressof(arenas["b"]) + kv_alignment.value - 1) & ~(kv_alignment.value - 1)
+            if model.ck_model_decode_batch2(idle_rows, 2, ctypes.c_void_p(idle_address),
+                                            work_bytes) != -2 or kv_digest() != idle_kv:
+                raise AssertionError("nonparticipating live KV arena alias was accepted or modified")
             for name, index, result in zip(
                 ("a", "b"), (2, 1), batch((("a", 2), ("b", 1)))):
                 compare(name, index, result)
@@ -299,6 +332,8 @@ def certify(bundle: Path) -> dict:
         "kv_bytes_per_sequence": kv_bytes.value,
         "batch_workspace_bytes": work_bytes.value,
         "artifacts": {name: _sha256(path) for name, path in assets.items()},
+        "loaded_libraries": loaded,
+        "loaded_generated_source_prefix_sha256": claimed.decode(),
     }
 
 
@@ -306,12 +341,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bundle", type=Path, required=True)
     parser.add_argument("--report", type=Path)
-    parser.add_argument("--generated-source", type=Path,
-                        help="retain the exact generated C source hash for this build")
+    parser.add_argument("--generated-source", type=Path, required=True,
+                        help="C source whose prefix digest must match the loaded generated-library symbol")
     args = parser.parse_args()
-    result = certify(args.bundle.resolve())
-    if args.generated_source:
-        result["generated_source_sha256"] = _sha256(args.generated_source.resolve())
+    result = certify(args.bundle.resolve(), args.generated_source.resolve())
+    result["generated_source_sha256"] = _sha256(args.generated_source.resolve())
     body = json.dumps(result, indent=2) + "\n"
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)
