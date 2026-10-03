@@ -6,6 +6,7 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 sys.path.insert(
@@ -262,6 +263,27 @@ def test_chat_completions_rejects_lossy_or_unsupported_inputs():
     assert "unknown tool_call_id" in unknown.json()["detail"]
 
 
+def test_named_tool_result_matches_its_call_id():
+    from ck_chat_completions_v8 import _responses_input
+    from server.schemas.chat import CreateChatCompletionRequest
+
+    base = {"model": "qwen38-local", "messages": [
+        {"role": "assistant", "tool_calls": [{"id": "call_1", "type": "function",
+            "function": {"name": "view_file", "arguments": '{"AbsolutePath":"/tmp/x"}'}}]},
+        {"role": "tool", "name": "view_file", "tool_call_id": "call_1", "content": "contents"},
+    ]}
+    items = _responses_input(CreateChatCompletionRequest.model_validate(base))
+    assert items[-1] == {"type": "function_call_output", "call_id": "call_1", "output": "contents"}
+
+    base["messages"][-1]["name"] = "run_command"
+    with pytest.raises(Exception, match="does not match tool_call_id"):
+        _responses_input(CreateChatCompletionRequest.model_validate(base))
+
+    base["messages"][-1] = {"role": "user", "name": "someone", "content": "x"}
+    with pytest.raises(Exception, match="supported only for tool results"):
+        _responses_input(CreateChatCompletionRequest.model_validate(base))
+
+
 def test_non_stream_runtime_failure_is_not_a_successful_completion():
     client, _ = make_client(error=RuntimeError("native failure"))
     response = client.post(
@@ -306,6 +328,38 @@ def test_chat_rejects_output_budget_larger_than_loaded_context():
         },
     )
     assert valid.status_code == 200
+
+
+def test_explicit_request_output_cap_accepts_large_client_upper_bound():
+    class BudgetSession(FakeSession):
+        seen_max_tokens = None
+
+        def generate(self, system, prompt, *, on_token, **kwargs):
+            self.seen_max_tokens = kwargs["max_tokens"]
+            return super().generate(system, prompt, on_token=on_token, **kwargs)
+
+    session = BudgetSession()
+    app = create_app(
+        session, model="qwen38-local", context_length=2048,
+        chat_template=TOOL_TEMPLATE, request_output_cap=128, viz=False,
+    )
+    client = TestClient(app)
+    response = client.post("/v1/chat/completions", json={
+        "model": "qwen38-local", "messages": [{"role": "user", "content": "hello"}],
+        "max_completion_tokens": 65535,
+    })
+    assert response.status_code == 200, response.text
+    assert session.seen_max_tokens == 128
+    direct = client.post("/v1/responses", json={
+        "model": "qwen38-local", "input": "hello", "max_output_tokens": 65535,
+    })
+    assert direct.status_code == 200, direct.text
+    assert direct.json()["max_output_tokens"] == 128
+    assert client.get("/v1/cke/loaded-identity").status_code == 404
+
+    with pytest.raises(ValueError, match="request_output_cap"):
+        create_app(session, model="qwen38-local", context_length=128,
+                   chat_template=TOOL_TEMPLATE, request_output_cap=128)
 
 
 def test_chat_rejects_rendered_prompt_plus_output_overflow():

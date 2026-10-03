@@ -25,11 +25,11 @@ def _message_text(content: Any) -> str:
 
 def _responses_input(body: CreateChatCompletionRequest) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
-    known_calls: set[str] = set()
+    known_calls: dict[str, str] = {}
     for message in body.messages:
-        if message.name:
+        if message.name and message.role != "tool":
             raise HTTPException(
-                status_code=422, detail="Named Chat Completions messages are unsupported"
+                status_code=422, detail="Named Chat Completions messages are supported only for tool results"
             )
         if message.reasoning or message.reasoning_content:
             raise HTTPException(
@@ -45,7 +45,7 @@ def _responses_input(body: CreateChatCompletionRequest) -> list[dict[str, Any]]:
                     raise HTTPException(
                         status_code=400, detail=f"Duplicate tool call id {call.id!r}"
                     )
-                known_calls.add(call.id)
+                known_calls[call.id] = call.function.name
                 items.append(
                     {
                         "type": "function_call",
@@ -67,6 +67,11 @@ def _responses_input(body: CreateChatCompletionRequest) -> list[dict[str, Any]]:
                         "Tool message references unknown tool_call_id "
                         f"{message.tool_call_id!r}"
                     ),
+                )
+            if message.name and message.name != known_calls[message.tool_call_id]:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Tool message name does not match tool_call_id {message.tool_call_id!r}",
                 )
             items.append(
                 {

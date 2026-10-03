@@ -9,7 +9,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-PROTOCOLS = frozenset({"none", "tagged_json", "bare_json", "qwen_xml", "qwen_code_xml", "qwen_code_xml_raw_v2"})
+PROTOCOLS = frozenset({"none", "tagged_json", "bare_json", "qwen_xml", "qwen_code_xml", "qwen_code_xml_raw_v2", "gemma4_dsl_v1"})
 SCHEMA = "cke.resolved_serving.v1"
 
 
@@ -88,6 +88,12 @@ def load_resolved_serving(run_dir: Path, *, document: dict[str, Any] | None = No
         variant = profile.get("variants", {}).get(doc.get("variant"))
         if not isinstance(variant, dict) or variant.get("output_protocol") != doc["output_protocol"]:
             raise ValueError("serving variant/protocol mismatch")
+        if doc.get("stop_text", []) != variant.get("stop_text", []):
+            raise ValueError("serving variant/stop policy mismatch")
+        stop_text = doc.get("stop_text", [])
+        if (not isinstance(stop_text, list) or any(not isinstance(item, str) or not item for item in stop_text)
+                or len(set(stop_text)) != len(stop_text)):
+            raise ValueError("invalid serving stop policy")
         if profile.get("renderer") != doc["renderer"] or profile.get("input_modalities") != doc["input_modalities"]:
             raise ValueError("serving profile capabilities mismatch")
         capacity = layout.get("config", {}).get("context_length")

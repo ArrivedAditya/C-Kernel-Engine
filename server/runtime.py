@@ -124,7 +124,7 @@ def load_tool_protocol(
         raise ValueError(f"invalid tool protocol sidecar schema: {path}")
     protocol = document.get("protocol")
     if protocol not in {
-        "tagged_json", "bare_json", "qwen_xml", "qwen_code_xml", "qwen_code_xml_raw_v2",
+        "tagged_json", "bare_json", "qwen_xml", "qwen_code_xml", "qwen_code_xml_raw_v2", "gemma4_dsl_v1",
     }:
         raise ValueError(f"unsupported tool protocol {protocol!r} in {path}")
     selected = None
