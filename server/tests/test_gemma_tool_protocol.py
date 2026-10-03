@@ -43,6 +43,15 @@ def test_gemma_rejects_malformed_or_nonterminal_calls(source):
         parse_gemma_tool_calls(source)
 
 
+@pytest.mark.parametrize("number", ["1e999", "9" * 4400, "2" * 129])
+def test_gemma_rejects_nonfinite_or_oversized_numbers_at_any_depth(number):
+    for arguments in (f"{{n:{number}}}", f"{{nested:[{{n:{number}}}]}}"):
+        with pytest.raises(GemmaToolSyntaxError):
+            parse_gemma_tool_calls(
+                f"<|tool_call>call:probe{arguments}<tool_call|>"
+            )
+
+
 def test_gemma_multiple_calls_and_declared_name_validation():
     calls = parse_gemma_tool_calls(CALL.replace("<|tool_response>", "") * 2 + "<|tool_response>")
     assert len(calls) == 2
@@ -138,3 +147,41 @@ def test_gemma_streamed_call_split_at_delimiters():
                event.get("item", {}).get("type") == "function_call" for event in events)
     assert any(event["type"] == "response.completed" for event in events)
     assert not any("<|tool_call>" in json.dumps(event) for event in events)
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("number", ["1e999", "9" * 4400])
+def test_gemma_http_rejects_bad_number_then_serves_valid_call(stream, number):
+    bad = f"<|tool_call>call:read_file{{n:{number}}}<tool_call|>"
+    session = _Session()
+    session.outputs = iter([bad, CALL])
+    client = TestClient(create_app(
+        session, model="gemma-test", chat_template="{{ messages[-1].content }}",
+        tool_protocol="gemma4_dsl_v1",
+    ))
+    request = {"model": "gemma-test", "input": "read it", "tools": [TOOL],
+               "stream": stream}
+    first = client.post("/v1/responses", json=request)
+    assert first.status_code == 200, first.text
+    if stream:
+        events = [json.loads(line[6:]) for line in first.text.splitlines()
+                  if line.startswith("data: ")]
+        assert any(event["type"] == "response.failed" for event in events)
+        assert not any(event.get("item", {}).get("type") == "function_call"
+                       for event in events)
+    else:
+        assert first.json()["status"] == "failed"
+        assert not any(item["type"] == "function_call"
+                       for item in first.json()["output"])
+    follow_up = client.post("/v1/responses", json=request)
+    assert follow_up.status_code == 200, follow_up.text
+    if stream:
+        events = [json.loads(line[6:]) for line in follow_up.text.splitlines()
+                  if line.startswith("data: ")]
+        assert any(event["type"] == "response.output_item.done"
+                   and event.get("item", {}).get("type") == "function_call"
+                   for event in events)
+    else:
+        assert follow_up.json()["status"] == "completed"
+        assert any(item["type"] == "function_call"
+                   for item in follow_up.json()["output"])

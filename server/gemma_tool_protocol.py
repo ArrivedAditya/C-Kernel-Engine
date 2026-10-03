@@ -1,6 +1,7 @@
 """Strict parser for the Gemma 4 publisher's delimited tool-call grammar."""
 from __future__ import annotations
 
+import math
 import re
 from typing import Any
 
@@ -12,6 +13,7 @@ class GemmaToolSyntaxError(ValueError):
 _NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]*")
 _NUMBER = re.compile(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?")
 _STRING = '<|"|>'
+_MAX_NUMBER_CHARS = 128
 
 
 class _Reader:
@@ -90,7 +92,15 @@ class _Reader:
             raise GemmaToolSyntaxError(f"expected delimited value at offset {self.pos}")
         self.pos = match.end()
         number = match.group()
-        return float(number) if any(c in number for c in ".eE") else int(number)
+        if len(number) > _MAX_NUMBER_CHARS:
+            raise GemmaToolSyntaxError("tool numeric literal exceeds parser limit")
+        try:
+            value = float(number) if any(c in number for c in ".eE") else int(number)
+        except (OverflowError, ValueError) as exc:
+            raise GemmaToolSyntaxError("invalid tool numeric literal") from exc
+        if isinstance(value, float) and not math.isfinite(value):
+            raise GemmaToolSyntaxError("nonfinite tool numeric literal")
+        return value
 
 
 def parse_gemma_tool_calls(text: str) -> list[dict[str, Any]]:
