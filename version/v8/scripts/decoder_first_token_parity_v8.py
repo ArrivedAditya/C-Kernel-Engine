@@ -88,6 +88,15 @@ def _load_bridge_report(path: Path) -> dict[str, Any]:
     return payload
 
 
+def _prefix_decode_policy(bridge_report: dict[str, Any] | None) -> str:
+    if bridge_report is None:
+        return "causal_mixed_prefix"
+    policy = bridge_report.get("prefix_decode_policy")
+    if not isinstance(policy, str) or policy not in {"causal_mixed_prefix", "non_causal_visual_chunk"}:
+        raise ValueError("bridge report requires a supported prefix_decode_policy")
+    return policy
+
+
 def _verify_runtime_memory_contracts(runtime: dict[str, Any]) -> dict[str, Any]:
     """Verify planner-produced write extents without recomputing kernel sizes."""
     phase_paths = {
@@ -1643,6 +1652,7 @@ def _capture_ck_dump(
     tokens_before: list[int] | None = None,
     prefix_grid: tuple[int, int] | None = None,
     prefix_text_pos: int | None = None,
+    prefix_decode_policy: str = "causal_mixed_prefix",
     ck_strict_parity: bool = True,
 ) -> dict[str, Any]:
     target = dump_dir / "dump.bin"
@@ -1679,6 +1689,7 @@ def _capture_ck_dump(
             prefix_embed_dim=prefix_row_dim,
             prefix_grid=prefix_grid,
             prefix_text_pos=prefix_text_pos,
+            prefix_decode_policy=prefix_decode_policy,
             strict_parity=ck_strict_parity,
         )
         fallback = fallback_dir / "dump.bin"
@@ -1726,6 +1737,7 @@ def _capture_dump_compare(
     dump_rtol: float,
     prefix_grid: tuple[int, int] | None = None,
     prefix_text_pos: int | None = None,
+    prefix_decode_policy: str = "causal_mixed_prefix",
     ck_strict_parity: bool = True,
     llama_prefix_decode_mode: str = "batched",
     llama_decode_mode: str = "sequential",
@@ -1786,6 +1798,7 @@ def _capture_dump_compare(
             tokens_before=tokens_before,
             prefix_grid=prefix_grid,
             prefix_text_pos=prefix_text_pos,
+            prefix_decode_policy=prefix_decode_policy,
             ck_strict_parity=ck_strict_parity,
         )
     finally:
@@ -1957,6 +1970,7 @@ def main(argv: list[str] | None = None) -> int:
         os.environ["OMP_NUM_THREADS"] = str(int(args.threads))
 
     bridge_report = _load_bridge_report(args.bridge_report.resolve()) if args.bridge_report is not None else None
+    prefix_decode_policy = _prefix_decode_policy(bridge_report)
     if args.gguf is not None:
         gguf_path = args.gguf.resolve()
     elif bridge_report is not None:
@@ -2107,6 +2121,7 @@ def main(argv: list[str] | None = None) -> int:
             dump_rtol=float(args.dump_rtol),
             prefix_grid=resolved_prefix_grid,
             prefix_text_pos=resolved_prefix_text_pos,
+            prefix_decode_policy=prefix_decode_policy,
             ck_strict_parity=bool(args.ck_strict_parity),
         )
     else:
@@ -2119,6 +2134,7 @@ def main(argv: list[str] | None = None) -> int:
             prefix_embed_dim=prefix_row_dim,
             prefix_grid=resolved_prefix_grid,
             prefix_text_pos=resolved_prefix_text_pos,
+            prefix_decode_policy=prefix_decode_policy,
             strict_parity=bool(args.ck_strict_parity),
         )
 
@@ -2151,6 +2167,7 @@ def main(argv: list[str] | None = None) -> int:
         "prompt_tokens_before_image": [int(tok) for tok in token_ids_before],
         "prompt_tokens_after_image": [int(tok) for tok in token_ids_after],
         "multimodal_prompt_segmented": bool(prompt_meta.get("uses_image_chunks")),
+        "prefix_decode_policy": prefix_decode_policy,
         "prefix": {
             "source": prefix_source,
             "tokens": int(prefix_tokens),
@@ -2196,6 +2213,8 @@ def main(argv: list[str] | None = None) -> int:
         },
         "compare": cmp,
         "notes": [
+            "Separate prefix files compare image-to-logit behavior with encoder producer evidence checked; this is not decoder-arithmetic parity."
+            if prefix_provenance is not None else
             "Separate prefix files compare image-to-logit behavior; their producers are not verified by this report, and this is not decoder-arithmetic parity."
             if separate_prefixes else
             "This is decoder-only parity: identical token IDs and prefix into llama.cpp and the generated v8 runtime.",
