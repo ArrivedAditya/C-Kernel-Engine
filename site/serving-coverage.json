@@ -1,11 +1,11 @@
 {
   "chat_scope_counts": {
-    "component": 19,
+    "component": 23,
     "linked_chat_declaration": 3,
     "text_decoder_candidate": 15,
     "unassessed": 4
   },
-  "circuit_count": 41,
+  "circuit_count": 45,
   "circuit_linked_count": 3,
   "rows": [
     {
@@ -401,7 +401,7 @@
       "chat_scope_reason": "circuit references a resolved serving profile",
       "circuit": "gemma4",
       "circuit_path": "version/v8/circuits/gemma4.json",
-      "circuit_sha256": "14717521207c8dc745729074c08c1d556b63e8f8fab54b0be4cf2b6ccbb55f6d",
+      "circuit_sha256": "49f0ee9242f2546b4a352f8d3a5e4fbb02ff2238129b3ea159d1865d77f85073",
       "evidence": {
         "cancellation_recovery": "not_assessed",
         "exact_token_ids": "not_assessed",
@@ -417,9 +417,9 @@
         "text"
       ],
       "output_protocol": "none",
-      "profile_id": "publisher-chat-v1",
-      "profile_ref": "serving_profiles/publisher_chat_v1.json",
-      "profile_sha256": "200fc72933f240c3cd58f936e5d793c87020828561fd0a8669bb8bbc520eb092",
+      "profile_id": "gemma4-v1",
+      "profile_ref": "serving_profiles/gemma4_v1.json",
+      "profile_sha256": "5eba14297d69f16c3456efe5ac5a5eddafe4c9d18716e9ef654f6c8e8411ac7b",
       "publisher_template": {
         "source": "publisher",
         "variant": "default"
@@ -432,7 +432,7 @@
         "source": "publisher",
         "variant": "default"
       },
-      "variant": "publisher"
+      "variant": "chat"
     },
     {
       "artifact": {
@@ -673,6 +673,120 @@
       },
       "chat_scope": "component",
       "chat_scope_reason": "no independent text-decoder serving path declared",
+      "circuit": "kokoro_decoder_complete_bounded",
+      "circuit_path": "version/v8/circuits/kokoro_decoder_complete_bounded.json",
+      "circuit_sha256": "0bbd88616d20696006d2258e24ae284bbf8c1bd10a30a9146796e03cb86c5207",
+      "evidence": {
+        "cancellation_recovery": "not_assessed",
+        "exact_token_ids": "not_assessed",
+        "generated_runtime": "not_assessed",
+        "harness_task": "not_assessed",
+        "loaded_artifact_identity": "not_assessed",
+        "rendered_prompt": "not_assessed",
+        "tool_protocol": "not_assessed",
+        "tool_round_trip": "not_assessed"
+      },
+      "family": "bounded_graph",
+      "input_modalities": null,
+      "output_protocol": null,
+      "profile_id": null,
+      "profile_ref": null,
+      "profile_sha256": null,
+      "publisher_template": null,
+      "reasoning_protocol": null,
+      "renderer": null,
+      "serving_declaration": "missing",
+      "stop_policy": null,
+      "tool_template": null,
+      "variant": null
+    },
+    {
+      "artifact": {
+        "conversion_to_circuit": null,
+        "quantization": null,
+        "repository": null,
+        "resolved_bundle_identity": null,
+        "revision": null,
+        "tokenizer_sha256": null
+      },
+      "chat_scope": "component",
+      "chat_scope_reason": "no independent text-decoder serving path declared",
+      "circuit": "kokoro_decoder_encode_bounded",
+      "circuit_path": "version/v8/circuits/kokoro_decoder_encode_bounded.json",
+      "circuit_sha256": "5c1f7cf454a665638b3fffc25acc6cae91f18a8325367a7e508971ad0dbe959b",
+      "evidence": {
+        "cancellation_recovery": "not_assessed",
+        "exact_token_ids": "not_assessed",
+        "generated_runtime": "not_assessed",
+        "harness_task": "not_assessed",
+        "loaded_artifact_identity": "not_assessed",
+        "rendered_prompt": "not_assessed",
+        "tool_protocol": "not_assessed",
+        "tool_round_trip": "not_assessed"
+      },
+      "family": "bounded_graph",
+      "input_modalities": null,
+      "output_protocol": null,
+      "profile_id": null,
+      "profile_ref": null,
+      "profile_sha256": null,
+      "publisher_template": null,
+      "reasoning_protocol": null,
+      "renderer": null,
+      "serving_declaration": "missing",
+      "stop_policy": null,
+      "tool_template": null,
+      "variant": null
+    },
+    {
+      "artifact": {
+        "conversion_to_circuit": null,
+        "quantization": null,
+        "repository": null,
+        "resolved_bundle_identity": null,
+        "revision": null,
+        "tokenizer_sha256": null
+      },
+      "chat_scope": "component",
+      "chat_scope_reason": "no independent text-decoder serving path declared",
+      "circuit": "kokoro_decoder_ingress_bounded",
+      "circuit_path": "version/v8/circuits/kokoro_decoder_ingress_bounded.json",
+      "circuit_sha256": "8206b104e467f6577dcfa2925a24641b4a918d842736b5d71f16d2685d75a8e0",
+      "evidence": {
+        "cancellation_recovery": "not_assessed",
+        "exact_token_ids": "not_assessed",
+        "generated_runtime": "not_assessed",
+        "harness_task": "not_assessed",
+        "loaded_artifact_identity": "not_assessed",
+        "rendered_prompt": "not_assessed",
+        "tool_protocol": "not_assessed",
+        "tool_round_trip": "not_assessed"
+      },
+      "family": "bounded_graph",
+      "input_modalities": null,
+      "output_protocol": null,
+      "profile_id": null,
+      "profile_ref": null,
+      "profile_sha256": null,
+      "publisher_template": null,
+      "reasoning_protocol": null,
+      "renderer": null,
+      "serving_declaration": "missing",
+      "stop_policy": null,
+      "tool_template": null,
+      "variant": null
+    },
+    {
+      "artifact": {
+        "conversion_to_circuit": null,
+        "quantization": null,
+        "repository": null,
+        "resolved_bundle_identity": null,
+        "revision": null,
+        "tokenizer_sha256": null
+      },
+      "chat_scope": "component",
+      "chat_scope_reason": "no independent text-decoder serving path declared",
       "circuit": "kokoro_duration_expansion_bounded",
       "circuit_path": "version/v8/circuits/kokoro_duration_expansion_bounded.json",
       "circuit_sha256": "73c864153e57daf10bd18ba8f49fee04ef3fba4a5f78afa5b1e81e181bf397e0",
@@ -714,6 +828,44 @@
       "circuit": "kokoro_duration_predictor_bounded",
       "circuit_path": "version/v8/circuits/kokoro_duration_predictor_bounded.json",
       "circuit_sha256": "b4ab3c1eee230cda5ba758ba8c02718d35eb28beceb418556462a64e4755e0ee",
+      "evidence": {
+        "cancellation_recovery": "not_assessed",
+        "exact_token_ids": "not_assessed",
+        "generated_runtime": "not_assessed",
+        "harness_task": "not_assessed",
+        "loaded_artifact_identity": "not_assessed",
+        "rendered_prompt": "not_assessed",
+        "tool_protocol": "not_assessed",
+        "tool_round_trip": "not_assessed"
+      },
+      "family": "bounded_graph",
+      "input_modalities": null,
+      "output_protocol": null,
+      "profile_id": null,
+      "profile_ref": null,
+      "profile_sha256": null,
+      "publisher_template": null,
+      "reasoning_protocol": null,
+      "renderer": null,
+      "serving_declaration": "missing",
+      "stop_policy": null,
+      "tool_template": null,
+      "variant": null
+    },
+    {
+      "artifact": {
+        "conversion_to_circuit": null,
+        "quantization": null,
+        "repository": null,
+        "resolved_bundle_identity": null,
+        "revision": null,
+        "tokenizer_sha256": null
+      },
+      "chat_scope": "component",
+      "chat_scope_reason": "no independent text-decoder serving path declared",
+      "circuit": "kokoro_generator_stage0_bounded",
+      "circuit_path": "version/v8/circuits/kokoro_generator_stage0_bounded.json",
+      "circuit_sha256": "de2dd2fc56dfba1d60ee7a3d1122b1ddf2deeb5fc98aeed294163de62e9cead1",
       "evidence": {
         "cancellation_recovery": "not_assessed",
         "exact_token_ids": "not_assessed",

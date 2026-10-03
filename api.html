@@ -9112,7 +9112,7 @@ test_rope.py::TestRoPECache::test_cache_values</p>
 
 
 <details open>
-    <summary>Other Functions (1436)</summary>
+    <summary>Other Functions (1442)</summary>
     <div class="accordion-content">
 
 
@@ -9570,6 +9570,16 @@ test_multi_layer_parity.py::TestMultiLayerParity::test_residual_add</p>
 
         <div class="card" style="margin-bottom: 1rem;">
             <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem;">
+                <code style="font-size: 1rem; background: none; color: var(--orange); padding: 0;">audio_concat_channels_checked_f32</code>
+                <span class="badge badge-green" style="margin-left: 0.5rem;">Forward</span>
+            </div>
+            <pre style="margin: 0.5rem 0; font-size: 0.8rem; overflow-x: auto;">int audio_concat_channels_checked_f32(const float * left, size_t left_elements, size_t left_stride, const float * right, size_t right_elements, size_t right_stride, float * output, size_t output_elements, size_t output_stride, size_t left_channels, size_t right_channels, size_t output_channels, size_t frames)</pre>
+            <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;"></p>
+        </div>
+
+
+        <div class="card" style="margin-bottom: 1rem;">
+            <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem;">
                 <code style="font-size: 1rem; background: none; color: var(--orange); padding: 0;">audio_conv1d_channel_major_f32</code>
                 <span class="badge badge-green" style="margin-left: 0.5rem;">Forward</span>
             </div>
@@ -9614,6 +9624,26 @@ test_multi_layer_parity.py::TestMultiLayerParity::test_residual_add</p>
                 <span class="badge badge-green" style="margin-left: 0.5rem;">Forward</span>
             </div>
             <pre style="margin: 0.5rem 0; font-size: 0.8rem; overflow-x: auto;">int audio_conv2d_whc_grouped_f32(const float * input, const float * weight, const float * bias, float * output, int input_width, int input_height, int input_channels, int output_channels, int kernel_width, int kernel_height, int stride_width, int stride_height, int padding_width, int padding_height, int groups, int output_width, int output_height)</pre>
+            <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;"></p>
+        </div>
+
+
+        <div class="card" style="margin-bottom: 1rem;">
+            <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem;">
+                <code style="font-size: 1rem; background: none; color: var(--orange); padding: 0;">audio_conv_transpose1d_dense_channel_major_f32_checked</code>
+                <span class="badge badge-green" style="margin-left: 0.5rem;">Forward</span>
+            </div>
+            <pre style="margin: 0.5rem 0; font-size: 0.8rem; overflow-x: auto;">int audio_conv_transpose1d_dense_channel_major_f32_checked(const float * input, size_t input_elements, size_t input_stride, const float * weight, size_t weight_elements, const float * bias, size_t bias_elements, float * output, size_t output_elements, size_t output_stride, float * scratch, size_t scratch_elements, size_t input_channels, size_t output_channels, size_t input_frames, size_t kernel_size, size_t stride, size_t padding, size_t output_padding, size_t output_frames)</pre>
+            <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;"></p>
+        </div>
+
+
+        <div class="card" style="margin-bottom: 1rem;">
+            <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem;">
+                <code style="font-size: 1rem; background: none; color: var(--orange); padding: 0;">audio_conv_transpose1d_dense_f32_workspace</code>
+                <span class="badge badge-green" style="margin-left: 0.5rem;">Forward</span>
+            </div>
+            <pre style="margin: 0.5rem 0; font-size: 0.8rem; overflow-x: auto;">int audio_conv_transpose1d_dense_f32_workspace(size_t output_channels, size_t output_frames, size_t * scratch_elements)</pre>
             <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;"></p>
         </div>
 
@@ -9904,6 +9934,26 @@ test_multi_layer_parity.py::TestMultiLayerParity::test_residual_add</p>
                 <span class="badge badge-green" style="margin-left: 0.5rem;">Forward</span>
             </div>
             <pre style="margin: 0.5rem 0; font-size: 0.8rem; overflow-x: auto;">int audio_scaled_sum_strided_f32_checked(const float * left, size_t left_elements, size_t left_stride, const float * right, size_t right_elements, size_t right_stride, float * output, size_t output_elements, size_t output_stride, size_t rows, size_t columns, float scale)</pre>
+            <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;"></p>
+        </div>
+
+
+        <div class="card" style="margin-bottom: 1rem;">
+            <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem;">
+                <code style="font-size: 1rem; background: none; color: var(--orange); padding: 0;">audio_stft_mag_phase_checked_f32</code>
+                <span class="badge badge-green" style="margin-left: 0.5rem;">Forward</span>
+            </div>
+            <pre style="margin: 0.5rem 0; font-size: 0.8rem; overflow-x: auto;">int audio_stft_mag_phase_checked_f32(const float * samples, size_t samples_capacity, const float * window, size_t window_capacity, const float * cos_table, const float * sin_table, size_t table_capacity, float * output, size_t output_capacity, size_t output_stride, float * scratch, size_t scratch_capacity, size_t samples_count, size_t n_fft, size_t hop, size_t frames)</pre>
+            <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;"></p>
+        </div>
+
+
+        <div class="card" style="margin-bottom: 1rem;">
+            <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem;">
+                <code style="font-size: 1rem; background: none; color: var(--orange); padding: 0;">audio_stft_mag_phase_plan_f32</code>
+                <span class="badge badge-green" style="margin-left: 0.5rem;">Forward</span>
+            </div>
+            <pre style="margin: 0.5rem 0; font-size: 0.8rem; overflow-x: auto;">int audio_stft_mag_phase_plan_f32(size_t samples, size_t n_fft, size_t hop, size_t * frames, size_t * spectral_elements)</pre>
             <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;"></p>
         </div>
 
@@ -15553,6 +15603,16 @@ hugepage_mode
                 <span class="badge badge-green" style="margin-left: 0.5rem;">Forward</span>
             </div>
             <pre style="margin: 0.5rem 0; font-size: 0.8rem; overflow-x: auto;">void ck_true_bpe_set_special_ids(CKTrueBPE * bpe, int32_t unk, int32_t bos, int32_t eos, int32_t pad)</pre>
+            <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;"></p>
+        </div>
+
+
+        <div class="card" style="margin-bottom: 1rem;">
+            <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem;">
+                <code style="font-size: 1rem; background: none; color: var(--orange); padding: 0;">ck_true_bpe_set_suppress_dummy_prefix</code>
+                <span class="badge badge-green" style="margin-left: 0.5rem;">Forward</span>
+            </div>
+            <pre style="margin: 0.5rem 0; font-size: 0.8rem; overflow-x: auto;">void ck_true_bpe_set_suppress_dummy_prefix(CKTrueBPE * bpe, bool suppress)</pre>
             <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;"></p>
         </div>
 
@@ -23754,7 +23814,7 @@ rmsnorm_backward(d_norm_out, input, gamma, rstd_cache, d_input, d_gamma, tokens,
             </div>
             <div style="text-align: right;">
                 <p style="color: #606060; font-size: 0.75rem; margin: 0;">Static docs · C-first execution</p>
-                <p style="color: #606060; font-size: 0.75rem; margin: 0.5rem 0 0 0;">2026-10-01</p>
+                <p style="color: #606060; font-size: 0.75rem; margin: 0.5rem 0 0 0;">2026-10-03</p>
             </div>
         </div>
     </footer>
