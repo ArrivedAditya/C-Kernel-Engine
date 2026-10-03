@@ -422,9 +422,12 @@ class V8NativeBridgeHostTests(unittest.TestCase):
             root = Path(tmpdir)
             selected = root / "selected-engine.so"
             selected.touch()
+            layout_path = root / "layout.json"
+            layout_path.write_text(json.dumps({"config": {"model": "fixture"}}))
             runtime = {
                 "so_path": root / "libencoder_v8.so",
                 "engine_so": str(selected),
+                "layout_path": layout_path,
             }
             sentinel = RuntimeError("loader reached")
             with mock.patch.object(bridge_runner_v8, "_load_encoder_lib", side_effect=sentinel) as loader:
@@ -648,6 +651,34 @@ class V8NativeBridgeHostTests(unittest.TestCase):
 
         self.assertIsNotNone(circuit)
         self.assertEqual(circuit["name"], "cohere_compass")
+
+    def test_prebuilt_qwen_vision_requires_declared_resize_rounding(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="v8_qwen_legacy_runtime_") as tmpdir:
+            runtime = Path(tmpdir)
+            for filename in (
+                "libencoder_v8.so", "libckernel_engine.so", "weights.bump", "weights_manifest.map",
+            ):
+                (runtime / filename).touch()
+            layout_path = runtime / "layout.json"
+            layout_path.write_text(json.dumps({"config": {"model": "qwen3_vl_vision", "embed_dim": 1152}}))
+            with self.assertRaisesRegex(ValueError, "regenerate the encoder artifact"):
+                bridge_runner_v8._load_prebuilt_encoder_runtime(runtime)
+            layout_path.write_text(json.dumps({
+                "config": {
+                    "model": "qwen3_vl_vision", "embed_dim": 1152,
+                    "image_resize_rounding_policy": "half_away_from_zero",
+                },
+            }))
+            self.assertEqual(bridge_runner_v8._load_prebuilt_encoder_runtime(runtime)["embed_dim"], 1152)
+
+    def test_qwen_encoder_execution_rejects_legacy_layout_before_library_load(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="v8_qwen_legacy_encoder_") as tmpdir:
+            layout_path = Path(tmpdir) / "layout.json"
+            layout_path.write_text(json.dumps({"config": {"model": "qwen3_vl_vision"}}))
+            with mock.patch.object(bridge_runner_v8, "_load_encoder_lib") as load_library:
+                with self.assertRaisesRegex(ValueError, "regenerate the encoder artifact"):
+                    bridge_runner_v8._run_encoder({"layout_path": layout_path}, "gradient")
+                load_library.assert_not_called()
 
     def test_unknown_prebuilt_runtime_pair_keeps_safe_fallback(self) -> None:
         with tempfile.TemporaryDirectory(prefix="v8_comp_runtime_unknown_") as tmpdir:
