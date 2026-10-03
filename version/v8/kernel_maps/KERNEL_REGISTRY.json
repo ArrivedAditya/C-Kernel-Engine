@@ -17965,7 +17965,8 @@
         "unit": [
           "tests/test_v8_audio_harmonic_source_oracle.py",
           "tests/test_v8_audio_harmonic_source_generated.py",
-          "tests/test_v8_audio_source_projection_generated.py"
+          "tests/test_v8_audio_source_projection_generated.py",
+          "tests/test_v8_kokoro_generated_f0_source.py"
         ],
         "oracle": "Direct pinned Kokoro 0.9.4 / PyTorch 2.8 full-model SineGen hook with captured Gaussian excitation"
       },
@@ -44434,7 +44435,8 @@
           "tests/test_v8_kokoro_generated_encoder.py",
           "tests/test_v8_kokoro_generated_decoder_encode.py",
           "tests/test_v8_kokoro_generated_decoder_complete.py",
-          "tests/test_v8_audio_source_projection_generated.py"
+          "tests/test_v8_audio_source_projection_generated.py",
+          "tests/test_v8_kokoro_generated_f0_source.py"
         ],
         "oracle": "Independent PyTorch torch.nn.functional.linear at small, pinned Kokoro projection and Q/K/V shapes, and direct full-model decoder style and source hooks; checked strided rows, bounded per-call capacities, and connected generated graphs"
       },
@@ -74590,7 +74592,8 @@
       "tests": {
         "unit": [
           "tests/test_v8_audio_tanh_checked_oracle.py",
-          "tests/test_v8_audio_source_projection_generated.py"
+          "tests/test_v8_audio_source_projection_generated.py",
+          "tests/test_v8_kokoro_generated_f0_source.py"
         ],
         "oracle": "Independent PyTorch tanh with finite, stride, bounds, and generated composition cases"
       },
