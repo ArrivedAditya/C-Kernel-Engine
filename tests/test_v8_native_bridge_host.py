@@ -2453,6 +2453,64 @@ class V8NativeBridgeHostTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "invalid GGUF magic"):
                 bridge_runner_v8._gguf_declared_context_limit(gguf)
 
+    def test_prebuilt_decoder_context_preflight_uses_packaged_capacity(self) -> None:
+        class FakeTokenizer:
+            def encode(self, text: str) -> list[int]:
+                return [11, 22]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime = Path(tmpdir) / "decoder"
+            workdir = Path(tmpdir) / "work"
+            for compiled_limit, operator_limit in ((50, None), (100, 50)):
+                contract = {"context_length": compiled_limit, "model_context_limit": 128}
+                with mock.patch.object(
+                    bridge_runner_v8, "_load_prebuilt_decoder_runtime", return_value=contract
+                ) as load_runtime, mock.patch.object(
+                    bridge_runner_v8, "_load_prebuilt_decoder_tokenizer", return_value=FakeTokenizer()
+                ), mock.patch.object(
+                    bridge_runner_v8, "_infer_prebuilt_composition_circuit", return_value=None
+                ), mock.patch.object(
+                    bridge_runner_v8, "_json_read", return_value={}
+                ), mock.patch.object(
+                    bridge_runner_v8, "_ensure_engine_lib"
+                ), mock.patch.object(
+                    bridge_runner_v8, "_run_decoder"
+                ) as run_decoder:
+                    argv = [
+                        "--decoder-runtime", str(runtime),
+                        "--workdir", str(workdir),
+                        "--prompt", "Describe the image.",
+                        "--synthetic-prefix-tokens", "40",
+                    ]
+                    if operator_limit is not None:
+                        argv.extend(["--decoder-context-cap", str(operator_limit)])
+                    with self.assertRaisesRegex(ValueError, "decoder context exceeds the declared limit"):
+                        bridge_runner_v8.main(argv)
+                    load_runtime.assert_called_once_with(runtime)
+                    run_decoder.assert_not_called()
+
+    def test_prebuilt_decoder_rejects_loaded_context_mismatch(self) -> None:
+        runtime = {
+            "runtime_dir": Path("/unused"),
+            "so_path": Path("/unused/libmodel.so"),
+            "engine_so": Path("/unused/libckernel_engine.so"),
+            "context_length": 64,
+        }
+        library = mock.Mock()
+        library.ck_model_get_context_window.return_value = 32
+        with mock.patch.object(
+            bridge_runner_v8, "_load_decoder_lib", return_value=library
+        ):
+            with self.assertRaisesRegex(RuntimeError, "loaded=32 packaged=64"):
+                bridge_runner_v8._run_decoder(runtime, array("f"), 0, [])
+        library.ck_model_init_with_manifest.assert_not_called()
+        library.ck_model_get_context_window = None
+        with mock.patch.object(
+            bridge_runner_v8, "_load_decoder_lib", return_value=library
+        ):
+            with self.assertRaisesRegex(RuntimeError, "no context-window ABI"):
+                bridge_runner_v8._run_decoder(runtime, array("f"), 0, [])
+
     def test_bridge_runner_encoder_path_delays_dim_check_until_decoder_ready(self) -> None:
         with tempfile.TemporaryDirectory(prefix="v8_native_bridge_encoder_") as tmpdir:
             tmp = Path(tmpdir)
