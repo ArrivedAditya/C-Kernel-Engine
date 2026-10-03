@@ -38,8 +38,9 @@ version/v8/scripts/cks-v8-run run \
   --generate-visualizer
 ```
 
-`--temperature 0.0` selects deterministic greedy decoding (the default is 0.7),
-so the first run is exactly repeatable. Omit `--prompt` for an interactive chat
+`--temperature 0.0` selects greedy decoding and removes sampling randomness (the
+default is 0.7). Exact repeatability additionally depends on fixed artifacts and
+deterministic runtime execution. Omit `--prompt` for an interactive chat
 session.
 
 Use the same command with a local GGUF path or another supported Hugging Face
