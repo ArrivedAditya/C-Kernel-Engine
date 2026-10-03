@@ -140,3 +140,12 @@ def test_matrix_rejects_server_restart_between_passed_steps(tmp_path, monkeypatc
     result = matrix.run(_config(), tmp_path / "matrix")
     assert result["status"] == "fail"
     assert result["steps"][-1]["server_instance_continuity_status"] == "fail"
+
+
+def test_matrix_requires_each_distinct_http_gate():
+    config = _config()
+    rows = [{"client": "qwen-control", "kind": kind, "status": "pass"}
+            for kind in ("plain-chat", "budget-boundary", "lifecycle", "task", "task")]
+    assert matrix._complete(config, rows)
+    rows[2]["kind"] = "plain-chat"
+    assert not matrix._complete(config, rows)

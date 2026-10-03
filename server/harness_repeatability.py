@@ -16,6 +16,7 @@ import signal
 import subprocess
 import sys
 import time
+from collections import Counter
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -214,6 +215,16 @@ def _save(summary: dict, root: Path) -> None:
     temporary.replace(root / "summary.json")
 
 
+def _complete(config: dict, rows: list[dict]) -> bool:
+    expected = Counter()
+    for client in config["clients"]:
+        for kind in ("plain-chat", "budget-boundary", "lifecycle"):
+            expected[(client["name"], kind)] = 1
+        expected[(client["name"], "task")] = config["attempts"]
+    actual = Counter((row.get("client"), row.get("kind")) for row in rows)
+    return actual == expected and all(row.get("status") == "pass" for row in rows)
+
+
 def run(config: dict, root: Path) -> dict:
     config = _validate(config)
     root.mkdir(parents=True, exist_ok=False)
@@ -245,9 +256,7 @@ def run(config: dict, root: Path) -> dict:
                 # automatically submit another request to this endpoint.
                 break
     summary["finished_at_unix"] = time.time()
-    summary["status"] = "pass" if (len(summary["steps"]) == len(config["clients"]) *
-                                    (config["attempts"] + 3) and
-                                    all(row["status"] == "pass" for row in summary["steps"])) else "fail"
+    summary["status"] = "pass" if _complete(config, summary["steps"]) else "fail"
     _save(summary, root)
     return summary
 
@@ -307,8 +316,7 @@ def reassess(root: Path) -> dict:
     result = {"schema": SCHEMA, "source_summary_sha256": hashlib.sha256(original_bytes).hexdigest(),
               "reassessed_at_unix": time.time(), "reassessment_source_commit": _source_commit(),
               "steps": rows,
-              "status": "pass" if (len(rows) == len(config["clients"]) * (config["attempts"] + 3)
-                                    and all(row["status"] == "pass" for row in rows)) else "fail"}
+              "status": "pass" if _complete(config, rows) else "fail"}
     with (root / "reassessment.json").open("x") as output:
         output.write(json.dumps(result, indent=2) + "\n")
     return result
