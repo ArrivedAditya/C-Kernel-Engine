@@ -129,6 +129,10 @@ def resolve_serving_bundle(run_dir: Path, circuit_path: Path, *, variant: str | 
     spec = profile.get("variants", {}).get(selected)
     if not isinstance(spec, dict) or spec.get("output_protocol") not in PROTOCOLS:
         raise ValueError(f"unsupported serving variant: {selected}")
+    stop_text = spec.get("stop_text", [])
+    if (not isinstance(stop_text, list) or any(not isinstance(item, str) or not item for item in stop_text)
+            or len(set(stop_text)) != len(stop_text)):
+        raise ValueError(f"invalid serving stop_text for variant: {selected}")
     config = _json(run_dir / "config.json")
     # GGUF conversion uses model_type/model_name; only some runtime configs
     # declare a canonical model key. The retained compiled manifest and its
@@ -182,6 +186,7 @@ def resolve_serving_bundle(run_dir: Path, circuit_path: Path, *, variant: str | 
     capacity = _json(run_dir / "layout_decode.json").get("config", {}).get("context_length")
     document = {"schema": SCHEMA, "profile_id": profile.get("id"), "profile_ref": profile_ref, "variant": selected,
                 "renderer": profile["renderer"], "output_protocol": spec["output_protocol"],
+                "stop_text": stop_text,
                 "input_modalities": profile["input_modalities"], "context_capacity": capacity,
                 "assets": assets, "compilation_lineage": lineage, "certification": "NOT_TESTED"}
     document["identity"] = contract_identity(document)

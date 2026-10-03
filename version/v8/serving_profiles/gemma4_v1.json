@@ -1,0 +1,19 @@
+{
+  "schema": "cke.serving_profile.v1",
+  "id": "gemma4-v1",
+  "renderer": "jinja-chat-v1",
+  "input_modalities": ["text"],
+  "variants": {
+    "chat": {
+      "chat": {"source": "publisher", "variant": "default"},
+      "tools": {"source": "publisher", "variant": "default"},
+      "output_protocol": "none"
+    },
+    "tools": {
+      "chat": {"source": "publisher", "variant": "default"},
+      "tools": {"source": "publisher", "variant": "default"},
+      "output_protocol": "gemma4_dsl_v1",
+      "stop_text": ["<|tool_response>", "<eos>"]
+    }
+  }
+}

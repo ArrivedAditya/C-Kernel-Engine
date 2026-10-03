@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 from server.live import create_app
 from server.runtime import load_manifest_templates, load_tool_protocol
 from server.serving_bundle import (
-    load_resolved_serving, loaded_serving_identity, resolved_renderer_tokens,
+    contract_identity, load_resolved_serving, loaded_serving_identity, resolved_renderer_tokens,
     verify_loaded_libraries,
 )
 from server.tests.test_native_qwen_jinja_contract import RecordingSession
@@ -133,6 +133,21 @@ def test_publisher_default_and_explicit_compat(setup):
     assert load_tool_protocol(setup[0], chat, variants) == "qwen_code_xml_raw_v2"
     with pytest.raises(ValueError, match="override conflicts"):
         load_tool_protocol(setup[0], chat + "changed", variants)
+
+
+def test_resolved_stop_policy_is_bound_to_selected_variant(setup):
+    run, _, source = setup
+    profile_path = source / "serving_profiles/qwen_tools_v1.json"
+    profile = json.loads(profile_path.read_text())
+    profile["variants"]["publisher"]["stop_text"] = ["<eos>"]
+    profile_path.write_text(json.dumps(profile))
+    doc = resolve(setup)
+    assert doc["stop_text"] == ["<eos>"]
+    assert load_resolved_serving(run)["stop_text"] == ["<eos>"]
+    doc["stop_text"] = ["<bad>"]
+    doc["identity"] = contract_identity(doc)
+    with pytest.raises(ValueError, match="stop policy mismatch"):
+        load_resolved_serving(run, document=doc)
 
 
 def test_publisher_chat_profile_rejects_tools_before_generation(setup):

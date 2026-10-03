@@ -4,8 +4,8 @@
   "family": "gemma4",
   "serving": {
     "schema": "cke.circuit_serving.v1",
-    "profile_ref": "serving_profiles/publisher_chat_v1.json",
-    "default_variant": "publisher"
+    "profile_ref": "serving_profiles/gemma4_v1.json",
+    "default_variant": "chat"
   },
   "projection_inputs": {
     "q_proj": {"x": "main_stream_q8"},
