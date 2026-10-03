@@ -94,8 +94,6 @@ def probe_report(tmp_path_factory):
     model_dir = _model_dir()
     if not (model_dir / "libmodel.so").exists():
         pytest.skip(f"compiled v8 runtime not found at {model_dir}")
-    if not (model_dir / "tokenizer.json").exists():
-        pytest.skip(f"tokenizer.json not found at {model_dir}")
     probe = _load_probe()
     out_path = tmp_path_factory.mktemp("arm_spark") / "probe.json"
     argv = sys.argv
