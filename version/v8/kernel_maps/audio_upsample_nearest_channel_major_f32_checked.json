@@ -193,7 +193,8 @@
     "unit": [
       "tests/test_v8_audio_prosody_upsample_oracle.py",
       "tests/test_v8_prosody_upsample_generated.py",
-      "tests/test_v8_kokoro_generated_prosody_complete.py"
+      "tests/test_v8_kokoro_generated_prosody_complete.py",
+      "tests/test_v8_kokoro_generated_decoder_complete.py"
     ],
     "oracle": "Pinned PyTorch 2.8 F.interpolate(mode=nearest), exact element copy"
   },

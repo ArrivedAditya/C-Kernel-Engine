@@ -918,6 +918,11 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_kokoro_generated_decoder_encode.py",
         timeout_sec=300,
     ),
+    "tts_kokoro_generated_decoder_complete": TestSuite(
+        "Kokoro Connected Generated Complete Acoustic Decoder", "inference",
+        ROOT / "tests" / "test_v8_kokoro_generated_decoder_complete.py",
+        timeout_sec=300,
+    ),
     "tts_checked_text_ops_generated": TestSuite(
         "Model-Neutral Checked Conv1D, Transpose, and Activation Graph", "inference",
         ROOT / "tests" / "test_v8_checked_text_ops_generated.py",

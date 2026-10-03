@@ -76,7 +76,8 @@
   },
   "tests": {"unit": ["tests/test_v8_audio_concat_channels_checked.py",
                      "tests/test_v8_audio_concat_channels_generated.py",
-                     "tests/test_v8_kokoro_generated_decoder_ingress.py"],
+                     "tests/test_v8_kokoro_generated_decoder_ingress.py",
+                     "tests/test_v8_kokoro_generated_decoder_complete.py"],
             "oracle": "Independent NumPy concatenate(axis=0), exact FP32 copy"},
   "notes": "O=L+R. Checked channel-major join copies only valid frames; padding stays untouched. No scratch, allocation, state, reduction, or supported backward path. No aliasing with output."
 }
