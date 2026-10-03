@@ -333,6 +333,7 @@ class CohereCompassContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             runtime = Path(directory)
             manifest = {
+                "config": {"context_length": 4096},
                 "special_tokens": {"bos_token_id": 2, "eos_token_id": 3},
                 "template": build_ir_v8._load_builtin_template_doc(
                     "cohere_compass_text"
@@ -370,10 +371,27 @@ class CohereCompassContractTests(unittest.TestCase):
             self.assertEqual(loaded["embed_dim"], 16)
             self.assertEqual(loaded["input_embed_dim"], 64)
             self.assertEqual(loaded["num_deepstack_layers"], 3)
+            self.assertEqual(loaded["context_length"], 2048)
+            self.assertEqual(loaded["model_context_limit"], 4096)
             with self.assertRaisesRegex(RuntimeError, "context is too small"):
                 bridge._load_prebuilt_decoder_runtime(
                     runtime, required_context=4096
                 )
+            (runtime / "layout_prefill.json").write_text(
+                json.dumps({"config": {**layout["config"], "context_length": 1024}}),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(RuntimeError, "prefill/decode context mismatch"):
+                bridge._load_prebuilt_decoder_runtime(runtime)
+            (runtime / "layout_prefill.json").write_text(
+                json.dumps(layout), encoding="utf-8"
+            )
+            manifest["config"]["context_length"] = 1024
+            (runtime / "weights_manifest.json").write_text(
+                json.dumps(manifest), encoding="utf-8"
+            )
+            with self.assertRaisesRegex(RuntimeError, "exceeds the model manifest"):
+                bridge._load_prebuilt_decoder_runtime(runtime)
 
     def test_bridge_preflights_decoder_context_before_encoder_execution(self) -> None:
         planned_bridge = {"embed_dim": 8192, "used_nbytes": 8240 * 8192 * 4}

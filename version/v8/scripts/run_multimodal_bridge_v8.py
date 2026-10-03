@@ -3020,10 +3020,39 @@ def _load_prebuilt_decoder_runtime(
         )
     decode_layout = _load_layout(required["decode_layout_path"])
     cfg = dict(decode_layout.get("config", {}) or {})
-    context_length = int(
-        cfg.get("context_length", cfg.get("context_len", cfg.get("max_seq_len", 0)))
-        or 0
+    prefill_layout = _load_layout(required["prefill_layout_path"])
+
+    def context_limit(config: dict[str, Any], source: str, *, optional: bool = False) -> int | None:
+        value = next(
+            (config[key] for key in ("context_length", "context_len", "max_seq_len") if key in config),
+            None,
+        )
+        if value is None and optional:
+            return None
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise RuntimeError(f"prebuilt decoder {source} has no positive context limit")
+        return value
+
+    context_length = context_limit(cfg, "decode layout")
+    prefill_context = context_limit(
+        dict(prefill_layout.get("config", {}) or {}), "prefill layout"
     )
+    if prefill_context != context_length:
+        raise RuntimeError(
+            "prebuilt decoder prefill/decode context mismatch: "
+            f"prefill={prefill_context} decode={context_length}"
+        )
+    manifest_config = manifest.get("config")
+    if manifest_config is not None and not isinstance(manifest_config, dict):
+        raise RuntimeError("prebuilt decoder manifest config must be an object")
+    model_context_limit = context_limit(
+        manifest_config or {}, "model manifest", optional=True
+    )
+    if model_context_limit is not None and context_length > model_context_limit:
+        raise RuntimeError(
+            "prebuilt decoder compiled context exceeds the model manifest: "
+            f"compiled={context_length} model={model_context_limit}"
+        )
     if required_context is not None and context_length < int(required_context):
         raise RuntimeError(
             "prebuilt decoder context is too small for the requested bridge run: "
@@ -3055,6 +3084,7 @@ def _load_prebuilt_decoder_runtime(
         "input_embed_dim": input_embed_dim,
         "num_deepstack_layers": num_deepstack_layers,
         "context_length": context_length,
+        "model_context_limit": model_context_limit,
         "vocab_size": int(cfg.get("vocab_size", 0) or 0),
     }
 
@@ -3594,6 +3624,18 @@ def _run_decoder(
         lib = _load_decoder_lib(model_so, engine_so=Path(runtime_engine))
     else:
         lib = _load_decoder_lib(model_so)
+    if runtime.get("runtime_dir") is not None:
+        context_query = getattr(lib, "ck_model_get_context_window", None)
+        if context_query is None:
+            raise RuntimeError("prebuilt decoder library has no context-window ABI")
+        context_query.restype = ctypes.c_int
+        loaded_context = int(context_query())
+        packaged_context = int(runtime["context_length"])
+        if loaded_context != packaged_context:
+            raise RuntimeError(
+                "prebuilt decoder library context disagrees with packaged layout: "
+                f"loaded={loaded_context} packaged={packaged_context}"
+            )
     _configure_gemm_schedule(lib, gemm_schedule)
     _log_progress("decoder: init start")
     memory_evidence = {"before_init": _memory_snapshot()}
@@ -4236,13 +4278,24 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     if args.decoder_context_cap is not None and args.decoder_context_cap <= 0:
         ap.error("--decoder-context-cap must be positive")
+    prebuilt_decoder_contract = (
+        _load_prebuilt_decoder_runtime(args.decoder_runtime)
+        if args.decoder_runtime is not None
+        else None
+    )
     model_context_limit = (
         _gguf_declared_context_limit(args.decoder_gguf.resolve())
         if args.decoder_gguf is not None
+        else prebuilt_decoder_contract["model_context_limit"]
+    )
+    compiled_runtime_limit = (
+        prebuilt_decoder_contract["context_length"]
+        if prebuilt_decoder_contract is not None
         else None
     )
     context_limits = [
-        limit for limit in (model_context_limit, args.decoder_context_cap) if limit is not None
+        limit for limit in (model_context_limit, compiled_runtime_limit, args.decoder_context_cap)
+        if limit is not None
     ]
     decoder_context_cap = min(context_limits) if context_limits else None
 
@@ -4692,6 +4745,7 @@ def main(argv: list[str] | None = None) -> int:
         "decoder_context_budget": {
             "requested_minimum": args.decoder_context_len,
             "model_limit": model_context_limit,
+            "compiled_runtime_limit": compiled_runtime_limit,
             "deployment_cap": args.decoder_context_cap,
             "planned_prefix_tokens": planned_prefix_tokens,
             "planned_context": planned_decoder_context,
