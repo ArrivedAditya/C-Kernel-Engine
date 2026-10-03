@@ -2446,6 +2446,22 @@ version/v8/scripts/ck_serve_v8.py "$RUN_DIR" --run "$RUN_DIR" \
         client's advertised tool set. File creation and native-template prompt-token parity
         remain open.
     </p>
+    <p>
+        The generated decoder has an optional serialized sequence-state ABI when the compiled
+        activation lifetimes identify KV as its only mutable sequence state. Two extra
+        generation-tagged state IDs use caller-owned, 64-byte-aligned KV arenas. The ABI
+        reports the required bytes; the caller budgets and retains each arena through
+        retirement. KV contents and positions survive state switches. Recurrent, encoder,
+        and multimodal layouts do not advertise this capability. HTTP remains single-flight;
+        this is neither batched decode nor continuous batching. Named KV pointer lookup
+        follows the active state, while its bump-arena offset is unavailable and returns
+        <code>-1</code> for a non-default state.
+        Run <code>python3 version/v8/scripts/certify_sequence_state_v8.py --run RUN_DIR</code>
+        against a freshly generated eligible bundle. A 128-token Gemma3-270M Q5_K_M build
+        passed eight exact finite-logit comparisons, including reset isolation and slot reuse.
+        The retained report hashes the library, weights, layout, and config. Concurrent calls,
+        recurrent state, cancellation, and throughput remain untested.
+    </p>
 </div>
 
 <div class="card">

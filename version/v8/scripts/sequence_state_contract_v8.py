@@ -11,15 +11,6 @@ from __future__ import annotations
 from typing import Any
 
 
-_OTHER_PERSISTENT = {
-    "recurrent_conv_state",
-    "recurrent_ssm_state",
-    "encoder_memory",
-    "encoder_k_cache",
-    "encoder_v_cache",
-}
-
-
 def resolve_sequence_state_contract(
     layout: dict[str, Any], config: dict[str, Any]
 ) -> dict[str, int] | None:
@@ -39,23 +30,37 @@ def resolve_sequence_state_contract(
         if name in by_name:
             raise ValueError(f"duplicate activation buffer {name}")
         by_name[name] = row
+    # A missing lifetime is unknown, not a call-local allocation. Older
+    # layouts consequently cannot advertise sequence isolation by accident.
+    if any(
+        row.get("lifetime") not in {"call", "sequence", "model"}
+        or not isinstance(row.get("mutable"), bool)
+        for row in buffers
+    ):
+        return None
     if (
         bool(config.get("uses_cross_attention"))
         or bool(config.get("_template_uses_persistent_cross_kv_cache"))
         or bool(config.get("uses_vision"))
         or str(config.get("artifact_scope", "")).lower() == "encoder_only"
-        or _OTHER_PERSISTENT.intersection(by_name)
-        or any(name.endswith("_state") for name in by_name)
-        or any(name.startswith(("image_", "vision_", "audio_", "encoder_")) for name in by_name)
     ):
         return None
     kv = by_name.get("kv_cache")
-    if kv is None:
+    if kv is None or kv.get("lifetime") != "sequence" or kv.get("mutable") is not True:
+        return None
+    if any(
+        row is not kv and (
+            row.get("lifetime") == "sequence"
+            or (row.get("lifetime") == "model" and row["mutable"])
+        ) for row in buffers
+    ):
         return None
     offset = kv.get("abs_offset")
     size = kv.get("size")
     if not isinstance(offset, int) or not isinstance(size, int) or offset < 0 or size <= 0:
         raise ValueError("KV cache requires a positive size and absolute offset")
+    if offset % 64:
+        raise ValueError("KV cache must preserve the planner's 64-byte alignment")
     arena_size = layout.get("memory", {}).get("arena", {}).get("total_size")
     if isinstance(arena_size, int) and offset + size > arena_size:
         raise ValueError("KV cache exceeds the planned arena")
@@ -66,4 +71,4 @@ def resolve_sequence_state_contract(
         if isinstance(other_offset, int) and isinstance(other_size, int) and other_size > 0:
             if offset < other_offset + other_size and other_offset < offset + size:
                 raise ValueError(f"KV cache overlaps {name}")
-    return {"kv_offset": offset, "kv_bytes": size}
+    return {"kv_offset": offset, "kv_bytes": size, "kv_alignment": 64}

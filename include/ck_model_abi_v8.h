@@ -69,15 +69,19 @@ typedef int (*ck_model_get_runtime_descriptor_v8_fn)(
     size_t descriptor_size);
 
 /* Optional when CK_MODEL_CAP_SEQUENCE_STATE_SWITCH is set. All calls, including
- * decode and reset, remain serialized. Handles belong to the loaded model and
- * become invalid at model_free. The default handle uses the model's arena;
- * create allocates a separate KV region and may fail on admission/OOM. This
+ * decode and reset, remain serialized. Nonzero handles are generation-tagged
+ * IDs; retired handles and handles from an earlier model load are rejected.
+ * The default state uses the model arena. Each extra sequence needs a caller-
+ * owned aligned KV arena of the reported size; it must remain alive through
+ * destroy or model_free. Admission is bounded to two extra sequences. This
  * ABI provides isolation, not simultaneous or computationally batched decode.
  */
-typedef void *(*ck_model_sequence_state_default_v8_fn)(void);
-typedef int (*ck_model_sequence_state_create_v8_fn)(void **handle_out);
-typedef int (*ck_model_sequence_state_activate_v8_fn)(void *handle);
-typedef int (*ck_model_sequence_state_destroy_v8_fn)(void *handle);
+typedef int (*ck_model_sequence_state_requirements_v8_fn)(size_t *bytes, size_t *alignment);
+typedef uint64_t (*ck_model_sequence_state_default_v8_fn)(void);
+typedef int (*ck_model_sequence_state_create_v8_fn)(void *arena, size_t arena_bytes,
+                                                    uint64_t *handle_out);
+typedef int (*ck_model_sequence_state_activate_v8_fn)(uint64_t handle);
+typedef int (*ck_model_sequence_state_destroy_v8_fn)(uint64_t handle);
 
 #ifdef __cplusplus
 }

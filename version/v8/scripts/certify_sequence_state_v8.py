@@ -16,7 +16,7 @@ from pathlib import Path
 
 
 SEQUENCE_SWITCH_CAPABILITY = 1 << 16
-TOKENS_A = (100, 101, 102)
+TOKENS_A = (100, 101, 102, 103)
 TOKENS_B = (200, 201)
 
 
@@ -54,12 +54,18 @@ def certify(run: Path) -> dict:
     model.ck_model_decode.restype = ctypes.c_int
     model.ck_model_kv_cache_reset.argtypes = []
     model.ck_model_sequence_state_default.argtypes = []
-    model.ck_model_sequence_state_default.restype = ctypes.c_void_p
-    model.ck_model_sequence_state_create.argtypes = [ctypes.POINTER(ctypes.c_void_p)]
+    model.ck_model_sequence_state_default.restype = ctypes.c_uint64
+    model.ck_model_sequence_state_requirements.argtypes = [
+        ctypes.POINTER(ctypes.c_size_t), ctypes.POINTER(ctypes.c_size_t)
+    ]
+    model.ck_model_sequence_state_requirements.restype = ctypes.c_int
+    model.ck_model_sequence_state_create.argtypes = [
+        ctypes.c_void_p, ctypes.c_size_t, ctypes.POINTER(ctypes.c_uint64)
+    ]
     model.ck_model_sequence_state_create.restype = ctypes.c_int
-    model.ck_model_sequence_state_activate.argtypes = [ctypes.c_void_p]
+    model.ck_model_sequence_state_activate.argtypes = [ctypes.c_uint64]
     model.ck_model_sequence_state_activate.restype = ctypes.c_int
-    model.ck_model_sequence_state_destroy.argtypes = [ctypes.c_void_p]
+    model.ck_model_sequence_state_destroy.argtypes = [ctypes.c_uint64]
     model.ck_model_sequence_state_destroy.restype = ctypes.c_int
     model.ck_model_get_named_activation_ptr.argtypes = [ctypes.c_char_p]
     model.ck_model_get_named_activation_ptr.restype = ctypes.c_size_t
@@ -96,10 +102,24 @@ def certify(run: Path) -> dict:
         default_kv = model.ck_model_get_named_activation_ptr(b"kv_cache")
         if not default_kv or model.ck_model_get_named_activation_runtime_offset(b"kv_cache") < 0:
             raise AssertionError("default KV activation lookup is inconsistent")
-        a, b, c = ctypes.c_void_p(), ctypes.c_void_p(), ctypes.c_void_p()
-        if model.ck_model_sequence_state_create(ctypes.byref(a)) != 0:
+        kv_bytes, kv_alignment = ctypes.c_size_t(), ctypes.c_size_t()
+        if model.ck_model_sequence_state_requirements(
+            ctypes.byref(kv_bytes), ctypes.byref(kv_alignment)
+        ) != 0 or kv_alignment.value != 64:
+            raise RuntimeError("invalid generated sequence-arena requirements")
+
+        def arena() -> tuple[ctypes.Array, ctypes.c_void_p]:
+            storage = ctypes.create_string_buffer(kv_bytes.value + kv_alignment.value - 1)
+            address = ctypes.addressof(storage)
+            aligned = (address + kv_alignment.value - 1) & ~(kv_alignment.value - 1)
+            return storage, ctypes.c_void_p(aligned)
+
+        arena_a, arena_a_ptr = arena()
+        arena_b, arena_b_ptr = arena()
+        a, b, c = ctypes.c_uint64(), ctypes.c_uint64(), ctypes.c_uint64()
+        if model.ck_model_sequence_state_create(arena_a_ptr, kv_bytes, ctypes.byref(a)) != 0:
             raise RuntimeError("failed to create sequence A")
-        if model.ck_model_sequence_state_create(ctypes.byref(b)) != 0:
+        if model.ck_model_sequence_state_create(arena_b_ptr, kv_bytes, ctypes.byref(b)) != 0:
             raise RuntimeError("failed to create sequence B")
         try:
             schedule = (
@@ -120,15 +140,32 @@ def certify(run: Path) -> dict:
                 if decode(token) != isolated[name][index]:
                     raise AssertionError(f"sequence {name} diverged at token {index}")
 
+            if model.ck_model_sequence_state_activate(b) != 0:
+                raise RuntimeError("failed to activate sequence B for reset")
+            model.ck_model_kv_cache_reset()
+            if model.ck_model_sequence_state_activate(a) != 0:
+                raise RuntimeError("resetting B corrupted the A handle")
+            if decode(TOKENS_A[3]) != isolated["a"][3]:
+                raise AssertionError("resetting B changed A's continuation")
+            if model.ck_model_sequence_state_activate(b) != 0:
+                raise RuntimeError("failed to reactivate reset sequence B")
+            if decode(TOKENS_B[0]) != isolated["b"][0]:
+                raise AssertionError("reset sequence B retained its old state")
+
             if model.ck_model_sequence_state_activate(default) != 0:
                 raise RuntimeError("failed to restore the default sequence")
+            retired_b = b.value
             if model.ck_model_sequence_state_destroy(b) != 0:
                 raise RuntimeError("failed to retire sequence B")
-            b = ctypes.c_void_p()
-            if model.ck_model_sequence_state_create(ctypes.byref(c)) != 0:
+            if model.ck_model_sequence_state_activate(retired_b) != -1:
+                raise AssertionError("retired handle was accepted")
+            b = ctypes.c_uint64()
+            if model.ck_model_sequence_state_create(arena_b_ptr, kv_bytes, ctypes.byref(c)) != 0:
                 raise RuntimeError("retired sequence slot could not be reused")
             if model.ck_model_sequence_state_activate(c) != 0:
                 raise RuntimeError("failed to activate reused slot")
+            if model.ck_model_sequence_state_activate(retired_b) != -1:
+                raise AssertionError("reused slot accepted stale handle")
             if decode(TOKENS_B[0]) != isolated["b"][0]:
                 raise AssertionError("reused slot retained state from its prior owner")
         finally:
@@ -139,6 +176,16 @@ def certify(run: Path) -> dict:
     finally:
         model.ck_model_free()
 
+    if model.ck_model_init(str(weights).encode()) != 0:
+        raise RuntimeError("generated model reload failed")
+    try:
+        if model.ck_model_sequence_state_activate(default) != -1:
+            raise AssertionError("prior model-load handle was accepted")
+        if model.ck_model_sequence_state_default() == default:
+            raise AssertionError("model reload reused the default handle")
+    finally:
+        model.ck_model_free()
+
     return {
         "schema": "cke.sequence-state-serialized-v1",
         "status": "pass",
@@ -146,7 +193,7 @@ def certify(run: Path) -> dict:
         "compiled_context_length": context,
         "tokens_a": list(TOKENS_A),
         "tokens_b": list(TOKENS_B),
-        "exact_logit_rows": len(TOKENS_A) + len(TOKENS_B) + 1,
+        "exact_logit_rows": len(TOKENS_A) + len(TOKENS_B) + 2,
         "library_sha256": _sha256(library),
         "weights_sha256": _sha256(weights),
         "layout_sha256": _sha256(layout),

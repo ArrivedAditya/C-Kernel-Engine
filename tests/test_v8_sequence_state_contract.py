@@ -23,8 +23,8 @@ def _layout(*, extra: list[dict] | None = None) -> dict:
             "arena": {"total_size": 256},
             "activations": {
                 "buffers": [
-                    {"name": "kv_cache", "abs_offset": 64, "size": 32},
-                    {"name": "logits", "abs_offset": 128, "size": 32},
+                    {"name": "kv_cache", "abs_offset": 64, "size": 32, "lifetime": "sequence", "mutable": True},
+                    {"name": "logits", "abs_offset": 128, "size": 32, "lifetime": "call", "mutable": True},
                     *(extra or []),
                 ]
             },
@@ -44,7 +44,7 @@ class SequenceStateContractTests(unittest.TestCase):
         self.assertIn("CK_MODEL_CAP_SEQUENCE_STATE_SWITCH", declared)
 
         hybrid_layout = _layout(
-            extra=[{"name": "recurrent_conv_state", "abs_offset": 160, "size": 16}]
+            extra=[{"name": "arbitrary_buffer", "abs_offset": 160, "size": 16, "lifetime": "sequence", "mutable": True}]
         )
         hybrid = codegen_core_v8.emit_model_and_api(layout=hybrid_layout, config=config)
         hybrid_declared = codegen_v8._emit_runtime_capability_api(
@@ -69,23 +69,28 @@ class SequenceStateContractTests(unittest.TestCase):
         self.assertEqual(resolve_sequence_state_contract(_layout(), {}), {
         "kv_offset": 64,
         "kv_bytes": 32,
+        "kv_alignment": 64,
         })
+        self.assertIsNotNone(resolve_sequence_state_contract(_layout(
+            extra=[{"name": "shared_table", "abs_offset": 160, "size": 16,
+                    "lifetime": "model", "mutable": False}]), {}))
         self.assertIsNone(resolve_sequence_state_contract(_layout(), {"uses_cross_attention": True}))
         self.assertIsNone(resolve_sequence_state_contract(
-            _layout(extra=[{"name": "recurrent_ssm_state", "abs_offset": 160, "size": 16}]), {}
+            _layout(extra=[{"name": "any_name", "abs_offset": 160, "size": 16, "lifetime": "sequence", "mutable": True}]), {}
         ))
         self.assertIsNone(resolve_sequence_state_contract(
-            _layout(extra=[{"name": "image_input", "abs_offset": 160, "size": 16}]), {}
+            _layout(extra=[{"name": "anything", "abs_offset": 160, "size": 16}]), {}
         ))
         self.assertIsNone(resolve_sequence_state_contract(
-            _layout(extra=[{"name": "deltanet_state", "abs_offset": 160, "size": 16}]), {}
+            _layout(extra=[{"name": "state", "abs_offset": 160, "size": 16, "lifetime": "model", "mutable": True}]), {}
         ))
 
     def test_invalid_kv_regions_do_not_receive_switching(self) -> None:
         for kv in (
-            {"name": "kv_cache", "abs_offset": 250, "size": 32},
-            {"name": "kv_cache", "abs_offset": -1, "size": 32},
-            {"name": "kv_cache", "abs_offset": 64, "size": 0},
+            {"name": "kv_cache", "abs_offset": 250, "size": 32, "lifetime": "sequence", "mutable": True},
+            {"name": "kv_cache", "abs_offset": -1, "size": 32, "lifetime": "sequence", "mutable": True},
+            {"name": "kv_cache", "abs_offset": 65, "size": 32, "lifetime": "sequence", "mutable": True},
+            {"name": "kv_cache", "abs_offset": 64, "size": 0, "lifetime": "sequence", "mutable": True},
         ):
             layout = _layout()
             layout["memory"]["activations"]["buffers"][0] = kv
@@ -95,7 +100,7 @@ class SequenceStateContractTests(unittest.TestCase):
     def test_overlapping_activation_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "overlaps"):
             resolve_sequence_state_contract(
-                _layout(extra=[{"name": "scratch", "abs_offset": 80, "size": 16}]), {}
+                _layout(extra=[{"name": "scratch", "abs_offset": 80, "size": 16, "lifetime": "call", "mutable": True}]), {}
             )
 
     def test_emitted_switching_keeps_two_sequences_independent(self) -> None:
@@ -122,16 +127,28 @@ static void advance(uint8_t token) {
     g_model->rope_pos++;
 }
 int main(void) {
-    uint8_t bump[16] = {0};
+    _Alignas(64) uint8_t bump[64] = {0};
+    _Alignas(64) uint8_t arena_a[64] = {0};
+    _Alignas(64) uint8_t arena_b[64] = {0};
+    _Alignas(64) uint8_t arena_c[64] = {0};
     CKModel model = {.bump = bump, .kv_cache = (float *)bump,
                      .kv_cache_f16 = (uint16_t *)bump};
     g_model = &model;
-    void *original = ck_model_sequence_state_default();
-    void *a = NULL, *b = NULL;
-    assert(ck_model_sequence_state_create(&a) == 0);
-    assert(ck_model_sequence_state_create(&b) == 0);
-    void *rejected = (void *)1;
-    assert(ck_model_sequence_state_create(&rejected) == -3 && rejected == NULL);
+    size_t bytes = 0, alignment = 0;
+    assert(ck_model_sequence_state_requirements(&bytes, &alignment) == 0);
+    assert(bytes == 16 && alignment == 64);
+    uint64_t original = ck_model_sequence_state_default();
+    uint64_t a = 0, b = 0, rejected = 123;
+    assert(original != 0);
+    assert(ck_model_sequence_state_create(NULL, bytes, &rejected) == -2 && rejected == 0);
+    assert(ck_model_sequence_state_create(arena_a + 1, bytes, &rejected) == -2);
+    assert(ck_model_sequence_state_create(arena_a, bytes - 1, &rejected) == -2);
+    assert(ck_model_sequence_state_create(arena_a, bytes, &a) == 0);
+    assert(ck_model_sequence_state_create(arena_a, bytes, &rejected) == -2);
+    assert(ck_model_sequence_state_create(arena_b, bytes, &b) == 0);
+    assert(ck_model_sequence_state_create(arena_c, bytes, &rejected) == -3 && rejected == 0);
+    assert(ck_model_sequence_state_create(bump, bytes, &rejected) == -2);
+    assert(ck_model_sequence_state_create(arena_b, bytes, &rejected) == -2);
     assert(ck_model_sequence_state_activate(a) == 0);
     advance(11); advance(12);
     assert(ck_model_sequence_state_activate(b) == 0);
@@ -145,14 +162,32 @@ int main(void) {
     assert(model.pos == 1 && model.rope_pos == 1);
     assert(((uint8_t *)model.kv_cache)[0] == 21);
     assert(((uint8_t *)model.kv_cache)[1] == 0);
+    memset(model.kv_cache, 0, KV_CACHE_SIZE);
+    model.pos = 0;
+    model.rope_pos = 0;
+    assert(ck_model_sequence_state_activate(a) == 0);
+    assert(model.pos == 3 && ((uint8_t *)model.kv_cache)[0] == 11);
+    assert(ck_model_sequence_state_activate(b) == 0);
+    assert(model.pos == 0 && ((uint8_t *)model.kv_cache)[0] == 0);
     assert(ck_model_sequence_state_activate(original) == 0);
     assert(model.pos == 0 && model.kv_cache == (float *)bump);
     assert(ck_model_sequence_state_destroy(a) == 0);
-    assert(ck_model_sequence_state_create(&a) == 0);
+    assert(ck_model_sequence_state_activate(a) == -1);
+    uint64_t old_a = a;
+    assert(ck_model_sequence_state_create(arena_a, bytes, &a) == 0);
+    assert(a != old_a && ck_model_sequence_state_activate(old_a) == -1);
+    assert(ck_model_sequence_state_activate(a) == 0);
     assert(ck_model_sequence_state_destroy(a) == 0);
+    assert(model.kv_cache == (float *)bump);
+    assert(ck_model_sequence_state_destroy(a) == -1);
     assert(ck_model_sequence_state_destroy(b) == 0);
     assert(ck_model_sequence_state_destroy(original) == -1);
     ck_sequence_release_all();
+    assert(ck_model_sequence_state_activate(original) == -1);
+    uint64_t new_default = ck_model_sequence_state_default();
+    assert(new_default != original);
+    assert(ck_model_sequence_state_activate(original) == -1);
+    assert(ck_model_sequence_state_activate(new_default) == 0);
     return 0;
 }
 '''
