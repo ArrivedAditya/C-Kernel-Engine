@@ -936,6 +936,10 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_kokoro_generated_generator_stage0.py",
         timeout_sec=300,
     ),
+    "tts_audio_stft_mag_phase": TestSuite(
+        "Checked Audio Magnitude/Phase STFT NumPy and PyTorch Oracles", "kernels",
+        ROOT / "tests" / "test_v8_audio_stft_mag_phase_oracle.py",
+    ),
     "tts_checked_text_ops_generated": TestSuite(
         "Model-Neutral Checked Conv1D, Transpose, and Activation Graph", "inference",
         ROOT / "tests" / "test_v8_checked_text_ops_generated.py",
