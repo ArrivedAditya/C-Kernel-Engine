@@ -26,10 +26,12 @@ enum CKModelCapabilityV8 {
     CK_MODEL_CAP_NAMED_ACTIVATIONS       = UINT64_C(1) << 12,
     CK_MODEL_CAP_PROFILE                 = UINT64_C(1) << 13,
     CK_MODEL_CAP_XRAY_KV                 = UINT64_C(1) << 14,
-    CK_MODEL_CAP_GENERATION_POLICY       = UINT64_C(1) << 15
+    CK_MODEL_CAP_GENERATION_POLICY       = UINT64_C(1) << 15,
+    /* Serialized state switching only; this does not imply batched arithmetic. */
+    CK_MODEL_CAP_SEQUENCE_STATE_SWITCH   = UINT64_C(1) << 16
 };
 
-#define CK_MODEL_CAP_V8_KNOWN_MASK ((UINT64_C(1) << 16) - UINT64_C(1))
+#define CK_MODEL_CAP_V8_KNOWN_MASK ((UINT64_C(1) << 17) - UINT64_C(1))
 
 enum CKGenerationFlagsV8 {
     CK_GENERATION_FLAG_TIMESTAMPS = 1u << 0
@@ -65,6 +67,17 @@ typedef uint64_t (*ck_model_get_capabilities_v8_fn)(void);
 typedef int (*ck_model_get_runtime_descriptor_v8_fn)(
     CKModelRuntimeDescriptorV8 *descriptor,
     size_t descriptor_size);
+
+/* Optional when CK_MODEL_CAP_SEQUENCE_STATE_SWITCH is set. All calls, including
+ * decode and reset, remain serialized. Handles belong to the loaded model and
+ * become invalid at model_free. The default handle uses the model's arena;
+ * create allocates a separate KV region and may fail on admission/OOM. This
+ * ABI provides isolation, not simultaneous or computationally batched decode.
+ */
+typedef void *(*ck_model_sequence_state_default_v8_fn)(void);
+typedef int (*ck_model_sequence_state_create_v8_fn)(void **handle_out);
+typedef int (*ck_model_sequence_state_activate_v8_fn)(void *handle);
+typedef int (*ck_model_sequence_state_destroy_v8_fn)(void *handle);
 
 #ifdef __cplusplus
 }

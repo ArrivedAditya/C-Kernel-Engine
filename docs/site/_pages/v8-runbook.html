@@ -1543,6 +1543,22 @@ version/v8/scripts/ck_serve_v8.py "$RUN_DIR" --run "$RUN_DIR" \
         client's advertised tool set. File creation and native-template prompt-token parity
         remain open.
     </p>
+    <p>
+        The generated decoder now has an optional, serialized sequence-state switch ABI for
+        layouts whose only request-owned model state is a declared KV cache and token position.
+        It permits two additional state handles and preserves their KV contents and positions
+        across switches. Recurrent, encoder, and multimodal layouts do not advertise this
+        capability. The server does not use these handles yet, and this is not batched decode
+        or continuous batching. The next gate is two-sequence logits parity against isolated
+        generated execution, followed by a single generated step that processes both rows.
+        For a non-default handle, named KV pointer lookup resolves to that handle; a bump-arena
+        offset is unavailable and returns <code>-1</code>.
+        Run <code>python3 version/v8/scripts/certify_sequence_state_v8.py --run RUN_DIR</code>
+        against a freshly generated eligible bundle. A 128-token Gemma3-270M Q5_K_M build
+        passed six exact finite-logit comparisons, including slot reuse; the retained JSON
+        report records the library, weights, layout, and config hashes. This bounded result
+        does not cover concurrent calls, recurrent models, cancellation, or throughput.
+    </p>
 </div>
 
 <div class="card">

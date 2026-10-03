@@ -174,6 +174,12 @@ def _emit_runtime_capability_api(
         role = "CK_MODEL_ROLE_COMBINED"
 
     capabilities = ["CK_MODEL_CAP_INIT"]
+    from sequence_state_contract_v8 import resolve_sequence_state_contract
+
+    sequence_config = dict(config)
+    sequence_config.update(layout_config)  # Match codegen_core_v8.generate.
+    if not encoder_only and resolve_sequence_state_contract(layout_obj, sequence_config):
+        capabilities.append("CK_MODEL_CAP_SEQUENCE_STATE_SWITCH")
     if buffers:
         capabilities.append("CK_MODEL_CAP_NAMED_ACTIVATIONS")
     if not encoder_only:
@@ -1570,7 +1576,9 @@ def _inject_strict_vision_encoder_oracle(code: str, layout_obj: Dict[str, Any]) 
     return token_store_pat.sub(r"\1\n" + block + "\n", code, count=1)
 
 
-def _inject_activation_lookup_api(code: str, layout_obj: Dict[str, Any]) -> str:
+def _inject_activation_lookup_api(
+    code: str, layout_obj: Dict[str, Any], *, sequence_switch: bool = False
+) -> str:
     act_buffers = (layout_obj.get("memory", {}) or {}).get("activations", {}).get("buffers", []) or []
     if not act_buffers:
         return code
@@ -1619,6 +1627,15 @@ def _inject_activation_lookup_api(code: str, layout_obj: Dict[str, Any]) -> str:
     if not cases:
         return code
 
+    kv_offset_guard = (
+        '    if (g_model && name && strcmp(name, "kv_cache") == 0 && '
+        'g_model->kv_cache != (float *)(g_model->bump + A_KV_CACHE)) return -1;\n'
+        if sequence_switch else ""
+    )
+    kv_pointer_guard = (
+        '    if (name && strcmp(name, "kv_cache") == 0) return (uintptr_t)g_model->kv_cache;\n'
+        if sequence_switch else ""
+    )
     block = """/* v8 activation lookup helpers for external hosts */
 static int ck_lookup_named_activation_info(const char *name, size_t *offset_out, size_t *size_out) {
     if (!name) return 0;
@@ -1628,6 +1645,7 @@ static int ck_lookup_named_activation_info(const char *name, size_t *offset_out,
 
 CK_EXPORT intptr_t ck_model_get_named_activation_runtime_offset(const char *name) {
     size_t offset = 0;
+{kv_offset_guard}
     if (!ck_lookup_named_activation_info(name, &offset, NULL)) return -1;
     return (intptr_t)offset;
 }
@@ -1641,10 +1659,13 @@ CK_EXPORT intptr_t ck_model_get_named_activation_nbytes(const char *name) {
 CK_EXPORT uintptr_t ck_model_get_named_activation_ptr(const char *name) {
     size_t offset = 0;
     if (!g_model) return (uintptr_t)0;
+{kv_pointer_guard}
     if (!ck_lookup_named_activation_info(name, &offset, NULL)) return (uintptr_t)0;
     return (uintptr_t)(g_model->bump + offset);
 }
-""".replace("{cases}", "\n".join(cases))
+""".replace("{cases}", "\n".join(cases)).replace(
+        "{kv_offset_guard}", kv_offset_guard
+    ).replace("{kv_pointer_guard}", kv_pointer_guard)
     return code + "\n\n" + block
 
 
@@ -2716,7 +2737,14 @@ def main(argv: list[str] | None = None) -> int:
         code = _patch_standalone_prefill_runtime(code, layout_obj)
         code = _inject_missing_rope_init(code, layout_obj, init_call_obj)
         code = _inject_strict_vision_encoder_oracle(code, layout_obj)
-        code = _inject_activation_lookup_api(code, layout_obj)
+        from sequence_state_contract_v8 import resolve_sequence_state_contract
+
+        sequence_config = dict(ir_obj.get("config", {}) or {})
+        sequence_config.update(layout_obj.get("config", {}) or {})
+        sequence_switch = bool(resolve_sequence_state_contract(layout_obj, sequence_config))
+        code = _inject_activation_lookup_api(
+            code, layout_obj, sequence_switch=sequence_switch
+        )
         include_marker = "#include <math.h>"
         abi_include = '#include "ck_model_abi_v8.h"'
         if abi_include not in code:

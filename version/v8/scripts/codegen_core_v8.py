@@ -3165,6 +3165,12 @@ def emit_model_and_api(
       These ops have c_code that reads from bump memory (needs loaded weights).
     """
     logits_stride = int(logits_stride)
+    from sequence_state_contract_v8 import resolve_sequence_state_contract
+    from sequence_state_codegen_v8 import emit_sequence_state_api
+
+    sequence_state_contract = resolve_sequence_state_contract(layout or {}, config or {})
+    sequence_state_api = emit_sequence_state_api() if sequence_state_contract else ""
+    sequence_state_release = "    ck_sequence_release_all();\n" if sequence_state_contract else ""
     if logits_stride > 0:
         decode_logits_copy = f"""
     /* Copy logits from position 0 to position token_pos in the logits buffer.
@@ -3574,6 +3580,7 @@ static int ck_model_cancel_requested(void) {{
 #else
 #define CK_EXPORT __attribute__((visibility("default")))
 #endif
+{sequence_state_api}
 
 /* Forward declarations */
 static void ck_decode(CKModel *model, int32_t token);
@@ -3848,7 +3855,7 @@ CK_EXPORT void ck_model_free(void) {{
 #ifndef A_ROPE_CACHE
     free(g_model->rope_cos);
 #endif
-    ck_bump_alloc_free(&g_model->bump_alloc);
+{sequence_state_release}    ck_bump_alloc_free(&g_model->bump_alloc);
     free(g_model);
     g_model = NULL;
 }}
