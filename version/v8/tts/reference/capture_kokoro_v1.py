@@ -59,6 +59,15 @@ GENERATOR_RESIDUAL_PREFIX_HOOKS = (
     "decoder.generator.noise_res.0.adain2.0",
     "decoder.generator.noise_res.0.convs2.0",
 )
+GENERATOR_RESIDUAL_BLOCK_TAIL_HOOKS = tuple(
+    f"decoder.generator.noise_res.0.{module}.{pair}"
+    for pair in (1, 2)
+    for module in ("adain1", "adain2", "convs1", "convs2")
+) + tuple(
+    f"decoder.generator.noise_res.0.{module}.{pair}.fc"
+    for pair in (1, 2)
+    for module in ("adain1", "adain2")
+)
 
 
 def sha256(path: Path) -> str:
@@ -204,13 +213,13 @@ def main() -> int:
         "predictor.duration_proj", "predictor.shared", "predictor.F0_proj",
         "predictor.N_proj", "text_encoder", "decoder", "decoder.generator",
         "decoder.generator.conv_post",
-    ) + FINE_PREDICTOR_HOOKS + PROSODY_BRANCH_HOOKS + DECODER_HOOKS + GENERATOR_HOOKS + GENERATOR_RESIDUAL_PREFIX_HOOKS
+    ) + FINE_PREDICTOR_HOOKS + PROSODY_BRANCH_HOOKS + DECODER_HOOKS + GENERATOR_HOOKS + GENERATOR_RESIDUAL_PREFIX_HOOKS + GENERATOR_RESIDUAL_BLOCK_TAIL_HOOKS
     modules = dict(model.named_modules())
     hooks = []
     for name in module_names:
         module = modules.get(name)
         if module is None:
-            if name in FINE_PREDICTOR_HOOKS + PROSODY_BRANCH_HOOKS + DECODER_HOOKS + GENERATOR_HOOKS + GENERATOR_RESIDUAL_PREFIX_HOOKS:
+            if name in FINE_PREDICTOR_HOOKS + PROSODY_BRANCH_HOOKS + DECODER_HOOKS + GENERATOR_HOOKS + GENERATOR_RESIDUAL_PREFIX_HOOKS + GENERATOR_RESIDUAL_BLOCK_TAIL_HOOKS:
                 raise RuntimeError(f"pinned predictor checkpoint module missing: {name}")
             record.setdefault("unavailable_hooks", []).append(name)
             continue
@@ -241,6 +250,18 @@ def main() -> int:
         capture_tensor(inputs[0], "decoder_generator_noise_res_0_pair0_output",
                        out_dir, record["tensors"])
     hooks.append(next_pair.register_forward_pre_hook(capture_first_pair_sum))
+    for pair in (1, 2):
+        for convolution in ("convs1", "convs2"):
+            module_name = f"decoder.generator.noise_res.0.{convolution}.{pair}"
+            label = f"decoder_generator_noise_res_0_pair{pair}_{convolution}_input"
+            def capture_snake(_module, inputs, label=label):
+                capture_tensor(inputs[0], label, out_dir, record["tensors"])
+            hooks.append(modules[module_name].register_forward_pre_hook(capture_snake))
+    def capture_second_pair_sum(_module, inputs):
+        capture_tensor(inputs[0], "decoder_generator_noise_res_0_pair1_output",
+                       out_dir, record["tensors"])
+    hooks.append(modules["decoder.generator.noise_res.0.adain1.2"]
+                 .register_forward_pre_hook(capture_second_pair_sum))
     stft = model.decoder.generator.stft
     capture_tensor(stft.window, "generator_stft_window", out_dir,
                    record["tensors"])
@@ -316,10 +337,16 @@ def main() -> int:
     for name in GENERATOR_RESIDUAL_PREFIX_HOOKS:
         if name.replace(".", "_") not in record["tensors"]:
             raise RuntimeError(f"pinned residual prefix checkpoint not reached: {name}")
+    for name in GENERATOR_RESIDUAL_BLOCK_TAIL_HOOKS:
+        if name.replace(".", "_") not in record["tensors"]:
+            raise RuntimeError(f"pinned residual tail checkpoint not reached: {name}")
     if "decoder_generator_noise_res_0_snake0" not in record["tensors"]:
         raise RuntimeError("pinned first source Snake input was not captured")
     for key in ("decoder_generator_noise_res_0_snake1",
-                "decoder_generator_noise_res_0_pair0_output"):
+                "decoder_generator_noise_res_0_pair0_output",
+                "decoder_generator_noise_res_0_pair1_output") + tuple(
+                f"decoder_generator_noise_res_0_pair{pair}_{convolution}_input"
+                for pair in (1, 2) for convolution in ("convs1", "convs2")):
         if key not in record["tensors"]:
             raise RuntimeError(f"pinned first source residual pair checkpoint not reached: {key}")
     record["fine_predictor_hooks"] = list(FINE_PREDICTOR_HOOKS)
@@ -327,6 +354,8 @@ def main() -> int:
     record["decoder_hooks"] = list(DECODER_HOOKS)
     record["generator_hooks"] = list(GENERATOR_HOOKS)
     record["generator_residual_prefix_hooks"] = list(GENERATOR_RESIDUAL_PREFIX_HOOKS)
+    record["generator_residual_block_tail_hooks"] = list(
+        GENERATOR_RESIDUAL_BLOCK_TAIL_HOOKS)
     capture_tensor(output.pred_dur, "predicted_duration", out_dir, record["tensors"])
     durations = output.pred_dur.detach().cpu().reshape(-1).to(torch.int64)
     if len(durations) != len(ids) or (durations < 1).any():
