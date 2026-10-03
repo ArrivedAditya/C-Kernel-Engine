@@ -55,7 +55,7 @@
     {"name": "frames", "source": "runtime:snake_frames", "value_type": "size_t"}
   ]},
   "tests": {
-    "unit": ["tests/test_v8_audio_snake_checked_oracle.py", "tests/test_v8_audio_snake_generated.py"],
+    "unit": ["tests/test_v8_audio_snake_checked_oracle.py", "tests/test_v8_audio_snake_generated.py", "tests/test_v8_kokoro_source_residual_prefix.py"],
     "oracle": "Committed PyTorch 2.8 fixtures and optional live PyTorch for channelwise Snake; padded strides, tails, 256-channel geometry, rejection, and repeated execution"
   },
   "constraints": {"notes": "Channels and valid frames positive. Alpha is finite, nonzero, and one value per channel. Input, alpha, and output are disjoint. All valid input and results are finite; complete preflight leaves output unchanged on rejection. No heap, scratch, or global state."},

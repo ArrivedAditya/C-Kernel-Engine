@@ -1,0 +1,60 @@
+{
+  "scope": "direct pinned full-model first source residual prefix",
+  "model_pin": "e8a90b41091c3c5b70375c47cc959799920fa4d6",
+  "code_pin": "dfb907a02bba8152ca444717ca5d78747ccb4bec",
+  "oracle": "pinned full KModel forward and convolution-input hooks",
+  "environment": {
+    "kokoro": "0.9.4",
+    "misaki": "0.9.4",
+    "torch": "2.8.0+cpu",
+    "transformers": "5.17.0",
+    "spacy": "3.8.16",
+    "num2words": "0.5.14",
+    "phonemizer-fork": "3.3.2",
+    "espeakng-loader": "0.2.4"
+  },
+  "asset_sha256": {
+    "config.json": "5abb01e2403b072bf03d04fde160443e209d7a0dad49a423be15196b9b43c17f",
+    "kokoro-v1_0.pth": "496dba118d1a58f5f3db2efc88dbdc216e0483fc89fe6e47ee1f2c53f18ad1e4",
+    "voices/af_heart.pt": "0ab5709b8ffab19bfd849cd11d98f75b60af7733253ad0d67b12382a102cb4ff"
+  },
+  "capture_manifest_sha256": "a28cb3e9c8035367757d31b292a5148eafb269e0f4a11729f4c3dd441754d26b",
+  "source_tensor_sha256": {
+    "decoder_style": "64b7bd32bdbe96ddfa68adc2adc67bbac60a6aba4bfcc6d71245815010d5487b",
+    "first_source_conv": "a9a881af3d26245bcddc4ffe08a824328e8a81ea32e1bef2f8dd339118763d21",
+    "style0": "f13907c9930ac0de8efbd50d1176aa26b3925f05c43549591098d9af3a2d2fc3",
+    "norm0": "37161389c574636b279c51e913d10a483e53ccd9c15a16d60b1fd917a4aa6cbf",
+    "snake0": "17e45dd809537bfb3a3275b9652a9b75ed90ccea356277251e16a086cdf21464",
+    "conv0": "6fe3376ec141a6ab809505967d3b2e9e118eb35e8ac42e5f0a42804947b8f0f8"
+  },
+  "effective_weight_sha256": {
+    "waveform_decoder.generator.noise_res.0.adain1.0.fc.weight": "2def5ea5b78cbb6d50b49aff8ecabb38a2148947dea50183f56b8e7d605c66ac",
+    "waveform_decoder.generator.noise_res.0.adain1.0.fc.bias": "315803a8b42cda7d1d706ad67c13d312bc353170e9ff64c20bbb7ea773c63d70",
+    "waveform_decoder.generator.noise_res.0.adain1.0.norm.weight": "893a106828fbdb9521e1d868c985aab7ad2ae2f606edc55329265a5e7676006c",
+    "waveform_decoder.generator.noise_res.0.adain1.0.norm.bias": "5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef",
+    "waveform_decoder.generator.noise_res.0.alpha1.0": "f25a652cbeb39f8a5e962154b080804a4b17089b7c73b3b2e46d060856161e22",
+    "waveform_decoder.generator.noise_res.0.convs1.0.weight": "786b6a32a84e4da18edc073b8f912e235ac6e71b2f9732694296664f5d553bee",
+    "waveform_decoder.generator.noise_res.0.convs1.0.bias": "0f9d33d08d93ad071b88a6056c0964041e2090d2956a913f264c137b5b87dedf"
+  },
+  "transformations": {
+    "alpha": "waveform_decoder.generator.noise_res.0.alpha1.0 [1,256,1] \u2192 canonical contiguous [256]; no value change"
+  },
+  "array_sha256": {
+    "decoder_style": "ec9518045009b676f9cdc1fd05ce82c3fb8d4a777be4df9c7ae722eb3f12ee87",
+    "first_source_conv": "fe76703557376309193018fafeaf920d0edbcdad7b1de46b2c38c8d4d2469bc7",
+    "style0": "87437c89607d83b91fbe68a6a38fb4a986c016bc2385b28f6ceb8b8a9b8825dc",
+    "norm0": "86882579a06d3c6f30c235ac2e288b713bda076be6ff3c556b611c0bc4210002",
+    "snake0": "c64d562307fad866f452a632bcfa457e421537ddda5b69c2a1044c7c347a4fe5",
+    "conv0": "3a73ba8266b5bfe44dcf9934eae2b34ce0169b96d0015851a2aded84b5ac203e",
+    "style_weight": "2def5ea5b78cbb6d50b49aff8ecabb38a2148947dea50183f56b8e7d605c66ac",
+    "style_bias": "315803a8b42cda7d1d706ad67c13d312bc353170e9ff64c20bbb7ea773c63d70",
+    "norm_weight": "893a106828fbdb9521e1d868c985aab7ad2ae2f606edc55329265a5e7676006c",
+    "norm_bias": "5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef",
+    "alpha": "f25a652cbeb39f8a5e962154b080804a4b17089b7c73b3b2e46d060856161e22",
+    "conv_weight": "786b6a32a84e4da18edc073b8f912e235ac6e71b2f9732694296664f5d553bee",
+    "conv_bias": "0f9d33d08d93ad071b88a6056c0964041e2090d2956a913f264c137b5b87dedf"
+  },
+  "fixture_sha256": "8626f194a8ded4e42390cf37722065a763b6f727b4fad9deb05ac1a339d02104",
+  "input_text": "Read this assistant response aloud.",
+  "valid_frames": 2060
+}

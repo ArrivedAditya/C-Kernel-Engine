@@ -51,6 +51,11 @@ GENERATOR_HOOKS = (
     "decoder.generator.noise_res.0",
     "decoder.generator.ups.0",
 )
+GENERATOR_RESIDUAL_PREFIX_HOOKS = (
+    "decoder.generator.noise_res.0.adain1.0.fc",
+    "decoder.generator.noise_res.0.adain1.0",
+    "decoder.generator.noise_res.0.convs1.0",
+)
 
 
 def sha256(path: Path) -> str:
@@ -196,13 +201,13 @@ def main() -> int:
         "predictor.duration_proj", "predictor.shared", "predictor.F0_proj",
         "predictor.N_proj", "text_encoder", "decoder", "decoder.generator",
         "decoder.generator.conv_post",
-    ) + FINE_PREDICTOR_HOOKS + PROSODY_BRANCH_HOOKS + DECODER_HOOKS + GENERATOR_HOOKS
+    ) + FINE_PREDICTOR_HOOKS + PROSODY_BRANCH_HOOKS + DECODER_HOOKS + GENERATOR_HOOKS + GENERATOR_RESIDUAL_PREFIX_HOOKS
     modules = dict(model.named_modules())
     hooks = []
     for name in module_names:
         module = modules.get(name)
         if module is None:
-            if name in FINE_PREDICTOR_HOOKS + PROSODY_BRANCH_HOOKS + DECODER_HOOKS + GENERATOR_HOOKS:
+            if name in FINE_PREDICTOR_HOOKS + PROSODY_BRANCH_HOOKS + DECODER_HOOKS + GENERATOR_HOOKS + GENERATOR_RESIDUAL_PREFIX_HOOKS:
                 raise RuntimeError(f"pinned predictor checkpoint module missing: {name}")
             record.setdefault("unavailable_hooks", []).append(name)
             continue
@@ -218,6 +223,11 @@ def main() -> int:
                 stem += "_output"
             capture_tensor(output, stem, out_dir, record["tensors"])
         hooks.append(module.register_forward_hook(on_output))
+    first_source_conv = modules["decoder.generator.noise_res.0.convs1.0"]
+    def capture_first_source_snake(_module, inputs):
+        capture_tensor(inputs[0], "decoder_generator_noise_res_0_snake0",
+                       out_dir, record["tensors"])
+    hooks.append(first_source_conv.register_forward_pre_hook(capture_first_source_snake))
     stft = model.decoder.generator.stft
     capture_tensor(stft.window, "generator_stft_window", out_dir,
                    record["tensors"])
@@ -290,10 +300,16 @@ def main() -> int:
         if not any(key.startswith(name.replace(".", "_"))
                    for key in record["tensors"]):
             raise RuntimeError(f"pinned generator checkpoint not reached: {name}")
+    for name in GENERATOR_RESIDUAL_PREFIX_HOOKS:
+        if name.replace(".", "_") not in record["tensors"]:
+            raise RuntimeError(f"pinned residual prefix checkpoint not reached: {name}")
+    if "decoder_generator_noise_res_0_snake0" not in record["tensors"]:
+        raise RuntimeError("pinned first source Snake input was not captured")
     record["fine_predictor_hooks"] = list(FINE_PREDICTOR_HOOKS)
     record["prosody_branch_hooks"] = list(PROSODY_BRANCH_HOOKS)
     record["decoder_hooks"] = list(DECODER_HOOKS)
     record["generator_hooks"] = list(GENERATOR_HOOKS)
+    record["generator_residual_prefix_hooks"] = list(GENERATOR_RESIDUAL_PREFIX_HOOKS)
     capture_tensor(output.pred_dur, "predicted_duration", out_dir, record["tensors"])
     durations = output.pred_dur.detach().cpu().reshape(-1).to(torch.int64)
     if len(durations) != len(ids) or (durations < 1).any():

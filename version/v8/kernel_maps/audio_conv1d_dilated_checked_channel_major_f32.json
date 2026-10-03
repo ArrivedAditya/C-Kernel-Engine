@@ -272,7 +272,8 @@
   "tests": {
     "unit": [
       "tests/test_v8_audio_dilated_conv_oracle.py",
-      "tests/test_v8_audio_dilated_conv_generated.py"
+      "tests/test_v8_audio_dilated_conv_generated.py",
+      "tests/test_v8_kokoro_source_residual_prefix.py"
     ],
     "oracle": "Committed independent PyTorch 2.8 dilated Conv1D fixtures and optional live PyTorch, with padded strides, production channel geometry, finite and capacity rejection"
   },
