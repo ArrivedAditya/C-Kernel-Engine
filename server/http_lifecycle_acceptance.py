@@ -392,9 +392,9 @@ def run_plain_chat(expected_reply: str, identity: dict, cases: list[dict]) -> No
 def run_budget_boundary(identity: dict, cases: list[dict]) -> None:
     """Reject a request beyond the declared capacity, then serve another.
 
-    A configured output cap changes a client's oversized reservation into a
-    smaller effective allowance. In that mode use deterministic high-entropy
-    input to test the rendered-prompt boundary instead.
+    A configured output cap changes an oversized reservation into a smaller
+    effective allowance. In that mode test an explicitly configured rendered
+    byte limit; it is separate from the model's token-context boundary.
     """
     effective = identity.get("effective_serving") or {}
     capacity = effective.get("active_context_limit")
@@ -405,13 +405,11 @@ def run_budget_boundary(identity: dict, cases: list[dict]) -> None:
         prompt = "hello"
         allowance = capacity
     else:
-        mode = "rendered_input"
-        # The current capped Gemma fixture is small. Bound the probe's own
-        # allocation while guaranteeing many varied tokenizer inputs.
-        if capacity > 8192:
-            raise RuntimeError("capped context above 8192 needs a separately budgeted probe")
-        prompt = "".join(hashlib.sha256(str(index).encode()).hexdigest()
-                         for index in range(capacity // 4 + 1))
+        byte_cap = effective.get("request_prompt_byte_cap")
+        if type(byte_cap) is not int or not 1 <= byte_cap <= 262144:
+            raise RuntimeError("capped output requires an explicit, bounded prompt byte cap for this probe")
+        mode = "rendered_byte_limit"
+        prompt = "x" * (byte_cap + 1)
         allowance = 1
     response = request("POST", "/responses", payload={
         "model": MODEL, "input": prompt, "max_output_tokens": allowance,
@@ -424,11 +422,13 @@ def run_budget_boundary(identity: dict, cases: list[dict]) -> None:
            "error_code": error_code, "input_bytes": len(prompt.encode()),
            "requested_output_tokens": allowance, "compiled_capacity": capacity}
     cases.append(row)
-    accepted_errors = ({"context_length_exceeded"} if mode == "output_reservation" else
-                       {"context_length_exceeded", "prompt_tokenization_failed"})
-    if response.status_code != 400 or error_code not in accepted_errors:
+    expected_status, expected_error = (
+        (400, "context_length_exceeded") if mode == "output_reservation" else
+        (413, "prompt_bytes_limit_exceeded"))
+    if response.status_code != expected_status or error_code != expected_error:
         raise RuntimeError(f"context-boundary: overflow was not rejected: {row}")
     row["counted_token_exceedance_proven"] = error_code == "context_length_exceeded"
+    row["byte_limit_proven"] = error_code == "prompt_bytes_limit_exceeded"
     row["followup"] = followup("context-boundary-followup")
 
 

@@ -25,6 +25,13 @@ SCHEMA = "cke.harness_repeatability.v1"
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 NAME = re.compile(r"[a-z][a-z0-9_-]{0,47}\Z")
 ADAPTERS = {"qwen_code", "antigravity_gemma"}
+HTTP_CASES = {
+    "plain-chat": {"chat-completions", "responses-stream", "multi-turn",
+                   "output-limit", "undeclared-tools"},
+    "budget-boundary": {"context-boundary"},
+    "lifecycle": {"long-input-timed-cancel", "decode", "stream-disconnect",
+                  "client-read-timeout"},
+}
 
 
 def _validate(config: dict) -> dict:
@@ -37,6 +44,7 @@ def _validate(config: dict) -> dict:
     if not isinstance(clients, list) or not clients:
         raise ValueError("clients must be a nonempty list")
     names: set[str] = set()
+    endpoints: set[tuple[str, int]] = set()
     for client in clients:
         if not isinstance(client, dict):
             raise ValueError("each client must be an object")
@@ -54,6 +62,10 @@ def _validate(config: dict) -> dict:
                 or parsed.path != "/v1" or parsed.query or parsed.fragment
                 or parsed.username or parsed.password):
             raise ValueError(f"{name}: endpoint must be an explicit localhost HTTP /v1 URL")
+        endpoint_key = ("127.0.0.1", parsed.port or 80)
+        if endpoint_key in endpoints:
+            raise ValueError(f"{name}: duplicate endpoint would bypass timeout isolation")
+        endpoints.add(endpoint_key)
         if not isinstance(client.get("model"), str) or not client["model"]:
             raise ValueError(f"{name}: model is required")
         for field in ("serving_identity", "session_library_sha256"):
@@ -117,6 +129,30 @@ def _server_instance(client: dict, report: dict | None) -> str | None:
     return before.get("server_instance_id") if isinstance(before, dict) else None
 
 
+def _report_matches_step(client: dict, kind: str, report: object) -> bool:
+    if not isinstance(report, dict) or report.get("model") != client["model"]:
+        return False
+    if report.get("endpoint") != client["endpoint"]:
+        return False
+    if kind == "task":
+        expected = ("cke.serving_harness_acceptance.v1" if client["adapter"] == "qwen_code"
+                    else "cke.gemma_antigravity_acceptance.v1")
+        return report.get("schema") == expected
+    if (report.get("schema") != "cke.http_lifecycle_acceptance.v1"
+            or report.get("suite") != kind):
+        return False
+    cases = report.get("cases")
+    if not isinstance(cases, list) or any(not isinstance(case, dict) for case in cases):
+        return False
+    labels = [case.get("label") for case in cases]
+    expected_labels = set(HTTP_CASES[kind])
+    identity = report.get("identity_before")
+    if (kind == "plain-chat" and isinstance(identity, dict)
+            and identity.get("output_protocol") == "none"):
+        expected_labels.add("chat-after-rejection")
+    return len(labels) == len(expected_labels) and set(labels) == expected_labels
+
+
 def _command(client: dict, kind: str, directory: Path) -> tuple[list[str], Path, int]:
     scripts = Path(__file__).resolve().parent
     base = ["--endpoint", client["endpoint"], "--model", client["model"],
@@ -171,17 +207,17 @@ def _run_step(client: dict, kind: str, directory: Path) -> dict:
                     process.wait()
                 exit_code = 124
     try:
-        report = json.loads(report_path.read_text()) if report_path.is_file() else None
+        report_bytes = report_path.read_bytes() if report_path.is_file() else None
+        report = json.loads(report_bytes) if report_bytes is not None else None
     except (OSError, json.JSONDecodeError):
+        report_bytes = None
         report = None
-    expected_schema = ("cke.http_lifecycle_acceptance.v1" if kind != "task" else
-                       "cke.serving_harness_acceptance.v1" if client["adapter"] == "qwen_code" else
-                       "cke.gemma_antigravity_acceptance.v1")
-    report_valid = (isinstance(report, dict) and report.get("schema") == expected_schema
-                    and report.get("model") == client["model"])
+    report_valid = _report_matches_step(client, kind, report)
     if not report_valid:
         report = None
     row = {"client": client["name"], "kind": kind, "report": str(report_path),
+           "report_sha256": hashlib.sha256(report_bytes).hexdigest() if report_bytes is not None else None,
+           "report_integrity_status": "pass" if report_bytes is not None else "missing",
            "started_at_unix": started, "elapsed_seconds": round(time.time() - started, 3),
            "exit_code": exit_code, "timed_out": timed_out,
            "report_schema_status": "pass" if report_valid else "missing_or_invalid",
@@ -279,16 +315,24 @@ def reassess(root: Path) -> dict:
         if not report_path.is_relative_to(root.resolve()):
             raise ValueError("matrix report path escapes its output directory")
         try:
-            report = json.loads(report_path.read_text())
+            report_bytes = report_path.read_bytes()
+            report = json.loads(report_bytes)
         except (OSError, json.JSONDecodeError):
+            report_bytes = None
             report = None
         kind = prior.get("kind")
-        expected_schema = ("cke.http_lifecycle_acceptance.v1" if kind != "task" else
-                           "cke.serving_harness_acceptance.v1" if client["adapter"] == "qwen_code" else
-                           "cke.gemma_antigravity_acceptance.v1")
-        valid = (isinstance(report, dict) and report.get("schema") == expected_schema
-                 and report.get("model") == client["model"])
+        if kind not in (*HTTP_CASES, "task"):
+            raise ValueError("matrix contains an unknown gate")
+        valid = _report_matches_step(client, kind, report)
         row = dict(prior)
+        expected_digest = prior.get("report_sha256")
+        if expected_digest is None:
+            row["report_integrity_status"] = "unverified"
+        elif (report_bytes is not None and isinstance(expected_digest, str)
+              and hashlib.sha256(report_bytes).hexdigest() == expected_digest):
+            row["report_integrity_status"] = "pass"
+        else:
+            row["report_integrity_status"] = "fail"
         row["report_schema_status"] = "pass" if valid else "missing_or_invalid"
         row["loaded_identity_status"] = (_identity_status(client, report) if valid else "missing")
         row["server_instance_id"] = _server_instance(client, report if valid else None)
@@ -307,7 +351,8 @@ def reassess(root: Path) -> dict:
         else:
             row["http_suite_status"] = (report or {}).get("status", "missing")
         row["status"] = ("pass" if row.get("exit_code") == 0 and not row.get("timed_out")
-                         and valid and row["loaded_identity_status"] == "pass"
+                         and valid and row["report_integrity_status"] == "pass"
+                         and row["loaded_identity_status"] == "pass"
                          and row["server_instance_continuity_status"] == "pass"
                          and row.get("task_status", row.get("http_suite_status")) == "pass"
                          and row.get("client_certification_status", "pass") == "pass"

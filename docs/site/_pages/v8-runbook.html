@@ -1745,7 +1745,8 @@ qwen --bare \
 GEMMA_RUN_DIR=/path/to/identified/gemma4-tools-bundle
 python3 version/v8/scripts/ck_serve_v8.py "$GEMMA_RUN_DIR" \
   --run "$GEMMA_RUN_DIR" --no-build --model-name gemma4-e4b-q4km-tools \
-  --host 127.0.0.1 --port 18205 --request-output-cap 256
+  --host 127.0.0.1 --port 18205 --request-output-cap 256 \
+  --request-prompt-byte-cap 32768
 
 # On the harness machine, tunnel the localhost-only endpoint from Ryzen.
 ssh -N -L 127.0.0.1:18215:127.0.0.1:18205 ryzen
@@ -1908,13 +1909,15 @@ python3 server/harness_repeatability.py \
         does not inherit a missing protocol or recovery result. The matrix also
         rejects a changed server-instance ID between attempts, even if the same
         bundle is reloaded. The HTTP suites
-        test multi-turn and output-limit behavior, context-budget rejection with
+        test multi-turn and output-limit behavior, bounded-input rejection with
         a successful follow-up, cancellation, disconnect, and timeout recovery.
         For an uncapped runtime, the context probe tests an oversized output
-        reservation; for the capped Gemma runtime, it sends oversized rendered
-        input. The generated tokenizer can refuse that oversized input before
-        it returns a count; the server reports a structured
-        <code>prompt_tokenization_failed</code> rejection rather than HTTP 500.
+        reservation. The 2,048-token Gemma deployment also declares an explicit
+        32,768-byte rendered-input cap; its probe tests that separate byte limit
+        and a successful follow-up. It does not infer a token count from the
+        input's byte length. Native tokenization failures without a proven
+        capacity cause remain structured server errors, while native busy
+        responses remain HTTP 429.
         The probe records whether an exact token-count exceedance was proven.
         It records which boundary was exercised and does not claim that
         the Qwen probe consumed 262K input. After a runner
@@ -1923,8 +1926,9 @@ python3 server/harness_repeatability.py \
         retrying edits or commands. It checks outcomes after execution; a fresh
         directory alone does not sandbox the client. Use a restricted account or
         container when tool execution needs isolation. Reassessment writes a separate immutable
-        <code>reassessment.json</code>, pins the original summary hash, and never
-        replays a task. The small Gemma artifact has only 2,048 tokens
+        <code>reassessment.json</code>, pins the original summary and each child
+        report hash, and never replays a task. Older reports without child hashes
+        remain integrity-unverified. The small Gemma artifact has only 2,048 tokens
         of compiled context and uses an explicit 256-token output cap; this matrix
         is bounded workflow evidence, not a larger-context or unattended-reliability
         claim. Repeat with a separately built and identified larger-context artifact

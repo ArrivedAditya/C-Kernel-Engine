@@ -1476,6 +1476,7 @@ def create_app(
     top_p: float = 1.0,
     max_tokens: int = 512,
     request_output_cap: int | None = None,
+    request_prompt_byte_cap: int | None = None,
     stop_on_text: Sequence[str] = (),
     stop_at_eos: bool = False,
     flags: int = 0,
@@ -1511,6 +1512,10 @@ def create_app(
         or (context_length is not None and request_output_cap >= context_length)
     ):
         raise ValueError("request_output_cap must be positive and below loaded context capacity")
+    if request_prompt_byte_cap is not None and (
+        type(request_prompt_byte_cap) is not int or request_prompt_byte_cap <= 0
+    ):
+        raise ValueError("request_prompt_byte_cap must be a positive byte count")
 
     router = APIRouter()
     if loaded_identity is not None and loaded_identity.get("schema") != "cke.loaded_serving_identity.v1":
@@ -1551,6 +1556,8 @@ def create_app(
     }
     if request_output_cap is not None:
         effective_serving["request_output_cap"] = request_output_cap
+    if request_prompt_byte_cap is not None:
+        effective_serving["request_prompt_byte_cap"] = request_prompt_byte_cap
 
     def _conversation_echo(body) -> dict[str, Any] | None:
         conv = body.conversation
@@ -1738,6 +1745,16 @@ def create_app(
                 prompt = f"{body.instructions}\n{prompt}".strip()
             if not prompt.strip():
                 prompt = "Hello"
+        if request_prompt_byte_cap is not None:
+            rendered_bytes = len(prompt.encode("utf-8"))
+            if rendered_bytes > request_prompt_byte_cap:
+                raise _harness_error(
+                    413,
+                    f"rendered prompt has {rendered_bytes} bytes, exceeding the "
+                    f"configured input byte cap {request_prompt_byte_cap}",
+                    err_type="invalid_request_error",
+                    code="prompt_bytes_limit_exceeded",
+                )
         if context_length is not None:
             if tok_limit >= context_length:
                 raise _harness_error(
@@ -1752,18 +1769,19 @@ def create_app(
             if callable(count_tokens):
                 try:
                     prompt_tokens = count_tokens(prompt)
-                except SessionError as exc:
-                    # Generated token buffers can reject oversized input
-                    # before returning a count. The request is inadmissible,
-                    # but the exact token count is unknown; do not call this
-                    # a proven context-length exceedance or leak HTTP 500.
+                except SessionBusyError as exc:
                     raise _harness_error(
-                        400,
-                        "native tokenizer could not count the rendered prompt; "
-                        "reduce the input or inspect the generated tokenizer "
-                        f"for loaded context capacity {context_length}",
-                        err_type="invalid_request_error",
-                        code="prompt_tokenization_failed",
+                        429, "Session busy: another request is in progress. Retry later.",
+                        err_type="rate_limit_error", code="rate_limit_exceeded",
+                        retry_after=_FLIGHT_WAIT_SECONDS,
+                    ) from exc
+                except SessionError as exc:
+                    # The v8 ABI currently folds tokenizer capacity, internal
+                    # errors and allocation failures into one runtime status.
+                    # Do not misclassify that status as a bad user prompt.
+                    raise _harness_error(
+                        500, "native tokenizer failed while counting the rendered prompt",
+                        err_type="server_error", code="native_tokenization_failed",
                     ) from exc
                 if prompt_tokens + tok_limit > context_length:
                     available = max(0, context_length - prompt_tokens)

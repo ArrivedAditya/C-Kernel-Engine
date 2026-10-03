@@ -1,4 +1,5 @@
 """The repeatability coordinator retains failures without inventing certification."""
+import hashlib
 import json
 from pathlib import Path
 
@@ -27,6 +28,15 @@ def test_config_rejects_remote_endpoints_and_unpinned_artifacts():
     config = _config()
     config["clients"][0]["serving_identity"] = "unverified"
     with pytest.raises(ValueError, match="serving_identity"):
+        matrix._validate(config)
+
+
+def test_config_rejects_two_clients_on_same_endpoint():
+    config = _config()
+    second = dict(config["clients"][0], name="same-port",
+                  endpoint="http://localhost:18103/v1")
+    config["clients"].append(second)
+    with pytest.raises(ValueError, match="duplicate endpoint"):
         matrix._validate(config)
 
 
@@ -92,6 +102,21 @@ def test_http_report_uses_its_own_identity_fields():
     assert matrix._identity_status(client, report) == "pass"
 
 
+def test_http_report_must_match_requested_suite_endpoint_and_cases():
+    client = _config()["clients"][0]
+    report = {"schema": "cke.http_lifecycle_acceptance.v1", "model": "qwen-test",
+              "endpoint": client["endpoint"], "suite": "lifecycle",
+              "identity_before": {"output_protocol": "qwen_xml"},
+              "cases": [{"label": label} for label in matrix.HTTP_CASES["lifecycle"]]}
+    assert matrix._report_matches_step(client, "lifecycle", report)
+    assert not matrix._report_matches_step(client, "plain-chat", report)
+    report["endpoint"] = "http://127.0.0.1:18104/v1"
+    assert not matrix._report_matches_step(client, "lifecycle", report)
+    report["endpoint"] = client["endpoint"]
+    report["cases"][-1]["label"] = "unexpected-case"
+    assert not matrix._report_matches_step(client, "lifecycle", report)
+
+
 def test_successful_child_exit_cannot_certify_wrong_report_schema(tmp_path, monkeypatch):
     import sys
 
@@ -108,6 +133,32 @@ def test_successful_child_exit_cannot_certify_wrong_report_schema(tmp_path, monk
     assert row["report_schema_status"] == "missing_or_invalid"
 
 
+def test_swapped_http_suite_report_fails_and_retains_its_hash(tmp_path, monkeypatch):
+    import sys
+
+    client = _config()["clients"][0]
+    identity = {"model": client["model"], "serving_identity": HASH,
+                "session_library_sha256": HASH, "server_instance_id": "first"}
+    report = {"schema": "cke.http_lifecycle_acceptance.v1", "model": client["model"],
+              "endpoint": client["endpoint"], "suite": "plain-chat", "status": "pass",
+              "identity_before": identity, "identity_after": identity,
+              "cases": [{"label": label} for label in matrix.HTTP_CASES["plain-chat"]]}
+    report_text = json.dumps(report)
+
+    def fake_command(_client, _kind, directory):
+        path = directory / "report.json"
+        return ([sys.executable, "-c",
+                 "from pathlib import Path; import sys; Path(sys.argv[1]).write_text(sys.argv[2])",
+                 str(path), report_text], path, 10)
+
+    monkeypatch.setattr(matrix, "_command", fake_command)
+    row = matrix._run_step(client, "lifecycle", tmp_path / "step")
+    assert row["exit_code"] == 0
+    assert row["report_schema_status"] == "missing_or_invalid"
+    assert row["report_sha256"] == hashlib.sha256(report_text.encode()).hexdigest()
+    assert row["status"] == "fail"
+
+
 def test_reassessment_uses_retained_reports_without_replaying_tasks(tmp_path):
     root = tmp_path / "matrix"
     root.mkdir()
@@ -117,17 +168,49 @@ def test_reassessment_uses_retained_reports_without_replaying_tasks(tmp_path):
     report_path = root / "http-report.json"
     report_path.write_text(json.dumps({
         "schema": "cke.http_lifecycle_acceptance.v1", "model": "qwen-test",
+        "endpoint": "http://127.0.0.1:18103/v1", "suite": "plain-chat",
+        "cases": [{"label": label} for label in matrix.HTTP_CASES["plain-chat"]],
         "identity_before": identity, "identity_after": identity, "status": "pass"}))
     original = {"schema": matrix.SCHEMA, "status": "fail", "steps": [{
         "client": "qwen-control", "kind": "plain-chat", "report": str(report_path),
+        "report_sha256": hashlib.sha256(report_path.read_bytes()).hexdigest(),
         "exit_code": 0, "timed_out": False, "status": "fail"}]}
     (root / "summary.json").write_text(json.dumps(original))
     result = matrix.reassess(root)
     assert result["steps"][0]["status"] == "pass"
     assert result["steps"][0]["loaded_identity_status"] == "pass"
+    assert result["steps"][0]["report_integrity_status"] == "pass"
     assert result["status"] == "fail"  # Other required steps are still missing.
     assert json.loads((root / "summary.json").read_text()) == original
     assert (root / "reassessment.json").is_file()
+
+
+@pytest.mark.parametrize("change", ["mutated", "missing_hash"])
+def test_reassessment_cannot_certify_unbound_child_report(tmp_path, change):
+    root = tmp_path / "matrix"
+    root.mkdir()
+    (root / "config.json").write_text(json.dumps(_config()))
+    identity = {"model": "qwen-test", "serving_identity": HASH,
+                "session_library_sha256": HASH, "server_instance_id": "first"}
+    report_path = root / "report.json"
+    report_path.write_text(json.dumps({
+        "schema": "cke.http_lifecycle_acceptance.v1", "model": "qwen-test",
+        "endpoint": "http://127.0.0.1:18103/v1", "suite": "budget-boundary",
+        "cases": [{"label": "context-boundary"}],
+        "identity_before": identity, "identity_after": identity, "status": "pass"}))
+    step = {"client": "qwen-control", "kind": "budget-boundary",
+            "report": str(report_path), "report_sha256": hashlib.sha256(report_path.read_bytes()).hexdigest(),
+            "exit_code": 0, "timed_out": False, "status": "fail"}
+    if change == "mutated":
+        report_path.write_text(report_path.read_text() + " ")
+    else:
+        del step["report_sha256"]
+    (root / "summary.json").write_text(json.dumps({
+        "schema": matrix.SCHEMA, "status": "fail", "steps": [step]}))
+    result = matrix.reassess(root)
+    assert result["steps"][0]["report_integrity_status"] == (
+        "fail" if change == "mutated" else "unverified")
+    assert result["steps"][0]["status"] == "fail"
 
 
 def test_matrix_rejects_server_restart_between_passed_steps(tmp_path, monkeypatch):
