@@ -184,6 +184,23 @@ class TestV8TokenizerCapabilityCodegen(unittest.TestCase):
             init,
         )
 
+    def test_bpe_codegen_respects_declared_space_prefix(self) -> None:
+        generated = build_ir_v8._generate_tokenizer_c_code(
+            "bpe",
+            vocab_size=256,
+            num_merges=0,
+            special_tokens={"add_bos_token": True, "add_space_prefix": False},
+        )
+        self.assertIn("ck_true_bpe_set_suppress_dummy_prefix(g_model->tokenizer, true);", generated["init"])
+
+        generated_with_prefix = build_ir_v8._generate_tokenizer_c_code(
+            "bpe",
+            vocab_size=256,
+            num_merges=0,
+            special_tokens={"add_space_prefix": True},
+        )
+        self.assertIn("ck_true_bpe_set_suppress_dummy_prefix(g_model->tokenizer, false);", generated_with_prefix["init"])
+
     def test_sentencepiece_exports_text_encode_capability(self) -> None:
         generated = build_ir_v8._generate_tokenizer_c_code(
             "sentencepiece",
