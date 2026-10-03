@@ -189,18 +189,25 @@ async def _run(args) -> int:
         "sdk_version": SDK_VERSION,
         "model": args.model,
         "endpoint": args.endpoint,
+        "case_timeout_seconds": args.case_timeout_seconds,
         "identity_before": identity_before,
         "cases": [],
         "status": "incomplete",
     }
     try:
-        for task in (
-            lambda: _one_file(args.endpoint, args.model, args.workspace, transient=False),
-            lambda: _two_files(args.endpoint, args.model, args.workspace),
-            lambda: _edit_and_validate(args.endpoint, args.model, args.workspace),
-            lambda: _one_file(args.endpoint, args.model, args.workspace, transient=True),
+        for case, task in (
+            ("one_file", lambda: _one_file(args.endpoint, args.model, args.workspace, transient=False)),
+            ("two_files", lambda: _two_files(args.endpoint, args.model, args.workspace)),
+            ("edit_and_validate", lambda: _edit_and_validate(args.endpoint, args.model, args.workspace)),
+            ("transient_tool_recovery", lambda: _one_file(
+                args.endpoint, args.model, args.workspace, transient=True)),
         ):
-            report["cases"].append(await task())
+            try:
+                result = await asyncio.wait_for(task(), timeout=args.case_timeout_seconds)
+            except TimeoutError as exc:
+                raise TimeoutError(
+                    f"{case} exceeded {args.case_timeout_seconds:g} seconds") from exc
+            report["cases"].append(result)
         identity_after = _identity(args.endpoint, args.model,
                                    args.expected_serving_identity,
                                    args.expected_session_library_sha256)
@@ -226,12 +233,15 @@ def main() -> int:
     parser.add_argument("--expected-session-library-sha256", required=True)
     parser.add_argument("--workspace", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--case-timeout-seconds", type=float, default=300.0)
     args = parser.parse_args()
     url = urlparse(args.endpoint)
     if url.scheme != "http" or url.hostname not in {"127.0.0.1", "localhost"} or not args.endpoint.endswith("/v1"):
         parser.error("endpoint must be an explicit localhost HTTP /v1 URL")
     if args.output.exists() or args.workspace.exists():
         parser.error("report and workspace must be new; retained evidence is immutable")
+    if not 0 < args.case_timeout_seconds <= 3600:
+        parser.error("case timeout must be greater than zero and at most one hour")
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.workspace.mkdir(parents=True)
     if importlib.metadata.version("google-antigravity") != SDK_VERSION:

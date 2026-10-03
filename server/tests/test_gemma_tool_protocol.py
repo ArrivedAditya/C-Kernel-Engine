@@ -69,6 +69,19 @@ def test_gemma_template_tool_shape_is_explicitly_protocol_selected():
         tool_protocol="gemma4_dsl_v1") == "read_file:string"
 
 
+def test_gemma_template_keeps_nested_tool_schema():
+    nested = {"type": "function", "name": "probe", "parameters": {
+        "type": "object", "properties": {"query": {"type": "object", "properties": {
+            "terms": {"type": "array", "items": {"type": "string"}}}}}}}
+    template = ("{{ tools[0].function.parameters.properties.query.properties."
+                "terms['items'].type }}")
+    body = SimpleNamespace(tools=[FunctionTool.model_validate(nested)],
+                           instructions=None, tool_choice=None)
+    assert _render_with_chat_templates(
+        template, None, [{"role": "user", "content": "hi"}], body,
+        tool_protocol="gemma4_dsl_v1") == "string"
+
+
 def test_pinned_json_schema_declaration_is_annotation_only():
     schema = {"$schema": "https://json-schema.org/draft/2020-12/schema",
               "type": "object", "properties": {"AbsolutePath": {"type": "string"}},

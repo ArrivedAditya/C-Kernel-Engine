@@ -1740,11 +1740,11 @@ qwen --bare \
     <p class="mini-note">On the isolated 2,048-token tools bundle, Antigravity SDK
         0.1.20 connected directly to CKE with <code>--request-output-cap 256</code>
         and completed a file read, two-file answer, exact HTML edit plus validator,
-        and retry after a transient tool error. The four-case report and disposable
-        workspace archive are retained under
+        and retry after a transient tool error in two consecutive four-case runs.
+        Both reports and disposable workspace archives are retained under
         <code>/srv/cke/profiles/gemma4-tools-20261003/</code>. Two earlier runs
         failed the single-file answer despite a correct tool call and result;
-        those failed reports are retained too. The third run passed after a more
+        those failed reports are retained too. The passing runs used a more
         specific task prompt. This establishes a bounded successful workflow,
         not repeated overnight reliability or larger-context capacity.
         The HTTP cancellation/disconnect suite passed on the same server instance;
@@ -1777,6 +1777,7 @@ python3 server/gemma_antigravity_acceptance.py \
   --model gemma4-e4b-q4km-tools \
   --expected-serving-identity "$SERVING_SHA" \
   --expected-session-library-sha256 "$SESSION_SHA" \
+  --case-timeout-seconds 300 \
   --workspace /path/to/new-disposable-workspace \
   --output /path/to/new-gemma-antigravity-report.json</pre>
     </div>
