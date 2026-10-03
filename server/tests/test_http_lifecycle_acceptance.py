@@ -66,10 +66,10 @@ def test_wrong_loaded_identity_rejects_before_generation(tmp_path):
 
 
 class _Response:
-    def __init__(self, status_code, body=None):
+    def __init__(self, status_code, body=None, text=None):
         self.status_code = status_code
         self._body = body or {}
-        self.text = json.dumps(self._body)
+        self.text = text if text is not None else json.dumps(self._body)
 
     def json(self):
         return self._body
@@ -204,3 +204,72 @@ def test_probe_rejects_server_instance_change_after_cases(tmp_path, monkeypatch)
     assert report["identity_before"]["server_instance_id"] == "first"
     assert report["identity_after"]["server_instance_id"] == "second"
     assert "changed during acceptance" in report["error"]
+
+
+def _plain_chat_fixture(monkeypatch, *, terminal="response.completed",
+                        limit_status="incomplete", rejection_code="tool_protocol_undeclared"):
+    def completion(word):
+        return _Response(200, {"choices": [{"message": {"content": word},
+                                              "finish_reason": "stop"}],
+                               "usage": {"completion_tokens": 1}})
+
+    stream_events = [
+        ("response.created", {"type": "response.created", "response": {"id": "resp_test"}}),
+        ("response.output_text.delta", {"type": "response.output_text.delta", "delta": "hello"}),
+        (terminal, {"type": terminal, "response": {
+            "status": "completed" if terminal == "response.completed" else "incomplete",
+            "output_text": "hello", "usage": {"output_tokens": 1}}}),
+    ]
+    stream_text = "".join(f"event: {name}\ndata: {json.dumps(body)}\n\n"
+                          for name, body in stream_events)
+    responses = [
+        completion("hello"),
+        _Response(200, text=stream_text),
+        completion("cobalt"),
+        _Response(200, {"status": limit_status,
+                        "incomplete_details": {"reason": "max_output_tokens"},
+                        "usage": {"output_tokens": 1}}),
+        _Response(501, {"error": {"code": rejection_code}}),
+        completion("recovered"),
+    ]
+    calls = []
+
+    def fake_request(method, path, **kwargs):
+        calls.append((method, path, kwargs.get("payload")))
+        return responses.pop(0)
+
+    monkeypatch.setattr(probe, "request", fake_request)
+    return calls
+
+
+def test_plain_chat_suite_covers_both_routes_multiturn_limit_and_recovery(monkeypatch):
+    calls = _plain_chat_fixture(monkeypatch)
+    monkeypatch.setattr(probe, "MODEL", "fixture-model")
+    cases = []
+    probe.run_plain_chat("hello", {"output_protocol": "none"}, cases)
+    assert [case["label"] for case in cases] == [
+        "chat-completions", "responses-stream", "multi-turn",
+        "output-limit", "undeclared-tools", "chat-after-rejection",
+    ]
+    assert all(case.get("protocol_status") for case in cases if "protocol_status" in case)
+    assert [path for _, path, _ in calls] == [
+        "/chat/completions", "/responses", "/chat/completions", "/responses",
+        "/chat/completions", "/chat/completions",
+    ]
+
+
+@pytest.mark.parametrize("terminal,limit_status,rejection_code,failed_case", [
+    ("response.incomplete", "incomplete", "tool_protocol_undeclared", "responses-stream"),
+    ("response.completed", "completed", "tool_protocol_undeclared", "output-limit"),
+    ("response.completed", "incomplete", "wrong_code", "undeclared-tools"),
+])
+def test_plain_chat_suite_rejects_false_success(monkeypatch, terminal, limit_status,
+                                                rejection_code, failed_case):
+    calls = _plain_chat_fixture(monkeypatch, terminal=terminal,
+                                limit_status=limit_status, rejection_code=rejection_code)
+    monkeypatch.setattr(probe, "MODEL", "fixture-model")
+    cases = []
+    with pytest.raises(RuntimeError, match=failed_case):
+        probe.run_plain_chat("hello", {"output_protocol": "none"}, cases)
+    assert cases[-1]["label"] == failed_case
+    assert len(calls) == len(cases)
