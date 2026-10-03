@@ -37,6 +37,16 @@ decoder_parity_v8 = _load_module("decoder_first_token_parity_v8_tests", V8_DECOD
 
 
 class V8DecoderFirstTokenParityTests(unittest.TestCase):
+    def test_bridge_prefix_decode_policy_fails_closed(self) -> None:
+        self.assertEqual(decoder_parity_v8._prefix_decode_policy(None), "causal_mixed_prefix")
+        self.assertEqual(
+            decoder_parity_v8._prefix_decode_policy({"prefix_decode_policy": "non_causal_visual_chunk"}),
+            "non_causal_visual_chunk",
+        )
+        for invalid in (None, "", "unknown", [], True):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, "prefix_decode_policy"):
+                decoder_parity_v8._prefix_decode_policy({"prefix_decode_policy": invalid})
+
     def test_encoder_prefix_report_binds_complete_independent_exports(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -1404,8 +1414,10 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
                     self.assertEqual(decoder_parity_v8.main(argv), 4)
                 self.assertEqual(run_llama.call_args.kwargs["prefix_path"], llama_prefix)
                 self.assertEqual(list(run_decoder.call_args.args[1]), [1.0, 2.0, 3.0, 4.0])
+                self.assertEqual(run_decoder.call_args.kwargs["prefix_decode_policy"], "causal_mixed_prefix")
                 report = json.loads(report_path.read_text(encoding="utf-8"))
                 self.assertEqual(report["status"], "incomplete")
+                self.assertEqual(report["prefix_decode_policy"], "causal_mixed_prefix")
                 self.assertFalse(report["pass"])
                 self.assertTrue(report["diagnostic_comparison_pass"])
                 self.assertEqual(report["prefix_input_scope"], "separate_files_unverified_producers")
@@ -1823,6 +1835,7 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
                     dump_pass="prefill",
                     dump_atol=1.0e-4,
                     dump_rtol=1.0e-3,
+                    prefix_decode_policy="non_causal_visual_chunk",
                 )
 
             self.assertEqual(ck["vocab_size"], 4)
@@ -1834,6 +1847,7 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
                 {"name": "text_after", "rows": 2, "physical_start": 3},
             ])
             ck_capture.assert_called_once()
+            self.assertEqual(ck_capture.call_args.kwargs["prefix_decode_policy"], "non_causal_visual_chunk")
             llama_capture.assert_called_once()
 
     def test_coalesce_multimodal_prefill_segments_joins_token_rows(self) -> None:
@@ -1923,6 +1937,7 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
                         "prefix_grid_x": 3,
                         "prefix_grid_y": 3,
                         "prefix_text_pos": 5,
+                        "prefix_decode_policy": "non_causal_visual_chunk",
                     }
                 ),
                 encoding="utf-8",
@@ -1986,7 +2001,9 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
             self.assertEqual(decoder_kwargs["tokens_before"], [11, 22])
             self.assertEqual(decoder_kwargs["prefix_grid"], (3, 3))
             self.assertEqual(decoder_kwargs["prefix_text_pos"], 5)
+            self.assertEqual(decoder_kwargs["prefix_decode_policy"], "non_causal_visual_chunk")
             report = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertEqual(report["prefix_decode_policy"], "non_causal_visual_chunk")
             self.assertTrue(report["multimodal_prompt_segmented"])
             self.assertEqual(report["formatted_prompt"], "<|im_start|>user\n<|vision_start|><image_embeds><|vision_end|>Explain this image.<|im_end|>\n<|im_start|>assistant\n")
             self.assertEqual(report["prompt_tokens_before_image"], [11, 22])
