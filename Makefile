@@ -1394,6 +1394,14 @@ test-v8-serve-localhost-e2e:
 	$(PYTHON) $(PYTHONFLAGS) -m pytest -q tests/test_v8_serve_localhost_e2e.py
 	$(PYTHON) $(PYTHONFLAGS) version/v8/scripts/test_serve_localhost_e2e.py
 
+.PHONY: test-arm-spark-baseline
+test-arm-spark-baseline:
+ifeq ($(IS_ARM_ARCH),)
+	@echo "SKIP: ARM Spark baseline fixture only runs on AArch64 hosts"
+else
+	$(PYTHON) $(PYTHONFLAGS) -m pytest -q tests/test_arm_spark_baseline.py
+endif
+
 .PHONY: test-v8-serve-native-jinja
 test-v8-serve-native-jinja:
 	$(PYTHON) $(PYTHONFLAGS) -m pytest -q server/tests/test_native_qwen_jinja_contract.py server/tests/test_serving_bundle.py

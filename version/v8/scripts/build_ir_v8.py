@@ -3802,12 +3802,21 @@ def _align_up(value: int, align: int) -> int:
 
 
 def _resolve_logits_layout(config: Dict[str, Any], mode: str) -> str:
-    """Resolve logits layout policy for this mode: 'last' or 'full'."""
+    """Resolve logits layout policy for this mode: 'last' or 'full'.
+
+    auto resolves to last-position logits for both prefill and decode: the
+    runtime only consumes the last row (chat, serving, and the parity probes
+    all read position 0), and planning full-sequence logits reserves
+    context_len x vocab x fp32 of arena (e.g. 35 GiB for a 262144-vocab
+    model at 32k context), which breaks small-memory targets. Full-sequence
+    logits remain available to callers that need them (training) via an
+    explicit --logits-layout full.
+    """
     layout = str(config.get("logits_layout", "auto")).lower()
     if layout not in {"auto", "last", "full"}:
         layout = "auto"
     if layout == "auto":
-        return "full" if mode == "prefill" else "last"
+        return "last"
     return layout
 
 
@@ -17547,7 +17556,7 @@ def main(args: List[str]) -> int:
         "--logits-layout",
         choices=["auto", "last", "full"],
         default="auto",
-        help="Logits buffer layout (auto=decode last/prefill full)"
+        help="Logits buffer layout (auto=last; full reserves context_len x vocab and is for training)"
     )
     parser.add_argument(
         "--prefill-policy-override",

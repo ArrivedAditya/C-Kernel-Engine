@@ -761,10 +761,56 @@ static void gated_deltanet_llama_avx2_grouped_forward_transposed_impl(
         }
     }
 #else
-    (void)q; (void)k; (void)v; (void)g; (void)beta;
-    (void)state_in; (void)state_out; (void)out;
-    (void)num_heads; (void)group_count; (void)state_dim; (void)norm_eps;
-    (void)head_begin; (void)head_end;
+    /* Portable scalar path (ARM and other non-AVX2 targets): identical
+     * transposed state layout and update order as the AVX2 path above.
+     * Without this the recurrent core silently no-ops on ARM and qwen35-
+     * class models emit garbage (state never updates, out stays stale). */
+    (void) norm_eps;
+    if (!q || !k || !v || !g || !beta || !state_in || !state_out || !out ||
+        num_heads <= 0 || group_count <= 0 || num_heads % group_count != 0 ||
+        state_dim <= 0 || state_dim > CK_DELTANET_MAX_STACK_DIM ||
+        head_begin < 0 || head_end < head_begin || head_end > num_heads) {
+        return;
+    }
+    /* ck_deltanet_llama_scale() is inside an AVX2-only block; use its
+     * portable non-SSE equivalent here. */
+    const float scale = 1.0f / sqrtf((float) state_dim);
+    const size_t vector_stride = (size_t) state_dim;
+    const size_t state_stride = (size_t) state_dim * (size_t) state_dim;
+
+    pthread_once(&ck_deltanet_libm_once, ck_bind_deltanet_llama_libm);
+    for (int h = head_begin; h < head_end; ++h) {
+        const int group = h % group_count;
+        const float *q_head = q + (size_t) group * vector_stride;
+        const float *k_head = k + (size_t) group * vector_stride;
+        const float *v_head = v + (size_t) h * vector_stride;
+        const float *state_prev = state_in + (size_t) h * state_stride;
+        float *state_cur = state_out + (size_t) h * state_stride;
+        float *out_head = out + (size_t) h * vector_stride;
+        const float gate = ck_deltanet_llama_expf(g[h]);
+        const float beta_s = ck_deltanet_llama_sigmoidf(beta[h]);
+
+        for (int col = 0; col < state_dim; ++col) {
+            const float *prev_col = state_prev + (size_t) col * vector_stride;
+            float *cur_col = state_cur + (size_t) col * vector_stride;
+            float memory = 0.0f;
+            float dot = 0.0f;
+            for (int row = 0; row < state_dim; ++row) {
+                cur_col[row] = prev_col[row] * gate;
+            }
+            for (int row = 0; row < state_dim; ++row) {
+                memory += cur_col[row] * k_head[row];
+            }
+            const float delta = (v_head[col] - memory) * beta_s;
+            for (int row = 0; row < state_dim; ++row) {
+                cur_col[row] = fmaf(k_head[row], delta, cur_col[row]);
+            }
+            for (int row = 0; row < state_dim; ++row) {
+                dot += cur_col[row] * q_head[row];
+            }
+            out_head[col] = dot * scale;
+        }
+    }
 #endif
 }
 

@@ -1,0 +1,149 @@
+{
+  "label": "NEW CERTIFICATION",
+  "label_note": "Two-generation ARM certification baseline: NVIDIA DGX Spark (GB10 Grace Blackwell) certified 2026-09-26, TDA4VM (2x Cortex-A72) certified 2026-10-03. The TDA4VM lane is labeled NEW CERTIFICATION for the current code even though the April 2026 TDA4VM regression baseline was later recovered (regression report 20260411_112740: qwen2/qwen3/qwen35/gemma PASS at --context-len 100, nanbeige OOM on 2 GB; evidence tarball sha256 94e02ada4fcdad45212455de3e633edb566b43be1f8f04463bd7c85a3ee1db70) — the April evidence predates the current runtime and does not cover it. All three machines (x86, Spark Grace, TDA4VM A72) ran bit-identical weights.",
+  "certification_date_utc": "2026-10-03",
+  "cke_revision": {
+    "branch": "test/arm-spark-baseline (PR #577), rebased onto main",
+    "base_note": "Spark measurements taken at base 50cb9915b6f449b25bc89a08170b83f6eddb52c9 + this branch's original build fixes; those fixes (immintrin guard, Q4_K symbol stubs) were superseded by PR #584 on main (guarded call sites + mixed-bump rewrite + ARM CI lane). TDA4VM measurements taken on main b5f03325c plus this branch's DeltaNet scalar fallback fix.",
+    "arm_fixes_landed_via": {
+      "pr_584_main": "guarded x86-only Q4_K packed-provider call sites (axpy/hyper_connection), file-backed mixed BUMP weights (fixes the April 'weights_base == 0 (got 448)' mixed-fallback rejection), _GNU_SOURCE/_POSIX_C_SOURCE portability, ubuntu-24.04-arm CI lane",
+      "this_branch": "gated_deltanet_llama_avx2_grouped_forward_transposed_impl scalar fallback (qwen35 ARM gibberish fix); --logits-layout auto plans last-position logits (full-sequence planning-bug fix)"
+    }
+  },
+  "hardware_spark": {
+    "machine": "NVIDIA DGX Spark (GB10 Grace Blackwell), hostname promaxgb10-9abd",
+    "arch": "aarch64",
+    "cpus": "20 cores (Cortex-X925 + Cortex-A725), 20 online",
+    "ram_total_gb": 121,
+    "isa_features": "NEON (asimd) + SVE/SVE2 (svebf16 svei8mm i8mm bf16 asimddp ...)",
+    "os_kernel": "Linux 7.0.0-1019-nvidia (Ubuntu 24.04), gcc 13.3.0, python 3.12.3"
+  },
+  "hardware_tda4vm": {
+    "machine": "TI TDA4VM SK board, hostname tda4vm-sk",
+    "arch": "aarch64",
+    "cpus": "2x Cortex-A72 (2 online), weak shared board",
+    "ram_total_mb": 2169,
+    "swap": "4 GB /swapfile (left in place)",
+    "disk_free_gb": 31,
+    "isa_features": "NEON (asimd) only; no SVE",
+    "os_kernel": "Linux 6.1.46-g5892b80d6 aarch64 (glibc 2.35), gcc 11.4.0 (aarch64-oe-linux), python 3.10",
+    "glibc_2_35_note": "glibc < 2.36 only defines RTLD_DEFAULT under _GNU_SOURCE; main covers all users (PR #584 added _GNU_SOURCE to deltanet_kernels.c, the one file missing it)"
+  },
+  "model": {
+    "source": "hf://unsloth/gemma-3-270m-it-GGUF/gemma-3-270m-it-Q5_K_M.gguf",
+    "quant": "Q5_K_M (converted tensor dtypes: 81x Q5_1, 27x Q5_K, 9x Q6_K, 9x Q8_0, 73x F32; no Q4_K tensors)",
+    "gguf_sha256": "0d29b1a23a4cb1f14fda28c9e63563fa4bbefb6f34db4f7e873bb72edd932b00",
+    "gguf_sha256_status": "identical on x86 cache, Spark, and TDA4VM (hash-verified)"
+  },
+  "run_config": {
+    "flow": "version/v8/scripts/cks-v8-run run <model> --context-len 1024 --force-compile --force-convert --temperature 0.0 --max-tokens 32 --prompt \"hello\" --chat-template auto",
+    "context_len": 1024,
+    "threads": "CK_NUM_THREADS=4 on x86/Spark, CK_NUM_THREADS=2 on TDA4VM (thread count does not change numerics for this model: verified bit-identical logits at 4 vs 20 threads on x86)",
+    "formatted_prompt": "<start_of_turn>user\nhello<end_of_turn>\n<start_of_turn>model\n",
+    "tokenizer": "built-in C tokenizer (llama contract), tokenizer.json extracted from GGUF"
+  },
+  "providers_executed_prefill": {
+    "note": "lowered_prefill.json positionally identical across x86/Spark (427 ops, 0 diffs); TDA4VM runs the same providers. Cross-ISA divergence is intra-kernel only.",
+    "kernels": {
+      "attention_forward_causal_head_major_gqa_llama_regular_strided_sliding_workspace": 18,
+      "ck_memcpy_parallel_dispatch": 36,
+      "ck_residual_add_token_major_parallel_dispatch": 36,
+      "embedding_forward_q8_0": 1,
+      "geglu_forward_ggml_native": 18,
+      "gemm_nt_q5_1_q8_1_parallel_dispatch": 63,
+      "gemm_nt_q5_k_parallel_dispatch_with_scratch": 27,
+      "gemm_nt_q6_k_q8_k": 9,
+      "gemm_nt_q8_0_q8_0_contract": 10,
+      "kv_cache_store_batch_f32": 18,
+      "memmove": 1,
+      "qk_norm_forward_llama_production_parallel_dispatch": 18,
+      "quantize_row_q8_k": 9,
+      "rmsnorm_forward_llama_production_parallel_dispatch": 73,
+      "rope_forward_qk_split_llama_parallel_dispatch": 18,
+      "transpose_inplace": 72
+    }
+  },
+  "results_gemma3_270m": {
+    "prompt_token_ids": [2, 105, 2364, 107, 23391, 106, 107, 105, 4368, 107],
+    "prompt_token_ids_match_all_three_machines": true,
+    "decode_trajectory_through_eos": [9259, 236888, 2088, 740, 564, 1601, 611, 3124, 236881, 107, 106],
+    "first_eos_index": 10,
+    "trajectory_matches_x86_through_eos_spark_and_tda4vm": true,
+    "rendered_response": "Hello! How can I help you today?",
+    "first_prefill_logits": {
+      "vocab": 262144,
+      "spark_sha256": "f8d395e95ebecc7b6a2ff3553bafaf3336f0430b211ae1bc52476d70e4beb587",
+      "x86_sha256": "005776e37abcb7a2031cbae15ffac24431dfb80127fd97bb0813437725dee726",
+      "argmax_all_machines": 9259,
+      "tda4vm_vs_spark": {"max_abs_diff": 0.0, "cosine": 1.0, "note": "BIT-IDENTICAL — both ARM targets execute the same portable scalar C kernel paths"},
+      "spark_vs_x86": {"max_abs_diff": 4.8705, "mean_abs_diff": 0.84642, "cosine": 0.999704},
+      "tda4vm_vs_x86": {"max_abs_diff": 4.8705, "cosine": 0.999704},
+      "torch_fp32_oracle_vs_spark": {"max_abs_diff": 4.5194, "mean_abs_diff": 1.51372, "cosine": 0.999817},
+      "torch_fp32_oracle_vs_x86": {"max_abs_diff": 6.0447, "mean_abs_diff": 1.80417, "cosine": 0.999740},
+      "oracle_note": "PyTorch oracle: transformers + torch fp32, GGUF dequantized, same 10 prompt IDs, last-position logits. ARM builds are slightly CLOSER to the fp32 oracle than x86; both share CKE's common reduced-intermediate-precision offset. Top-3 order identical across all; top-8 sets identical.",
+      "top8_spark_tda4vm": [[9259, 3.097], [10979, 1.966], [3910, 0.257], [236777, -1.979], [23391, -2.428], [242687, -3.046], [125508, -3.172], [144626, -3.943]],
+      "top8_x86": [[9259, 4.218], [10979, 2.594], [3910, 1.588], [242687, -2.059], [144626, -3.208], [125508, -3.345], [236777, -3.789], [23391, -3.914]],
+      "top8_torch": [[9259, 6.251], [10979, 3.654], [3910, 2.426], [236777, -0.195], [242687, -0.341], [23391, -0.527], [125508, -0.946], [144626, -2.243]]
+    },
+    "timings": {
+      "spark_cli": {"prefill_ms_per_10_tokens": 181.51, "decode_ms_per_token": 80.14, "threads": 4},
+      "tda4vm_cli": {"prefill_ms_per_10_tokens": 1619.32, "decode_ms_per_token": 243.69, "threads": 2},
+      "x86_cli": {"prefill_ms_per_10_tokens": 45.26, "decode_ms_per_token": 8.36, "threads": 4},
+      "peak_rss_full_flow_kib": {"spark": 2986988, "x86": 3012980}
+    },
+    "repeat_penalty_note": "the cks-v8-run default repeat-penalty (1.05) can flip the step-10 106/emoji near-tie (observed on Spark); with --repeat-penalty 1.0 all machines emit byte-identical output. Raw argmax trajectories (probe) are identical."
+  },
+  "results_tda4vm_other_families": {
+    "context": "board runs on main b5f03325c at --context-len 1024, 2 threads, prompt 'What is the capital of France?' unless noted",
+    "qwen2_0.5b_q4_k_m": {"status": "PASS", "response_start": "The capital of France is Paris. ...", "prefill_ms_per_token": 268.62, "decode_ms_per_token": 307.49},
+    "qwen3_0.6b_q8_0": {"status": "PASS", "note": "coherent think-block response", "prefill_ms_per_token": 130.22, "decode_ms_per_token": 179.55},
+    "qwen35_0.8b_q4_k_m": {
+      "status_before_fix": "FAIL (gibberish): first-prefill logits vs x86 cosine -0.35, max-abs 33.8",
+      "root_cause": "gated_deltanet_llama_avx2_grouped_forward_transposed_impl has an AVX2-only body and a no-op #else; on ARM the recurrent core silently did nothing (state never updates). Localized via per-layer CK_DEBUG_EXPORT_HIDDEN dumps: layer 0 op 15 recurrent_core — all inputs bit-match x86, outputs garbage. Generated model_v8.c bit-identical between board and x86.",
+      "fix": "scalar fallback with identical transposed layout and update order (this branch); x86 engine bit-identical with/without",
+      "status_after_fix": "PASS: 32-token greedy trajectory matches x86 exactly; first logits cosine 0.99768, max-abs 0.97, argmax 248068 both",
+      "prefill_ms_per_token": 655.61,
+      "decode_ms_per_token": 512.73
+    },
+    "nanbeige4.1_3b_q4_k_m": {
+      "april_2026": "OOM on 2 GB RAM (report 20260411_112740)",
+      "main_b5f03325c": "loads and generates at ctx 1024 but output is incoherent ('Weimplify is asked: ...'); not certified — suspected numerics issue in the hybrid/Q4_K path on ARM, unbisected"
+    }
+  },
+  "full_sequence_logits_planning_bug": {
+    "symptom": "with --logits-layout auto (the default), v8 prefill memory planning reserved context_len x vocab x fp32 logits scratch: 37,817,942,016 bytes (35.2 GiB) for gemma3 270M at its 32768-token default context, 24 GiB class reservations for qwen2 — ck_huge_alloc aligned_alloc fails on the 2 GB TDA4VM (gemma-main-ctxdefault.log) and inflates arenas everywhere",
+    "root_cause": "build_ir_v8.py _resolve_logits_layout mapped auto -> 'full' for prefill (vestige of vision encoder bring-up, 864ca2666), although chat/serving/probes only consume last-position logits; no circuit declares 'full'; training already passes explicit --logits-layout full",
+    "fix": "auto now resolves to 'last' for prefill and decode (this branch); explicit 'full' unchanged. Gemma ctx-1024 arena shrinks 1,445,192,256 -> 372,499,008 bytes; x86 numerics bit-identical (probe logits max-abs 0.0, trajectory unchanged); regression test tests/test_v8_logits_layout_auto.py (7 tests)",
+    "mitigation_confirmed": "--logits-layout last makes even the default-32768-context runtime load and run on the TDA4VM (gemma-main-last.log)"
+  },
+  "optimized_provider_pass_spark": {
+    "build": "separate directory build-neoverse, CFLAGS=-O3 -fPIC -DCK_TARGET_ARM=1 -mcpu=neoverse-v2 -fno-math-errno (SVE2/I8MM/BF16 enabled)",
+    "first_logits_vs_baseline": "bit-identical (max-abs-diff 0.0)",
+    "trajectory_vs_baseline": "identical",
+    "timing": {"baseline_prefill_ms": 286.0, "neoverse_prefill_ms": 309.7, "baseline_decode_ms_per_token": 96.33, "neoverse_decode_ms_per_token": 92.91},
+    "conclusion": "No numerical drift and no meaningful performance change. The repo contains NEON (arm_neon.h) providers only for q5_0/q8_0/q6k_q8k GEMM kernels and NO SVE/SVE2 providers anywhere (no arm_sve.h in the tree); the dominant gemma3 270M GEMMs execute as portable scalar C on ARM. No optimization is claimed."
+  },
+  "tolerances": {
+    "prompt_token_ids": "exact",
+    "decode_trajectory_through_eos": "exact",
+    "post_eos_tail": "membership in {106, 107}",
+    "first_prefill_argmax": "exact",
+    "first_prefill_top8_set": "exact",
+    "first_prefill_top8_values_abs": 0.25
+  },
+  "regression_fixture": {
+    "test": "tests/test_arm_spark_baseline.py (pytest; skips unless platform.machine() is aarch64/arm64 and a compiled runtime exists at CK_ARM_SPARK_MODEL_DIR or the default cache path)",
+    "probe": "version/v8/scripts/arm_baseline_probe_v8.py",
+    "make_target": "test-arm-spark-baseline (prints SKIP on non-ARM hosts)",
+    "runtime_spark_s": 4.0,
+    "runtime_tda4vm_s": 46.9,
+    "board_validation": "3 passed on TDA4VM against ~/.cache/ck-engine-v8/models/unsloth--gemma-3-270m-it-GGUF/ck-main-ctx1024"
+  },
+  "known_limitations": [
+    "Q4_K packed-provider routes (prefill packed-meta and VNNI dispatch) remain x86-only in provider coverage; on ARM the generic Q4_K/Q8_K paths run instead (correct after PR #584; performance untuned).",
+    "nanbeige4.1-3B is incoherent on the TDA4VM on main (unbisected ARM numerics issue; April baseline OOM'd it on 2 GB).",
+    "The canonical cks-v8-run flow compiles model_v8.c with -march=native on all hosts; the generic-ISA baseline applies to the engine/tokenizer libraries.",
+    "Post-EOS 106/107 near-ties are below run-to-run numeric noise and are not pinned.",
+    "TDA4VM timings are heavily swap/storage constrained (2 GB RAM + 4 GB swapfile); treat them as functional evidence, not performance guidance."
+  ]
+}
