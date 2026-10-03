@@ -990,6 +990,11 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_kokoro_generated_source_stft_conv.py",
         timeout_sec=300,
     ),
+    "tts_kokoro_source_residual_prefix": TestSuite(
+        "Kokoro Generated First Source Residual Prefix", "inference",
+        ROOT / "tests" / "test_v8_kokoro_source_residual_prefix.py",
+        timeout_sec=300,
+    ),
     "tts_checked_text_ops_generated": TestSuite(
         "Model-Neutral Checked Conv1D, Transpose, and Activation Graph", "inference",
         ROOT / "tests" / "test_v8_checked_text_ops_generated.py",

@@ -12436,7 +12436,8 @@
           "tests/test_v8_kokoro_generated_prosody_first_block.py",
           "tests/test_v8_kokoro_generated_prosody_complete.py",
           "tests/test_v8_kokoro_generated_decoder_encode.py",
-          "tests/test_v8_kokoro_generated_decoder_complete.py"
+          "tests/test_v8_kokoro_generated_decoder_complete.py",
+          "tests/test_v8_kokoro_source_residual_prefix.py"
         ],
         "oracle": "Independent torch.nn.functional.instance_norm CPU, committed PyTorch 2.13 fixture and optional live comparison; fixture-versus-live and native-versus-live reported separately"
       },
@@ -14694,7 +14695,8 @@
       "tests": {
         "unit": [
           "tests/test_v8_audio_dilated_conv_oracle.py",
-          "tests/test_v8_audio_dilated_conv_generated.py"
+          "tests/test_v8_audio_dilated_conv_generated.py",
+          "tests/test_v8_kokoro_source_residual_prefix.py"
         ],
         "oracle": "Committed independent PyTorch 2.8 dilated Conv1D fixtures and optional live PyTorch, with padded strides, production channel geometry, finite and capacity rejection"
       },
@@ -21130,7 +21132,8 @@
       "tests": {
         "unit": [
           "tests/test_v8_audio_snake_checked_oracle.py",
-          "tests/test_v8_audio_snake_generated.py"
+          "tests/test_v8_audio_snake_generated.py",
+          "tests/test_v8_kokoro_source_residual_prefix.py"
         ],
         "oracle": "Committed PyTorch 2.8 fixtures and optional live PyTorch for channelwise Snake; padded strides, tails, 256-channel geometry, rejection, and repeated execution"
       },
@@ -45176,7 +45179,8 @@
           "tests/test_v8_kokoro_generated_decoder_encode.py",
           "tests/test_v8_kokoro_generated_decoder_complete.py",
           "tests/test_v8_audio_source_projection_generated.py",
-          "tests/test_v8_kokoro_generated_f0_source.py"
+          "tests/test_v8_kokoro_generated_f0_source.py",
+          "tests/test_v8_kokoro_source_residual_prefix.py"
         ],
         "oracle": "Independent PyTorch torch.nn.functional.linear at small, pinned Kokoro projection and Q/K/V shapes, and direct full-model decoder style and source hooks; checked strided rows, bounded per-call capacities, and connected generated graphs"
       },
