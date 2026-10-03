@@ -21,6 +21,57 @@ sys.path.insert(0, str(ROOT / 'version/v8/tts'))
 import build_kokoro_decoder_complete_circuit as author
 
 
+DECODER_CONTRACT_NAME = 'kokoro.decoder-complete.pinned-fp32-v1'
+# The last block's AdaIN discrepancy reaches 8.12e-5 on one alternate
+# utterance. Its following convolution accumulates that input difference to
+# 1.20e-4; the residual output is 8.41e-5. These are checkpoint-specific
+# propagation bounds, not a claim of identical PyTorch reduction order.
+DECODER_BLOCK_CHECKPOINT_TOLERANCES = {
+    'input': 3e-5, 'norm0': 6e-5, 'conv0': 3e-5,
+    'norm1': 8e-5, 'conv1': 8e-5, 'shortcut': 6e-5,
+    'output': 6e-5,
+}
+DECODER_CHECKPOINT_TOLERANCES = {
+    f'decoder_decode{index}_{checkpoint}': ceiling
+    for index in range(4)
+    for checkpoint, ceiling in DECODER_BLOCK_CHECKPOINT_TOLERANCES.items()
+}
+DECODER_CHECKPOINT_TOLERANCES.update({
+    'decoder_decode3_pool': 3e-5,
+    'decoder_decode3_shortcut_upsample': 3e-5,
+    'decoder_decode3_norm1': 1e-4,
+    'decoder_decode3_conv1': 2e-4,
+    'decoder_decode3_output': 1e-4,
+})
+
+
+def decoder_checkpoint_tolerance(name):
+    return DECODER_CHECKPOINT_TOLERANCES[name]
+
+
+def require_matching_reference_identity(reference, candidate):
+    for field in ('model_pin', 'code_pin', 'asset_sha256'):
+        if field not in reference or field not in candidate:
+            raise ValueError(f'missing reference identity: {field}')
+        if reference[field] != candidate[field]:
+            raise ValueError(f'reference identity mismatch: {field}')
+
+
+def checkpoint_metrics(actual, expected):
+    if not np.isfinite(actual).all() or not np.isfinite(expected).all():
+        raise ValueError('nonfinite checkpoint samples')
+    difference = actual.astype(np.float64) - expected.astype(np.float64)
+    magnitude = np.abs(difference)
+    point = np.unravel_index(np.argmax(magnitude), magnitude.shape)
+    return {
+        'max_abs': float(magnitude[point]),
+        'worst_index': [int(value) for value in point],
+        'actual': float(actual[point]),
+        'reference': float(expected[point]),
+        'rmse': float(np.sqrt(np.mean(difference * difference))),
+    }
+
+
 class KokoroGeneratedDecoderCompleteTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -38,6 +89,8 @@ class KokoroGeneratedDecoderCompleteTest(unittest.TestCase):
         for index in range(4):
             cls.decode[index], cls.decode_meta[index] = verified_fixture(
                 f'decoder_decode{index}')
+        for meta in (cls.encode_meta, *cls.decode_meta.values()):
+            require_matching_reference_identity(cls.direct_meta, meta)
         weights = {'acoustic_text_encoder.embedding.weight':
                    fixtures['text_embedding']['table'].copy()}
         text = fixtures['text_encoder']
@@ -116,7 +169,7 @@ class KokoroGeneratedDecoderCompleteTest(unittest.TestCase):
         self.assertEqual(self.fn(arena, len(arena), ctypes.byref(frames),
                                  ctypes.byref(doubled)), 0)
         self.assertEqual((frames.value, doubled.value), (103, 206))
-        errors = {}
+        metrics = {}
         tolerances = {}
         for index in range(4):
             prefix = f'decoder_decode{index}'
@@ -139,17 +192,11 @@ class KokoroGeneratedDecoderCompleteTest(unittest.TestCase):
                 channels, valid = expected.shape
                 capacity = 256 if valid == 206 else 128
                 actual = self.view(arena, name).reshape(channels, capacity)
-                self.assertTrue(np.isfinite(actual[:, :valid]).all(), name)
-                error = np.abs(actual[:, :valid] - expected)
-                point = np.unravel_index(np.argmax(error), error.shape)
-                errors[name] = float(error[point])
-                ceiling = (8e-5 if name.endswith(('_norm1', '_conv1'))
-                           else 6e-5 if name.endswith(('_norm0', '_shortcut',
-                                                        '_output'))
-                           else 3e-5)
+                metrics[name] = checkpoint_metrics(actual[:, :valid], expected)
+                ceiling = decoder_checkpoint_tolerance(name)
                 tolerances[name] = ceiling
-                self.assertLessEqual(errors[name], ceiling,
-                                     (name, point, errors[name]))
+                self.assertLessEqual(metrics[name]['max_abs'], ceiling,
+                                     (name, metrics[name], ceiling))
                 if name.endswith('_output'):
                     self.assertTrue(np.all(actual[:, valid:] == -91.), name)
         print('CKE_NUMERICAL_CASE ' + json.dumps({
@@ -158,9 +205,13 @@ class KokoroGeneratedDecoderCompleteTest(unittest.TestCase):
             'provider': 'generated_decoder_complete', 'dtype': 'fp32',
             'direction': 'inference', 'oracle': 'pinned-full-kmodel-pytorch28',
             'backend_version': self.decode_meta[0]['environment']['torch'],
-            'status': 'pass', 'max_diff': max(errors.values()),
+            'status': 'pass',
+            'numerical_contract': DECODER_CONTRACT_NAME,
+            'max_diff': max(item['max_abs'] for item in metrics.values()),
             'tolerance': max(tolerances.values()),
-            'checkpoint_max_abs': errors,
+            'checkpoint_max_abs': {name: item['max_abs']
+                                   for name, item in metrics.items()},
+            'checkpoint_metrics': metrics,
             'checkpoint_tolerances': tolerances,
             'configuration': '36 phonemes; A=103/128; 2A=206/256; af_heart',
             'reproduction_command': 'python3 -m unittest ' + self.id()}))
@@ -171,7 +222,7 @@ class KokoroGeneratedDecoderCompleteTest(unittest.TestCase):
             with self.subTest(utterance=label):
                 reference, meta = verified_fixture(
                     f'decoder_utterance_{label}')
-                self.assertEqual(meta['model_pin'], self.decode_meta[0]['model_pin'])
+                require_matching_reference_identity(self.direct_meta, meta)
                 for index in range(4):
                     self.view(arena, f'decoder_decode{index}_output')[:] = -91.
                 ids = self.buffers['word_ids']
@@ -186,7 +237,7 @@ class KokoroGeneratedDecoderCompleteTest(unittest.TestCase):
                     ctypes.byref(frames), ctypes.byref(doubled)), 0)
                 self.assertEqual((frames.value, doubled.value),
                                  (meta['valid_frames'], meta['upsampled_frames']))
-                errors = {}
+                metrics = {}
                 tolerances = {}
                 names = {f'decoder_decode{i}_output': f'decoder_decode_{i}'
                          for i in range(4)}
@@ -202,14 +253,12 @@ class KokoroGeneratedDecoderCompleteTest(unittest.TestCase):
                     channels, valid = expected.shape
                     capacity = 256 if valid == doubled.value else 128
                     actual = self.view(arena, name).reshape(channels, capacity)
-                    self.assertTrue(np.isfinite(actual[:, :valid]).all())
-                    error = np.abs(actual[:, :valid] - expected)
-                    errors[name] = float(error.max())
-                    ceiling = (2e-4 if name == 'decoder_decode3_conv1'
-                               else 1e-4)
+                    metrics[name] = checkpoint_metrics(actual[:, :valid],
+                                                        expected)
+                    ceiling = decoder_checkpoint_tolerance(name)
                     tolerances[name] = ceiling
-                    self.assertLessEqual(errors[name], ceiling,
-                                         (label, name, errors[name]))
+                    self.assertLessEqual(metrics[name]['max_abs'], ceiling,
+                                         (label, name, metrics[name], ceiling))
                     if name.endswith('_output'):
                         self.assertTrue(np.all(actual[:, valid:] == -91.),
                                         (label, name))
@@ -220,9 +269,13 @@ class KokoroGeneratedDecoderCompleteTest(unittest.TestCase):
                     'direction': 'inference',
                     'oracle': 'pinned-full-kmodel-pytorch28',
                     'backend_version': meta['environment']['torch'],
-                    'status': 'pass', 'max_diff': max(errors.values()),
+                    'status': 'pass',
+                    'numerical_contract': DECODER_CONTRACT_NAME,
+                    'max_diff': max(item['max_abs'] for item in metrics.values()),
                     'tolerance': max(tolerances.values()),
-                    'checkpoint_max_abs': errors,
+                    'checkpoint_max_abs': {name: item['max_abs']
+                                           for name, item in metrics.items()},
+                    'checkpoint_metrics': metrics,
                     'checkpoint_tolerances': tolerances,
                     'configuration': f'{meta["input_text"]}; A={frames.value}/128',
                     'reproduction_command': 'python3 -m unittest ' + self.id()}))
@@ -240,6 +293,14 @@ class KokoroGeneratedDecoderCompleteTest(unittest.TestCase):
                                     ctypes.byref(doubled)), 0)
         self.assertEqual((frames.value, doubled.value), (-999, -999))
         self.assertTrue(np.all(self.view(arena, 'decoder_decode3_output') == -91.))
+
+    def test_reference_identity_rejects_mixed_experiments(self):
+        for field in ('model_pin', 'code_pin', 'asset_sha256'):
+            candidate = dict(self.direct_meta)
+            candidate[field] = 'different experiment'
+            with self.subTest(field=field), self.assertRaisesRegex(
+                    ValueError, field):
+                require_matching_reference_identity(self.direct_meta, candidate)
 
     def test_invalid_upsample_weight_stops_final_output(self):
         arena = self.arena()
@@ -307,8 +368,10 @@ class KokoroGeneratedDecoderCompleteTest(unittest.TestCase):
                 'kernel_id', 'function'],
             'observed_storage': {'default': 'fp32', 'checkpoints': {}},
             'dtype_thresholds': {'fp32': {'cosine_min': .99999,
-                'rmse_max': 6e-5, 'relative_rmse_max': 6e-5,
-                'max_abs_max': 6e-5, 'finite_required': True}},
+                'rmse_max': decoder_checkpoint_tolerance(name),
+                'relative_rmse_max': 6e-5,
+                'max_abs_max': decoder_checkpoint_tolerance(name),
+                'finite_required': True}},
             'checkpoint_order': [point['id']],
             'interval_expansions': {}, 'backend_mappings': {}}
         only = lambda manifest: {**manifest, 'checkpoints': [entry for entry in
