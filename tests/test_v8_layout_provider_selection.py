@@ -22,6 +22,7 @@ SPEC.loader.exec_module(resolver)
 
 BUILD_IR_SCRIPT = ROOT / "version" / "v8" / "scripts" / "build_ir_v8.py"
 sys.path.insert(0, str(BUILD_IR_SCRIPT.parent))
+from codegen_core_v8 import emit_op as emit_core_op
 BUILD_IR_SPEC = importlib.util.spec_from_file_location("build_ir_v8_layout_test", BUILD_IR_SCRIPT)
 assert BUILD_IR_SPEC is not None and BUILD_IR_SPEC.loader is not None
 build_ir = importlib.util.module_from_spec(BUILD_IR_SPEC)
@@ -258,6 +259,78 @@ int run_generated_layout(float *arena, int num_tokens) {{
             operation["resolved_physical_execution"]["layout_conversion"]["to_layout"],
             "head_major_contiguous",
         )
+
+    def test_kv_layout_bridge_uses_resolved_multitoken_geometry(self):
+        tokens, heads, dim = 4, 2, 3
+        elements = tokens * heads * dim
+        lowered = {
+            "config": {},
+            "operations": [{
+                "idx": 0,
+                "kernel": "layout_convert_token_to_head_f32",
+                "function": "transpose_inplace",
+                "op": "transpose_kv_to_head_major",
+                "layer": 0,
+                "section": "body",
+                "params": {"_m": tokens, "num_kv_heads": heads, "head_dim": dim},
+            }],
+        }
+        call = build_ir.generate_ir_lower_3(lowered, "prefill")["operations"][0]
+        self.assertEqual(call["layout_bridge"], {
+            "num_tokens": tokens, "num_kv_heads": heads, "head_dim": dim,
+        })
+        with self.assertRaisesRegex(ValueError, "unresolved geometry"):
+            emit_core_op({"op": "transpose_kv_to_head_major", "layer": 0})
+
+        guard = 8
+        k_offset = guard
+        v_offset = k_offset + elements + guard
+        scratch_offset = v_offset + elements + guard
+        total = scratch_offset + elements + guard
+        k_op = dict(call, _is_k=True)
+        v_op = dict(call, _is_k=False)
+        with tempfile.TemporaryDirectory(prefix="cke-kv-layout-") as td:
+            source = Path(td) / "layout.c"
+            library_path = Path(td) / "layout.so"
+            source.write_text(f"""
+#include <stddef.h>
+#include <string.h>
+typedef struct {{ unsigned char *bump; }} CKModel;
+#define A_K_SCRATCH ((size_t){k_offset} * sizeof(float))
+#define A_V_SCRATCH ((size_t){v_offset} * sizeof(float))
+#define A_LAYER_OUTPUT ((size_t){scratch_offset} * sizeof(float))
+static void ck_debug_export_hidden(CKModel *model, int layer, const char *name,
+                                   const float *data, size_t count) {{
+    (void)model; (void)layer; (void)name; (void)data; (void)count;
+}}
+void run(float *arena) {{
+    CKModel storage = {{ (unsigned char *)arena }};
+    CKModel *model = &storage;
+{emit_core_op(k_op)}
+{emit_core_op(v_op)}
+}}
+""", encoding="utf-8")
+            subprocess.run(["cc", "-std=c11", "-O2", "-shared", "-fPIC", str(source),
+                            "-o", str(library_path)], check=True)
+            library = ctypes.CDLL(str(library_path))
+            library.run.argtypes = [ctypes.POINTER(ctypes.c_float)]
+            sentinel = 0xA5A5A5A5
+            bits = (ctypes.c_uint32 * total)(*[sentinel] * total)
+            floats = ctypes.cast(bits, ctypes.POINTER(ctypes.c_float))
+            for index in range(elements):
+                floats[k_offset + index] = float(index + 1)
+                floats[v_offset + index] = float(100 + index)
+            library.run(floats)
+            expected = [
+                float(1 + (token * heads + head) * dim + channel)
+                for head in range(heads) for token in range(tokens) for channel in range(dim)
+            ]
+            self.assertEqual([floats[k_offset + i] for i in range(elements)], expected)
+            self.assertEqual([floats[v_offset + i] for i in range(elements)], [x + 99 for x in expected])
+            for start, stop in ((0, k_offset), (k_offset + elements, v_offset),
+                                (v_offset + elements, scratch_offset),
+                                (scratch_offset + elements, total)):
+                self.assertTrue(all(bits[i] == sentinel for i in range(start, stop)))
 
     def test_attention_output_selects_direct_token_major_provider(self):
         registry = json.loads(

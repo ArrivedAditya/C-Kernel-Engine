@@ -748,21 +748,60 @@ class V8NativeBridgeHostTests(unittest.TestCase):
         self.assertNotIn(marker, source)
 
     def test_gemma4_geometry_override_uses_pooled_projector_tokens(self) -> None:
-        with mock.patch.object(bridge_runner_v8, "_image_source_size", return_value=(72, 72)):
+        contract = {
+            "patch_size": 16,
+            "spatial_merge_size": 3,
+            "image_min_pixels": 161280,
+            "image_max_pixels": 2580480,
+            "image_resize_algorithm": "bicubic",
+            "image_resize_padding": "none",
+            "image_resize_rounding_policy": "half_away_from_zero",
+        }
+        with mock.patch.object(bridge_runner_v8, "_image_source_size", return_value=(512, 256)):
             overrides = bridge_runner_v8._gemma4_geometry_overrides(
-                {"patch_size": 16, "spatial_merge_size": 3},
-                Path("tiny.ppm"),
+                contract, Path("image.ppm"),
             )
 
-        self.assertEqual(overrides["image_width"], 336)
-        self.assertEqual(overrides["image_height"], 336)
-        self.assertEqual(overrides["vision_grid_w"], 21)
-        self.assertEqual(overrides["vision_grid_h"], 21)
-        self.assertEqual(overrides["vision_num_patches"], 441)
-        self.assertEqual(overrides["vision_merged_tokens"], 49)
-        self.assertEqual(overrides["merged_grid_x"], 7)
-        self.assertEqual(overrides["merged_grid_y"], 7)
+        self.assertEqual(overrides["image_width"], 576)
+        self.assertEqual(overrides["image_height"], 288)
+        self.assertEqual(overrides["vision_grid_w"], 36)
+        self.assertEqual(overrides["vision_grid_h"], 18)
+        self.assertEqual(overrides["vision_num_patches"], 648)
+        self.assertEqual(overrides["vision_merged_tokens"], 72)
+        self.assertEqual(overrides["merged_grid_x"], 12)
+        self.assertEqual(overrides["merged_grid_y"], 6)
         self.assertEqual(overrides["spatial_merge_factor"], 9)
+        self.assertEqual(overrides["image_min_pixels"], 161280)
+
+        for invalid in (
+            {"image_min_pixels": None},
+            {"image_min_pixels": True},
+            {"image_max_pixels": 1},
+            {"image_resize_algorithm": "bilinear"},
+            {"image_resize_rounding_policy": "ties_to_even"},
+        ):
+            with self.subTest(invalid=invalid), mock.patch.object(
+                bridge_runner_v8, "_image_source_size", return_value=(512, 256)
+            ), self.assertRaisesRegex(RuntimeError, "Gemma4 vision"):
+                bridge_runner_v8._gemma4_geometry_overrides({**contract, **invalid}, Path("image.ppm"))
+
+    def test_gemma4_bicubic_resize_without_padding(self) -> None:
+        if bridge_runner_v8.Image is None:
+            self.skipTest("Pillow is required for bicubic preprocessing")
+        with tempfile.TemporaryDirectory(prefix="v8_gemma4_resize_") as tmpdir:
+            image = Path(tmpdir) / "image.ppm"
+            image.write_bytes(b"P6\n2 1\n255\n" + bytes((255, 0, 0, 0, 0, 255)))
+            result = bridge_runner_v8._load_image_file(
+                image, 2, 4,
+                image_mean=[0.0, 0.0, 0.0],
+                image_std=[1.0, 1.0, 1.0],
+                resize_algorithm="bicubic",
+                resize_padding="none",
+            )
+        pixels = result["interleaved"]
+        self.assertEqual(len(pixels), 2 * 4 * 3)
+        self.assertIn("bicubic_none_resize_4x2", result["preprocess"])
+        self.assertTrue(all(sum(pixels[index:index + 3]) > 0.0 for index in range(0, len(pixels), 3)))
 
     def test_ck_run_v8_step_run_chat_uses_detected_default_threads(self) -> None:
         with tempfile.TemporaryDirectory(prefix="v8_step_run_chat_threads_") as tmpdir:

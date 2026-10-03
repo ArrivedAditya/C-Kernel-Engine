@@ -16637,6 +16637,21 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
                     ),
                 },
             }
+            if op_name == "transpose_kv_to_head_major":
+                params = op.get("params") or {}
+                tokens = int(params.get("_m", params.get("seq_len", 0)) or 0)
+                heads = int(params.get("num_kv_heads", 0) or 0)
+                head_dim = int(params.get("head_dim", 0) or 0)
+                if tokens <= 0 or heads <= 0 or head_dim <= 0:
+                    raise RuntimeError(
+                        f"layer {op.get('layer')}: K/V layout bridge requires resolved "
+                        "positive token, KV-head, and head-width geometry"
+                    )
+                transpose_op["layout_bridge"] = {
+                    "num_tokens": tokens,
+                    "num_kv_heads": heads,
+                    "head_dim": head_dim,
+                }
             if "_cross_kv_kind" in op:
                 transpose_op["_cross_kv_kind"] = op["_cross_kv_kind"]
             if "_cross_encoder_tokens_runtime" in op:

@@ -2174,39 +2174,33 @@ def _gemma4_geometry_overrides(config: dict[str, Any], image_path: Path) -> dict
     merge_size = int(config.get("spatial_merge_size", 3) or 3)
     if patch_size <= 0 or merge_size <= 0:
         raise RuntimeError(f"invalid Gemma4V patch/merge config patch={patch_size} merge={merge_size}")
-
-    # llama.cpp's Gemma4V projector average-pools merge_size x merge_size patch
-    # tiles before the decoder prefix. For small images, it upsizes to satisfy
-    # the projector's minimum visual-token budget; keep the bridge geometry in
-    # the same pooled-token contract instead of exposing raw patch rows.
-    min_tokens = int(config.get("image_min_tokens", config.get("vision_min_tokens", 40)) or 40)
-    max_tokens = int(config.get("image_max_tokens", config.get("vision_max_tokens", 280)) or 280)
-    min_tokens = max(1, min_tokens)
-    max_tokens = max(min_tokens, max_tokens)
-
-    aspect = float(source_width) / max(1.0, float(source_height))
-    pooled_h = max(1, int(round(math.sqrt(float(min_tokens) / max(aspect, 1.0e-6)))))
-    pooled_w = max(1, int(math.ceil(float(min_tokens) / float(pooled_h))))
-    if pooled_w * pooled_h < min_tokens:
-        pooled_w += 1
-    while pooled_w * pooled_h > max_tokens and pooled_w > 1:
-        pooled_w -= 1
-    while pooled_w * pooled_h > max_tokens and pooled_h > 1:
-        pooled_h -= 1
-    if source_width == source_height:
-        side = max(1, int(math.ceil(math.sqrt(float(min_tokens)))))
-        pooled_w = pooled_h = side
-
-    vision_grid_w = pooled_w * merge_size
-    vision_grid_h = pooled_h * merge_size
-    image_width = vision_grid_w * patch_size
-    image_height = vision_grid_h * patch_size
+    min_pixels = config.get("image_min_pixels")
+    max_pixels = config.get("image_max_pixels")
+    if (type(min_pixels) is not int or type(max_pixels) is not int
+            or min_pixels <= 0 or max_pixels < min_pixels):
+        raise RuntimeError(
+            "Gemma4 vision pixel limits are missing or invalid; regenerate the encoder artifact"
+        )
+    if config.get("image_resize_algorithm") != "bicubic" or config.get("image_resize_padding") != "none":
+        raise RuntimeError(
+            "Gemma4 vision resize contract is missing or invalid; regenerate the encoder artifact"
+        )
+    if config.get("image_resize_rounding_policy") != "half_away_from_zero":
+        raise RuntimeError(
+            "Gemma4 vision rounding contract is missing or invalid; regenerate the encoder artifact"
+        )
+    align_size = patch_size * merge_size
+    image_width, image_height = _calc_qwen_vl_smart_resize(
+        source_width, source_height, align_size, min_pixels, max_pixels,
+        rounding_policy="half_away_from_zero",
+    )
+    vision_grid_w = image_width // patch_size
+    vision_grid_h = image_height // patch_size
+    pooled_w = vision_grid_w // merge_size
+    pooled_h = vision_grid_h // merge_size
     vision_num_patches = vision_grid_w * vision_grid_h
     vision_merged_tokens = pooled_w * pooled_h
-    patch_area = patch_size * patch_size
     merge_factor = merge_size * merge_size
-    min_pixels = min_tokens * merge_factor * patch_area
-    max_pixels = max_tokens * merge_factor * patch_area
     return {
         "image_width": int(image_width),
         "image_height": int(image_height),
@@ -2224,8 +2218,8 @@ def _gemma4_geometry_overrides(config: dict[str, Any], image_path: Path) -> dict
         "image_source_height": int(source_height),
         "image_min_pixels": int(min_pixels),
         "image_max_pixels": int(max_pixels),
-        "image_min_tokens": int(min_tokens),
-        "image_max_tokens": int(max_tokens),
+        "image_min_tokens": int(math.ceil(min_pixels / float(align_size * align_size))),
+        "image_max_tokens": int(max_pixels // (align_size * align_size)),
     }
 
 
@@ -2431,19 +2425,25 @@ def _load_image_file(
             src_rgb = rgb.tobytes()
     if resize_algorithm == "bilinear" and resize_padding == "none":
         pixels = _resize_rgb8_bilinear(src_rgb, source_width, source_height, width, height)
-    elif resize_algorithm == "bicubic" and resize_padding == "center_ceil":
+    elif resize_algorithm == "bicubic" and resize_padding in ("none", "center_ceil"):
         if Image is None:
             raise RuntimeError("Pillow is required for bicubic image preprocessing")
-        scale = min(width / source_width, height / source_height)
-        resized_width = min(math.ceil(source_width * scale), width)
-        resized_height = min(math.ceil(source_height * scale), height)
+        if resize_padding == "center_ceil":
+            scale = min(width / source_width, height / source_height)
+            resized_width = min(math.ceil(source_width * scale), width)
+            resized_height = min(math.ceil(source_height * scale), height)
+        else:
+            resized_width, resized_height = width, height
         resized = Image.frombytes("RGB", (source_width, source_height), src_rgb).resize(
             (resized_width, resized_height), Image.Resampling.BICUBIC
         )
-        padded = Image.new("RGB", (width, height), (0, 0, 0))
-        padded.paste(resized, ((width - resized_width) // 2, (height - resized_height) // 2))
-        padded_rgb = padded.tobytes()
-        pixels = [tuple(padded_rgb[idx:idx + 3]) for idx in range(0, len(padded_rgb), 3)]
+        if resize_padding == "center_ceil":
+            padded = Image.new("RGB", (width, height), (0, 0, 0))
+            padded.paste(resized, ((width - resized_width) // 2, (height - resized_height) // 2))
+            resized_rgb = padded.tobytes()
+        else:
+            resized_rgb = resized.tobytes()
+        pixels = [tuple(resized_rgb[idx:idx + 3]) for idx in range(0, len(resized_rgb), 3)]
     else:
         raise RuntimeError(f"unsupported image resize contract: {resize_algorithm}/{resize_padding}")
     preprocess_prefix = f"{suffix.removeprefix('.')}_rgb_{resize_algorithm}_{resize_padding}_resize"

@@ -1155,6 +1155,27 @@ int main(int argc, char **argv) {
                 )
                 self.assertIn(f'"{label}_last"', prefill)
 
+    def test_joint_qk_norm_exports_all_heads_and_tokens(self) -> None:
+        op = {
+            "op": "qk_norm",
+            "function": "qk_norm_forward_parallel_dispatch",
+            "layer": 0,
+            "args": [
+                _arg("q", "Q"),
+                _arg("k", "K"),
+                _arg("num_heads", "3"),
+                _arg("num_kv_heads", "2"),
+                _arg("num_tokens", "7"),
+                _arg("head_dim", "4"),
+            ],
+        }
+        emitted = codegen.emit_op(op)
+        self.assertIn('"qk_norm_q", (const float*)Q, (3) * (7) * (4)', emitted)
+        self.assertIn('"qk_norm_k", (const float*)K, (2) * (7) * (4)', emitted)
+        without_tokens = dict(op, args=[arg for arg in op["args"] if arg["name"] != "num_tokens"])
+        with self.assertRaisesRegex(ValueError, "token extent"):
+            codegen.emit_op(without_tokens)
+
     def test_split_qk_norm_exports_complete_runtime_extent(self) -> None:
         cases = (
             ("q_norm", "Q", "num_heads", "8", "qk_norm_q"),
