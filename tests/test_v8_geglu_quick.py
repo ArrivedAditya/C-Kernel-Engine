@@ -55,6 +55,10 @@ class GeGLUQuickTests(unittest.TestCase):
         provider = json.loads((ROOT / "version/v8/kernel_maps/geglu_forward_quick.json").read_text())
         self.assertEqual(provider["operation_interface"], "geglu.fp32_compacting.v1")
         self.assertEqual(provider["impl"]["function"], "geglu_forward_quick")
+        self.assertEqual(
+            provider["memory_contract"]["input_output_overlap"],
+            "exact_input_output_alias_or_disjoint_only",
+        )
 
         sys.path.insert(0, str(ROOT / "version/v8/scripts"))
         import build_ir_v8

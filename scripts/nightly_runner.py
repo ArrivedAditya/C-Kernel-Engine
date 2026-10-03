@@ -1129,6 +1129,11 @@ TEST_SUITES = {
         "parity",
         ROOT / "tests" / "test_v8_numeric_parity_qwen3vl_mmproj.py",
     ),
+    "v8_geglu_quick_contract": TestSuite(
+        "v8 GeGLU Quick Numerical and Alias Contract",
+        "kernels",
+        ROOT / "tests" / "test_v8_geglu_quick.py",
+    ),
     "v8_generated_layout_bridges": TestSuite(
         "v8 Generated Layout Bridge Execution",
         "parity",
