@@ -97,6 +97,7 @@ def test_vision_numerics_profiles_are_explicit() -> None:
         exact, "cohere_compass_vision", "pytorch_exact"
     )
     assert exact == {
+        "image_resize_rounding_policy": "ties_to_even",
         "vision_patch_frontend": "integrated_temporal2",
         "vision_patch_projection_reduction_policy": "pytorch_onednn_conv3d_exact",
         "vision_mrope_reduction_policy": "pytorch_mkl_exact",
@@ -111,6 +112,7 @@ def test_vision_numerics_profiles_are_explicit() -> None:
         native, "cohere_compass_vision", "native"
     )
     assert native == {
+        "image_resize_rounding_policy": "ties_to_even",
         "vision_patch_frontend": "integrated_temporal2",
         "vision_patch_projection_reduction_policy": "native_pair_dot",
         "vision_mrope_reduction_policy": "portable_fp32_reference",

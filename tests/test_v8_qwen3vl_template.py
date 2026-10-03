@@ -714,6 +714,23 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
             self.assertEqual(out["image_resize_algorithm"], "bicubic")
             self.assertEqual(out["image_resize_padding"], "center_ceil")
 
+    def test_qwen_vl_smart_resize_rounding_follows_declared_source(self) -> None:
+        resize = run_multimodal_bridge_v8._calc_qwen_vl_smart_resize
+        self.assertEqual(resize(143, 143, 32, 1, 1024 * 1024), (128, 128))
+        self.assertEqual(resize(144, 144, 32, 1, 1024 * 1024), (128, 128))
+        self.assertEqual(resize(145, 145, 32, 1, 1024 * 1024), (160, 160))
+        self.assertEqual(resize(208, 80, 32, 1, 1024 * 1024), (192, 64))
+        self.assertEqual(
+            resize(144, 144, 32, 1, 1024 * 1024, rounding_policy="half_away_from_zero"),
+            (160, 160),
+        )
+        self.assertEqual(
+            resize(208, 80, 32, 1, 1024 * 1024, rounding_policy="half_away_from_zero"),
+            (224, 96),
+        )
+        with self.assertRaisesRegex(ValueError, "rounding policy"):
+            resize(144, 144, 32, 1, 1024 * 1024, rounding_policy="unknown")
+
     def test_qwen3vl_decoder_declares_bridge_generation_contract(self) -> None:
         doc = build_ir_v8._load_builtin_template_doc("qwen3vl")
         bridge = doc["contract"]["multimodal_bridge"]

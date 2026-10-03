@@ -1821,8 +1821,15 @@ def _run_converter(
     return manifest, manifest_path, bump_path, config_path
 
 
-def _round_by_factor(x: float, factor: int) -> int:
-    return int(round(float(x) / float(factor))) * int(factor)
+def _round_by_factor(x: float, factor: int, rounding_policy: str = "ties_to_even") -> int:
+    scaled = float(x) / float(factor)
+    if rounding_policy == "ties_to_even":
+        rounded = round(scaled)
+    elif rounding_policy == "half_away_from_zero":
+        rounded = math.floor(scaled + 0.5)
+    else:
+        raise ValueError(f"unsupported image resize rounding policy: {rounding_policy}")
+    return int(rounded) * int(factor)
 
 
 def _ceil_by_factor(x: float, factor: int) -> int:
@@ -1833,11 +1840,14 @@ def _floor_by_factor(x: float, factor: int) -> int:
     return int(math.floor(float(x) / float(factor))) * int(factor)
 
 
-def _calc_qwen_vl_smart_resize(width: int, height: int, align_size: int, min_pixels: int, max_pixels: int) -> tuple[int, int]:
+def _calc_qwen_vl_smart_resize(
+    width: int, height: int, align_size: int, min_pixels: int, max_pixels: int,
+    *, rounding_policy: str = "ties_to_even",
+) -> tuple[int, int]:
     if width <= 0 or height <= 0 or align_size <= 0:
         raise ValueError(f"invalid smart-resize inputs width={width} height={height} align={align_size}")
-    w_bar = max(align_size, _round_by_factor(width, align_size))
-    h_bar = max(align_size, _round_by_factor(height, align_size))
+    w_bar = max(align_size, _round_by_factor(width, align_size, rounding_policy))
+    h_bar = max(align_size, _round_by_factor(height, align_size, rounding_policy))
     if h_bar * w_bar > max_pixels:
         beta = math.sqrt(float(width * height) / float(max_pixels))
         w_bar = max(align_size, _floor_by_factor(width / beta, align_size))
@@ -2033,12 +2043,14 @@ def _qwen3vl_geometry_overrides(
         max_pixels = int(image_max_tokens) * patch_area
     if max_pixels < min_pixels:
         max_pixels = min_pixels
+    rounding_policy = str(config.get("image_resize_rounding_policy", "ties_to_even"))
     image_width, image_height = _calc_qwen_vl_smart_resize(
         int(source_width),
         int(source_height),
         int(align_size),
         int(min_pixels),
         int(max_pixels),
+        rounding_policy=rounding_policy,
     )
     if image_width % patch_size != 0 or image_height % patch_size != 0:
         raise RuntimeError(
@@ -2074,6 +2086,7 @@ def _qwen3vl_geometry_overrides(
         "image_max_tokens": int(max_pixels // patch_area),
         "image_resize_algorithm": "bicubic",
         "image_resize_padding": "center_ceil",
+        "image_resize_rounding_policy": rounding_policy,
     }
 
 
