@@ -1278,33 +1278,43 @@ def _normalize_chat_template_choice(mode: str | None) -> str:
     return _CHAT_TEMPLATE_ALIASES.get(value, value)
 
 
-def _read_gguf_metadata(gguf_path: Path, wanted_keys: set[str]) -> dict[str, Any]:
-    if not wanted_keys:
+def _read_gguf_metadata(
+    gguf_path: Path,
+    wanted_keys: set[str],
+    *,
+    wanted_suffixes: tuple[str, ...] = (),
+    strict: bool = False,
+) -> dict[str, Any]:
+    if not wanted_keys and not wanted_suffixes:
         return {}
     try:
         with open(gguf_path, "rb") as f:
             r = convert_gguf_to_bump_v8.GGUFReader(f)
             magic = r._read_exact(4)
             if magic != b"GGUF":
-                return {}
+                raise ValueError(f"invalid GGUF magic: {gguf_path}")
             version = r.u32()
             if version >= 2:
-                _ = r.u64()
+                n_tensors = r.u64()
                 n_kv = r.u64()
             else:
-                _ = r.u32()
+                n_tensors = r.u32()
                 n_kv = r.u32()
+            if n_tensors > 1_000_000 or n_kv > 1_000_000:
+                raise ValueError(f"GGUF header counts look corrupt: {gguf_path}")
 
             data: dict[str, Any] = {}
             for _ in range(int(n_kv)):
                 key = r.key_str()
                 vtype = r.u32()
-                if key in wanted_keys:
+                if key in wanted_keys or key.endswith(wanted_suffixes):
                     data[key] = convert_gguf_to_bump_v8._gguf_read_value(r, vtype)
                 else:
                     convert_gguf_to_bump_v8._gguf_skip_value(r, vtype)
             return data
     except Exception:
+        if strict:
+            raise
         return {}
 
 
@@ -4099,12 +4109,41 @@ def _derive_decoder_context_len(
     requested: int | None = None,
     slack_tokens: int = 16,
     minimum_context: int = 32,
+    maximum_context: int | None = None,
 ) -> int:
     needed = max(1, int(prompt_token_count) + max(0, int(prefix_tokens)))
     required = needed + max(1, int(slack_tokens))
+    selected = max(minimum_context, required)
     if requested is not None and int(requested) > 0:
-        return max(int(requested), required)
-    return max(minimum_context, required)
+        selected = max(int(requested), required)
+    if maximum_context is not None and selected > int(maximum_context):
+        raise ValueError(
+            "decoder context exceeds the declared limit: "
+            f"prompt={prompt_token_count} visual_prefix={prefix_tokens} "
+            f"continuation={max(1, int(slack_tokens))} requested={requested} "
+            f"required={selected} limit={maximum_context}"
+        )
+    return selected
+
+
+def _gguf_declared_context_limit(path: Path) -> int:
+    """Read the source model's context contract before allocating a runtime."""
+    gguf = convert_gguf_to_bump_v8
+    metadata = _read_gguf_metadata(
+        path,
+        {"general.architecture"},
+        wanted_suffixes=(".context_length",),
+        strict=True,
+    )
+    architecture = metadata.get("general.architecture")
+    if not isinstance(architecture, str) or not architecture:
+        raise ValueError("decoder GGUF has no general.architecture")
+    gguf.gguf_ck_arch_contract(architecture)
+    key = gguf.gguf_ck_metadata_key(architecture, "context_length") or f"{architecture}.context_length"
+    value = metadata.get(key)
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"decoder GGUF has no positive declared context length at {key!r}")
+    return value
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -4153,6 +4192,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--image-max-tokens", type=int, default=None, help="Maximum merged visual tokens for smart-resized Qwen3-VL images")
     ap.add_argument("--synthetic-prefix-tokens", type=int, default=0, help="Use zero prefix embeddings when a real encoder bridge is unavailable")
     ap.add_argument("--decoder-context-len", type=int, default=None, help="Minimum decoder context length; reserves prompt, visual prefix, and requested generation budget")
+    ap.add_argument(
+        "--decoder-context-cap",
+        type=int,
+        default=None,
+        help="Deployment context cap; requests above this or the GGUF-declared limit fail before encoder execution or decoder allocation",
+    )
     ap.add_argument("--dump-prefix-f32", type=Path, default=None, help="Optional output path for resolved float32 prefix embeddings")
     ap.add_argument("--dump-logits-f32", type=Path, default=None, help="Optional output path for first mixed-prefill logits as float32")
     ap.add_argument("--max-tokens", type=int, default=0, help="Generate up to N tokens after multimodal prefill; 0 reports first-token logits only")
@@ -4189,6 +4234,17 @@ def main(argv: list[str] | None = None) -> int:
         help="Optional vision encoder activation override(s) in op=dtype form, e.g. out_proj=q8",
     )
     args = ap.parse_args(argv)
+    if args.decoder_context_cap is not None and args.decoder_context_cap <= 0:
+        ap.error("--decoder-context-cap must be positive")
+    model_context_limit = (
+        _gguf_declared_context_limit(args.decoder_gguf.resolve())
+        if args.decoder_gguf is not None
+        else None
+    )
+    context_limits = [
+        limit for limit in (model_context_limit, args.decoder_context_cap) if limit is not None
+    ]
+    decoder_context_cap = min(context_limits) if context_limits else None
 
     workdir = args.workdir.resolve()
     workdir.mkdir(parents=True, exist_ok=True)
@@ -4358,18 +4414,19 @@ def main(argv: list[str] | None = None) -> int:
         timings["encoder_prepare_ms"] = encoder_prepare_elapsed * 1000.0
         _log_progress(f"encoder runtime prepare done elapsed={encoder_prepare_elapsed:.2f}s")
 
+    planned_prefix_tokens = max(
+        _planned_encoder_prefix_tokens(encoder_runtime) if encoder_runtime is not None else 0,
+        max(0, int(args.synthetic_prefix_tokens)),
+    )
+    planned_decoder_context = _derive_decoder_context_len(
+        prompt_token_count=total_text_prompt_tokens,
+        prefix_tokens=planned_prefix_tokens,
+        requested=args.decoder_context_len,
+        slack_tokens=max(16, int(args.max_tokens or 0)),
+        maximum_context=decoder_context_cap,
+    )
     preflight_decoder_runtime: dict[str, Any] | None = None
     if encoder_runtime is not None and args.decoder_runtime is not None:
-        planned_prefix_tokens = max(
-            _planned_encoder_prefix_tokens(encoder_runtime),
-            max(0, int(args.synthetic_prefix_tokens)),
-        )
-        planned_decoder_context = _derive_decoder_context_len(
-            prompt_token_count=total_text_prompt_tokens,
-            prefix_tokens=planned_prefix_tokens,
-            requested=args.decoder_context_len,
-            slack_tokens=max(16, int(args.max_tokens or 0)),
-        )
         _log_progress(
             "decoder context preflight "
             f"runtime={args.decoder_runtime.resolve()} "
@@ -4406,6 +4463,7 @@ def main(argv: list[str] | None = None) -> int:
         prefix_tokens=decoder_prefix_budget,
         requested=args.decoder_context_len,
         slack_tokens=max(16, int(args.max_tokens or 0)),
+        maximum_context=decoder_context_cap,
     )
     decoder_source_label = (
         f"runtime={args.decoder_runtime.resolve()}"
@@ -4631,6 +4689,14 @@ def main(argv: list[str] | None = None) -> int:
         "decoder_embed_dim": int(decoder_runtime["embed_dim"]),
         "decoder_input_embed_dim": int(decoder_runtime.get("input_embed_dim", decoder_runtime["embed_dim"])),
         "decoder_context_len": int(decoder_context_len),
+        "decoder_context_budget": {
+            "requested_minimum": args.decoder_context_len,
+            "model_limit": model_context_limit,
+            "deployment_cap": args.decoder_context_cap,
+            "planned_prefix_tokens": planned_prefix_tokens,
+            "planned_context": planned_decoder_context,
+            "effective_context": decoder_context_len,
+        },
         "prefix_tokens": prefix_tokens,
         "prefix_embed_dim": int(prefix_embed_dim),
         "prefix_grid_x": None if prefix_grid is None else int(prefix_grid[0]),
