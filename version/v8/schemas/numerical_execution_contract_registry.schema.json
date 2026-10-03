@@ -118,7 +118,8 @@
             "yarn_rope_init",
             "runtime_extent_scale",
             "audio_upsample_nearest",
-            "audio_conv_transpose1d_depthwise"
+            "audio_conv_transpose1d_depthwise",
+            "audio_conv_transpose1d_dense"
           ]
         },
         "status": {
