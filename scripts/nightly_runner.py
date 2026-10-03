@@ -968,6 +968,14 @@ TEST_SUITES = {
         "Checked Channelwise Snake Normal-Compiler Generated Graph", "inference",
         ROOT / "tests" / "test_v8_audio_snake_generated.py",
     ),
+    "tts_audio_dilated_conv": TestSuite(
+        "Checked Dilated Conv1D PyTorch Oracles", "kernels",
+        ROOT / "tests" / "test_v8_audio_dilated_conv_oracle.py",
+    ),
+    "tts_audio_dilated_conv_generated": TestSuite(
+        "Checked Dilated Conv1D and Snake Generated Graph", "inference",
+        ROOT / "tests" / "test_v8_audio_dilated_conv_generated.py",
+    ),
     "tts_audio_source_projection_generated": TestSuite(
         "Kokoro Generated Harmonic Source Linear Tanh Projection", "inference",
         ROOT / "tests" / "test_v8_audio_source_projection_generated.py",

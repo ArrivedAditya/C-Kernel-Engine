@@ -21,22 +21,27 @@ int audio_conv1d_checked_workspace(size_t input_channels, size_t output_channels
     return CK_AUDIO_CONV_CHECKED_OK;
 }
 
-int audio_conv1d_checked_channel_major_f32(
+static int audio_conv1d_checked_impl(
     const float *input, size_t input_elements, size_t input_stride,
     const float *weight, size_t weight_elements,
     const float *bias, size_t bias_elements,
     float *output, size_t output_elements, size_t output_stride,
     float *scratch, size_t scratch_elements,
     size_t input_channels, size_t output_channels, size_t input_frames,
-    size_t kernel_size, size_t stride, size_t padding, size_t output_frames) {
+    size_t kernel_size, size_t stride, size_t padding, size_t dilation,
+    size_t output_frames) {
     size_t input_span, output_span, weight_count, scratch_need;
     if (!input_channels || !output_channels || !input_frames ||
-        !kernel_size || !stride || !output_frames ||
+        !kernel_size || !stride || !dilation || !output_frames ||
         input_channels > INT_MAX || output_channels > INT_MAX ||
         input_frames > INT_MAX || kernel_size > INT_MAX ||
-        stride > INT_MAX || padding > INT_MAX || output_frames > INT_MAX)
+        stride > INT_MAX || padding > INT_MAX || dilation > INT_MAX ||
+        output_frames > INT_MAX)
         return CK_AUDIO_CONV_CHECKED_INVALID;
-    const int64_t padded = (int64_t)input_frames + 2 * (int64_t)padding - kernel_size;
+    const int64_t effective_kernel = 1 +
+        ((int64_t)kernel_size - 1) * (int64_t)dilation;
+    const int64_t padded = (int64_t)input_frames +
+        2 * (int64_t)padding - effective_kernel;
     if (padded < 0 || padded / stride + 1 != output_frames)
         return CK_AUDIO_CONV_CHECKED_INVALID;
     if (!ck_checked_span((size_t)input_channels, (size_t)input_frames,
@@ -88,7 +93,8 @@ int audio_conv1d_checked_channel_major_f32(
                     ((size_t)oc * (size_t)input_channels + (size_t)ic) *
                     (size_t)kernel_size;
                 for (size_t tap = 0; tap < kernel_size; ++tap) {
-                    int64_t source = (int64_t)frame * stride + tap - padding;
+                    int64_t source = (int64_t)frame * stride +
+                        (int64_t)tap * dilation - padding;
                     if (source >= 0 && (size_t)source < input_frames)
                         sum = fmaf(input[(size_t)ic * input_stride +
                             (size_t)source], row[tap], sum);
@@ -104,4 +110,35 @@ int audio_conv1d_checked_channel_major_f32(
                staged + (size_t)channel * (size_t)output_frames,
                (size_t)output_frames * sizeof(float));
     return CK_AUDIO_CONV_CHECKED_OK;
+}
+
+int audio_conv1d_checked_channel_major_f32(
+    const float *input, size_t input_elements, size_t input_stride,
+    const float *weight, size_t weight_elements,
+    const float *bias, size_t bias_elements,
+    float *output, size_t output_elements, size_t output_stride,
+    float *scratch, size_t scratch_elements,
+    size_t input_channels, size_t output_channels, size_t input_frames,
+    size_t kernel_size, size_t stride, size_t padding, size_t output_frames) {
+    return audio_conv1d_checked_impl(input, input_elements, input_stride,
+        weight, weight_elements, bias, bias_elements, output, output_elements,
+        output_stride, scratch, scratch_elements, input_channels,
+        output_channels, input_frames, kernel_size, stride, padding, 1,
+        output_frames);
+}
+
+int audio_conv1d_dilated_checked_channel_major_f32(
+    const float *input, size_t input_elements, size_t input_stride,
+    const float *weight, size_t weight_elements,
+    const float *bias, size_t bias_elements,
+    float *output, size_t output_elements, size_t output_stride,
+    float *scratch, size_t scratch_elements,
+    size_t input_channels, size_t output_channels, size_t input_frames,
+    size_t kernel_size, size_t stride, size_t padding, size_t dilation,
+    size_t output_frames) {
+    return audio_conv1d_checked_impl(input, input_elements, input_stride,
+        weight, weight_elements, bias, bias_elements, output, output_elements,
+        output_stride, scratch, scratch_elements, input_channels,
+        output_channels, input_frames, kernel_size, stride, padding, dilation,
+        output_frames);
 }
