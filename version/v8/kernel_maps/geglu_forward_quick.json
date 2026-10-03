@@ -21,7 +21,7 @@
     {"name": "out", "dtype": "fp32", "shape": ["tokens", "dim"], "layout": "token_major_contiguous", "access": "write", "storage_class": "activation", "consumption": "required", "desc": "Compacted GELU-quick(gate) times up"}
   ],
   "memory_contract": {
-    "input_output_overlap": "allowed_with_ascending_serial_compaction"
+    "input_output_overlap": "exact_input_output_alias_or_disjoint_only"
   },
   "dims": ["tokens", "dim"],
   "params": [],
@@ -43,5 +43,5 @@
     "unit": ["tests/test_v8_geglu_quick.py"],
     "parity": []
   },
-  "notes": "GELU-quick(gate) * up, with coefficient 1.702 and ascending in-place compaction."
+  "notes": "GELU-quick(gate) * up, with coefficient 1.702. Only exact input/output aliasing or disjoint buffers are supported; shifted overlap is not covered."
 }

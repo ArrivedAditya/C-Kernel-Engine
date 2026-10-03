@@ -30350,7 +30350,7 @@
         }
       ],
       "memory_contract": {
-        "input_output_overlap": "allowed_with_ascending_serial_compaction"
+        "input_output_overlap": "exact_input_output_alias_or_disjoint_only"
       },
       "dims": [
         "tokens",
@@ -30399,7 +30399,7 @@
         ],
         "parity": []
       },
-      "notes": "GELU-quick(gate) * up, with coefficient 1.702 and ascending in-place compaction.",
+      "notes": "GELU-quick(gate) * up, with coefficient 1.702. Only exact input/output aliasing or disjoint buffers are supported; shifted overlap is not covered.",
       "name": "geglu_forward_quick",
       "_source_file": "geglu_forward_quick.json"
     },
