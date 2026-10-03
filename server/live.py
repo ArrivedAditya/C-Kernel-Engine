@@ -64,6 +64,7 @@ from .schemas.response import CreateResponseRequest
 from .session_v8 import (
     CK_SESSION_REQUEST_RAW_PROMPT,
     SessionBusyError,
+    SessionError,
     stop_reason_name,
     truncate_stop_markers,
 )
@@ -1749,7 +1750,21 @@ def create_app(
                 )
             count_tokens = getattr(session, "count_tokens", None)
             if callable(count_tokens):
-                prompt_tokens = count_tokens(prompt)
+                try:
+                    prompt_tokens = count_tokens(prompt)
+                except SessionError as exc:
+                    # Generated token buffers can reject oversized input
+                    # before returning a count. The request is inadmissible,
+                    # but the exact token count is unknown; do not call this
+                    # a proven context-length exceedance or leak HTTP 500.
+                    raise _harness_error(
+                        400,
+                        "native tokenizer could not count the rendered prompt; "
+                        "reduce the input or inspect the generated tokenizer "
+                        f"for loaded context capacity {context_length}",
+                        err_type="invalid_request_error",
+                        code="prompt_tokenization_failed",
+                    ) from exc
                 if prompt_tokens + tok_limit > context_length:
                     available = max(0, context_length - prompt_tokens)
                     raise _harness_error(

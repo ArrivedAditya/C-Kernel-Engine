@@ -401,6 +401,49 @@ def test_prompt_over_budget_400_has_envelope():
     assert resp.json()["error"]["code"] == "context_length_exceeded"
 
 
+@pytest.mark.parametrize("route", ["/v1/responses", "/v1/chat/completions"])
+def test_native_token_count_failure_is_structured_and_recoverable(route):
+    import sys
+    from pathlib import Path
+    from server.session_v8 import SessionError
+
+    scripts = str(Path(__file__).resolve().parents[2] / "version" / "v8" / "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    from ck_serve_v8 import create_app as create_full_app
+
+    class FailingCountSession(FakeSession):
+        def __init__(self):
+            super().__init__()
+            self.fail_count = True
+            self.generate_calls = 0
+
+        def count_tokens(self, text):
+            if self.fail_count:
+                raise SessionError(-7, "native tokenizer failed")
+            return 2
+
+        def generate(self, *args, **kwargs):
+            self.generate_calls += 1
+            return super().generate(*args, **kwargs)
+
+    session = FailingCountSession()
+    client = TestClient(create_full_app(session, model="m", context_length=128,
+                                        allow_untemplated=True))
+    payload = ({"model": "m", "input": "long", "max_output_tokens": 8}
+               if route.endswith("responses") else
+               {"model": "m", "messages": [{"role": "user", "content": "long"}],
+                "max_tokens": 8})
+    rejected = client.post(route, json=payload)
+    assert rejected.status_code == 400, rejected.text
+    assert rejected.json()["error"]["code"] == "prompt_tokenization_failed"
+    assert session.generate_calls == 0
+    session.fail_count = False
+    recovered = client.post(route, json=payload)
+    assert recovered.status_code == 200, recovered.text
+    assert session.generate_calls == 1
+
+
 def test_unknown_call_id_400_has_envelope_and_detail():
     client = TestClient(create_app(FakeSession(), model="m"))
     resp = client.post(
