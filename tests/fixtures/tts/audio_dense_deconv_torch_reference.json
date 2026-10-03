@@ -1,0 +1,79 @@
+{
+  "oracle": "torch.nn.functional.conv_transpose1d",
+  "oracle_version": "2.12.1+cpu",
+  "numpy_version": "2.5.1",
+  "seed": 1937,
+  "torch_threads": 20,
+  "mkldnn_enabled": true,
+  "generator_sha256": "57922b9d0e9307cdcfcfa5b78fd1c8bb8aad3594e6658c7a9f7d1fa1096f0b95",
+  "cases": [
+    [
+      1,
+      1,
+      1,
+      4,
+      2,
+      1,
+      0
+    ],
+    [
+      3,
+      5,
+      4,
+      5,
+      2,
+      1,
+      0
+    ],
+    [
+      5,
+      3,
+      3,
+      20,
+      10,
+      5,
+      0
+    ],
+    [
+      7,
+      4,
+      3,
+      12,
+      6,
+      3,
+      0
+    ],
+    [
+      2,
+      3,
+      5,
+      3,
+      2,
+      1,
+      1
+    ]
+  ],
+  "fixture_sha256": "303f97976ec87bd47a8785f9ec291558e83a64856e55e4918618307dc6bd52a2",
+  "array_sha256": {
+    "case0_input": "8c061d0cc7766d4154f48d722f4801600144f22b5607ee943dcc76cd26ab8c49",
+    "case0_weight": "f3bd0027408107077d2b6f65a876f0c461d9e2e0a0f7be876c53f1b9b370b1a6",
+    "case0_bias": "d470c84c784b173ead5a303a60b520e8b2a8b7eb378edf5521cec4f9ba187176",
+    "case0_output": "02195f4b17e933f8dacbc7f5e549abab82e8a261fc397eab86320641140633ff",
+    "case1_input": "6523e886bfdf4642f5235181b97cd6047735c1b3d0fbcc65939d2e45a5e082bb",
+    "case1_weight": "8993fd85634f6962ea725a865933b93440b615cd1db35e70f0e2fc6d5888fccf",
+    "case1_bias": "12390e8eb3d0c90ded22babc9db0ccabc72d3488cff948907609ecb03b4dacd2",
+    "case1_output": "ebefcdf4409dae7ee6423d5fdf5a0cc8ae88fe1bb6a349ac9f0fcd02b721b113",
+    "case2_input": "c64bd688b423483fc54da0d0ffc4c216515007a0db322ae86512f041da3fa746",
+    "case2_weight": "f44d352b36a451e40a85104f65e6a095b894905c0d2e687e3b9384517213ae3a",
+    "case2_bias": "c429933a0eacc380bd163344047f06a148cc5986ff9589a0321b38e6c515532e",
+    "case2_output": "2327a76c36ffebbda0c8ae89127d090bd1f738f48203d6bf1f9f534278e100f9",
+    "case3_input": "abd5442d6ed756ac5a8cd13a4b143ebfbca2e0bfc2fb09a70459ce15d47fe821",
+    "case3_weight": "a8dd2d06a538a98ada99030ee1d24fd9dbc2ed0b4df9f935eeb46ee22c0ef772",
+    "case3_bias": "f29f5525849ff21e0b6582f51ac314eff96198a222e2247d98c28ec3beaa648c",
+    "case3_output": "aeb6f5b91f2d5d0f56799379b2bd83c2cc4e5279bb2008dab74c4755018fb28c",
+    "case4_input": "2af0a226d1de03b756b20e507fef9a90e1de1b1e89491a427b370f9ecfc691d0",
+    "case4_weight": "1fe91a9345cd98530e405bc2783955d2d6f5073de75ac16b2e684a3cf5c37252",
+    "case4_bias": "f3175f89432e775712d3fd907a7070bf856ab09d08d1943b8a15246198f769fe",
+    "case4_output": "d244fc31addfe0e4dd0c64af5d46c335e13ecfa36536919ca31fa180afa59e8c"
+  }
+}

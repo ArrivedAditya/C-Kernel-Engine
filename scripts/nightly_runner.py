@@ -887,6 +887,10 @@ TEST_SUITES = {
         "TTS Nearest and Depthwise Transposed Conv1D Pinned Oracle", "kernels",
         ROOT / "tests" / "test_v8_audio_prosody_upsample_oracle.py",
     ),
+    "tts_dense_deconv_oracle": TestSuite(
+        "TTS Dense Transposed Conv1D PyTorch Oracle", "kernels",
+        ROOT / "tests" / "test_v8_audio_dense_deconv_oracle.py",
+    ),
     "tts_runtime_extent_scale": TestSuite(
         "Checked Runtime Extent Scale", "kernels",
         ROOT / "tests" / "test_v8_runtime_extent_scale.py",
