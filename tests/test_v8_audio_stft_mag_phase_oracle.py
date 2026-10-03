@@ -56,10 +56,12 @@ class AudioStftMagnitudePhaseTest(unittest.TestCase):
         return window, np.cos(angle).astype(np.float32), np.sin(angle).astype(np.float32)
 
     def invoke(self, run, samples, nfft, hop, frames=None, stride_extra=3,
-               output_short=0, scratch_short=0):
+               output_short=0, scratch_short=0, window_override=None):
         count = len(samples) // hop + 1 if frames is None else frames
         bins = nfft // 2 + 1
         window, cosine, sine = self.tables(nfft)
+        if window_override is not None:
+            window = np.ascontiguousarray(window_override, dtype=np.float32)
         stride = count + stride_extra
         output = np.full((2 * bins, stride), -91, dtype=np.float32)
         scratch = np.full(2 * bins * count, -37, dtype=np.float32)
@@ -167,10 +169,12 @@ class AudioStftMagnitudePhaseTest(unittest.TestCase):
         # 206 F0 frames * 300 samples/frame => 12,361 source STFT frames.
         samples = np.random.default_rng(531).normal(0, .05, 206 * 300).astype(np.float32)
         run, _ = self.calls[-1]
-        status, output, _, _, _ = self.invoke(run, samples, 20, 5, stride_extra=0)
+        window = torch.hann_window(20, periodic=True)
+        status, output, _, _, _ = self.invoke(run, samples, 20, 5,
+            stride_extra=0, window_override=window.numpy())
         self.assertEqual(status, 0)
         spectrum = torch.stft(torch.from_numpy(samples), 20, 5, 20,
-            window=torch.hann_window(20, periodic=True), return_complex=True)
+            window=window, return_complex=True)
         reference = spectrum.numpy()
         magnitude = np.abs(reference)
         phase = np.angle(reference)
@@ -211,7 +215,7 @@ class AudioStftMagnitudePhaseTest(unittest.TestCase):
         reference_conv_error = np.abs(reconstructed_reference -
                                       expected_source_conv)
         self.assertLessEqual(float(reference_conv_error.max()), 5e-5)
-        for run, _ in self.calls:
+        for variant, (run, _) in enumerate(self.calls):
             status, output, _, arguments, _ = self.invoke(
                 run, samples, 20, 5, stride_extra=0)
             self.assertEqual(status, 0)
@@ -237,11 +241,16 @@ class AudioStftMagnitudePhaseTest(unittest.TestCase):
                                     expected_source_conv)
             self.assertLessEqual(float(isolated_error.max()), 5e-5)
             print('CKE_NUMERICAL_CASE ' + json.dumps({
-                'case_id': 'kokoro.source-stft.raw-phase-diagnostic',
+                'case_id': f'kokoro.source-stft.raw-phase.{("o0", "o3")[variant]}',
                 'name': 'pinned-window raw phase before source convolution',
                 'provider': 'audio_stft_mag_phase_checked_f32',
                 'oracle': 'direct-pinned-kokoro-pytorch28',
-                'status': 'not_tested',
+                'status': 'fail',
+                'gate': 'diagnostic',
+                'blocking': False,
+                'reason': 'Known scalar-STFT phase mismatch before connected Kokoro source graph',
+                'max_diff': float(source_conv_error[worst_conv]),
+                'tolerance': 5e-5,
                 'configuration': '61,800 samples, PyTorch 2.8 Hann window, nfft20/hop5',
                 'max_magnitude_error': float(magnitude_error.max()),
                 'max_raw_phase_error': float(phase_error.max()),
@@ -250,8 +259,7 @@ class AudioStftMagnitudePhaseTest(unittest.TestCase):
                     float(reference_conv_error.max()),
                 'max_source_conv_error': float(source_conv_error[worst_conv]),
                 'worst_source_conv_index': list(map(int, worst_conv)),
-                'max_after_oracle_phase_isolation': float(isolated_error.max()),
-                'reason': 'source-convolution parity remains unresolved'}))
+                'max_after_oracle_phase_isolation': float(isolated_error.max())}))
 
     def test_live_pytorch_when_available(self):
         try:
@@ -260,10 +268,12 @@ class AudioStftMagnitudePhaseTest(unittest.TestCase):
             self.skipTest('live PyTorch unavailable; NumPy oracle still runs')
         samples = np.random.default_rng(991).normal(size=60).astype(np.float32)
         for run, _ in self.calls:
-            status, output, _, _, _ = self.invoke(run, samples, 20, 5)
+            window = torch.hann_window(20, periodic=True)
+            status, output, _, _, _ = self.invoke(run, samples, 20, 5,
+                window_override=window.numpy())
             self.assertEqual(status, 0)
             spectrum = torch.stft(torch.from_numpy(samples), 20, 5, 20,
-                window=torch.hann_window(20, periodic=True), return_complex=True)
+                window=window, return_complex=True)
             expected = torch.cat([torch.abs(spectrum), torch.angle(spectrum)], dim=0)
             actual = output[:, :13]
             reference = expected.numpy()
@@ -284,7 +294,8 @@ class AudioStftMagnitudePhaseTest(unittest.TestCase):
             self.assertEqual(hashlib.sha256(value.tobytes()).hexdigest(),
                 metadata['array_sha256'][name])
         for run, _ in self.calls:
-            status, output, _, _, _ = self.invoke(run, arrays['samples'], 20, 5)
+            status, output, _, _, _ = self.invoke(run, arrays['samples'],
+                20, 5, window_override=arrays['window'])
             self.assertEqual(status, 0)
             self.assertTrue(np.isfinite(output[:, :13]).all())
             np.testing.assert_allclose(output[:11, :13], arrays['magnitude'],

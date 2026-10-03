@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -293,7 +294,18 @@ def verify_report(
             if subtest_status not in {"pass", "fail", "not_tested"}:
                 errors.append(f"{name}: subtest {subtest_name} has invalid status {subtest_status!r}")
             elif subtest_status == "fail":
-                errors.append(f"{name}: failed subtest {subtest_name}")
+                metadata = subtest.get("metadata")
+                diagnostic = (isinstance(metadata, dict) and
+                              metadata.get("gate") == "diagnostic" and
+                              metadata.get("blocking") is False)
+                maximum, tolerance = subtest.get("max_diff"), subtest.get("tolerance")
+                measured_failure = (isinstance(maximum, (int, float)) and
+                                    isinstance(tolerance, (int, float)) and
+                                    math.isfinite(maximum) and math.isfinite(tolerance) and
+                                    maximum > tolerance >= 0)
+                if not (diagnostic and case_id and
+                        str(metadata.get("reason") or "").strip() and measured_failure):
+                    errors.append(f"{name}: failed subtest {subtest_name}")
             evidence_kind = str(subtest.get("evidence_kind") or "numerical")
             uncertified_kinds = {
                 "performance",

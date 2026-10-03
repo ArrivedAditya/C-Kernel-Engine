@@ -513,7 +513,7 @@
       "reduction": {"kind": "composite", "order": "stage_ordered", "partial_accumulator": "fp64", "merge_order": "none"},
       "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},
       "position_transform": null,
-      "description": "Frame-rate F0 is nearest-expanded; nonpulse harmonic phase uses an FP64 prefix sum stored to FP32, then align-corners-false linear interpolation and scalar sine. Gaussian excitation is an explicit input, not an internal RNG."
+      "description": "Frame-rate F0 is nearest-expanded with upsample >= 4; this excludes the pinned nonpulse initial-phase draw from midpoint downsampling. Harmonic phase uses an FP64 prefix sum stored to FP32, then align-corners-false linear interpolation and scalar sine. Gaussian excitation is an explicit input, not an internal RNG."
     },
     "hyper_stream_expand_exact_fp32": {
       "operator_family": "hyper_stream_expand",

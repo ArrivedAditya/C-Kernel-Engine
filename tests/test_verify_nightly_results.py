@@ -95,6 +95,29 @@ class NightlyVerdictTests(unittest.TestCase):
         self.assertTrue(any("audio: timeout" in error for error in errors))
         self.assertTrue(any("failed subtest nvfp4" in error for error in errors))
 
+    def test_measured_nonblocking_diagnostic_keeps_failed_status(self) -> None:
+        verifier = _load_verifier()
+        case = {
+            "case_id": "audio.phase-known-mismatch",
+            "name": "raw phase through source convolution",
+            "status": "fail",
+            "max_diff": 0.1601,
+            "tolerance": 5e-5,
+            "metadata": {
+                "gate": "diagnostic",
+                "blocking": False,
+                "reason": "The connected source graph is still under development",
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write(Path(tmp), [{"name": "audio", "status": "pass",
+                                           "sub_tests": [case]}])
+            self.assertEqual(verifier.verify_report(path), [])
+            case["metadata"]["reason"] = ""
+            errors = verifier.verify_report(self._write(Path(tmp), [
+                {"name": "audio", "status": "pass", "sub_tests": [case]}]))
+            self.assertTrue(any("failed subtest raw phase" in error for error in errors))
+
     def test_rejects_duplicate_cases_and_performance_only_numerical_pass(self) -> None:
         verifier = _load_verifier()
         rows = [

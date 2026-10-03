@@ -20,7 +20,7 @@ int audio_harmonic_source_checked_f32(
     size_t frames, size_t upsample, size_t harmonics,
     float sample_rate, float voiced_threshold,
     float sine_amp, float noise_std) {
-    if (!frames || !upsample || !harmonics || !isfinite(sample_rate) ||
+    if (!frames || upsample < 4 || !harmonics || !isfinite(sample_rate) ||
         !isfinite(voiced_threshold) || !isfinite(sine_amp) ||
         !isfinite(noise_std) || sample_rate <= 0.0f || sine_amp < 0.0f ||
         noise_std < 0.0f || frames > SIZE_MAX / upsample)

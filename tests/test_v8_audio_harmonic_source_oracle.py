@@ -12,6 +12,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / 'tests/fixtures/tts/kokoro_source_pinned.npz'
+SMALL_FIXTURE = ROOT / 'tests/fixtures/tts/audio_harmonic_source_cases_pytorch28.npz'
 FLOAT = ctypes.POINTER(ctypes.c_float)
 SIZE = ctypes.c_size_t
 
@@ -108,7 +109,7 @@ class HarmonicSourceOracleTest(unittest.TestCase):
 
     def test_direct_pinned_model_harmonic_checkpoint(self):
         outputs = []
-        for function in self.functions:
+        for variant, function in enumerate(self.functions):
             status, output, _, _ = self.call(function)
             self.assertEqual(status, 0)
             expected = self.arrays['sine_waves'].reshape(-1)
@@ -119,7 +120,7 @@ class HarmonicSourceOracleTest(unittest.TestCase):
                                  (point, float(output[point]), float(expected[point])))
             outputs.append(output.copy())
             print('CKE_NUMERICAL_CASE ' + json.dumps({
-                'case_id': 'kokoro.harmonic-source.native-vs-pinned-model',
+                'case_id': f'kokoro.harmonic-source.native-vs-pinned-model.{("o0", "o3")[variant]}',
                 'name': 'checked harmonic source versus direct full-model hook',
                 'provider': 'audio_harmonic_source_checked_f32',
                 'dtype': 'fp32', 'direction': 'inference',
@@ -131,6 +132,43 @@ class HarmonicSourceOracleTest(unittest.TestCase):
                 'reproduction_command': 'python3 -m unittest ' + self.id()}))
         np.testing.assert_array_equal(outputs[0], outputs[1])
 
+    def test_pinned_voiced_unvoiced_lengths_and_upsampling(self):
+        metadata = json.loads(SMALL_FIXTURE.with_suffix('.json').read_text())
+        self.assertEqual(metadata['torch'], '2.8.0+cpu')
+        self.assertEqual(hashlib.sha256(SMALL_FIXTURE.read_bytes()).hexdigest(),
+                         metadata['fixture_sha256'])
+        with np.load(SMALL_FIXTURE) as archive:
+            arrays = {key: archive[key].copy() for key in archive.files}
+        for name, value in arrays.items():
+            self.assertEqual(hashlib.sha256(value.tobytes()).hexdigest(),
+                             metadata['array_sha256'][name], name)
+        for case in metadata['cases']:
+            name = case['name']
+            f0 = arrays[f'{name}_f0'].reshape(-1)
+            gaussian = arrays[f'{name}_gaussian'].reshape(-1)
+            expected = arrays[f'{name}_output'].reshape(-1)
+            outputs = []
+            for function in self.functions:
+                status, output, _, _ = self.call(function, f0.copy(),
+                    gaussian.copy(), upsample=case['upsample'],
+                    harmonics=case['harmonics'])
+                self.assertEqual(status, 0, name)
+                self.assertTrue(np.isfinite(output).all(), name)
+                error = np.abs(output - expected)
+                worst = int(np.argmax(error))
+                self.assertLessEqual(float(error[worst]), 2e-7,
+                    (name, worst, float(output[worst]), float(expected[worst])))
+                outputs.append(output.copy())
+            np.testing.assert_array_equal(outputs[0], outputs[1])
+            print('CKE_NUMERICAL_CASE ' + json.dumps({
+                'case_id': f'audio.harmonic-source.{name}.pytorch28',
+                'name': f'harmonic source {name} versus pinned SineGen',
+                'provider': 'audio_harmonic_source_checked_f32',
+                'oracle': 'pinned-kokoro-sinegen-pytorch28',
+                'status': 'pass', 'max_diff': float(error[worst]),
+                'tolerance': 2e-7,
+                'configuration': f"frames={case['frames']} upsample={case['upsample']} harmonics={case['harmonics']}"}))
+
     def test_small_geometry_and_invalid_bounds(self):
         for function in self.functions:
             f0 = np.array([100., 0., 220.], np.float32)
@@ -141,7 +179,8 @@ class HarmonicSourceOracleTest(unittest.TestCase):
                 output, scratch, upsample=4, harmonics=2)
             self.assertEqual(status, 0)
             self.assertTrue(np.isfinite(result).all())
-            for index, value in ((8, 0), (9, 0), (10, 0), (12, float('nan')),
+            for index, value in ((8, 0), (9, 0), (9, 1), (9, 2),
+                                 (10, 0), (12, float('nan')),
                                  (8, SIZE(-1).value)):
                 bad = args.copy(); bad[index] = value
                 output.fill(-91.)

@@ -1021,6 +1021,10 @@ TEST_SUITES = {
         "Kernel Oracle Reporting and Registration Contracts", "kernels",
         ROOT / "tests" / "test_kernel_oracle_reporting.py",
     ),
+    "nightly_verdict_contract": TestSuite(
+        "Nightly Required Verdict and Nonblocking Diagnostic Contracts", "inference",
+        ROOT / "tests" / "test_verify_nightly_results.py",
+    ),
     "nightly_runner_hardware": TestSuite(
         "Nightly Runner Hardware Capture",
         "inference",
