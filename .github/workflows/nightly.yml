@@ -46,7 +46,8 @@ jobs:
             unittest/test_bump_alloc_mixed.py \
             unittest/test_v8_arm_q4k_oracle.py \
             unittest/test_hyper_connection_quantized.py \
-            unittest/test_moe_swiglu_q4k_q5k.py
+            unittest/test_moe_swiglu_q4k_q5k.py \
+            unittest/test_deltanet_transposed_scalar.py
 
       - name: Verify portable normalization fixture on native ARM64
         if: always()
