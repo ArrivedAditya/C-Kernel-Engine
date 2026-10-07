@@ -464,6 +464,33 @@ class AttentionContractV8Tests(unittest.TestCase):
                 )
                 self.assertTrue(result["implementation"]["threading"]["work_partition"])
 
+    def test_gemma4_prefill_tiled_reduction_is_circuit_and_call_owned(self) -> None:
+        circuit = resolver.load_json(V8_ROOT / "circuits" / "gemma4.json")
+        for name in ("decoder.attention.gemma4_full", "decoder.attention.gemma4_sliding"):
+            with self.subTest(name=name):
+                phases = circuit["required_contracts"][name]["phases"]
+                self.assertEqual(
+                    phases["prefill"]["requires"]["numerics.attention_reduction"],
+                    "f16_flash_auto_qtile64_noscale",
+                )
+                self.assertEqual(
+                    phases["decode"]["requires"]["numerics.attention_reduction"],
+                    "f16_online_single_range_noscale",
+                )
+                result = resolver.resolve_contract(
+                    circuit, copy.deepcopy(self.contracts), copy.deepcopy(self.kernels),
+                    operation=name, phase="prefill", mode="bringup",
+                    source_circuit_path=V8_ROOT / "circuits" / "gemma4.json",
+                )
+                kernel_map = resolver.load_json(
+                    V8_ROOT / "kernel_maps" / f"{result['kernel']['id']}.json"
+                )
+                self.assertEqual(
+                    next(arg["source"] for arg in kernel_map["call_abi"]["params"]
+                         if arg["name"] == "reduction"),
+                    "const:CK_ATTN_REDUCTION_F16_FLASH_AUTO_QTILE64",
+                )
+
     def test_f16kv_prefill_provider_owns_head_parallel_selection(self) -> None:
         kernel = resolver.load_json(
             V8_ROOT

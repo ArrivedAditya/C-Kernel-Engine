@@ -91,6 +91,30 @@
         "reference": "llama.cpp GGML tiled flash attention with F16 K/V and GGML_PREC_F32"
       }
     },
+    "f16_kv_tiled64_fp32_softmax_fp64_sum_update_noscale": {
+      "status": "validated",
+      "q_compute": "fp32",
+      "k_compute": "fp16_rounded",
+      "score_accumulator": "fp32",
+      "softmax_statistics": "fp32",
+      "value_compute": "fp16_rounded",
+      "value_accumulator": "fp32",
+      "partial_storage": "fp32",
+      "partial_merge": "fp32_chunk_order",
+      "partition": {
+        "kind": "query_key_tiles",
+        "query_tile_size": 64,
+        "key_tile_size": 64,
+        "softmax_sum_update": "fp64_add_then_fp32_store",
+        "worker_partition": "contiguous_head_query_rows"
+      },
+      "description": "Unit-scale 64x64 tiled attention with FP32 Q, FP16 K/V and FP32 value accumulation.",
+      "validation": {
+        "test": "tests/test_v8_direct_layout_attention.py",
+        "cases": ["72-query exact-input llama.cpp replay", "segment tile boundary"],
+        "reference": "pinned llama.cpp CPU flash attention with Gemma4 unit scale"
+      }
+    },
     "f16_flash_auto_qtile64": {
       "status": "validated",
       "q_compute": "shape_dependent_fp16_or_fp32",
@@ -158,6 +182,29 @@
           "window-boundary positions"
         ],
         "reference": "independent scalar oracle reproducing the declared FP16 rounding and AVX2 reduction order"
+      }
+    },
+    "f16_flash_auto_qtile64_noscale": {
+      "status": "validated",
+      "q_compute": "shape_dependent_fp16_or_fp32",
+      "k_compute": "fp16_rounded",
+      "score_accumulator": "fp32",
+      "softmax_statistics": "fp32",
+      "value_compute": "fp16_rounded",
+      "value_accumulator": "shape_dependent_fp16_or_fp32",
+      "partial_storage": "shape_dependent_none_or_fp32",
+      "partial_merge": "shape_dependent_single_range_or_fp32_chunk_order",
+      "partition": {
+        "kind": "query_tile_threshold",
+        "threshold": 64,
+        "below_threshold": "f16_online_single_range_noscale",
+        "at_or_above_threshold": "f16_kv_tiled64_fp32_softmax_fp64_sum_update_noscale"
+      },
+      "description": "Unit-scale FP16-cache prefill uses 64x64 FP32 tiles for query batches of at least 64 when the entire cache prefix fits the live window; shorter or actively sliding batches use unit-scale FP16 online attention.",
+      "validation": {
+        "test": "tests/test_v8_direct_layout_attention.py",
+        "cases": ["72-query exact-input llama.cpp replay", "short query fallback", "active sliding fallback"],
+        "reference": "pinned llama.cpp CPU flash-attention capture with independent Q/K/V"
       }
     },
     "f16_online_fp32_merge": {

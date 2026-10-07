@@ -70,6 +70,10 @@ class DirectLayoutAttentionTests(unittest.TestCase):
             gemma_sliding_prefill_signature
         )
         cls._lib.attention_forward_causal_head_major_gqa_prefill_append_f16cache_sliding_gemma4_workspace.restype = ctypes.c_int
+        cls._lib.attention_forward_causal_head_major_gqa_prefill_segmented_f16cache_sliding_gemma4_workspace.argtypes = (
+            gemma_sliding_prefill_signature + [ctypes.POINTER(ctypes.c_int), ctypes.c_int]
+        )
+        cls._lib.attention_forward_causal_head_major_gqa_prefill_segmented_f16cache_sliding_gemma4_workspace.restype = ctypes.c_int
         gemma_decode_signature = [
             ctypes.POINTER(ctypes.c_float),
             ctypes.POINTER(ctypes.c_uint16),
@@ -173,6 +177,123 @@ class DirectLayoutAttentionTests(unittest.TestCase):
         self.assertEqual(full.tobytes(), unbounded_sliding.tobytes())
         self.assertNotEqual(full.tobytes(), bounded_sliding.tobytes())
         self.assertNotEqual(full.tobytes(), scaled.tobytes())
+
+    def test_gemma4_long_prefill_uses_unit_scale_tiled_reduction(self):
+        heads, kv_heads, past, tokens, dim, capacity = 4, 2, 5, 72, 16, 80
+        q = array("f", (math.sin(i * 0.013) for i in range(heads * tokens * dim)))
+        scaled_q = array("f", (value * math.sqrt(dim) for value in q))
+
+        def half_bits(value):
+            return int.from_bytes(struct.pack("<e", value), "little")
+
+        k = array("H", (half_bits(math.cos(i * 0.011)) for i in range(kv_heads * capacity * dim)))
+        v = array("H", (half_bits(math.sin(i * 0.017)) for i in range(kv_heads * capacity * dim)))
+        workspace = array("f", [0.0]) * (2 * heads * dim)
+
+        def fp(values):
+            return (ctypes.c_float * len(values)).from_buffer(values)
+
+        def hp(values):
+            return (ctypes.c_uint16 * len(values)).from_buffer(values)
+
+        def run(function, query, sliding, reduction):
+            output = array("f", [0.0]) * (heads * tokens * dim)
+            args = (
+                fp(query), hp(k), hp(v), fp(output), heads, kv_heads,
+                tokens, past, capacity, dim, dim,
+            )
+            if sliding is not None:
+                args += (sliding,)
+            status = function(
+                *args, reduction, fp(workspace), len(workspace) * 4,
+            )
+            self.assertEqual(status, 0)
+            return output
+
+        gemma = self._lib.attention_forward_causal_head_major_gqa_prefill_append_f16cache_sliding_gemma4_workspace
+        generic = self._lib.attention_forward_causal_head_major_gqa_prefill_append_f16cache_contract_workspace
+        tiled = run(gemma, q, capacity, 3)
+        expected_tiled = run(generic, scaled_q, None, 3)
+        self.assertEqual(tiled.tobytes(), expected_tiled.tobytes())
+        self.assertNotEqual(tiled.tobytes(), run(gemma, q, capacity, 2).tobytes())
+        self.assertEqual(
+            run(gemma, q, 16, 3).tobytes(),
+            run(gemma, q, 16, 2).tobytes(),
+        )
+
+    def test_gemma4_segmented_prefill_restarts_tiled_policy(self):
+        heads, kv_heads, tokens, dim, capacity = 4, 2, 91, 16, 100
+        segments = (5, 72, 14)
+        q = array("f", (math.sin(i * 0.013) for i in range(heads * tokens * dim)))
+
+        def half_bits(value):
+            return int.from_bytes(struct.pack("<e", value), "little")
+
+        k = array("H", (half_bits(math.cos(i * 0.011)) for i in range(kv_heads * capacity * dim)))
+        v = array("H", (half_bits(math.sin(i * 0.017)) for i in range(kv_heads * capacity * dim)))
+        workspace = array("f", [0.0]) * (2 * heads * dim)
+        actual = array("f", [0.0]) * (heads * tokens * dim)
+        expected = array("f", [0.0]) * (heads * tokens * dim)
+        unsegmented = array("f", [0.0]) * (heads * tokens * dim)
+
+        def fp(values):
+            return (ctypes.c_float * len(values)).from_buffer(values)
+
+        def hp(values):
+            return (ctypes.c_uint16 * len(values)).from_buffer(values)
+
+        fn = self._lib.attention_forward_causal_head_major_gqa_prefill_append_f16cache_sliding_gemma4_workspace
+        segmented_fn = self._lib.attention_forward_causal_head_major_gqa_prefill_segmented_f16cache_sliding_gemma4_workspace
+        args = (fp(q), hp(k), hp(v), fp(actual), heads, kv_heads,
+                tokens, 0, capacity, dim, dim, capacity, 3,
+                fp(workspace), len(workspace) * 4)
+        plan = (ctypes.c_int * len(segments))(*segments)
+        self.assertEqual(segmented_fn(*args, plan, len(segments)), 0)
+
+        offset = 0
+        for rows in segments:
+            query = array("f")
+            for head in range(heads):
+                start = (head * tokens + offset) * dim
+                query.extend(q[start:start + rows * dim])
+            result = array("f", [0.0]) * (heads * rows * dim)
+            self.assertEqual(fn(
+                fp(query), hp(k), hp(v), fp(result), heads, kv_heads,
+                rows, offset, capacity, dim, dim, capacity, 3,
+                fp(workspace), len(workspace) * 4,
+            ), 0)
+            for head in range(heads):
+                dst = (head * tokens + offset) * dim
+                src = head * rows * dim
+                expected[dst:dst + rows * dim] = result[src:src + rows * dim]
+            offset += rows
+        self.assertEqual(actual.tobytes(), expected.tobytes())
+        self.assertEqual(fn(
+            fp(q), hp(k), hp(v), fp(unsegmented), heads, kv_heads,
+            tokens, 0, capacity, dim, dim, capacity, 3,
+            fp(workspace), len(workspace) * 4,
+        ), 0)
+        self.assertNotEqual(actual.tobytes(), unsegmented.tobytes())
+
+        zero_plan = (ctypes.c_int * 3)(0, tokens, 0)
+        zero_output = array("f", [0.0]) * len(actual)
+        self.assertEqual(segmented_fn(
+            fp(q), hp(k), hp(v), fp(zero_output), heads, kv_heads,
+            tokens, 0, capacity, dim, dim, capacity, 3,
+            fp(workspace), len(workspace) * 4, zero_plan, 3,
+        ), 0)
+        self.assertEqual(zero_output.tobytes(), unsegmented.tobytes())
+
+        for invalid in ((5, 72, 13), (5, -1, 87), (5, 92, -6)):
+            sentinel = array("f", [123.0]) * len(actual)
+            bad_plan = (ctypes.c_int * 3)(*invalid)
+            self.assertNotEqual(segmented_fn(
+                fp(q), hp(k), hp(v), fp(sentinel), heads, kv_heads,
+                tokens, 0, capacity, dim, dim, capacity, 3,
+                fp(workspace), len(workspace) * 4, bad_plan, 3,
+            ), 0)
+            self.assertEqual(sentinel[0], 123.0)
+            self.assertEqual(sentinel[-1], 123.0)
 
     def test_gemma4_f16cache_matches_independent_rounding_oracle(self):
         heads, kv_heads = 6, 2

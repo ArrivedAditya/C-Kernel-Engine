@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -27,6 +28,52 @@ codegen_prefill_v8 = _load_module("codegen_prefill_v8_tests", CODEGEN_PREFILL_PA
 
 
 class TestV8PrefillCodegen(unittest.TestCase):
+    def test_gemma4_mixed_bridge_emits_segmented_attention_schedule(self):
+        path = ROOT / "version/v8/kernel_maps/attention_forward_causal_head_major_gqa_prefill_append_f16cache_sliding_gemma4.json"
+        provider = json.loads(path.read_text(encoding="utf-8"))
+        op = {
+            "function": provider["impl"]["function"],
+            "op": "attn_sliding",
+            "layer": 0,
+            "resolved_execution": {"implementation": provider["implementation"]},
+            "args": [
+                {"name": arg["name"], "source": arg["source"], "expr": arg["name"]}
+                for arg in provider["call_abi"]["params"]
+            ],
+        }
+        config = {
+            "embed_dim": 16,
+            "multimodal_bridge_contract": {
+                "prefill_batching": "segmented_append",
+                "prefill_schedule": {
+                    "segments": ["text_before", "visual", "text_after"],
+                    "cache_transition": "append_preserve",
+                    "position_transition": "runtime_offset",
+                },
+            },
+        }
+        emitted = codegen_prefill_v8.emit_prefill_from_embedded_function([op], config)
+        self.assertIn("static int g_multimodal_prefill_segment_lengths[3]", emitted)
+        self.assertIn("ck_multimodal_prefill_has_segment_plan(num_tokens)", emitted)
+        self.assertIn(provider["implementation"]["segmented_query_provider"]["function"] + "(", emitted)
+        self.assertIn(provider["impl"]["function"] + "(", emitted)
+        embedding = {
+            "op": "dense_embedding_lookup",
+            "function": "embedding_forward_q4_k",
+            "args": [
+                {"name": "token_ids", "expr": "tokens"},
+                {"name": "token_embeddings", "expr": "weights"},
+                {"name": "output", "expr": "embedded"},
+            ],
+        }
+        bridge = codegen_prefill_v8.emit_multimodal_bridge_api([embedding], config)
+        self.assertIn("g_multimodal_prefill_segment_lengths[0] = tokens_before_count", bridge)
+        self.assertIn("g_multimodal_prefill_segment_lengths[1] = prefix_tokens", bridge)
+        self.assertIn("g_multimodal_prefill_num_segments = 0", bridge)
+        invalid = json.loads(json.dumps(config))
+        invalid["multimodal_bridge_contract"]["prefill_schedule"]["cache_transition"] = "replace"
+        self.assertFalse(codegen_prefill_v8._has_mixed_prefill_segment_contract(invalid))
+
     def test_hyper_prefill_exports_wide_boundaries_and_last_rows(self):
         args = {"rows": "num_tokens", "streams": "4", "hidden_dim": "2560",
                 "dynamic_dim": "320", "normalized_scratch": "norm",

@@ -2000,6 +2000,29 @@ def _has_multimodal_bridge_contract(config: Dict) -> bool:
     return bool(str(bridge.get("prefix_policy", "") or "").strip())
 
 
+def _has_mixed_prefill_segment_contract(config: Dict) -> bool:
+    bridge = config.get("multimodal_bridge_contract")
+    if not isinstance(bridge, dict):
+        return False
+    schedule = bridge.get("prefill_schedule")
+    if not isinstance(schedule, dict) or schedule.get("segments") != [
+        "text_before", "visual", "text_after"
+    ]:
+        return False
+    batching = bridge.get("prefill_batching")
+    cache = schedule.get("cache_transition")
+    positions = schedule.get("position_transition")
+    return (
+        batching == "segmented_append"
+        and cache == "append_preserve"
+        and positions in {"segment_defined", "runtime_offset"}
+    ) or (
+        batching == "unified_mixed"
+        and cache == "single_pass"
+        and positions == "explicit_full_sequence"
+    )
+
+
 def _has_segmented_append_prefill_contract(config: Dict) -> bool:
     bridge = config.get("multimodal_bridge_contract")
     if not isinstance(bridge, dict):
@@ -2650,6 +2673,7 @@ def emit_prefill_from_embedded_function(
     debug_outproj_default = 1 if outproj_policy in {"fp32", "fp32_input", "force_fp32"} else 0
     embed_scale_emitted = False
     has_multimodal_bridge = _has_multimodal_bridge_contract(config)
+    has_mixed_prefill_segments = _has_mixed_prefill_segment_contract(config)
     segment_preserving_ops = _segment_preserving_projection_operations(config)
     q4_gateup_swiglu_x16_default = int(
         bool(config.get("prefill_gateup_swiglu_fusion_default", True))
@@ -2689,6 +2713,21 @@ def emit_prefill_from_embedded_function(
     )
     if helper_block:
         lines.append(helper_block)
+    elif has_mixed_prefill_segments:
+        lines.append("""
+static int g_multimodal_prefill_segment_lengths[3] = {0, 0, 0};
+static int g_multimodal_prefill_num_segments = 0;
+
+static int ck_multimodal_prefill_has_segment_plan(int total_tokens) {
+    if (g_multimodal_prefill_num_segments != 3) return 0;
+    const int before = g_multimodal_prefill_segment_lengths[0];
+    const int visual = g_multimodal_prefill_segment_lengths[1];
+    const int after = g_multimodal_prefill_segment_lengths[2];
+    return before >= 0 && visual >= 0 && after >= 0 &&
+        before <= total_tokens && visual <= total_tokens - before &&
+        after == total_tokens - before - visual;
+}
+""")
 
     prologue = """
 /* ============================================================================
@@ -2937,7 +2976,7 @@ static void ck_prefill_from_embedded_range(CKModel *model, int num_tokens, int p
                 config,
                 profile=profile,
                 dump=dump,
-                segment_plan_available=has_decoder_multimodal_bridge,
+                segment_plan_available=has_mixed_prefill_segments,
             )
             if has_decoder_multimodal_bridge and op_type == "rope_qk":
                 resolved_rope_function = str(op.get("function", "") or "").strip()
@@ -3034,6 +3073,7 @@ def emit_multimodal_bridge_api(ops: List[Dict], config: Dict | None = None) -> s
     has_multimodal_bridge = _has_multimodal_bridge_contract(config)
     has_segmented_append = _has_segmented_append_prefill_contract(config)
     has_unified_mixed = _has_unified_mixed_prefill_contract(config)
+    has_mixed_prefill_segments = _has_mixed_prefill_segment_contract(config)
     if has_multimodal_bridge and not (has_segmented_append or has_unified_mixed):
         raise RuntimeError(
             "multimodal bridge must resolve exactly one supported prefill schedule"
@@ -3169,6 +3209,18 @@ def emit_multimodal_bridge_api(ops: List[Dict], config: Dict | None = None) -> s
         }
 """
 
+    segment_plan_begin = (
+        "    g_multimodal_prefill_segment_lengths[0] = tokens_before_count;\n"
+        "    g_multimodal_prefill_segment_lengths[1] = prefix_tokens;\n"
+        "    g_multimodal_prefill_segment_lengths[2] = tokens_after_count;\n"
+        "    g_multimodal_prefill_num_segments = 3;\n"
+        if has_mixed_prefill_segments else ""
+    )
+    segment_plan_end = (
+        "    g_multimodal_prefill_num_segments = 0;\n"
+        if has_mixed_prefill_segments else ""
+    )
+
     if has_segmented_append:
         segments_execute_block = f"""
     const int aligned_embed_dim = ({aligned_embed_dim_expr});
@@ -3211,7 +3263,9 @@ def emit_multimodal_bridge_api(ops: List[Dict], config: Dict | None = None) -> s
         if (rc < 0) return rc;
     }}
 
+{segment_plan_begin}
     ck_prefill_from_embedded(g_model, total_tokens);
+{segment_plan_end}
 """
 
     return f"""
