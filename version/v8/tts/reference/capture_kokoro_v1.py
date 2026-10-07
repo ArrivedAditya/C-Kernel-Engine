@@ -262,6 +262,11 @@ def main() -> int:
                        out_dir, record["tensors"])
     hooks.append(modules["decoder.generator.noise_res.0.adain1.2"]
                  .register_forward_pre_hook(capture_second_pair_sum))
+    def capture_generator_stage0_join(_module, inputs):
+        capture_tensor(inputs[0], "decoder_generator_stage0_join",
+                       out_dir, record["tensors"])
+    hooks.append(modules["decoder.generator.resblocks.0"]
+                 .register_forward_pre_hook(capture_generator_stage0_join))
     stft = model.decoder.generator.stft
     capture_tensor(stft.window, "generator_stft_window", out_dir,
                    record["tensors"])
@@ -349,6 +354,8 @@ def main() -> int:
                 for pair in (1, 2) for convolution in ("convs1", "convs2")):
         if key not in record["tensors"]:
             raise RuntimeError(f"pinned first source residual pair checkpoint not reached: {key}")
+    if "decoder_generator_stage0_join" not in record["tensors"]:
+        raise RuntimeError("pinned first generator source/main join was not captured")
     record["fine_predictor_hooks"] = list(FINE_PREDICTOR_HOOKS)
     record["prosody_branch_hooks"] = list(PROSODY_BRANCH_HOOKS)
     record["decoder_hooks"] = list(DECODER_HOOKS)
