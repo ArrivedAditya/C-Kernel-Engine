@@ -20962,9 +20962,10 @@
           "tests/test_v8_kokoro_generated_decoder_encode.py",
           "tests/test_v8_kokoro_generated_decoder_complete.py",
           "tests/test_v8_kokoro_source_residual_first_pair.py",
-          "tests/test_v8_kokoro_source_residual_block0.py"
+          "tests/test_v8_kokoro_source_residual_block0.py",
+          "tests/test_v8_kokoro_generator_stage0_join.py"
         ],
-        "oracle": "Independent NumPy FP32 sum then multiply; synthetic generated-C fixture; pinned full-model PyTorch hooks for F0/noise and decoder residual blocks"
+        "oracle": "Independent NumPy FP32 sum then multiply; synthetic generated-C fixture; pinned full-model PyTorch hooks for F0/noise, decoder residual blocks, and first generator join"
       },
       "notes": "Inference only. Separate FP32 sum then FP32 scale, no FMA. All valid inputs and derived results are preflighted before output writes; physical padding is untouched. Inputs and output must not alias. No heap or scratch.",
       "name": "audio_scaled_sum_strided_f32_checked",

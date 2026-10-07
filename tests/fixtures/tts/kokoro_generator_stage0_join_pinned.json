@@ -1,0 +1,33 @@
+{
+  "scope": "direct pinned full-model first generator source/main join",
+  "model_pin": "e8a90b41091c3c5b70375c47cc959799920fa4d6",
+  "code_pin": "dfb907a02bba8152ca444717ca5d78747ccb4bec",
+  "oracle": "pinned full KModel first resblock input prehook",
+  "environment": {
+    "kokoro": "0.9.4",
+    "misaki": "0.9.4",
+    "torch": "2.8.0+cpu",
+    "transformers": "5.17.0",
+    "spacy": "3.8.16",
+    "num2words": "0.5.14",
+    "phonemizer-fork": "3.3.2",
+    "espeakng-loader": "0.2.4"
+  },
+  "asset_sha256": {
+    "config.json": "5abb01e2403b072bf03d04fde160443e209d7a0dad49a423be15196b9b43c17f",
+    "kokoro-v1_0.pth": "496dba118d1a58f5f3db2efc88dbdc216e0483fc89fe6e47ee1f2c53f18ad1e4",
+    "voices/af_heart.pt": "0ab5709b8ffab19bfd849cd11d98f75b60af7733253ad0d67b12382a102cb4ff"
+  },
+  "capture_manifest_sha256": "04686ef8ca30b470cad2f6f8979b8115eb06eb33956e3acc1699b8393a041f20",
+  "source_tensor_sha256": {
+    "join": "9fa3fa83e899202e0af791790e3ab1d3abfaeaccd3c493be2a001b43338874ae",
+    "main": "16878f548ba0493e81583f4e1b88d8e4331e15746e9647642ccefff70a0d4ed8",
+    "source": "dfb25d1a0bfb01ad130c5163695ca0ab45e32c9485579a4a44741713dd5b2c74"
+  },
+  "array_sha256": {
+    "join": "61717b014be653b9ca45b1b92bcb2b196204c48c15b45396027a493957848c55"
+  },
+  "fixture_sha256": "b939fd3214e42b944e1178a81522fd5de7c72a906cc1d385b09020242ca176bd",
+  "input_text": "Read this assistant response aloud.",
+  "valid_frames": 2060
+}
