@@ -6924,6 +6924,7 @@ typedef struct {
     int head_dim;
     int aligned_head_dim;
     int cache_is_bf16;
+    float attention_scale;
     ck_attention_prefill_schedule_t schedule;
     size_t q_head_stride;
     size_t output_head_stride;
@@ -7079,7 +7080,8 @@ static void ck_attention_f16_prefill_qtile64_work(int ith, int nth, void *opaque
     if (job_begin >= job_end) return;
 
     const int kv_tokens = args->past_tokens + args->q_tokens;
-    const float scale = ck_attention_strict_scale_f32(args->head_dim);
+    const float scale = args->attention_scale != 0.0f
+        ? args->attention_scale : ck_attention_strict_scale_f32(args->head_dim);
     const size_t kv_head_stride =
         (size_t) args->cache_capacity * (size_t) args->aligned_head_dim;
 
@@ -7461,6 +7463,7 @@ static ck_attention_status_t ck_attention_f16_prefill_qtile64_dispatch(
     int head_dim,
     int aligned_head_dim,
     int cache_is_bf16,
+    float attention_scale,
     size_t q_head_stride,
     size_t output_head_stride,
     ck_attention_prefill_schedule_t schedule)
@@ -7482,6 +7485,7 @@ static ck_attention_status_t ck_attention_f16_prefill_qtile64_dispatch(
         .head_dim = head_dim,
         .aligned_head_dim = aligned_head_dim,
         .cache_is_bf16 = cache_is_bf16,
+        .attention_scale = attention_scale,
         .schedule = schedule,
         .q_head_stride = q_head_stride,
         .output_head_stride = output_head_stride,
@@ -7687,7 +7691,7 @@ ck_attention_status_t attention_forward_causal_head_major_gqa_prefill_append_f16
     }
     return ck_attention_f16_prefill_qtile64_dispatch(
         q, k_cache, v_cache, output, num_heads, num_kv_heads, q_tokens,
-        past_tokens, cache_capacity, head_dim, aligned_head_dim, 0,
+        past_tokens, cache_capacity, head_dim, aligned_head_dim, 0, 0.0f,
         (size_t) q_tokens * (size_t) aligned_head_dim,
         (size_t) q_tokens * (size_t) aligned_head_dim, schedule);
 }
@@ -7723,7 +7727,7 @@ ck_attention_status_t attention_forward_causal_head_major_gqa_prefill_append_f16
     if (reduction == CK_ATTN_REDUCTION_F16_FLASH_AUTO_QTILE64) {
         return ck_attention_f16_prefill_qtile64_dispatch(
             q, k_cache, v_cache, output, num_heads, num_kv_heads, q_tokens,
-            past_tokens, cache_capacity, head_dim, aligned_head_dim, 0,
+            past_tokens, cache_capacity, head_dim, aligned_head_dim, 0, 0.0f,
             (size_t) q_tokens * (size_t) aligned_head_dim,
             (size_t) q_tokens * (size_t) aligned_head_dim,
             CK_ATTN_PREFILL_SCHEDULE_QUERY_TILES);
@@ -7791,7 +7795,9 @@ static ck_attention_status_t ck_attention_prefill_append_f16cache_gemma4_workspa
     int sliding_window,
     ck_attention_reduction_t reduction,
     float *token_workspace,
-    size_t token_workspace_bytes)
+    size_t token_workspace_bytes,
+    const int *segment_lengths,
+    int num_segments)
 {
     if (!q || !k_cache || !v_cache || !output || num_heads <= 0 ||
         num_kv_heads <= 0 || q_tokens <= 0 || past_tokens < 0 ||
@@ -7800,6 +7806,23 @@ static ck_attention_status_t ck_attention_prefill_append_f16cache_gemma4_workspa
         aligned_head_dim < head_dim || sliding_window < 0) {
         return CK_ATTENTION_STATUS_INVALID_ARGUMENT;
     }
+    int one_segment = q_tokens;
+    if (!segment_lengths && num_segments == 0) {
+        segment_lengths = &one_segment;
+        num_segments = 1;
+    }
+    if (!segment_lengths || num_segments <= 0 ||
+        (num_segments > q_tokens && num_segments > 3)) {
+        return CK_ATTENTION_STATUS_INVALID_ARGUMENT;
+    }
+    int planned_rows = 0;
+    for (int s = 0; s < num_segments; ++s) {
+        if (segment_lengths[s] < 0 || segment_lengths[s] > q_tokens - planned_rows) {
+            return CK_ATTENTION_STATUS_INVALID_ARGUMENT;
+        }
+        planned_rows += segment_lengths[s];
+    }
+    if (planned_rows != q_tokens) return CK_ATTENTION_STATUS_INVALID_ARGUMENT;
     if ((size_t) num_heads > SIZE_MAX / (size_t) aligned_head_dim) {
         return CK_ATTENTION_STATUS_INVALID_ARGUMENT;
     }
@@ -7810,28 +7833,54 @@ static ck_attention_status_t ck_attention_prefill_append_f16cache_gemma4_workspa
     }
     float *q_token = token_workspace;
     float *out_token = token_workspace + token_elems;
-    for (int t = 0; t < q_tokens; ++t) {
-        for (int h = 0; h < num_heads; ++h) {
-            const float *src = q +
-                ((size_t) h * (size_t) q_tokens + (size_t) t) *
-                (size_t) aligned_head_dim;
-            memcpy(q_token + (size_t) h * (size_t) aligned_head_dim, src,
-                   (size_t) aligned_head_dim * sizeof(float));
+    int row_offset = 0;
+    for (int s = 0; s < num_segments; ++s) {
+        const int rows = segment_lengths[s];
+        if (rows == 0) continue;
+        if (reduction == CK_ATTN_REDUCTION_F16_FLASH_AUTO_QTILE64 &&
+            rows >= CK_GGML_FA_TILE_Q &&
+            (sliding_window == 0 || past_tokens + row_offset + rows <= sliding_window)) {
+            const ck_attention_status_t status = ck_attention_f16_prefill_qtile64_dispatch(
+                q + (size_t) row_offset * (size_t) aligned_head_dim,
+                k_cache, v_cache,
+                output + (size_t) row_offset * (size_t) aligned_head_dim,
+                num_heads, num_kv_heads, rows, past_tokens + row_offset,
+                cache_capacity, head_dim, aligned_head_dim, 0, 1.0f,
+                (size_t) q_tokens * (size_t) aligned_head_dim,
+                (size_t) q_tokens * (size_t) aligned_head_dim,
+                CK_ATTN_PREFILL_SCHEDULE_QUERY_TILES);
+            if (status != CK_ATTENTION_STATUS_OK) return status;
+            row_offset += rows;
+            continue;
         }
-        const ck_attention_status_t status = ck_attention_forward_decode_f16cache_gemma4(
-            q_token, k_cache, v_cache, out_token, num_heads, num_kv_heads,
-            past_tokens + t + 1, cache_capacity, head_dim, aligned_head_dim,
-            sliding_window, reduction);
-        if (status != CK_ATTENTION_STATUS_OK) {
-            return status;
+        const ck_attention_reduction_t selected =
+            reduction == CK_ATTN_REDUCTION_F16_FLASH_AUTO_QTILE64
+                ? CK_ATTN_REDUCTION_F16_ONLINE_SINGLE_RANGE : reduction;
+        for (int local_row = 0; local_row < rows; ++local_row) {
+            const int t = row_offset + local_row;
+            for (int h = 0; h < num_heads; ++h) {
+                const float *src = q +
+                    ((size_t) h * (size_t) q_tokens + (size_t) t) *
+                    (size_t) aligned_head_dim;
+                memcpy(q_token + (size_t) h * (size_t) aligned_head_dim, src,
+                       (size_t) aligned_head_dim * sizeof(float));
+            }
+            const ck_attention_status_t status = ck_attention_forward_decode_f16cache_gemma4(
+                q_token, k_cache, v_cache, out_token, num_heads, num_kv_heads,
+                past_tokens + t + 1, cache_capacity, head_dim, aligned_head_dim,
+                sliding_window, selected);
+            if (status != CK_ATTENTION_STATUS_OK) {
+                return status;
+            }
+            for (int h = 0; h < num_heads; ++h) {
+                float *dst = output +
+                    ((size_t) h * (size_t) q_tokens + (size_t) t) *
+                    (size_t) aligned_head_dim;
+                memcpy(dst, out_token + (size_t) h * (size_t) aligned_head_dim,
+                       (size_t) aligned_head_dim * sizeof(float));
+            }
         }
-        for (int h = 0; h < num_heads; ++h) {
-            float *dst = output +
-                ((size_t) h * (size_t) q_tokens + (size_t) t) *
-                (size_t) aligned_head_dim;
-            memcpy(dst, out_token + (size_t) h * (size_t) aligned_head_dim,
-                   (size_t) aligned_head_dim * sizeof(float));
-        }
+        row_offset += rows;
     }
     return CK_ATTENTION_STATUS_OK;
 }
@@ -7846,7 +7895,7 @@ ck_attention_status_t attention_forward_causal_head_major_gqa_prefill_append_f16
     return ck_attention_prefill_append_f16cache_gemma4_workspace(
         q, k_cache, v_cache, output, num_heads, num_kv_heads, q_tokens,
         past_tokens, cache_capacity, head_dim, aligned_head_dim, 0, reduction,
-        token_workspace, token_workspace_bytes);
+        token_workspace, token_workspace_bytes, NULL, 0);
 }
 
 ck_attention_status_t attention_forward_causal_head_major_gqa_prefill_append_f16cache_sliding_gemma4_workspace(
@@ -7859,7 +7908,36 @@ ck_attention_status_t attention_forward_causal_head_major_gqa_prefill_append_f16
     return ck_attention_prefill_append_f16cache_gemma4_workspace(
         q, k_cache, v_cache, output, num_heads, num_kv_heads, q_tokens,
         past_tokens, cache_capacity, head_dim, aligned_head_dim, sliding_window,
-        reduction, token_workspace, token_workspace_bytes);
+        reduction, token_workspace, token_workspace_bytes, NULL, 0);
+}
+
+ck_attention_status_t attention_forward_causal_head_major_gqa_prefill_segmented_f16cache_sliding_gemma4_workspace(
+    const float *q, const uint16_t *k_cache, const uint16_t *v_cache,
+    float *output, int num_heads, int num_kv_heads, int q_tokens,
+    int past_tokens, int cache_capacity, int head_dim, int aligned_head_dim,
+    int sliding_window, ck_attention_reduction_t reduction,
+    float *token_workspace, size_t token_workspace_bytes,
+    const int *segment_lengths, int num_segments)
+{
+    return ck_attention_prefill_append_f16cache_gemma4_workspace(
+        q, k_cache, v_cache, output, num_heads, num_kv_heads, q_tokens,
+        past_tokens, cache_capacity, head_dim, aligned_head_dim, sliding_window,
+        reduction, token_workspace, token_workspace_bytes,
+        segment_lengths, num_segments);
+}
+
+ck_attention_status_t attention_forward_causal_head_major_gqa_prefill_segmented_f16cache_gemma4_workspace(
+    const float *q, const uint16_t *k_cache, const uint16_t *v_cache,
+    float *output, int num_heads, int num_kv_heads, int q_tokens,
+    int past_tokens, int cache_capacity, int head_dim, int aligned_head_dim,
+    ck_attention_reduction_t reduction, float *token_workspace,
+    size_t token_workspace_bytes, const int *segment_lengths, int num_segments)
+{
+    return ck_attention_prefill_append_f16cache_gemma4_workspace(
+        q, k_cache, v_cache, output, num_heads, num_kv_heads, q_tokens,
+        past_tokens, cache_capacity, head_dim, aligned_head_dim, 0,
+        reduction, token_workspace, token_workspace_bytes,
+        segment_lengths, num_segments);
 }
 
 static ck_attention_status_t ck_attention_forward_causal_head_major_gqa_prefill_segmented_f16cache_schedule_workspace(

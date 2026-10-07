@@ -5056,22 +5056,22 @@
           "head_major"
         ],
         "numerics.attention_reduction": [
-          "f16_online_single_range_noscale"
+          "f16_flash_auto_qtile64_noscale"
         ]
       },
       "supported_reductions": {
-        "f16_online_single_range_noscale": {
+        "f16_flash_auto_qtile64_noscale": {
           "status": "validated",
           "function": "attention_forward_causal_head_major_gqa_prefill_append_f16cache_gemma4_workspace",
           "explicit_selector": true,
-          "selector": "CK_ATTN_REDUCTION_F16_ONLINE_SINGLE_RANGE",
-          "notes": "Gemma4 unit-scale, single-range FP16 online attention over an append-preserving cache."
+          "selector": "CK_ATTN_REDUCTION_F16_FLASH_AUTO_QTILE64",
+          "notes": "Unit-scale tiled attention for batches of at least 64 queries; online attention for shorter batches."
         }
       },
       "numerical_capabilities": {
         "input_dtype": "fp32_q_fp16_kv",
-        "accumulation_dtype": "fp32_scores_fp16_value_updates",
-        "reduction_order": "f16_online_single_range_noscale",
+        "accumulation_dtype": "fp32_tiled_or_fp16_online",
+        "reduction_order": "f16_flash_auto_qtile64_noscale",
         "output_dtype": "fp32"
       },
       "operation_interface": "attention.causal_gqa.append_f16cache.noscale.prefill.v1",
@@ -5085,13 +5085,36 @@
       },
       "implementation": {
         "isa_dispatch": "runtime",
+        "segmented_query_provider": {
+          "function": "attention_forward_causal_head_major_gqa_prefill_segmented_f16cache_gemma4_workspace",
+          "base_args": [
+            "q",
+            "k_cache",
+            "v_cache",
+            "output",
+            "num_heads",
+            "num_kv_heads",
+            "q_tokens",
+            "past_tokens",
+            "cache_capacity",
+            "head_dim",
+            "aligned_head_dim",
+            "reduction",
+            "token_workspace",
+            "token_workspace_bytes"
+          ],
+          "segment_lengths_dtype": "i32",
+          "boundary_semantics": "restart_query_tile_policy_at_each_segment",
+          "fallback": "reject_invalid_plan"
+        },
         "threading": {
-          "runtime": "serial",
+          "runtime": "ck_threadpool",
           "work_partition": [
-            "serial"
+            "independent_query_blocks"
           ],
           "dispatch": [
-            "inline"
+            "inline",
+            "ck_threadpool_dispatch_n"
           ],
           "reduction_order_effect": "contract_defined"
         }
@@ -5258,7 +5281,7 @@
           },
           {
             "name": "reduction",
-            "source": "const:CK_ATTN_REDUCTION_F16_ONLINE_SINGLE_RANGE"
+            "source": "const:CK_ATTN_REDUCTION_F16_FLASH_AUTO_QTILE64"
           },
           {
             "name": "token_workspace",
@@ -5491,22 +5514,22 @@
           "head_major"
         ],
         "numerics.attention_reduction": [
-          "f16_online_single_range_noscale"
+          "f16_flash_auto_qtile64_noscale"
         ]
       },
       "supported_reductions": {
-        "f16_online_single_range_noscale": {
+        "f16_flash_auto_qtile64_noscale": {
           "status": "validated",
           "function": "attention_forward_causal_head_major_gqa_prefill_append_f16cache_sliding_gemma4_workspace",
           "explicit_selector": true,
-          "selector": "CK_ATTN_REDUCTION_F16_ONLINE_SINGLE_RANGE",
-          "notes": "Gemma4 unit-scale sliding attention over the declared live cache range."
+          "selector": "CK_ATTN_REDUCTION_F16_FLASH_AUTO_QTILE64",
+          "notes": "Unit-scale tiled attention for batches of at least 64 queries within the declared live window; online attention otherwise."
         }
       },
       "numerical_capabilities": {
         "input_dtype": "fp32_q_fp16_kv",
-        "accumulation_dtype": "fp32_scores_fp16_value_updates",
-        "reduction_order": "f16_online_single_range_noscale",
+        "accumulation_dtype": "fp32_tiled_or_fp16_online",
+        "reduction_order": "f16_flash_auto_qtile64_noscale",
         "output_dtype": "fp32"
       },
       "operation_interface": "attention.causal_gqa.append_f16cache.noscale.sliding.prefill.v1",
@@ -5520,13 +5543,37 @@
       },
       "implementation": {
         "isa_dispatch": "runtime",
+        "segmented_query_provider": {
+          "function": "attention_forward_causal_head_major_gqa_prefill_segmented_f16cache_sliding_gemma4_workspace",
+          "base_args": [
+            "q",
+            "k_cache",
+            "v_cache",
+            "output",
+            "num_heads",
+            "num_kv_heads",
+            "q_tokens",
+            "past_tokens",
+            "cache_capacity",
+            "head_dim",
+            "aligned_head_dim",
+            "sliding_window",
+            "reduction",
+            "token_workspace",
+            "token_workspace_bytes"
+          ],
+          "segment_lengths_dtype": "i32",
+          "boundary_semantics": "restart_query_tile_policy_at_each_segment",
+          "fallback": "reject_invalid_plan"
+        },
         "threading": {
-          "runtime": "serial",
+          "runtime": "ck_threadpool",
           "work_partition": [
-            "serial"
+            "independent_query_blocks"
           ],
           "dispatch": [
-            "inline"
+            "inline",
+            "ck_threadpool_dispatch_n"
           ],
           "reduction_order_effect": "contract_defined"
         }
@@ -5698,7 +5745,7 @@
           },
           {
             "name": "reduction",
-            "source": "const:CK_ATTN_REDUCTION_F16_ONLINE_SINGLE_RANGE"
+            "source": "const:CK_ATTN_REDUCTION_F16_FLASH_AUTO_QTILE64"
           },
           {
             "name": "token_workspace",
