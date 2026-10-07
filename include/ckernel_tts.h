@@ -128,6 +128,18 @@ int audio_stft_mag_phase_checked_f32(const float *samples, size_t samples_capaci
     float *scratch, size_t scratch_capacity,
     size_t samples_count, size_t n_fft, size_t hop, size_t frames);
 
+/* Diagnostic-only variant of the same arithmetic path. complex_trace is an
+ * interleaved [bin, frame, real/imag] FP64 caller-owned buffer. It records
+ * the actual values entering atan2, after the exact-real Nyquist adjustment.
+ * Not a model provider; production generated calls use the function above. */
+int audio_stft_mag_phase_trace_checked_f32(const float *samples,
+    size_t samples_capacity, const float *window, size_t window_capacity,
+    const float *cos_table, const float *sin_table, size_t table_capacity,
+    float *output, size_t output_capacity, size_t output_stride,
+    float *scratch, size_t scratch_capacity,
+    size_t samples_count, size_t n_fft, size_t hop, size_t frames,
+    double *complex_trace, size_t complex_trace_capacity);
+
 /* Frame F0 and explicit Gaussian excitation to sample-major harmonic waves.
  * Scratch holds frame*harmonic phases plus sample*harmonic staged output;
  * rejection preserves output. The random stream is supplied by the caller. */

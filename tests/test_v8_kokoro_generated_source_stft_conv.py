@@ -60,6 +60,15 @@ class KokoroGeneratedSourceStftConvTest(unittest.TestCase):
             str(ROOT / 'src/kernels/audio_stft_mag_phase_checked.c'),
             '-lm', '-o', str(stft_library)], check=True, capture_output=True)
         cls.stft_loaded = ctypes.CDLL(str(stft_library))
+        cls.stft_trace = cls.stft_loaded.audio_stft_mag_phase_trace_checked_f32
+        cls.stft_trace.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_float), ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float),
+            ctypes.c_size_t, ctypes.POINTER(ctypes.c_float), ctypes.c_size_t,
+            ctypes.c_size_t, ctypes.POINTER(ctypes.c_float), ctypes.c_size_t,
+            ctypes.c_size_t, ctypes.c_size_t, ctypes.c_size_t, ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_double), ctypes.c_size_t]
+        cls.stft_trace.restype = ctypes.c_int
         cls.fn.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t] + \
             [ctypes.POINTER(ctypes.c_int32)] * 5
         cls.buffers = {item['name']: item for item in
@@ -143,6 +152,26 @@ class KokoroGeneratedSourceStftConvTest(unittest.TestCase):
         self.assertEqual(status, 0)
         return output
 
+    def native_stft_trace(self, samples):
+        samples = np.ascontiguousarray(samples, dtype=np.float32)
+        frames = len(samples) // 5 + 1
+        taps = np.arange(20, dtype=np.float64)
+        angles = -2 * np.pi * np.arange(11)[:, None] * taps / 20
+        cosine = np.ascontiguousarray(np.cos(angles), dtype=np.float32)
+        sine = np.ascontiguousarray(np.sin(angles), dtype=np.float32)
+        window = np.ascontiguousarray(self.oracle['window'])
+        output = np.empty((22, frames), dtype=np.float32)
+        scratch = np.empty_like(output)
+        trace = np.empty((11, frames, 2), dtype=np.float64)
+        pointer = lambda value: value.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+        status = self.stft_trace(pointer(samples), samples.size,
+            pointer(window), window.size, pointer(cosine), pointer(sine),
+            cosine.size, pointer(output), output.size, frames,
+            pointer(scratch), scratch.size, samples.size, 20, 5, frames,
+            trace.ctypes.data_as(ctypes.POINTER(ctypes.c_double)), trace.size)
+        self.assertEqual(status, 0)
+        return output, trace
+
     def test_reference_stft_to_native_source_convolution(self):
         """Isolate convolution from source generation and STFT arithmetic."""
         reference_channels = np.ascontiguousarray(np.concatenate((
@@ -205,6 +234,8 @@ class KokoroGeneratedSourceStftConvTest(unittest.TestCase):
             ('pinned-source', self.oracle['source'][0].copy(),
              self.native_stft(self.oracle['source'][0])),
             ('generated-source', generated_source, generated_channels)):
+            traced_channels, complex_trace = self.native_stft_trace(samples)
+            np.testing.assert_array_equal(traced_channels, native_channels)
             complex_reference, reference_channels = torch_channels(samples)
             if label == 'pinned-source':
                 fixture_channels = np.concatenate((self.oracle['magnitude'][0],
@@ -231,10 +262,10 @@ class KokoroGeneratedSourceStftConvTest(unittest.TestCase):
                     'reproduction_command': 'python3 -m unittest ' + self.id()}))
             magnitude_error = np.abs(native_channels[:11] - reference_channels[:11])
             phase_error = np.abs(native_channels[11:] - reference_channels[11:])
-            # These complex values are reconstructed from CKE's actual output
-            # channels. The current provider does not expose pre-atan2 real/imag.
-            complex_native = native_channels[:11] * np.exp(
-                1j * native_channels[11:])
+            # This is the production kernel's actual FP64 pre-atan2 trace,
+            # not a reconstruction from rounded magnitude/phase channels.
+            complex_native = (complex_trace[:, :, 0] +
+                              1j * complex_trace[:, :, 1])
             complex_error = np.abs(complex_native - complex_reference)
             branch = np.argwhere(phase_error > 1.)
             branch_details = []
@@ -245,15 +276,36 @@ class KokoroGeneratedSourceStftConvTest(unittest.TestCase):
                     self.oracle['window'])
                 minimal_fft = torch.fft.rfft(torch.from_numpy(windowed),
                     n=20).numpy()[bin_index]
+                # A 20-sample excerpt reproduces the exact CKE frame: frame
+                # zero stays at zero; an interior frame becomes local frame 2.
+                excerpt_start = max(0, int(frame_index) * 5 - 10)
+                excerpt = samples[excerpt_start:excerpt_start + 20].copy()
+                local_frame = 0 if frame_index == 0 else 2
+                _, excerpt_trace = self.native_stft_trace(excerpt)
+                np.testing.assert_array_equal(
+                    excerpt_trace[bin_index, local_frame],
+                    complex_trace[bin_index, frame_index])
                 branch_details.append({
                     'bin': int(bin_index), 'frame': int(frame_index),
                     'native_magnitude': float(native_channels[bin_index, frame_index]),
                     'native_raw_phase': float(native_channels[11 + bin_index, frame_index]),
+                    'native_pre_atan2_real_f64': float(complex_trace[
+                        bin_index, frame_index, 0]),
+                    'native_pre_atan2_imag_f64': float(complex_trace[
+                        bin_index, frame_index, 1]),
+                    'native_pre_atan2_imag_signbit': bool(np.signbit(
+                        complex_trace[bin_index, frame_index, 1])),
                     'oracle_real': float(complex_reference[bin_index, frame_index].real),
                     'oracle_imag': float(complex_reference[bin_index, frame_index].imag),
+                    'oracle_imag_signbit': bool(np.signbit(
+                        complex_reference[bin_index, frame_index].imag)),
                     'oracle_raw_phase': float(reference_channels[11 + bin_index, frame_index]),
                     'minimal_fft_real': float(minimal_fft.real),
                     'minimal_fft_imag': float(minimal_fft.imag),
+                    'minimal_excerpt_start': excerpt_start,
+                    'minimal_excerpt_local_frame': local_frame,
+                    'minimal_excerpt_sha256': hashlib.sha256(
+                        excerpt.tobytes()).hexdigest(),
                     'windowed_frame_sha256': hashlib.sha256(windowed.tobytes()).hexdigest()})
             native_conv = (generated_conv if label == 'generated-source' else
                            self.native_source_convolution(native_channels))
@@ -270,7 +322,7 @@ class KokoroGeneratedSourceStftConvTest(unittest.TestCase):
                 'oracle': 'live-pinned-pytorch-' + torch.__version__,
                 'status': 'fail' if len(branch) or float(conv_input_error[worst]) > 5e-5 else 'pass',
                 'gate': 'diagnostic', 'blocking': False,
-                'reason': 'raw phase remains a convolution input; complex values are reconstructed from native magnitude/phase',
+                'reason': 'raw phase remains a convolution input; complex values are actual native pre-atan2 accumulators',
                 'max_complex_real_error': float(np.max(np.abs(
                     complex_native.real - complex_reference.real))),
                 'max_complex_imag_error': float(np.max(np.abs(
