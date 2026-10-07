@@ -246,6 +246,207 @@ def _exact_base(arg: dict[str, Any], buffer: dict[str, Any]) -> bool:
     return bool(match and match.group(1) == buffer.get("define"))
 
 
+def _mapped_two_row_projection(
+    op: dict[str, Any], providers: dict[str, dict[str, Any]],
+    buffers: dict[str, dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Resolve an exact-base projection through its selected decode map."""
+    args = _args(op)
+    input_arg = args.get("x") or args.get("x_q8")
+    if set(args) not in ({"x", "y", "W", "M", "K"}, {"x_q8", "y", "W", "M", "K"}) or not input_arg:
+        return None
+    try:
+        width, height = int(args["K"]["expr"]), int(args["M"]["expr"])
+    except (KeyError, ValueError, TypeError):
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    input_ref, output_ref = input_arg.get("buffer_ref"), args["y"].get("buffer_ref")
+    if input_ref not in buffers or output_ref not in buffers or input_ref == output_ref:
+        return None
+    if not _exact_base(input_arg, buffers[input_ref]) or not _exact_base(args["y"], buffers[output_ref]):
+        return None
+    weight = _WEIGHT.fullmatch(str(args["W"].get("expr", "")))
+    if not weight:
+        return None
+    selected = (op.get("call_abi") or {}).get("kernel_id")
+    decode = providers.get(selected, {})
+    batch_id = decode.get("batch_decode_two_rows", {}).get("provider_id")
+    provider = providers.get(batch_id, {})
+    binding = provider.get("batch_decode_two_rows", {})
+    max_input_dim = binding.get("max_input_dim")
+    alignment = decode.get("constraints", {}).get("alignment", {}).get("K", 1)
+    if (not isinstance(max_input_dim, int) or max_input_dim <= 0
+            or not isinstance(alignment, int) or alignment <= 0
+            or width % alignment):
+        return None
+    if (decode.get("impl", {}).get("function") != op.get("function")
+            or binding.get("decode_provider_id") != selected
+            or binding.get("decode_function") != op.get("function")
+            or binding.get("rows") != 2
+            or binding.get("numerical_contract") != provider.get("numerical_contract")
+            or any(decode.get("quant", {}).get(key) != provider.get("quant", {}).get(key)
+                   for key in ("weight", "activation", "output"))
+            or width > max_input_dim):
+        return None
+    function = binding.get("function")
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", str(function or "")):
+        return None
+    dtype = binding.get("input_dtype", "fp32")
+    if dtype not in {"fp32", "q8_k"} or (dtype == "q8_k") != ("x_q8" in args):
+        return None
+    if dtype == "q8_k" and width % 256:
+        return None
+    input_bytes = width * 4 if dtype == "fp32" else width // 256 * 292
+    output_bytes = height * 4
+    input_capacity = buffers[input_ref].get("size")
+    output_capacity = buffers[output_ref].get("size")
+    if (not isinstance(input_capacity, int) or input_capacity < input_bytes
+            or not isinstance(output_capacity, int) or output_capacity < output_bytes):
+        return None
+    return {"input": input_ref, "output": output_ref, "input_bytes": input_bytes,
+            "output_bytes": output_bytes, "input_dim": width, "output_dim": height,
+            "weight": weight.group(1), "function": function, "dtype": dtype}
+
+
+def _full_layer_plan(
+    ops: list[dict[str, Any]], buffers: dict[str, dict[str, Any]],
+    providers: dict[str, dict[str, Any]], config: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Plan one checked layer from IR boundaries and selected provider maps.
+
+    The operation pattern is an admission guard, while the execution stages,
+    crossing values, extents and provider calls are derived from the graph.
+    Unknown dependencies retain the older, narrower batch entry.
+    """
+    if len(ops) < 22:
+        return None
+    first_layer = ops[3].get("layer")
+    if not isinstance(first_layer, int) or first_layer < 0:
+        return None
+    if str(config.get("out_proj_input_policy") or "").strip().lower() in {
+        "fp32", "fp32_input", "force_fp32"
+    }:
+        return None
+    for key in ("out_proj_fp32_layers", "out_proj_fp32_layer",
+                "attn_proj_fp32_layers", "attn_qkv_fp32_layers", "attn_proj_fp32_layer",
+                "mlp_gate_up_fp32_layers", "mlp_gate_up_fp32_layer",
+                "mlp_gate_up_q8_contract_layers", "mlp_gate_up_q8_contract_layer"):
+        raw = config.get(key)
+        values = raw if isinstance(raw, (list, tuple, set)) else (raw,)
+        if any(value is not None and str(value) == str(first_layer) for value in values):
+            return None
+    end = next((i for i in range(4, len(ops)) if ops[i].get("layer") != first_layer), None)
+    if end is None or end < 20:
+        return None
+    layer_ops = ops[:end]
+    projection_names = ("q_proj", "k_proj", "v_proj", "out_proj", "mlp_gate_up", "mlp_down")
+    indexed = [(i, op) for i, op in enumerate(layer_ops) if op.get("op") in projection_names]
+    if [op.get("op") for _, op in indexed] != list(projection_names):
+        return None
+    if any(op.get("layer") != first_layer for _, op in indexed):
+        return None
+    projections = []
+    for index, op in indexed:
+        projection = _mapped_two_row_projection(op, providers, buffers)
+        if projection is None:
+            return None
+        projections.append({"index": index, **projection})
+    # Only contiguous projections with one identical packed input may share a
+    # stage. Stateful attention and other graph operations stay sequence-local.
+    groups: list[list[dict[str, Any]]] = []
+    for projection in projections:
+        if (groups and projection["index"] == groups[-1][-1]["index"] + 1
+                and projection["input"] == groups[-1][0]["input"]
+                and projection["input_bytes"] == groups[-1][0]["input_bytes"]):
+            groups[-1].append(projection)
+        else:
+            groups.append([projection])
+    if [len(group) for group in groups] != [3, 1, 1, 1]:
+        return None
+    stages = []
+    cursor = 0
+    for group in groups:
+        start, stop = group[0]["index"], group[-1]["index"] + 1
+        if cursor < start:
+            stages.append({"kind": "local", "start": cursor, "stop": start})
+        stages.append({"kind": "shared", "start": start, "stop": stop, "projections": group})
+        cursor = stop
+    stages.append({"kind": "local", "start": cursor, "stop": len(ops)})
+    # The final local stage runs all later layers; all preceding boundaries
+    # are within this one admitted layer.
+    extents: dict[str, int] = {}
+    for projection in projections:
+        for ref, count in ((projection["input"], projection["input_bytes"]),
+                           (projection["output"], projection["output_bytes"])):
+            extents[ref] = max(extents.get(ref, 0), count)
+    for group in groups:
+        outputs = [projection["output"] for projection in group]
+        if len(outputs) != len(set(outputs)) or group[0]["input"] in outputs:
+            return None
+    save = _args(ops[1])
+    try:
+        residual = save["dst"]["buffer_ref"]
+        extents[residual] = int(save["size"]["expr"])
+    except (KeyError, ValueError, TypeError):
+        return None
+    # A shared gate/up projection fully replaces its output. Verify its
+    # immediate GeGLU consumer before using that fact for liveness.
+    gate = groups[2][0]
+    gate_after = layer_ops[gate["index"] + 1]
+    gate_args = _args(gate_after)
+    try:
+        gate_consumer_dim = int(gate_args.get("dim", {}).get("expr", 0))
+    except (TypeError, ValueError):
+        return None
+    if (gate_after.get("op") != "geglu"
+            or gate_args.get("x", {}).get("buffer_ref") != gate["output"]
+            or gate_args.get("out", {}).get("buffer_ref") != gate["output"]
+            or gate_args.get("tokens", {}).get("expr") != "1"
+            or gate_consumer_dim * 2 != gate["output_dim"]):
+        return None
+    down = groups[3][0]
+    quantize = layer_ops[down["index"] - 1]
+    qargs = _args(quantize)
+    if (quantize.get("op") != "quantize_mlp_down_input"
+            or qargs.get("y", {}).get("buffer_ref") != down["input"]
+            or not _exact_base(qargs.get("y", {}), buffers[down["input"]])
+            or qargs.get("rows", {}).get("expr") != "1"
+            or qargs.get("k", {}).get("expr") != str(down["input_dim"])):
+        return None
+    replacements = _certified_full_writes(layer_ops, buffers) | {(gate["index"], gate["output"])}
+    for stage in stages[:-1]:
+        cut = stage["stop"]
+        live = _crossing_at(layer_ops, cut, replacements)
+        if not live or any(ref not in extents for ref in live):
+            return None
+        for ref in live:
+            row = buffers[ref]
+            capacity = row.get("size")
+            if (row.get("lifetime") != "call" or row.get("mutable") is not True
+                    or not isinstance(capacity, int) or capacity < extents[ref]
+                    or not _unaliased(ref, buffers)
+                    or not re.fullmatch(r"A_[A-Z0-9_]+", str(row.get("define", "")))):
+                return None
+        stage["live_after"] = sorted(live)
+    for before, shared in zip(stages, stages[1:]):
+        if shared["kind"] == "shared":
+            if any(projection["input"] not in before.get("live_after", [])
+                   or projection["output"] not in shared["live_after"]
+                   for projection in shared["projections"]):
+                return None
+    # Every call-local access in this layer must use the declared base. This
+    # rejects offset expressions that snapshots could not preserve.
+    for op in layer_ops:
+        for arg in op.get("args", []):
+            ref = arg.get("buffer_ref") if isinstance(arg, dict) else None
+            if (ref in extents and not str(arg.get("source", "")).startswith("scratch:")
+                    and not _exact_base(arg, buffers[ref])):
+                return None
+    return {"stages": stages, "buffers": {ref: buffers[ref]["define"] for ref in extents},
+            "extents": extents, "layer_end": end}
+
+
 def resolve_two_row_batch_contract(
     ops: list[dict[str, Any]], layout: dict[str, Any], config: dict[str, Any]
 ) -> dict[str, Any] | None:
@@ -389,4 +590,7 @@ def resolve_two_row_batch_contract(
     )
     if extension:
         contract["layer_extension"] = extension
+        full_layer = _full_layer_plan(ops, buffers, providers, config)
+        if full_layer:
+            contract["full_layer_plan"] = full_layer
     return contract

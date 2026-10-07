@@ -1,0 +1,1220 @@
+{
+  "source_scope": "Gemma3 270M Q5_K_M first decode layer, reduced from retained generated IR; no weights",
+  "ops": [
+    {
+      "op": "dense_embedding_lookup",
+      "layer": -1,
+      "function": "embedding_forward_q8_0",
+      "call_abi": {
+        "version": 1,
+        "owner": "kernel_map",
+        "kernel_id": "embedding_forward_q8_0",
+        "source_file": "embedding_forward_q8_0.json"
+      },
+      "args": [
+        {
+          "name": "token_ids",
+          "source": "activation:tokens",
+          "expr": "(int32_t*)(model->bump + A_TOKEN_IDS)",
+          "buffer_ref": "token_ids"
+        },
+        {
+          "name": "token_count",
+          "source": "dim:seq_len",
+          "expr": "1"
+        },
+        {
+          "name": "vocab_size",
+          "source": "dim:vocab_size",
+          "expr": "262144"
+        },
+        {
+          "name": "token_embeddings",
+          "source": "weight:token_emb",
+          "expr": "(const void*)(model->bump + W_TOKEN_EMB)"
+        },
+        {
+          "name": "pos_embeddings",
+          "source": "null",
+          "expr": "NULL"
+        },
+        {
+          "name": "output",
+          "source": "output:output",
+          "expr": "(float*)(model->bump + A_EMBEDDED_INPUT)",
+          "buffer_ref": "embedded_input"
+        },
+        {
+          "name": "embed_dim",
+          "source": "dim:embed_dim",
+          "expr": "640"
+        },
+        {
+          "name": "aligned_embed_dim",
+          "source": "dim:embed_dim",
+          "expr": "640"
+        },
+        {
+          "name": "context_window",
+          "source": "dim:seq_len",
+          "expr": "1"
+        },
+        {
+          "name": "add_pos",
+          "source": "const:0",
+          "expr": "0"
+        }
+      ]
+    },
+    {
+      "op": "residual_save",
+      "layer": 0,
+      "function": "ck_memcpy_parallel_dispatch",
+      "call_abi": {
+        "version": 1,
+        "owner": "kernel_map",
+        "kernel_id": "memcpy",
+        "source_file": "memcpy.json"
+      },
+      "args": [
+        {
+          "name": "dst",
+          "source": "output:dst",
+          "expr": "(void*)(model->bump + A_RESIDUAL)",
+          "buffer_ref": "residual"
+        },
+        {
+          "name": "src",
+          "source": "activation:src",
+          "expr": "(const void*)(model->bump + A_EMBEDDED_INPUT)",
+          "buffer_ref": "embedded_input"
+        },
+        {
+          "name": "size",
+          "source": "dim:_memcpy_bytes",
+          "expr": "2560"
+        }
+      ]
+    },
+    {
+      "op": "attn_norm",
+      "layer": 0,
+      "function": "rmsnorm_forward_llama_production",
+      "call_abi": {
+        "version": 1,
+        "owner": "kernel_map",
+        "kernel_id": "rmsnorm_forward_llama_production",
+        "source_file": "rmsnorm_forward_llama_production.json"
+      },
+      "args": [
+        {
+          "name": "input",
+          "source": "activation:input",
+          "expr": "(const float*)(model->bump + A_EMBEDDED_INPUT)",
+          "buffer_ref": "embedded_input"
+        },
+        {
+          "name": "gamma",
+          "source": "weight:gamma",
+          "expr": "(const float*)(model->bump + W_LAYER_0_LN1_GAMMA)"
+        },
+        {
+          "name": "output",
+          "source": "output:output",
+          "expr": "(float*)(model->bump + A_EMBEDDED_INPUT)",
+          "buffer_ref": "embedded_input"
+        },
+        {
+          "name": "rstd_cache",
+          "source": "null",
+          "expr": "NULL"
+        },
+        {
+          "name": "tokens",
+          "source": "dim:seq_len",
+          "expr": "1"
+        },
+        {
+          "name": "d_model",
+          "source": "dim:embed_dim",
+          "expr": "640"
+        },
+        {
+          "name": "aligned_embed_dim",
+          "source": "dim:embed_dim",
+          "expr": "640"
+        },
+        {
+          "name": "eps",
+          "source": "dim:rms_eps",
+          "expr": "9.999999974752427e-07"
+        }
+      ]
+    },
+    {
+      "op": "q_proj",
+      "layer": 0,
+      "function": "gemv_q5_1_q8_1",
+      "call_abi": {
+        "version": 0,
+        "owner": "legacy_compatibility",
+        "kernel_id": "gemv_q5_1",
+        "source_file": "kernel_bindings*.json"
+      },
+      "args": [
+        {
+          "name": "y",
+          "source": "output:y",
+          "expr": "(float*)(model->bump + A_Q_SCRATCH)",
+          "buffer_ref": "q_scratch"
+        },
+        {
+          "name": "W",
+          "source": "weight:_first_weight",
+          "expr": "(const void*)(model->bump + W_LAYER_0_WQ)"
+        },
+        {
+          "name": "x",
+          "source": "activation:x",
+          "expr": "(const float*)(model->bump + A_EMBEDDED_INPUT)",
+          "buffer_ref": "embedded_input"
+        },
+        {
+          "name": "M",
+          "source": "dim:_output_dim",
+          "expr": "1024"
+        },
+        {
+          "name": "K",
+          "source": "dim:_input_dim",
+          "expr": "640"
+        }
+      ]
+    },
+    {
+      "op": "k_proj",
+      "layer": 0,
+      "function": "gemv_q5_1_q8_1",
+      "call_abi": {
+        "version": 0,
+        "owner": "legacy_compatibility",
+        "kernel_id": "gemv_q5_1",
+        "source_file": "kernel_bindings*.json"
+      },
+      "args": [
+        {
+          "name": "y",
+          "source": "output:y",
+          "expr": "(float*)(model->bump + A_K_SCRATCH)",
+          "buffer_ref": "k_scratch"
+        },
+        {
+          "name": "W",
+          "source": "weight:_first_weight",
+          "expr": "(const void*)(model->bump + W_LAYER_0_WK)"
+        },
+        {
+          "name": "x",
+          "source": "activation:x",
+          "expr": "(const float*)(model->bump + A_EMBEDDED_INPUT)",
+          "buffer_ref": "embedded_input"
+        },
+        {
+          "name": "M",
+          "source": "dim:_output_dim",
+          "expr": "256"
+        },
+        {
+          "name": "K",
+          "source": "dim:_input_dim",
+          "expr": "640"
+        }
+      ]
+    },
+    {
+      "op": "v_proj",
+      "layer": 0,
+      "function": "gemv_q8_0_q8_0_contract",
+      "call_abi": {
+        "version": 1,
+        "owner": "kernel_map",
+        "kernel_id": "gemv_q8_0_q8_0_contract",
+        "source_file": "gemv_q8_0_q8_0_contract.json"
+      },
+      "args": [
+        {
+          "name": "y",
+          "source": "output:y",
+          "expr": "(float*)(model->bump + A_V_SCRATCH)",
+          "buffer_ref": "v_scratch"
+        },
+        {
+          "name": "W",
+          "source": "weight:_first_weight",
+          "expr": "(const void*)(model->bump + W_LAYER_0_WV)"
+        },
+        {
+          "name": "x",
+          "source": "activation:x",
+          "expr": "(const float*)(model->bump + A_EMBEDDED_INPUT)",
+          "buffer_ref": "embedded_input"
+        },
+        {
+          "name": "M",
+          "source": "dim:_output_dim",
+          "expr": "256"
+        },
+        {
+          "name": "K",
+          "source": "dim:_input_dim",
+          "expr": "640"
+        }
+      ]
+    },
+    {
+      "op": "qk_norm",
+      "layer": 0,
+      "function": "qk_norm_forward_llama_production",
+      "call_abi": {
+        "version": 1,
+        "owner": "kernel_map",
+        "kernel_id": "qk_norm_forward_llama_production",
+        "source_file": "qk_norm_forward_llama_production.json"
+      },
+      "args": [
+        {
+          "name": "q",
+          "source": "scratch:q_scratch",
+          "expr": "(float*)(model->bump + A_Q_SCRATCH)",
+          "buffer_ref": "q_scratch"
+        },
+        {
+          "name": "k",
+          "source": "scratch:k_scratch",
+          "expr": "(float*)(model->bump + A_K_SCRATCH)",
+          "buffer_ref": "k_scratch"
+        },
+        {
+          "name": "q_gamma",
+          "source": "weight_f:q_norm",
+          "expr": "(const float*)(model->bump + W_LAYER_0_Q_NORM)"
+        },
+        {
+          "name": "k_gamma",
+          "source": "weight_f:k_norm",
+          "expr": "(const float*)(model->bump + W_LAYER_0_K_NORM)"
+        },
+        {
+          "name": "num_heads",
+          "source": "dim:num_heads",
+          "expr": "4"
+        },
+        {
+          "name": "num_kv_heads",
+          "source": "dim:num_kv_heads",
+          "expr": "1"
+        },
+        {
+          "name": "num_tokens",
+          "source": "dim:seq_len",
+          "expr": "1"
+        },
+        {
+          "name": "head_dim",
+          "source": "dim:head_dim",
+          "expr": "256"
+        },
+        {
+          "name": "eps",
+          "source": "dim:rms_eps",
+          "expr": "9.999999974752427e-07"
+        }
+      ]
+    },
+    {
+      "op": "rope_qk",
+      "layer": 0,
+      "function": "rope_forward_qk_split_llama_parallel_dispatch",
+      "call_abi": {
+        "version": 1,
+        "owner": "kernel_map",
+        "kernel_id": "rope_forward_qk_split_llama",
+        "source_file": "rope_forward_qk_split_llama.json"
+      },
+      "args": [
+        {
+          "name": "q",
+          "source": "scratch:q_scratch",
+          "expr": "(float*)(model->bump + A_Q_SCRATCH)",
+          "buffer_ref": "q_scratch"
+        },
+        {
+          "name": "k",
+          "source": "scratch:k_scratch",
+          "expr": "(float*)(model->bump + A_K_SCRATCH)",
+          "buffer_ref": "k_scratch"
+        },
+        {
+          "name": "freq_factors",
+          "source": "weight_f:rope_freqs",
+          "expr": "NULL"
+        },
+        {
+          "name": "use_freq_factors",
+          "source": "dim:use_rope_freq_factors",
+          "expr": "0"
+        },
+        {
+          "name": "num_heads",
+          "source": "dim:num_heads",
+          "expr": "4"
+        },
+        {
+          "name": "num_kv_heads",
+          "source": "dim:num_kv_heads",
+          "expr": "1"
+        },
+        {
+          "name": "num_tokens",
+          "source": "dim:seq_len",
+          "expr": "1"
+        },
+        {
+          "name": "head_dim",
+          "source": "dim:head_dim",
+          "expr": "256"
+        },
+        {
+          "name": "aligned_head_dim",
+          "source": "dim:head_dim",
+          "expr": "256"
+        },
+        {
+          "name": "pos_offset",
+          "source": "runtime:pos",
+          "expr": "model->rope_pos"
+        },
+        {
+          "name": "rotary_dim",
+          "source": "dim:rotary_dim",
+          "expr": "256"
+        },
+        {
+          "name": "freq_base",
+          "source": "dim:rope_freq_base",
+          "expr": "10000.0"
+        }
+      ]
+    },
+    {
+      "op": "kv_cache_store",
+      "layer": 0,
+      "function": "kv_cache_store",
+      "call_abi": {
+        "version": 1,
+        "owner": "kernel_map",
+        "kernel_id": "kv_cache_store",
+        "source_file": "kv_cache_store.json"
+      },
+      "args": [
+        {
+          "name": "kv_cache_k",
+          "source": "runtime:kv_cache_k_layer",
+          "expr": "(float*)((model->kv_cache + (0*2)*NUM_KV_HEADS*MAX_SEQ_LEN*256))"
+        },
+        {
+          "name": "kv_cache_v",
+          "source": "runtime:kv_cache_v_layer",
+          "expr": "(float*)((model->kv_cache + (0*2+1)*NUM_KV_HEADS*MAX_SEQ_LEN*256))"
+        },
+        {
+          "name": "k",
+          "source": "scratch:k_scratch",
+          "expr": "(const float*)(model->bump + A_K_SCRATCH)",
+          "buffer_ref": "k_scratch"
+        },
+        {
+          "name": "v",
+          "source": "scratch:v_scratch",
+          "expr": "(const float*)(model->bump + A_V_SCRATCH)",
+          "buffer_ref": "v_scratch"
+        },
+        {
+          "name": "layer",
+          "source": "runtime:layer",
+          "expr": "0"
+        },
+        {
+          "name": "pos",
+          "source": "runtime:pos",
+          "expr": "model->pos"
+        },
+        {
+          "name": "num_kv_heads",
+          "source": "dim:num_kv_heads",
+          "expr": "1"
+        },
+        {
+          "name": "head_dim",
+          "source": "dim:head_dim",
+          "expr": "256"
+        },
+        {
+          "name": "max_seq_len",
+          "source": "dim:max_seq_len",
+          "expr": "1024"
+        }
+      ]
+    },
+    {
+      "op": "attn_sliding",
+      "layer": 0,
+      "function": "attention_forward_decode_head_major_gqa_llama_regular_sliding_workspace",
+      "call_abi": {
+        "version": 1,
+        "owner": "kernel_map",
+        "kernel_id": "attention_forward_decode_head_major_gqa_llama_regular_sliding",
+        "source_file": "attention_forward_decode_head_major_gqa_llama_regular_sliding.json"
+      },
+      "args": [
+        {
+          "name": "q",
+          "source": "scratch:q_scratch",
+          "expr": "(const float*)(model->bump + A_Q_SCRATCH)",
+          "buffer_ref": "q_scratch"
+        },
+        {
+          "name": "k",
+          "source": "runtime:kv_cache_k_layer",
+          "expr": "(const float*)((model->kv_cache + (0*2)*NUM_KV_HEADS*MAX_SEQ_LEN*256))"
+        },
+        {
+          "name": "v",
+          "source": "runtime:kv_cache_v_layer",
+          "expr": "(const float*)((model->kv_cache + (0*2+1)*NUM_KV_HEADS*MAX_SEQ_LEN*256))"
+        },
+        {
+          "name": "output",
+          "source": "output:out",
+          "expr": "(float*)(model->bump + A_ATTN_SCRATCH)",
+          "buffer_ref": "attn_scratch"
+        },
+        {
+          "name": "num_heads",
+          "source": "dim:num_heads",
+          "expr": "4"
+        },
+        {
+          "name": "num_kv_heads",
+          "source": "dim:num_kv_heads",
+          "expr": "1"
+        },
+        {
+          "name": "live_tokens",
+          "source": "runtime:kv_tokens",
+          "expr": "model->pos + 1"
+        },
+        {
+          "name": "kv_stride_tokens",
+          "source": "dim:max_seq_len",
+          "expr": "1024"
+        },
+        {
+          "name": "head_dim",
+          "source": "dim:head_dim",
+          "expr": "256"
+        },
+        {
+          "name": "aligned_head_dim",
+          "source": "dim:head_dim",
+          "expr": "256"
+        },
+        {
+          "name": "sliding_window",
+          "source": "dim:sliding_window",
+          "expr": "512"
+        },
+        {
+          "name": "scores",
+          "source": "scratch:scores",
+          "expr": "(float*)(model->bump + A_MLP_SCRATCH)",
+          "buffer_ref": "mlp_scratch"
+        },
+        {
+          "name": "scores_bytes",
+          "source": "scratch_size:scores",
+          "expr": "131072"
+        },
+        {
+          "name": "value_columns",
+          "source": "scratch:value_columns",
+          "expr": "(float*)(model->bump + (A_MLP_SCRATCH + 131072))",
+          "buffer_ref": "mlp_scratch"
+        },
+        {
+          "name": "value_columns_bytes",
+          "source": "scratch_size:value_columns",
+          "expr": "33554432"
+        },
+        {
+          "name": "scaled_scores",
+          "source": "scratch:scaled_scores",
+          "expr": "(float*)(model->bump + (A_MLP_SCRATCH + 33685504))",
+          "buffer_ref": "mlp_scratch"
+        },
+        {
+          "name": "scaled_scores_bytes",
+          "source": "scratch_size:scaled_scores",
+          "expr": "131072"
+        }
+      ]
+    },
+    {
+      "op": "out_proj",
+      "layer": 0,
+      "function": "gemv_q5_k",
+      "call_abi": {
+        "version": 1,
+        "owner": "kernel_map",
+        "kernel_id": "gemv_q5_k",
+        "source_file": "gemv_q5_k.json"
+      },
+      "args": [
+        {
+          "name": "y",
+          "source": "output:y",
+          "expr": "(float*)(model->bump + A_EMBEDDED_INPUT)",
+          "buffer_ref": "embedded_input"
+        },
+        {
+          "name": "W",
+          "source": "weight:_first_weight",
+          "expr": "(const void*)(model->bump + W_LAYER_0_WO)"
+        },
+        {
+          "name": "x",
+          "source": "activation:x",
+          "expr": "(const float*)(model->bump + A_ATTN_SCRATCH)",
+          "buffer_ref": "attn_scratch"
+        },
+        {
+          "name": "M",
+          "source": "dim:_output_dim",
+          "expr": "640"
+        },
+        {
+          "name": "K",
+          "source": "dim:_input_dim",
+          "expr": "1024"
+        }
+      ]
+    },
+    {
+      "op": "post_attention_norm",
+      "layer": 0,
+      "function": "rmsnorm_forward_llama_production",
+      "call_abi": {
+        "version": 1,
+        "owner": "kernel_map",
+        "kernel_id": "rmsnorm_forward_llama_production",
+        "source_file": "rmsnorm_forward_llama_production.json"
+      },
+      "args": [
+        {
+          "name": "input",
+          "source": "activation:input",
+          "expr": "(const float*)(model->bump + A_EMBEDDED_INPUT)",
+          "buffer_ref": "embedded_input"
+        },
+        {
+          "name": "gamma",
+          "source": "weight:gamma",
+          "expr": "(const float*)(model->bump + W_LAYER_0_POST_ATTENTION_NORM)"
+        },
+        {
+          "name": "output",
+          "source": "output:output",
+          "expr": "(float*)(model->bump + A_EMBEDDED_INPUT)",
+          "buffer_ref": "embedded_input"
+        },
+        {
+          "name": "rstd_cache",
+          "source": "null",
+          "expr": "NULL"
+        },
+        {
+          "name": "tokens",
+          "source": "dim:seq_len",
+          "expr": "1"
+        },
+        {
+          "name": "d_model",
+          "source": "dim:embed_dim",
+          "expr": "640"
+        },
+        {
+          "name": "aligned_embed_dim",
+          "source": "dim:embed_dim",
+          "expr": "640"
+        },
+        {
+          "name": "eps",
+          "source": "dim:rms_eps",
+          "expr": "9.999999974752427e-07"
+        }
+      ]
+    },
+    {
+      "op": "residual_add",
+      "layer": 0,
+      "function": "ck_residual_add_token_major_parallel_dispatch",
+      "call_abi": {
+        "version": 1,
+        "owner": "kernel_map",
+        "kernel_id": "ck_residual_add_token_major",
+        "source_file": "ck_residual_add_token_major.json"
+      },
+      "args": [
+        {
+          "name": "a",
+          "source": "activation:a",
+          "expr": "(float*)(model->bump + A_EMBEDDED_INPUT)",
+          "buffer_ref": "embedded_input"
+        },
+        {
+          "name": "b",
+          "source": "activation:b",
+          "expr": "(float*)(model->bump + A_RESIDUAL)",
+          "buffer_ref": "residual"
+        },
+        {
+          "name": "out",
+          "source": "output:out",
+          "expr": "(float*)(model->bump + A_EMBEDDED_INPUT)",
+          "buffer_ref": "embedded_input"
+        },
+        {
+          "name": "tokens",
+          "source": "dim:seq_len",
+          "expr": "1"
+        },
+        {
+          "name": "aligned_embed_dim",
+          "source": "dim:embed_dim",
+          "expr": "640"
+        }
+      ]
+    },
+    {
+      "op": "residual_save",
+      "layer": 0,
+      "function": "ck_memcpy_parallel_dispatch",
+      "call_abi": {
+        "version": 1,
+        "owner": "kernel_map",
+        "kernel_id": "memcpy",
+        "source_file": "memcpy.json"
+      },
+      "args": [
+        {
+          "name": "dst",
+          "source": "output:dst",
+          "expr": "(void*)(model->bump + A_RESIDUAL)",
+          "buffer_ref": "residual"
+        },
+        {
+          "name": "src",
+          "source": "activation:src",
+          "expr": "(const void*)(model->bump + A_EMBEDDED_INPUT)",
+          "buffer_ref": "embedded_input"
+        },
+        {
+          "name": "size",
+          "source": "dim:_memcpy_bytes",
+          "expr": "2560"
+        }
+      ]
+    },
+    {
+      "op": "ffn_norm",
+      "layer": 0,
+      "function": "rmsnorm_forward_llama_production",
+      "call_abi": {
+        "version": 1,
+        "owner": "kernel_map",
+        "kernel_id": "rmsnorm_forward_llama_production",
+        "source_file": "rmsnorm_forward_llama_production.json"
+      },
+      "args": [
+        {
+          "name": "input",
+          "source": "activation:input",
+          "expr": "(const float*)(model->bump + A_EMBEDDED_INPUT)",
+          "buffer_ref": "embedded_input"
+        },
+        {
+          "name": "gamma",
+          "source": "weight:gamma",
+          "expr": "(const float*)(model->bump + W_LAYER_0_LN2_GAMMA)"
+        },
+        {
+          "name": "output",
+          "source": "output:output",
+          "expr": "(float*)(model->bump + A_EMBEDDED_INPUT)",
+          "buffer_ref": "embedded_input"
+        },
+        {
+          "name": "rstd_cache",
+          "source": "null",
+          "expr": "NULL"
+        },
+        {
+          "name": "tokens",
+          "source": "dim:seq_len",
+          "expr": "1"
+        },
+        {
+          "name": "d_model",
+          "source": "dim:embed_dim",
+          "expr": "640"
+        },
+        {
+          "name": "aligned_embed_dim",
+          "source": "dim:embed_dim",
+          "expr": "640"
+        },
+        {
+          "name": "eps",
+          "source": "dim:rms_eps",
+          "expr": "9.999999974752427e-07"
+        }
+      ]
+    },
+    {
+      "op": "mlp_gate_up",
+      "layer": 0,
+      "function": "gemv_q5_1_q8_1",
+      "call_abi": {
+        "version": 0,
+        "owner": "legacy_compatibility",
+        "kernel_id": "gemv_q5_1",
+        "source_file": "kernel_bindings*.json"
+      },
+      "args": [
+        {
+          "name": "y",
+          "source": "output:y",
+          "expr": "(float*)(model->bump + A_MLP_SCRATCH)",
+          "buffer_ref": "mlp_scratch"
+        },
+        {
+          "name": "W",
+          "source": "weight:_first_weight",
+          "expr": "(const void*)(model->bump + W_LAYER_0_W1)"
+        },
+        {
+          "name": "x",
+          "source": "activation:x",
+          "expr": "(const float*)(model->bump + A_EMBEDDED_INPUT)",
+          "buffer_ref": "embedded_input"
+        },
+        {
+          "name": "M",
+          "source": "dim:_output_dim",
+          "expr": "4096"
+        },
+        {
+          "name": "K",
+          "source": "dim:_input_dim",
+          "expr": "640"
+        }
+      ]
+    },
+    {
+      "op": "geglu",
+      "layer": 0,
+      "function": "geglu_forward_ggml_native",
+      "call_abi": {
+        "version": 1,
+        "owner": "kernel_map",
+        "kernel_id": "geglu_forward_ggml_native",
+        "source_file": "geglu_forward_ggml_native.json"
+      },
+      "args": [
+        {
+          "name": "x",
+          "source": "activation:input",
+          "expr": "(const float*)(model->bump + A_MLP_SCRATCH)",
+          "buffer_ref": "mlp_scratch"
+        },
+        {
+          "name": "out",
+          "source": "output:output",
+          "expr": "(float*)(model->bump + A_MLP_SCRATCH)",
+          "buffer_ref": "mlp_scratch"
+        },
+        {
+          "name": "tokens",
+          "source": "dim:seq_len",
+          "expr": "1"
+        },
+        {
+          "name": "dim",
+          "source": "dim:intermediate_size",
+          "expr": "2048"
+        }
+      ]
+    },
+    {
+      "op": "quantize_mlp_down_input",
+      "layer": 0,
+      "function": "quantize_row_q8_k",
+      "call_abi": {
+        "version": 0,
+        "owner": "legacy_compatibility",
+        "kernel_id": "quantize_row_q8_k",
+        "source_file": "kernel_bindings*.json"
+      },
+      "args": [
+        {
+          "name": "x",
+          "source": "activation:input",
+          "expr": "(const float*)(model->bump + A_MLP_SCRATCH)",
+          "buffer_ref": "mlp_scratch"
+        },
+        {
+          "name": "y",
+          "source": "output:output",
+          "expr": "(void*)(model->bump + A_MAIN_STREAM_Q8)",
+          "buffer_ref": "main_stream_q8"
+        },
+        {
+          "name": "k",
+          "source": "dim:_input_dim",
+          "expr": "2048"
+        },
+        {
+          "name": "rows",
+          "source": "dim:rows",
+          "expr": "1"
+        }
+      ]
+    },
+    {
+      "op": "mlp_down",
+      "layer": 0,
+      "function": "gemv_q6_k_q8_k",
+      "call_abi": {
+        "version": 1,
+        "owner": "kernel_map",
+        "kernel_id": "gemv_q6_k_q8_k",
+        "source_file": "gemv_q6_k_q8_k.json"
+      },
+      "args": [
+        {
+          "name": "y",
+          "source": "output:y",
+          "expr": "(float*)(model->bump + A_EMBEDDED_INPUT)",
+          "buffer_ref": "embedded_input"
+        },
+        {
+          "name": "W",
+          "source": "weight:_first_weight",
+          "expr": "(const void*)(model->bump + W_LAYER_0_W2)"
+        },
+        {
+          "name": "x_q8",
+          "source": "activation:x",
+          "expr": "(void*)(model->bump + A_MAIN_STREAM_Q8)",
+          "buffer_ref": "main_stream_q8"
+        },
+        {
+          "name": "M",
+          "source": "dim:_output_dim",
+          "expr": "640"
+        },
+        {
+          "name": "K",
+          "source": "dim:_input_dim",
+          "expr": "2048"
+        }
+      ]
+    },
+    {
+      "op": "post_ffn_norm",
+      "layer": 0,
+      "function": "rmsnorm_forward_llama_production",
+      "call_abi": {
+        "version": 1,
+        "owner": "kernel_map",
+        "kernel_id": "rmsnorm_forward_llama_production",
+        "source_file": "rmsnorm_forward_llama_production.json"
+      },
+      "args": [
+        {
+          "name": "input",
+          "source": "activation:input",
+          "expr": "(const float*)(model->bump + A_EMBEDDED_INPUT)",
+          "buffer_ref": "embedded_input"
+        },
+        {
+          "name": "gamma",
+          "source": "weight:gamma",
+          "expr": "(const float*)(model->bump + W_LAYER_0_POST_FFN_NORM)"
+        },
+        {
+          "name": "output",
+          "source": "output:output",
+          "expr": "(float*)(model->bump + A_EMBEDDED_INPUT)",
+          "buffer_ref": "embedded_input"
+        },
+        {
+          "name": "rstd_cache",
+          "source": "null",
+          "expr": "NULL"
+        },
+        {
+          "name": "tokens",
+          "source": "dim:seq_len",
+          "expr": "1"
+        },
+        {
+          "name": "d_model",
+          "source": "dim:embed_dim",
+          "expr": "640"
+        },
+        {
+          "name": "aligned_embed_dim",
+          "source": "dim:embed_dim",
+          "expr": "640"
+        },
+        {
+          "name": "eps",
+          "source": "dim:rms_eps",
+          "expr": "9.999999974752427e-07"
+        }
+      ]
+    },
+    {
+      "op": "residual_add",
+      "layer": 0,
+      "function": "ck_residual_add_token_major_parallel_dispatch",
+      "call_abi": {
+        "version": 1,
+        "owner": "kernel_map",
+        "kernel_id": "ck_residual_add_token_major",
+        "source_file": "ck_residual_add_token_major.json"
+      },
+      "args": [
+        {
+          "name": "a",
+          "source": "activation:a",
+          "expr": "(float*)(model->bump + A_EMBEDDED_INPUT)",
+          "buffer_ref": "embedded_input"
+        },
+        {
+          "name": "b",
+          "source": "activation:b",
+          "expr": "(float*)(model->bump + A_RESIDUAL)",
+          "buffer_ref": "residual"
+        },
+        {
+          "name": "out",
+          "source": "output:out",
+          "expr": "(float*)(model->bump + A_EMBEDDED_INPUT)",
+          "buffer_ref": "embedded_input"
+        },
+        {
+          "name": "tokens",
+          "source": "dim:seq_len",
+          "expr": "1"
+        },
+        {
+          "name": "aligned_embed_dim",
+          "source": "dim:embed_dim",
+          "expr": "640"
+        }
+      ]
+    },
+    {
+      "op": "residual_save",
+      "layer": 1,
+      "function": "ck_memcpy_parallel_dispatch",
+      "call_abi": {
+        "version": 1,
+        "owner": "kernel_map",
+        "kernel_id": "memcpy",
+        "source_file": "memcpy.json"
+      },
+      "args": [
+        {
+          "name": "dst",
+          "source": "output:dst",
+          "expr": "(void*)(model->bump + A_RESIDUAL)",
+          "buffer_ref": "residual"
+        },
+        {
+          "name": "src",
+          "source": "activation:src",
+          "expr": "(const void*)(model->bump + A_EMBEDDED_INPUT)",
+          "buffer_ref": "embedded_input"
+        },
+        {
+          "name": "size",
+          "source": "dim:_memcpy_bytes",
+          "expr": "2560"
+        }
+      ]
+    }
+  ],
+  "layout": {
+    "memory": {
+      "arena": {
+        "total_size": 332635136
+      },
+      "activations": {
+        "buffers": [
+          {
+            "name": "text_input",
+            "size": 16,
+            "abs_offset": 258937408,
+            "define": "A_TEXT_INPUT",
+            "lifetime": "call",
+            "mutable": true
+          },
+          {
+            "name": "token_ids",
+            "size": 4,
+            "abs_offset": 258937472,
+            "define": "A_TOKEN_IDS",
+            "lifetime": "call",
+            "mutable": true
+          },
+          {
+            "name": "embedded_input",
+            "size": 2560,
+            "abs_offset": 258937536,
+            "define": "A_EMBEDDED_INPUT",
+            "lifetime": "call",
+            "mutable": true
+          },
+          {
+            "name": "layer_input",
+            "size": 2560,
+            "abs_offset": 258940096,
+            "define": "A_LAYER_INPUT",
+            "lifetime": "call",
+            "mutable": true
+          },
+          {
+            "name": "main_stream_q8",
+            "size": 2336,
+            "abs_offset": 258942656,
+            "define": "A_MAIN_STREAM_Q8",
+            "lifetime": "call",
+            "mutable": true
+          },
+          {
+            "name": "residual",
+            "size": 2560,
+            "abs_offset": 258945024,
+            "define": "A_RESIDUAL",
+            "lifetime": "call",
+            "mutable": true
+          },
+          {
+            "name": "kv_cache",
+            "size": 37748736,
+            "abs_offset": 258947584,
+            "define": "A_KV_CACHE",
+            "lifetime": "sequence",
+            "mutable": true
+          },
+          {
+            "name": "rope_cache",
+            "size": 1048576,
+            "abs_offset": 296696320,
+            "define": "A_ROPE_CACHE",
+            "lifetime": "model",
+            "mutable": false
+          },
+          {
+            "name": "q_scratch",
+            "size": 4096,
+            "abs_offset": 297744896,
+            "define": "A_Q_SCRATCH",
+            "lifetime": "call",
+            "mutable": true
+          },
+          {
+            "name": "k_scratch",
+            "size": 1024,
+            "abs_offset": 297748992,
+            "define": "A_K_SCRATCH",
+            "lifetime": "call",
+            "mutable": true
+          },
+          {
+            "name": "v_scratch",
+            "size": 1024,
+            "abs_offset": 297750016,
+            "define": "A_V_SCRATCH",
+            "lifetime": "call",
+            "mutable": true
+          },
+          {
+            "name": "attn_q_gate_packed",
+            "size": 8192,
+            "abs_offset": 297751040,
+            "define": "A_ATTN_Q_GATE_PACKED",
+            "lifetime": "call",
+            "mutable": true
+          },
+          {
+            "name": "attn_gate",
+            "size": 4096,
+            "abs_offset": 297759232,
+            "define": "A_ATTN_GATE",
+            "lifetime": "call",
+            "mutable": true
+          },
+          {
+            "name": "attn_scratch",
+            "size": 4096,
+            "abs_offset": 297763328,
+            "define": "A_ATTN_SCRATCH",
+            "lifetime": "call",
+            "mutable": true
+          },
+          {
+            "name": "mlp_scratch",
+            "size": 33816576,
+            "abs_offset": 297767424,
+            "define": "A_MLP_SCRATCH",
+            "lifetime": "call",
+            "mutable": true
+          },
+          {
+            "name": "layer_output",
+            "size": 2560,
+            "abs_offset": 331584000,
+            "define": "A_LAYER_OUTPUT",
+            "lifetime": "call",
+            "mutable": true
+          },
+          {
+            "name": "logits",
+            "size": 1048576,
+            "abs_offset": 331586560,
+            "define": "A_LOGITS",
+            "lifetime": "call",
+            "mutable": true
+          }
+        ]
+      }
+    }
+  },
+  "config": {
+    "vocab_size": 262144
+  }
+}

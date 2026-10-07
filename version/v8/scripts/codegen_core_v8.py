@@ -4369,35 +4369,50 @@ static void _ck_profile_dump(void) {
 
     if logits_stride == 0:
         from batch_decode_contract_v8 import resolve_two_row_batch_contract
-        from batch_decode_codegen_v8 import emit_two_row_batch_api
+        from batch_decode_codegen_v8 import emit_two_row_batch_api, emit_full_layer_batch_api
 
         batch_contract = resolve_two_row_batch_contract(ops, layout, config)
         if batch_contract:
-            parts.append(emit_decode_function(
-                ops[:batch_contract["prefix_len"]], token_offset, token_base,
-                config=config, scale_embeddings_sqrt_dim=scale_embeddings_sqrt_dim,
-                function_name="ck_batch_decode_prefix", advance_position=False,
-            ))
-            extension = batch_contract.get("layer_extension")
-            if extension:
-                parts.append(emit_decode_function(
-                    ops[batch_contract["suffix_start"]:extension["cut"]],
-                    token_offset, token_base, config=config,
-                    function_name="ck_batch_decode_before_gateup",
-                    store_token=False, advance_position=False,
-                ))
-                parts.append(emit_decode_function(
-                    ops[extension["post_cut"]:], token_offset, token_base,
-                    config=config, function_name="ck_batch_decode_after_gateup",
-                    store_token=False,
-                ))
+            full_layer = batch_contract.get("full_layer_plan")
+            if full_layer:
+                for number, stage in enumerate(full_layer["stages"]):
+                    if stage["kind"] != "local":
+                        continue
+                    parts.append(emit_decode_function(
+                        ops[stage["start"]:stage["stop"]], token_offset, token_base,
+                        config=config,
+                        scale_embeddings_sqrt_dim=scale_embeddings_sqrt_dim if stage["start"] == 0 else False,
+                        function_name=f"ck_batch_stage_{number}",
+                        store_token=stage["start"] == 0,
+                        advance_position=stage is full_layer["stages"][-1],
+                    ))
+                parts.append(emit_full_layer_batch_api(full_layer))
             else:
                 parts.append(emit_decode_function(
-                    ops[batch_contract["suffix_start"]:], token_offset, token_base,
-                    config=config, function_name="ck_batch_decode_suffix",
-                    store_token=False,
+                    ops[:batch_contract["prefix_len"]], token_offset, token_base,
+                    config=config, scale_embeddings_sqrt_dim=scale_embeddings_sqrt_dim,
+                    function_name="ck_batch_decode_prefix", advance_position=False,
                 ))
-            parts.append(emit_two_row_batch_api(batch_contract))
+                extension = batch_contract.get("layer_extension")
+                if extension:
+                    parts.append(emit_decode_function(
+                        ops[batch_contract["suffix_start"]:extension["cut"]],
+                        token_offset, token_base, config=config,
+                        function_name="ck_batch_decode_before_gateup",
+                        store_token=False, advance_position=False,
+                    ))
+                    parts.append(emit_decode_function(
+                        ops[extension["post_cut"]:], token_offset, token_base,
+                        config=config, function_name="ck_batch_decode_after_gateup",
+                        store_token=False,
+                    ))
+                else:
+                    parts.append(emit_decode_function(
+                        ops[batch_contract["suffix_start"]:], token_offset, token_base,
+                        config=config, function_name="ck_batch_decode_suffix",
+                        store_token=False,
+                    ))
+                parts.append(emit_two_row_batch_api(batch_contract))
 
     return "\n".join(parts)
 

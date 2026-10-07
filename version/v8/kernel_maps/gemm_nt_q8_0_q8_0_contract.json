@@ -1,5 +1,15 @@
 {
   "id": "gemm_nt_q8_0_q8_0_contract",
+  "numerical_contract": "q8_0_weight_fp32_input_internal_q8_0_llama_fp32_output",
+  "batch_decode_two_rows": {
+    "decode_provider_id": "gemv_q8_0_q8_0_contract",
+    "decode_function": "gemv_q8_0_q8_0_contract",
+    "function": "gemm_nt_q8_0_q8_0_contract_m2",
+    "input_dtype": "fp32",
+    "max_input_dim": 8192,
+    "numerical_contract": "q8_0_weight_fp32_input_internal_q8_0_llama_fp32_output",
+    "rows": 2
+  },
   "op": "gemm",
   "variant": "q8_0_w_fp32_a_fp32_out_contract",
   "quant": {

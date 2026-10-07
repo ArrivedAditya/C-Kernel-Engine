@@ -589,8 +589,10 @@ void gemm_nt_q5_1_q8_1_m2(const float *A, const void *B, const float *bias, floa
 void gemm_nt_q5_1_q8_1_ref(const void *A_q8, const void *B, const float *bias, float *C, int M, int N, int K);
 void gemm_nt_q5_k(const float *A, const void *B, const float *bias, float *C, int M, int N, int K);
 void gemm_nt_q5_k_q8_k(const void *A_q8, const void *B, const float *bias, float *C, int M, int N, int K);
+void gemm_nt_q5_k_q8_k_m2(const float *A, const void *B, const float *bias, float *C, int M, int N, int K);
 void gemm_nt_q8_0(const float *A, const void *B, const float *bias, float *C, int M, int N, int K);
 void gemm_nt_q8_0_q8_0_contract(const float *A, const void *B, const float *bias, float *C, int M, int N, int K);
+void gemm_nt_q8_0_q8_0_contract_m2(const float *A, const void *B, const float *bias, float *C, int M, int N, int K);
 
 // GEMV versions (for decode mode - single token)
 void gemv_q4_0(float *y, const void *W, const float *x, int M, int K);
@@ -733,6 +735,9 @@ void gemm_nt_q6_k_q8_k_m4_tile(const void *A_q8,
                                 int M, int N, int K,
                                 int m0, int m1,
                                 int n0, int n1);
+
+void gemm_nt_q6_k_q8_k_m2(const void *A_q8, const void *B,
+                           const float *bias, float *C, int M, int N, int K);
 
 void gemm_nt_q6_k_q8_k_tiled(const void *A_q8,
                              const void *B,
