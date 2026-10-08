@@ -1,11 +1,21 @@
 var ck__model__abi__v8_8h =
 [
+    [ "CKModelBatchDecodeRowV8", "structCKModelBatchDecodeRowV8.html", "structCKModelBatchDecodeRowV8" ],
     [ "CKModelRuntimeDescriptorV8", "structCKModelRuntimeDescriptorV8.html", "structCKModelRuntimeDescriptorV8" ],
     [ "CK_MODEL_ABI_V8_VERSION", "ck__model__abi__v8_8h.html#a990b94b15df12f072518424b042900fd", null ],
     [ "CK_MODEL_CAP_V8_KNOWN_MASK", "ck__model__abi__v8_8h.html#ae6406bd82615f1cb06671610e2f90b07", null ],
+    [ "ck_model_batch_decode_projection_groups_v8_fn", "ck__model__abi__v8_8h.html#a1cdf326a2d7160c4d81179fc5224193f", null ],
+    [ "ck_model_batch_decode_shared_layers_v8_fn", "ck__model__abi__v8_8h.html#a52fbfb888a5c99a3d22137a9e319d220", null ],
+    [ "ck_model_batch_decode_workspace_v8_fn", "ck__model__abi__v8_8h.html#a9a757cf609837314eeb3119e2b63eb2e", null ],
+    [ "ck_model_decode_batch2_v8_fn", "ck__model__abi__v8_8h.html#a4e9c3db4e47490dbca36761726a25ad8", null ],
     [ "ck_model_get_abi_version_v8_fn", "ck__model__abi__v8_8h.html#a5385b6e9bc0a739d8b8edd12cf376521", null ],
     [ "ck_model_get_capabilities_v8_fn", "ck__model__abi__v8_8h.html#a36dc8190afb9f8678f05368dcad38cee", null ],
     [ "ck_model_get_runtime_descriptor_v8_fn", "ck__model__abi__v8_8h.html#a0b7c6d803b4d3ae2a169e5fd8e1e448c", null ],
+    [ "ck_model_sequence_state_activate_v8_fn", "ck__model__abi__v8_8h.html#abd277ac1eddb5bfaad518b71188a7215", null ],
+    [ "ck_model_sequence_state_create_v8_fn", "ck__model__abi__v8_8h.html#ae01134bc51a046ff070b58637504ef14", null ],
+    [ "ck_model_sequence_state_default_v8_fn", "ck__model__abi__v8_8h.html#aa854217b2dd9c2039b1794c29981c618", null ],
+    [ "ck_model_sequence_state_destroy_v8_fn", "ck__model__abi__v8_8h.html#a6bbd69a654325d3a83f9cfb4066fbec7", null ],
+    [ "ck_model_sequence_state_requirements_v8_fn", "ck__model__abi__v8_8h.html#ae8f6dcc28cf3cd36c48b038f06a7365b", null ],
     [ "CKGenerationFlagsV8", "ck__model__abi__v8_8h.html#aa1482c31b77314279565e29da84cba14", [
       [ "CK_GENERATION_FLAG_TIMESTAMPS", "ck__model__abi__v8_8h.html#aa1482c31b77314279565e29da84cba14a5f5e8f3e5f1bdc3b3139de885f509f8b", null ]
     ] ],
@@ -31,6 +41,8 @@ var ck__model__abi__v8_8h =
       [ "CK_MODEL_CAP_NAMED_ACTIVATIONS", "ck__model__abi__v8_8h.html#a66bda251a7af012335928df3e1b04626ab8dd8208c82592d08689b60edd24aebb", null ],
       [ "CK_MODEL_CAP_PROFILE", "ck__model__abi__v8_8h.html#a66bda251a7af012335928df3e1b04626ab38865d601f67bbe132d19c84d56ca72", null ],
       [ "CK_MODEL_CAP_XRAY_KV", "ck__model__abi__v8_8h.html#a66bda251a7af012335928df3e1b04626aaf964bb8f9a9c27a607c6ee0859e6d32", null ],
-      [ "CK_MODEL_CAP_GENERATION_POLICY", "ck__model__abi__v8_8h.html#a66bda251a7af012335928df3e1b04626a7e46bfc030a4667f90cde12b5da608f5", null ]
+      [ "CK_MODEL_CAP_GENERATION_POLICY", "ck__model__abi__v8_8h.html#a66bda251a7af012335928df3e1b04626a7e46bfc030a4667f90cde12b5da608f5", null ],
+      [ "CK_MODEL_CAP_SEQUENCE_STATE_SWITCH", "ck__model__abi__v8_8h.html#a66bda251a7af012335928df3e1b04626a36650a9bcdebf503e0b11eac602e28fd", null ],
+      [ "CK_MODEL_CAP_BATCH_DECODE_TWO_ROWS", "ck__model__abi__v8_8h.html#a66bda251a7af012335928df3e1b04626afbac4fd18b46ca874448256c93d5a82e", null ]
     ] ]
 ];

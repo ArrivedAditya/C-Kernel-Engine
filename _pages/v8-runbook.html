@@ -715,8 +715,11 @@ make test-v8-arm-model-smoke CK_ARM_MODEL_DIR=/path/to/generated-v8-model</pre><
 <pre>version/v8/scripts/cks-v8-run run \
   hf://unsloth/gemma-3-270m-it-GGUF/gemma-3-270m-it-Q5_K_M.gguf \
   --context-len 1024 --force-compile --force-convert --chat-template=auto \
+  --prompt "Give me a concise example of C code." \
+  --max-tokens 64 --temperature 0.0 \
   --generate-visualizer</pre>
     </div>
+    <p class="mini-note">The smallest promoted text model. <code>--prompt</code> with <code>--max-tokens</code> makes the run non-interactive and bounded; <code>--temperature 0.0</code> selects deterministic greedy decoding (the default is 0.7). Omit <code>--prompt</code> for an interactive chat session.</p>
 
     <h3>Gemma 4 E4B IT</h3>
     <div class="cmd-block">
@@ -1539,6 +1542,114 @@ version/v8/scripts/ck_serve_v8.py "$RUN_DIR" --run "$RUN_DIR" \
         <code>write_file</code> request was rejected because that tool was absent from the
         client's advertised tool set. File creation and native-template prompt-token parity
         remain open.
+    </p>
+    <p>
+        The generated decoder now has an optional, serialized sequence-state switch ABI for
+        layouts whose compiled activation lifetimes declare only KV as persistent mutable
+        sequence state. It permits two additional generation-tagged state IDs backed by
+        caller-owned, 64-byte-aligned KV arenas. The ABI reports the exact bytes required;
+        the caller budgets and retains each arena through retirement. KV contents and
+        positions survive switches. Recurrent, encoder, and multimodal layouts do not advertise this
+        capability. The server does not use these handles yet. An additional generated
+        <code>ck_model_decode_batch2</code> entry now admits two one-token rows only when
+        the KV-only compiled layout and kernel map declare compatible Q5_1/Q8_1
+        projections. The first layer's Q and K projections share one M=2 weight traversal;
+        the remaining layers and attention execute with separate sequence state. This is
+        actual shared generated projection work, but not a full-layer batched decoder,
+        a server scheduler, mixed prefill/decode, or continuous batching.
+        For a non-default handle, named KV pointer lookup resolves to that handle; a bump-arena
+        offset is unavailable and returns <code>-1</code>.
+        Run <code>python3 version/v8/scripts/certify_sequence_state_v8.py --run RUN_DIR</code>
+        against a freshly generated eligible bundle. A 128-token Gemma3-270M Q5_K_M build
+        passed eight exact finite-logit comparisons, including reset isolation and slot reuse; the retained JSON
+        report records the library, weights, layout, and config hashes. This bounded result
+        does not cover concurrent calls, recurrent models, cancellation, or throughput.
+    </p>
+    <p>
+        Run <code>python3 version/v8/scripts/certify_batch_decode_v8.py --bundle BUNDLE --generated-source MODEL_C</code>
+        against a freshly generated eligible bundle. The retained Gemma3-270M Q5_K_M
+        report compares full finite logits and complete KV bytes with isolated prefill/decode:
+        seven continuations matched exactly across unequal prompts, swapped row order,
+        one-row continuation, retired-slot reuse, pre-step cancellation, capacity rejection,
+        and rejected buffer aliases, including a third live sequence arena. Admission now checks
+        the split's crossing values and exact base-pointer expressions, and binds the M=2 provider
+        to the selected decode kernel map. The report identifies actual loaded model, engine, and
+        tokenizer mappings and checks the generated source against the loaded model's source digest.
+        CI compiles and executes a tiny generated-entry fixture and tests rejection after a loaded
+        library pathname is replaced. Its timings are diagnostic workloads, not a speedup measurement. Recurrent
+        Qwen, larger artifacts, simultaneous API calls, and HTTP request scheduling remain
+        uncertified for this batch entry.
+    </p>
+    <p>
+        The next generated step shares the first layer's MLP gate/up Q5_1 projection as a
+        second two-row weight traversal after sequence-local attention and KV writes. The
+        compiler derives both cutpoints' live values from lowered IR without depending on
+        argument order. Only validated full decode-row writes retire earlier values; unknown
+        or partial writes prevent the extension. It checks the gate/up provider and GeGLU
+        consumption contract, and retains the Q/K-only entry for layouts
+        that do not qualify. The separate
+        <code>batch_decode_gemma3_270m_two_row_layer_20261003.json</code> report records
+        seven exact full-logit and KV comparisons from a freshly rebuilt local bundle and
+        requires both shared projection groups. A compiled fixture also compares the actual
+        emitted split functions with isolated execution. In that earlier two-group build,
+        V, output and down projections remained sequence-local; it made no full-layer or
+        throughput claim.
+    </p>
+    <p>
+        The next bounded generated entry derives four projection groups and their
+        crossing tensors from the first layer's lowered graph. Q/K/V, attention
+        output, gate/up and MLP down use map-selected two-row providers; attention,
+        KV writes, normalization and all later layers remain sequence-local. The
+        planner rejects unsupported provider bindings, pointer offsets, new live
+        values and persistent state outside the declared KV contract. The generated
+        batch entry validates both handles, positions, capacity, cancellation and
+        buffer ownership before work starts; a rejected step advances neither
+        sequence. Once admitted, both rows finish the forward pass. Cancellation
+        is observed at the next step boundary, not inside a running kernel. The retained
+        <code>batch_decode_gemma3_270m_full_layer_20261007.json</code> report requires
+        four groups and records seven exact full-vocabulary logit and complete-KV
+        comparisons on a newly generated Gemma3-270M Q5_K_M bundle. On the local
+        i7-14700T, three artifact-identical diagnostic repetitions of six matched
+        decode tokens took 183.1–184.3 ms as isolated sequential calls and
+        57.8–65.5 ms in three two-row steps. The base report and its
+        <code>_run2</code> and <code>_run3</code> siblings preserve each attempt.
+        These tiny samples are not an overnight-task or generalized
+        speedup claim. The server still uses
+        single-flight execution; later layers, recurrent Qwen state, dynamic
+        admission and mixed prefill/decode remain separate milestones.
+    </p>
+    <p>
+        The subsequent two-row generated entry extends the checked graph-derived
+        plan across consecutive complete decoder layers. On the identified
+        Gemma3-270M Q5_K_M artifact, all 18 supported layers execute four
+        shared map-selected projection groups per layer (72 total); attention,
+        KV writes and positions remain sequence-local. The plan checks values
+        live across every split against the complete remaining graph. It rejects
+        an unsupported layer and leaves the rest of the decode path local rather
+        than assuming an unproven buffer extent or provider binding. Compact
+        row packing is required where a selected provider stride differs from
+        the live activation extent.
+    </p>
+    <p>
+        Run <code>certify_batch_decode_v8.py</code> with
+        <code>--expected-shared-layers 18 --expected-projection-groups 72</code>
+        against the identified local bundle and matching generated source. The retained
+        <code>batch_decode_gemma3_270m_multi_layer_20261008.json</code> report
+        compares complete finite logits, KV bytes and positions after each of
+        seven continuations: unequal prefixes, swapped rows, retirement and
+        slot reuse, cancellation, capacity rejection and recovery. A small
+        compiled two-layer regression runs in the standard test suite and
+        includes deliberately broken restoration and cache-ownership controls.
+        On the local i7-14700T, three artifact-identical repetitions measured
+        six isolated native decode calls at 59.4–62.1 ms versus three two-row
+        native calls at 70.6–76.8 ms. Python validation and output copying are
+        outside both timing boundaries. Thus this small-artifact batch path was
+        slower on the matched workload; it is a correctness milestone, not a
+        speedup claim. The reports record workspace and copy volume. An optional
+        monotonic-clock copy profile measured 0.748 ms of copying across three
+        instrumented steps; its instrumentation perturbs full-step timing.
+        HTTP remains single-flight; recurrent Qwen state, request
+        scheduling and mixed prefill/decode still need their own contracts.
     </p>
 </div>
 

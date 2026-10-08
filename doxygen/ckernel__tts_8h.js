@@ -10,9 +10,12 @@ var ckernel__tts_8h =
     ] ],
     [ "audio_duration_expand_channel_major_f32", "ckernel__tts_8h.html#ac24cccf1fbd382d1067650282f3c3ed3", null ],
     [ "audio_duration_logits_to_frames_f32", "ckernel__tts_8h.html#a67439167b590e67fa58513f30f86cfac", null ],
+    [ "audio_harmonic_source_checked_f32", "ckernel__tts_8h.html#aefe8b35c00236310bd648f3f8386ec39", null ],
+    [ "audio_harmonic_source_weighted_fma_checked_f32", "ckernel__tts_8h.html#acbd9566690cd68610009c26351e74fc2", null ],
     [ "audio_istft_mag_phase_f32", "ckernel__tts_8h.html#a4c7380c2b59352b52e4769687a32a888", null ],
     [ "audio_istft_mag_phase_plan_f32", "ckernel__tts_8h.html#a5d20ffbb3739001f22b58f8e23526d50", null ],
     [ "audio_stft_mag_phase_checked_f32", "ckernel__tts_8h.html#a02be866ef4fb9eaccb9f74f7b79d193d", null ],
     [ "audio_stft_mag_phase_plan_f32", "ckernel__tts_8h.html#a260ec8d60648e11d37636b70afc492b7", null ],
+    [ "audio_stft_mag_phase_trace_checked_f32", "ckernel__tts_8h.html#a0680b129f58febba72fb4e5182090019", null ],
     [ "ck_kokoro_plan_shape_v8", "ckernel__tts_8h.html#a665733e67504d5412730d8733bceb0a4", null ]
 ];
