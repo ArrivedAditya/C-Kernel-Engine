@@ -1,7 +1,7 @@
 {
   "id": "rope_forward_q_gemma4",
   "op": "rope",
-  "variant": "fp32_head_major_q_only",
+  "variant": "fp32_head_major_q_only_recursive_cpu",
   "quant": {
     "weight": "none",
     "activation": "fp32",
@@ -40,12 +40,12 @@
     {"name": "cache_rotary_dim", "dtype": "int32", "source": "dim:max_rotary_dim"}
   ],
   "impl": {
-    "function": "rope_forward_q_split_direct_f32",
-    "c_declaration": "void rope_forward_q_split_direct_f32(float *q, const float *freq_factors, int use_freq_factors, int num_heads, int num_tokens, int head_dim, int aligned_head_dim, int pos_offset, int rotary_dim, float freq_base);",
+    "function": "rope_forward_q_split_llama_f32",
+    "c_declaration": "void rope_forward_q_split_llama_f32(float *q, const float *freq_factors, int use_freq_factors, int num_heads, int num_tokens, int head_dim, int aligned_head_dim, int pos_offset, int rotary_dim, float freq_base);",
     "sources": ["src/kernels/rope_kernels.c"],
     "variants": [
       {"name": "ref", "requires": [], "compile_flags": []}
     ]
   },
-  "notes": "Gemma4 assistant q-only RoPE. The Q stream later acts as the shared K/V stream."
+  "notes": "Gemma4 shared-KV Q-only RoPE uses the ggml CPU frequency recurrence. The Q stream later acts as the shared K/V stream."
 }
