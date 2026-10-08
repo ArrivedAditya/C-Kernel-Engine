@@ -1033,6 +1033,11 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_kokoro_generator_stage0_pool.py",
         timeout_sec=300,
     ),
+    "tts_kokoro_generator_stage1_ingress": TestSuite(
+        "Kokoro Generated Second Generator Upsample and Reflection", "inference",
+        ROOT / "tests" / "test_v8_kokoro_generator_stage1_ingress.py",
+        timeout_sec=300,
+    ),
     "tts_checked_text_ops_generated": TestSuite(
         "Model-Neutral Checked Conv1D, Transpose, and Activation Graph", "inference",
         ROOT / "tests" / "test_v8_checked_text_ops_generated.py",
