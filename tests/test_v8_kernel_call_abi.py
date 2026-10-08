@@ -15,8 +15,8 @@ SCHEMA = ROOT / "version" / "v8" / "schemas" / "kernel_call_abi.schema.json"
 REGISTRY = MAPS / "KERNEL_REGISTRY.json"
 EXCLUDED = {"KERNEL_REGISTRY.json", "kernel_bindings.json", "kernel_bindings.overlay.json"}
 BUILD_IR = ROOT / "version" / "v8" / "scripts" / "build_ir_v8.py"
-EXPECTED_GOVERNED_MAP_COUNT = 207
-EXPECTED_MAP_OWNED_ABI_COUNT = 287
+EXPECTED_GOVERNED_MAP_COUNT = 208
+EXPECTED_MAP_OWNED_ABI_COUNT = 288
 GLM4_PARITY_PROVIDERS = {
     "rope_forward_qk_pairwise_llama_cpu",
     "rope_precompute_cache_llama_cpu",
@@ -113,6 +113,7 @@ class V8KernelCallABITests(unittest.TestCase):
         self.assertIn("transpose_strided_f32_checked", call_abis)
         self.assertIn("leaky_relu_strided_f32_checked", call_abis)
         self.assertIn("audio_scaled_sum_strided_f32_checked", call_abis)
+        self.assertIn("audio_harmonic_source_weighted_fma_checked_f32", call_abis)
         self.assertIn("layernorm_rows_checked_param_epsilon_f32", call_abis)
         self.assertTrue(QWEN3VL_PARITY_PROVIDERS.issubset(call_abis))
         self.assertTrue(GLM4_PARITY_PROVIDERS.issubset(call_abis))

@@ -44,5 +44,5 @@
     ]
   },
   "tests": {"unit": ["tests/test_v8_audio_harmonic_source_oracle.py", "tests/test_v8_audio_harmonic_source_generated.py", "tests/test_v8_audio_source_projection_generated.py", "tests/test_v8_kokoro_generated_f0_source.py"], "oracle": "Direct pinned Kokoro 0.9.4 / PyTorch 2.8 full-model SineGen hook with captured Gaussian excitation"},
-  "notes": "Explicit Gaussian input isolates source mathematics; this map does not provide a native RNG or claim complete stochastic source execution. The pinned reference's initial phase draw is discarded by midpoint downsampling in this nonpulse path. Generated linear/tanh merge now consumes this output; native RNG, STFT and generator joins remain separate operations."
+  "notes": "Explicit Gaussian input isolates source mathematics; this map does not provide a native RNG or claim complete stochastic source execution. The pinned reference's initial phase draw is discarded by midpoint downsampling in this nonpulse path. This direct-difference interpolation provider evaluates a + (b-a)*w; the separately mapped weighted-FMA provider models the pinned PyTorch 2.8 CPU interpolation order. Generated linear/tanh merge now consumes this output; native RNG, STFT and generator joins remain separate operations."
 }

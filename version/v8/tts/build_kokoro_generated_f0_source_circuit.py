@@ -53,7 +53,8 @@ def build_circuit():
     }
     harmonic = {
         'id': 'source_harmonics', 'op': 'audio_harmonic_source_checked',
-        'kernel': 'audio_harmonic_source_checked_f32', 'returns_status': True,
+        'kernel': 'audio_harmonic_source_weighted_fma_checked_f32',
+        'returns_status': True,
         'consumes_runtime_lengths': ['upsampled_frames', 'source_samples'],
         'runtime_scalar_bindings': {'source_frames': 'upsampled_frames'},
         'params': {'F': F0_CAPACITY, 'S': SAMPLES_CAPACITY, 'H': HARMONICS,

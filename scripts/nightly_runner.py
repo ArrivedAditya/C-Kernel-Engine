@@ -953,6 +953,10 @@ TEST_SUITES = {
         "Checked Harmonic Source Direct Kokoro/PyTorch Oracle", "kernels",
         ROOT / "tests" / "test_v8_audio_harmonic_source_oracle.py",
     ),
+    "tts_audio_harmonic_source_weighted_fma": TestSuite(
+        "Checked Weighted-FMA Harmonic Source Pinned PyTorch Oracle", "kernels",
+        ROOT / "tests" / "test_v8_audio_harmonic_source_weighted_fma_oracle.py",
+    ),
     "tts_audio_harmonic_source_generated": TestSuite(
         "Checked Harmonic Source Normal-Compiler Generated Graph", "inference",
         ROOT / "tests" / "test_v8_audio_harmonic_source_generated.py",

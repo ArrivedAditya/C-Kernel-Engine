@@ -618,6 +618,17 @@
       "position_transform": null,
       "description": "Frame-rate F0 is nearest-expanded with upsample >= 4; this excludes the pinned nonpulse initial-phase draw from midpoint downsampling. Harmonic phase uses an FP64 prefix sum stored to FP32, then align-corners-false linear interpolation and scalar sine. Gaussian excitation is an explicit input, not an internal RNG."
     },
+    "audio_harmonic_source_wide_cumsum_weighted_fma_phase_fp32": {
+      "operator_family": "audio_harmonic_source_checked",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "none", "output": "fp32"},
+      "compute": {"input": "fp32", "weight": "none", "accumulator": "fp64", "contraction": "enabled", "evaluation_order": "ascending_frame_harmonic_wide_cumsum_then_weighted_fma_phase_interpolation_then_sine_uv_gaussian_add"},
+      "rounding": {"mode": "rne", "points": ["input_load", "reduction_update", "reduction_finalize", "weighted_product", "activation_intermediate_store", "output_store"]},
+      "reduction": {"kind": "composite", "order": "stage_ordered", "partial_accumulator": "fp64", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "The frame-phase FP64 prefix sum is stored to FP32 exactly as the direct-interpolation provider. Sample interpolation evaluates b*w in FP32, then fmaf(a, 1-w, b*w), matching the pinned PyTorch 2.8 CPU weighted interpolation on the certified source fixture. Gaussian excitation is caller-supplied; native RNG and other PyTorch backends remain separate contracts."
+    },
     "hyper_stream_expand_exact_fp32": {
       "operator_family": "hyper_stream_expand",
       "status": "validated",
