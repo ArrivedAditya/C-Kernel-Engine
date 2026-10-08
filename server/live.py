@@ -4,7 +4,7 @@ Ports the Responses lifecycle from ``version/v8/scripts/ck_serve_v8.py`` into
 the server boundary so a generic harness can use ``POST /v1/responses`` with
 ``function``/``mcp`` tools without importing the scripts tree:
 
-* single-flight native session (HTTP 429 when busy)
+* single-flight native session with bounded FIFO admission (HTTP 429 on overload)
 * ``previous_response_id`` + ``function_call_output`` multi-turn history
 * tool parsing driven by an explicit protocol (tagged JSON, Qwen XML, or bare
   JSON); ``malformed``/``unknown``
@@ -30,7 +30,7 @@ import time
 import uuid
 from datetime import datetime
 import xml.etree.ElementTree as ET
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
@@ -76,9 +76,10 @@ C_GRAY = "\033[38;5;242m"
 C_ORANGE = "\033[38;5;208m"
 C_RESET = "\033[0m"
 
-# How long a second request waits for the single-flight lock before the
-# server answers 429 (harness retry storm mitigation).
+# A small FIFO absorbs harness bursts while one native worker owns the session.
+# This is serial admission, not continuous batching.
 _FLIGHT_WAIT_SECONDS = 30.0
+_FLIGHT_MAX_WAITERS = 8
 
 _IGNORED_TOOL_TYPES = frozenset(
     {
@@ -1399,11 +1400,54 @@ def _classify_stream_mode(
     return "text"
 
 
+class _FlightAdmission:
+    """Bounded FIFO admission around the existing single native owner."""
+
+    def __init__(self, lock: threading.Lock, max_waiters: int):
+        if type(max_waiters) is not int or max_waiters < 0:
+            raise ValueError("max_waiters must be a nonnegative integer")
+        self.lock = lock
+        self.max_waiters = max_waiters
+        self.guard = threading.Condition()
+        self.waiters: deque[object] = deque()
+
+    def acquire(self, timeout: float) -> str:
+        deadline = time.monotonic() + max(0.0, timeout)
+        with self.guard:
+            if not self.waiters and self.lock.acquire(blocking=False):
+                return "acquired"
+            if len(self.waiters) >= self.max_waiters:
+                return "full"
+            ticket = object()
+            self.waiters.append(ticket)
+            try:
+                while True:
+                    if self.waiters[0] is ticket and self.lock.acquire(blocking=False):
+                        self.waiters.popleft()
+                        self.guard.notify_all()
+                        return "acquired"
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        return "timeout"
+                    # Some tests and external hosts hold the exposed lock
+                    # directly, so retain a bounded poll as a fallback.
+                    self.guard.wait(min(remaining, 0.05))
+            finally:
+                if ticket in self.waiters:
+                    self.waiters.remove(ticket)
+                    self.guard.notify_all()
+
+    def notify_release(self) -> None:
+        with self.guard:
+            self.guard.notify_all()
+
+
 class _FlightLease:
     """One request's execution ownership, independent of HTTP consumption."""
-    def __init__(self, lock, session):
+    def __init__(self, lock, session, on_release=None):
         self.lock = lock
         self.session = session
+        self.on_release = on_release
         self.guard = threading.Lock()
         self.active = True
         self.worker_started = False
@@ -1422,6 +1466,8 @@ class _FlightLease:
             if self.active:
                 self.active = False
                 self.lock.release()
+                if self.on_release is not None:
+                    self.on_release()
 
     def cancel(self):
         with self.guard:
@@ -1444,6 +1490,8 @@ class _FlightLease:
             else:
                 self.active = False
                 self.lock.release()
+                if self.on_release is not None:
+                    self.on_release()
 
 
 class _OwnedStreamingResponse(StreamingResponse):
@@ -1533,6 +1581,7 @@ def create_app(
     response_store_lock = threading.Lock()
     response_store_limit = 256
     _flight_lock = threading.Lock()
+    _flight_admission = _FlightAdmission(_flight_lock, _FLIGHT_MAX_WAITERS)
     active_streams: dict[str, dict[str, Any]] = {}
     active_streams_lock = threading.Lock()
 
@@ -2716,28 +2765,26 @@ def create_app(
 
 
     def _acquire_flight_or_429(timeout: float | None = None) -> None:
-        """Take the single-flight lock, waiting briefly for harness bursts.
+        """Take the single-flight lock through bounded FIFO admission.
 
         Concurrent harness requests (e.g. title + main, client retries) wait
         up to ``_FLIGHT_WAIT_SECONDS`` instead of failing instantly. A healthy
-        long generation may still answer 429 after that wait; retries are not
-        a substitute for a bounded scheduler or confirmed worker completion.
+        long generation may still answer 429 after that wait. Queue admission
+        does not change native worker ownership or add batched execution.
         """
         if timeout is None:
             timeout = _FLIGHT_WAIT_SECONDS
-        deadline = time.monotonic() + timeout
-        while True:
-            if _flight_lock.acquire(blocking=False):
-                return
-            if time.monotonic() >= deadline:
-                raise _harness_error(
-                    429,
-                    "Session busy: another request is in progress. Retry later.",
-                    err_type="rate_limit_error",
-                    code="rate_limit_exceeded",
-                    retry_after=timeout,
-                )
-            time.sleep(0.05)
+        outcome = _flight_admission.acquire(timeout)
+        if outcome == "acquired":
+            return
+        raise _harness_error(
+            429,
+            "Session busy: admission queue is full." if outcome == "full"
+            else "Session busy: another request is in progress. Retry later.",
+            err_type="rate_limit_error",
+            code="rate_limit_exceeded",
+            retry_after=timeout,
+        )
 
     @router.post("/responses", response_model=None)
     def create_response(body: CreateResponseRequest, request: Request):
@@ -2747,7 +2794,7 @@ def create_app(
             _validate_request(body)
             _acquire_flight_or_429()
             acquired = True
-            lease = _FlightLease(_flight_lock, session)
+            lease = _FlightLease(_flight_lock, session, _flight_admission.notify_release)
             prompt, tok_limit, temperature_eff, top_p_eff, effective_flags, generation_prefix = (
                 _prepare_request(body)
             )
@@ -3100,6 +3147,7 @@ def create_app(
     app.state.active_streams = active_streams
     app.state.active_streams_lock = active_streams_lock
     app.state.flight_lock = _flight_lock
+    app.state.flight_admission = _flight_admission
     app.state.session = session
 
     return app
