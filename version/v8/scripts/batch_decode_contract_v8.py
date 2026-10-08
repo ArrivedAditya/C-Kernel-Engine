@@ -309,21 +309,12 @@ def _mapped_two_row_projection(
             "weight": weight.group(1), "function": function, "dtype": dtype}
 
 
-def _full_layer_plan(
-    ops: list[dict[str, Any]], buffers: dict[str, dict[str, Any]],
-    providers: dict[str, dict[str, Any]], config: dict[str, Any],
-) -> dict[str, Any] | None:
-    """Plan one checked layer from IR boundaries and selected provider maps.
-
-    The operation pattern is an admission guard, while the execution stages,
-    crossing values, extents and provider calls are derived from the graph.
-    Unknown dependencies retain the older, narrower batch entry.
-    """
-    if len(ops) < 22:
-        return None
-    first_layer = ops[3].get("layer")
-    if not isinstance(first_layer, int) or first_layer < 0:
-        return None
+def _layer_projection_groups(
+    ops: list[dict[str, Any]], start: int, end: int, layer: int,
+    buffers: dict[str, dict[str, Any]], providers: dict[str, dict[str, Any]],
+    config: dict[str, Any],
+) -> list[list[dict[str, Any]]] | None:
+    """Admit one layer's map-selected, ordered row-wise projections."""
     if str(config.get("out_proj_input_policy") or "").strip().lower() in {
         "fp32", "fp32_input", "force_fp32"
     }:
@@ -334,17 +325,13 @@ def _full_layer_plan(
                 "mlp_gate_up_q8_contract_layers", "mlp_gate_up_q8_contract_layer"):
         raw = config.get(key)
         values = raw if isinstance(raw, (list, tuple, set)) else (raw,)
-        if any(value is not None and str(value) == str(first_layer) for value in values):
+        if any(value is not None and str(value) == str(layer) for value in values):
             return None
-    end = next((i for i in range(4, len(ops)) if ops[i].get("layer") != first_layer), None)
-    if end is None or end < 20:
-        return None
-    layer_ops = ops[:end]
     projection_names = ("q_proj", "k_proj", "v_proj", "out_proj", "mlp_gate_up", "mlp_down")
-    indexed = [(i, op) for i, op in enumerate(layer_ops) if op.get("op") in projection_names]
+    indexed = [(i, ops[i]) for i in range(start, end) if ops[i].get("op") in projection_names]
     if [op.get("op") for _, op in indexed] != list(projection_names):
         return None
-    if any(op.get("layer") != first_layer for _, op in indexed):
+    if any(op.get("layer") != layer for _, op in indexed):
         return None
     projections = []
     for index, op in indexed:
@@ -364,6 +351,84 @@ def _full_layer_plan(
             groups.append([projection])
     if [len(group) for group in groups] != [3, 1, 1, 1]:
         return None
+    gate = groups[2][0]
+    gate_after = ops[gate["index"] + 1]
+    gate_args = _args(gate_after)
+    try:
+        gate_consumer_dim = int(gate_args.get("dim", {}).get("expr", 0))
+    except (TypeError, ValueError):
+        return None
+    if (gate_after.get("op") != "geglu" or gate_after.get("layer") != layer
+            or gate_args.get("x", {}).get("buffer_ref") != gate["output"]
+            or gate_args.get("out", {}).get("buffer_ref") != gate["output"]
+            or gate_args.get("tokens", {}).get("expr") != "1"
+            or gate_consumer_dim * 2 != gate["output_dim"]):
+        return None
+    down = groups[3][0]
+    if down["dtype"] == "q8_k":
+        quantize = ops[down["index"] - 1]
+        qargs = _args(quantize)
+        if (quantize.get("op") != "quantize_mlp_down_input"
+                or quantize.get("layer") != layer
+                or qargs.get("y", {}).get("buffer_ref") != down["input"]
+                or not _exact_base(qargs.get("y", {}), buffers[down["input"]])
+                or qargs.get("rows", {}).get("expr") != "1"
+                or qargs.get("k", {}).get("expr") != str(down["input_dim"])):
+            return None
+    elif (down["input"] != gate["output"]
+          or down["index"] != gate["index"] + 2
+          or gate_consumer_dim != down["input_dim"]
+          or not _exact_base(gate_args["out"], buffers[down["input"]])):
+        return None
+    for group in groups:
+        outputs = [projection["output"] for projection in group]
+        if len(outputs) != len(set(outputs)) or group[0]["input"] in outputs:
+            return None
+    return groups
+
+
+def _full_layer_plan(
+    ops: list[dict[str, Any]], buffers: dict[str, dict[str, Any]],
+    providers: dict[str, dict[str, Any]], config: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Extend checked shared projections across contiguous supported layers.
+
+    Each layer supplies the same bounded operation contract. The cuts, live
+    values, extents and selected providers come from the complete lowered IR.
+    The first unsupported layer and everything after it execute locally.
+    """
+    if len(ops) < 22:
+        return None
+    first_layer = ops[3].get("layer")
+    if not isinstance(first_layer, int) or first_layer < 0:
+        return None
+    layer_limit = config.get("batch_decode_max_shared_layers")
+    if layer_limit is not None and (type(layer_limit) is not int or layer_limit < 1):
+        return None
+    groups: list[list[dict[str, Any]]] = []
+    shared_layers: list[int] = []
+    start, layer, selected_end = 0, first_layer, 0
+    while start < len(ops):
+        end = next((i for i in range(max(start + 1, 4), len(ops))
+                    if ops[i].get("layer") != layer), None)
+        if end is None:
+            break
+        layer_groups = _layer_projection_groups(
+            ops, start, end, layer, buffers, providers, config,
+        )
+        if layer_groups is None:
+            break
+        groups.extend(layer_groups)
+        shared_layers.append(layer)
+        selected_end = end
+        start = end
+        if layer_limit is not None and len(shared_layers) >= layer_limit:
+            break
+        if ops[start].get("layer") != layer + 1:
+            break
+        layer += 1
+    if not shared_layers:
+        return None
     stages = []
     cursor = 0
     for group in groups:
@@ -373,49 +438,27 @@ def _full_layer_plan(
         stages.append({"kind": "shared", "start": start, "stop": stop, "projections": group})
         cursor = stop
     stages.append({"kind": "local", "start": cursor, "stop": len(ops)})
-    # The final local stage runs all later layers. Liveness at every earlier
-    # cut must therefore include consumers in that complete suffix, not just
-    # consumers within the shared layer.
+    # The final local stage runs every unsupported later layer. Liveness at
+    # every cut includes the complete remaining decode sequence.
     extents: dict[str, int] = {}
-    for projection in projections:
+    for projection in (projection for group in groups for projection in group):
         for ref, count in ((projection["input"], projection["input_bytes"]),
                            (projection["output"], projection["output_bytes"])):
             extents[ref] = max(extents.get(ref, 0), count)
-    for group in groups:
-        outputs = [projection["output"] for projection in group]
-        if len(outputs) != len(set(outputs)) or group[0]["input"] in outputs:
+    for op in ops[:selected_end]:
+        if op.get("op") != "residual_save":
+            continue
+        save = _args(op)
+        try:
+            residual = save["dst"]["buffer_ref"]
+            count = int(save["size"]["expr"])
+        except (KeyError, ValueError, TypeError):
             return None
-    save = _args(ops[1])
-    try:
-        residual = save["dst"]["buffer_ref"]
-        extents[residual] = int(save["size"]["expr"])
-    except (KeyError, ValueError, TypeError):
-        return None
-    # A shared gate/up projection fully replaces its output. Verify its
-    # immediate GeGLU consumer before using that fact for liveness.
-    gate = groups[2][0]
-    gate_after = layer_ops[gate["index"] + 1]
-    gate_args = _args(gate_after)
-    try:
-        gate_consumer_dim = int(gate_args.get("dim", {}).get("expr", 0))
-    except (TypeError, ValueError):
-        return None
-    if (gate_after.get("op") != "geglu"
-            or gate_args.get("x", {}).get("buffer_ref") != gate["output"]
-            or gate_args.get("out", {}).get("buffer_ref") != gate["output"]
-            or gate_args.get("tokens", {}).get("expr") != "1"
-            or gate_consumer_dim * 2 != gate["output_dim"]):
-        return None
-    down = groups[3][0]
-    quantize = layer_ops[down["index"] - 1]
-    qargs = _args(quantize)
-    if (quantize.get("op") != "quantize_mlp_down_input"
-            or qargs.get("y", {}).get("buffer_ref") != down["input"]
-            or not _exact_base(qargs.get("y", {}), buffers[down["input"]])
-            or qargs.get("rows", {}).get("expr") != "1"
-            or qargs.get("k", {}).get("expr") != str(down["input_dim"])):
-        return None
-    replacements = _certified_full_writes(ops, buffers) | {(gate["index"], gate["output"])}
+        extents[residual] = max(extents.get(residual, 0), count)
+    replacements = _certified_full_writes(ops, buffers) | {
+        (groups[index][0]["index"], groups[index][0]["output"])
+        for index in range(2, len(groups), 4)
+    }
     for stage in stages[:-1]:
         cut = stage["stop"]
         live = _crossing_at(ops, cut, replacements)
@@ -436,16 +479,17 @@ def _full_layer_plan(
                    or projection["output"] not in shared["live_after"]
                    for projection in shared["projections"]):
                 return None
-    # Every call-local access in this layer must use the declared base. This
+    # Every call-local access in shared layers must use the declared base. This
     # rejects offset expressions that snapshots could not preserve.
-    for op in layer_ops:
+    for op in ops[:selected_end]:
         for arg in op.get("args", []):
             ref = arg.get("buffer_ref") if isinstance(arg, dict) else None
             if (ref in extents and not str(arg.get("source", "")).startswith("scratch:")
                     and not _exact_base(arg, buffers[ref])):
                 return None
     return {"stages": stages, "buffers": {ref: buffers[ref]["define"] for ref in extents},
-            "extents": extents, "layer_end": end}
+            "extents": extents, "layer_end": selected_end,
+            "shared_layers": shared_layers, "projection_groups": len(groups)}
 
 
 def resolve_two_row_batch_contract(

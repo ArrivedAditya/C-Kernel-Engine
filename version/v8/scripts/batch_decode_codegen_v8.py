@@ -6,7 +6,7 @@ from typing import Any
 
 
 def emit_full_layer_batch_api(plan: dict[str, Any]) -> str:
-    """Emit one graph-planned, two-row layer while keeping stateful ops local."""
+    """Emit checked two-row projection stages across admitted decoder layers."""
     offsets: dict[str, int] = {}
     total = 0
     for ref, size in sorted(plan["extents"].items()):
@@ -14,8 +14,26 @@ def emit_full_layer_batch_api(plan: dict[str, Any]) -> str:
         offsets[ref] = total
         total += 2 * size
     total = (total + 63) & ~63
+    projections = [projection for stage in plan["stages"]
+                   for projection in stage.get("projections", [])]
+    compact_input_bytes = max(
+        (projection["input_bytes"] for projection in projections
+         if plan["extents"][projection["input"]] != projection["input_bytes"]),
+        default=0,
+    )
+    compact_output_bytes = max(
+        (projection["output_bytes"] for projection in projections
+         if plan["extents"][projection["output"]] != projection["output_bytes"]),
+        default=0,
+    )
+    compact_input_offset = total
+    total = (total + 2 * compact_input_bytes + 63) & ~63
+    compact_output_offset = total
+    total = (total + 2 * compact_output_bytes + 63) & ~63
     work: list[str] = []
     previous_live: list[str] = []
+    snapshot_copy_bytes = 0
+    packing_copy_bytes = 0
     for number, stage in enumerate(plan["stages"]):
         if stage["kind"] == "local":
             lines = ["    for (size_t i = 0; i < 2; ++i) {",
@@ -24,6 +42,7 @@ def emit_full_layer_batch_api(plan: dict[str, Any]) -> str:
             for ref in previous_live:
                 size, macro = plan["extents"][ref], plan["buffers"][ref]
                 lines.append(f"        memcpy(g_model->bump + {macro}, base + {offsets[ref]}u + i * {size}u, {size}u);")
+                snapshot_copy_bytes += 2 * size
             if stage is plan["stages"][-1]:
                 lines.extend(["        g_ck_skip_decode_logits = 0;",
                               f"        ck_batch_stage_{number}(g_model, rows[i].token);",
@@ -33,21 +52,61 @@ def emit_full_layer_batch_api(plan: dict[str, Any]) -> str:
                 for ref in stage["live_after"]:
                     size, macro = plan["extents"][ref], plan["buffers"][ref]
                     lines.append(f"        memcpy(base + {offsets[ref]}u + i * {size}u, g_model->bump + {macro}, {size}u);")
+                    snapshot_copy_bytes += 2 * size
             lines.append("    }")
             work.extend(lines)
         else:
             for projection in stage["projections"]:
                 src, dst = projection["input"], projection["output"]
+                source = f"base + {offsets[src]}u"
+                output = f"base + {offsets[dst]}u"
+                if plan["extents"][src] != projection["input_bytes"]:
+                    size = projection["input_bytes"]
+                    work.append(
+                        f"    for (size_t i = 0; i < 2; ++i) "
+                        f"memcpy(base + {compact_input_offset}u + i * {size}u, "
+                        f"base + {offsets[src]}u + i * {plan['extents'][src]}u, {size}u);"
+                    )
+                    source = f"base + {compact_input_offset}u"
+                    packing_copy_bytes += 2 * size
+                if plan["extents"][dst] != projection["output_bytes"]:
+                    output = f"base + {compact_output_offset}u"
                 work.append(
-                    f"    {projection['function']}((const {'void' if projection['dtype'] == 'q8_k' else 'float'} *)(base + {offsets[src]}u), "
+                    f"    {projection['function']}((const {'void' if projection['dtype'] == 'q8_k' else 'float'} *)({source}), "
                     f"g_model->bump + {projection['weight']}, NULL, "
-                    f"(float *)(base + {offsets[dst]}u), 2, {projection['output_dim']}, {projection['input_dim']});"
+                    f"(float *)({output}), 2, {projection['output_dim']}, {projection['input_dim']});"
                 )
+                if plan["extents"][dst] != projection["output_bytes"]:
+                    size = projection["output_bytes"]
+                    work.append(
+                        f"    for (size_t i = 0; i < 2; ++i) "
+                        f"memcpy(base + {offsets[dst]}u + i * {plan['extents'][dst]}u, "
+                        f"base + {compact_output_offset}u + i * {size}u, {size}u);"
+                    )
+                    packing_copy_bytes += 2 * size
         previous_live = stage.get("live_after", [])
-    execution = "\n".join(work)
+    execution = "\n".join(work).replace("memcpy(", "ck_batch_memcpy(")
     return f'''
-/* Generated from checked IR cuts. Four shared projection groups cover one
- * complete layer; attention, KV updates and subsequent layers remain local. */
+#include <time.h>
+/* Generated from checked IR cuts. {plan['projection_groups']} shared projection
+ * groups span {len(plan['shared_layers'])} layer(s); attention and KV updates remain local. */
+static uint64_t g_ck_batch_copy_ns;
+static int g_ck_batch_profile_copies;
+static uint64_t ck_batch_clock_ns(void) {{
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return 0;
+    return (uint64_t)now.tv_sec * 1000000000u + (uint64_t)now.tv_nsec;
+}}
+static void ck_batch_memcpy(void *dst, const void *src, size_t bytes) {{
+    if (!g_ck_batch_profile_copies) {{ memcpy(dst, src, bytes); return; }}
+    uint64_t begin = ck_batch_clock_ns();
+    memcpy(dst, src, bytes);
+    uint64_t end = ck_batch_clock_ns();
+    if (end >= begin) g_ck_batch_copy_ns += end - begin;
+}}
+CK_EXPORT uint64_t ck_model_batch_decode_last_copy_ns(void) {{
+    return g_ck_batch_copy_ns;
+}}
 static int ck_batch_ranges_overlap(const void *left, size_t left_bytes,
                                    const void *right, size_t right_bytes) {{
     uintptr_t a = (uintptr_t)left, b = (uintptr_t)right;
@@ -64,7 +123,19 @@ CK_EXPORT int ck_model_batch_decode_workspace(size_t *bytes, size_t *alignment) 
 }}
 
 CK_EXPORT int ck_model_batch_decode_projection_groups(void) {{
-    return 4;
+    return {plan['projection_groups']};
+}}
+
+CK_EXPORT int ck_model_batch_decode_shared_layers(void) {{
+    return {len(plan['shared_layers'])};
+}}
+
+CK_EXPORT size_t ck_model_batch_decode_snapshot_copy_bytes(void) {{
+    return {snapshot_copy_bytes}u;
+}}
+
+CK_EXPORT size_t ck_model_batch_decode_packing_copy_bytes(void) {{
+    return {packing_copy_bytes}u;
 }}
 
 CK_EXPORT int ck_model_decode_batch2(const CKModelBatchDecodeRowV8 *rows,
@@ -117,6 +188,9 @@ CK_EXPORT int ck_model_decode_batch2(const CKModelBatchDecodeRowV8 *rows,
                                     g_model->bump_size) != 0) return -2;
     }}
     uint8_t *base = (uint8_t *)workspace;
+    const char *copy_profile = getenv("CK_BATCH_PROFILE_COPIES");
+    g_ck_batch_profile_copies = copy_profile && copy_profile[0] && copy_profile[0] != '0';
+    g_ck_batch_copy_ns = 0;
 {execution}
     return 0;
 }}

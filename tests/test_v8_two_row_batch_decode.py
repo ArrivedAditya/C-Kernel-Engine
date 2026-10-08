@@ -14,13 +14,14 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "version/v8/scripts"))
 from batch_decode_contract_v8 import _crossing_at, resolve_two_row_batch_contract  # noqa: E402
 from batch_decode_codegen_v8 import emit_two_row_batch_api, emit_full_layer_batch_api  # noqa: E402
-from certify_batch_decode_v8 import _require_projection_groups  # noqa: E402
+from certify_batch_decode_v8 import _measure_native_call, _require_projection_groups  # noqa: E402
 from codegen_core_v8 import emit_decode_function  # noqa: E402
 from server.serving_bundle import verified_loaded_symbol_backing  # noqa: E402
 
@@ -108,6 +109,29 @@ def _layer_fixture() -> tuple[list[dict], dict, dict]:
     return ops, layout, config
 
 
+def _two_layer_fixture() -> tuple[list[dict], dict, dict]:
+    fixture = json.loads((ROOT / "tests/fixtures/batch_decode_gemma3_first_layer.json").read_text())
+    ops, layout, config = fixture["ops"], fixture["layout"], fixture["config"]
+    second = copy.deepcopy(ops[1:21])
+    for op in second:
+        op["layer"] = 1
+        for arg in op.get("args", []):
+            arg["expr"] = str(arg["expr"]).replace("W_LAYER_0_", "W_LAYER_1_")
+    # The second layer's publisher-selected down projection consumes FP32
+    # GeGLU output directly. Its compact 8 KiB row is held in the same
+    # 16 KiB buffer that holds the gate/up result.
+    second = [op for op in second if op["op"] != "quantize_mlp_down_input"]
+    down = next(op for op in second if op["op"] == "mlp_down")
+    down["function"] = "gemv_q5_k"
+    down["call_abi"]["kernel_id"] = "gemv_q5_k"
+    down_input = next(arg for arg in down["args"] if arg["name"] == "x_q8")
+    down_input.update({"name": "x", "buffer_ref": "mlp_scratch",
+                       "expr": "(const float*)(model->bump + A_MLP_SCRATCH)"})
+    final = copy.deepcopy(ops[21])
+    final["layer"] = 2
+    return ops[:21] + second + [final], layout, config
+
+
 def _avx2_available() -> bool:
     if platform.machine().lower() not in {"x86_64", "amd64"}:
         return False
@@ -187,6 +211,7 @@ class BatchContractTests(unittest.TestCase):
                           if stage["kind"] == "shared"], [3, 1, 1, 1])
         self.assertEqual(plan["extents"]["main_stream_q8"], 2336)
         emitted = emit_full_layer_batch_api(plan)
+        self.assertIn("clock_gettime(CLOCK_MONOTONIC, &now)", emitted)
         self.assertIn("gemm_nt_q8_0_q8_0_contract_m2", emitted)
         self.assertIn("gemm_nt_q5_k_q8_k_m2", emitted)
         self.assertIn("gemm_nt_q6_k_q8_k_m2", emitted)
@@ -209,6 +234,7 @@ class BatchContractTests(unittest.TestCase):
                                     for p in stage.get("projections", [])})
             )
             source.write_text(
+                "#define _POSIX_C_SOURCE 200809L\n"
                 "#include <stdint.h>\n#include <stddef.h>\n#include <stdlib.h>\n#include <string.h>\n"
                 "#define CK_EXPORT\n#define VOCAB_SIZE 32\n#define MAX_SEQ_LEN 16\n"
                 "#define KV_CACHE_SIZE 64\n" + defines + "\n"
@@ -308,6 +334,7 @@ class BatchContractTests(unittest.TestCase):
                                        for stage in plan["stages"]
                                        for projection in stage.get("projections", [])}))
         prelude = r'''
+#define _POSIX_C_SOURCE 200809L
 #include <stdint.h>
 #include <stddef.h>
 #include <stdlib.h>
@@ -431,21 +458,179 @@ int main(void) {
 
             def run(text: str) -> subprocess.CompletedProcess[str]:
                 source.write_text(text)
-                subprocess.run(["cc", "-std=c11", "-O0", "-Wall", "-Werror",
-                                "-Wno-unused-function", "-Wno-unused-variable",
-                                str(source), "-o", str(binary)],
-                               check=True, capture_output=True, text=True)
+                compiled = subprocess.run(["cc", "-std=c11", "-O0", "-Wall", "-Werror",
+                                           "-Wno-unused-function", "-Wno-unused-variable",
+                                           str(source), "-o", str(binary)],
+                                          capture_output=True, text=True)
+                self.assertEqual(compiled.returncode, 0, compiled.stderr)
                 return subprocess.run([str(binary)], capture_output=True, text=True)
 
             self.assertEqual(run(source_text).returncode, 0)
             # This control removes one per-row restoration after shared Q/K/V.
             # The same two distinct inputs must now diverge from isolation.
             lost_q = re.sub(
-                r"(?m)^        memcpy\(g_model->bump \+ A_Q_SCRATCH, base \+ [^\n]+\n",
+                r"(?m)^        ck_batch_memcpy\(g_model->bump \+ A_Q_SCRATCH, base \+ [^\n]+\n",
                 "", source_text, count=1,
             )
             self.assertNotEqual(lost_q, source_text)
             self.assertNotEqual(run(lost_q).returncode, 0)
+
+    def test_two_layer_plan_executes_compact_fp32_rows(self) -> None:
+        ops, layout, config = _two_layer_fixture()
+        contract = resolve_two_row_batch_contract(ops, layout, config)
+        self.assertIsNotNone(contract)
+        plan = contract["full_layer_plan"]
+        self.assertEqual(plan["shared_layers"], [0, 1])
+        self.assertEqual(plan["projection_groups"], 8)
+        self.assertEqual(plan["stages"][15]["projections"][0]["input_bytes"], 8192)
+        self.assertEqual(plan["extents"]["mlp_scratch"], 16384)
+        limited = resolve_two_row_batch_contract(ops, layout,
+                                                 {**config, "batch_decode_max_shared_layers": 1})
+        self.assertEqual(limited["full_layer_plan"]["shared_layers"], [0])
+        bad = copy.deepcopy(ops)
+        next(op for op in bad if op.get("layer") == 1 and op["op"] == "v_proj")["call_abi"]["kernel_id"] = "gemv_q5_0"
+        fallback = resolve_two_row_batch_contract(bad, layout, config)
+        self.assertEqual(fallback["full_layer_plan"]["shared_layers"], [0])
+        # A value produced in layer 1 and consumed after that layer must not
+        # disappear merely because the selected projection groups are valid.
+        bad = copy.deepcopy(ops)
+        bad_layout = copy.deepcopy(layout)
+        bad_layout["memory"]["activations"]["buffers"].append(
+            {"name": "later_live", "size": 64, "abs_offset": 1 << 32,
+             "define": "A_LATER_LIVE", "lifetime": "call", "mutable": True})
+        next(op for op in bad if op.get("layer") == 1 and op["op"] == "geglu")["args"].append(
+            {"name": "later_out", "source": "output:later_out", "buffer_ref": "later_live",
+             "expr": "(float*)(model->bump + A_LATER_LIVE)"})
+        bad[-1]["args"].append(
+            {"name": "later_in", "source": "activation:later_in", "buffer_ref": "later_live",
+             "expr": "(const float*)(model->bump + A_LATER_LIVE)"})
+        fallback = resolve_two_row_batch_contract(bad, bad_layout, config)
+        self.assertNotIn("full_layer_plan", fallback)
+
+        symbols = sorted(set(plan["buffers"].values()) |
+                         {projection["weight"] for stage in plan["stages"]
+                          for projection in stage.get("projections", [])})
+        defines = "\n".join(f"#define {name} {32768 * (index + 1)}"
+                            for index, name in enumerate(symbols))
+        kernels = "\n".join(
+            f"static void {name}(const {'void' if dtype == 'q8_k' else 'float'} *input, "
+            "const void *weight, const float *bias, float *output, int rows, int channels, int width) "
+            "{ (void)bias; for (int row=0; row<rows; ++row) for (int channel=0; channel<channels; ++channel) "
+            "output[row*channels+channel]="
+            + ("((const float *)((const uint8_t *)input+row*(width/256*292)))[0]"
+               if dtype == "q8_k" else "((const float *)input)[row*width]")
+            + "+((const uint8_t *)weight)[0]; }"
+            for name, dtype in sorted({(projection["function"], projection["dtype"])
+                                       for stage in plan["stages"]
+                                       for projection in stage.get("projections", [])})
+        )
+        bodies = {
+            0: "value(model,A_EMBEDDED_INPUT)[0]=(float)token; value(model,A_RESIDUAL)[0]=(float)token;",
+            2: "g_active_sequence->kv[model->pos]=(uint8_t)token;",
+            8: "value(model,A_RESIDUAL)[0]+=(float)token;",
+            10: "g_active_sequence->kv[16+model->pos]=(uint8_t)token;",
+            14: "value(model,A_MLP_SCRATCH)[0]=(float)(10*token)+value(model,A_RESIDUAL)[0];",
+            16: "model->logits[0]=value(model,A_EMBEDDED_INPUT)[0]; model->pos++;",
+        }
+        stages = "\n".join(
+            f"static void ck_batch_stage_{index}(CKModel *model, int token) "
+            "{ " + bodies.get(index, "(void)model; (void)token;") + " }"
+            for index, stage in enumerate(plan["stages"]) if stage["kind"] == "local"
+        )
+        prelude = r'''
+#define _POSIX_C_SOURCE 200809L
+#include <stdint.h>
+#include <stddef.h>
+#include <stdlib.h>
+#include <string.h>
+#define CK_EXPORT
+#define VOCAB_SIZE 16
+#define MAX_SEQ_LEN 16
+#define KV_CACHE_SIZE 64
+'''
+        prelude += defines + f"\n#define BUMP_BYTES {(len(symbols) + 1) * 32768}\n" + r'''
+typedef struct { uint64_t sequence_handle; int token, position; size_t row_offset, token_count; float *logits; } CKModelBatchDecodeRowV8;
+typedef struct { int occupied, pos; uint64_t handle; uint8_t *kv; } CKSequenceStateV8;
+typedef struct { uint8_t *bump; size_t bump_size; int pos; float logits[VOCAB_SIZE]; } CKModel;
+static CKModel object;
+static CKModel *g_model=&object;
+static CKSequenceStateV8 g_sequence_states[3];
+static CKSequenceStateV8 *g_active_sequence;
+static int g_ck_skip_decode_logits;
+static CKSequenceStateV8 *ck_sequence_find(uint64_t handle) {
+    for (int i=0;i<3;++i) if (g_sequence_states[i].occupied && g_sequence_states[i].handle==handle) return &g_sequence_states[i];
+    return NULL;
+}
+static int ck_model_sequence_state_activate(uint64_t handle) {
+    CKSequenceStateV8 *next=ck_sequence_find(handle);
+    if (!next) return -1;
+    if (g_active_sequence) g_active_sequence->pos=g_model->pos;
+    g_model->pos=next->pos; g_active_sequence=next;
+    return 0;
+}
+static int ck_model_cancel_requested(void) { return 0; }
+static float *value(CKModel *model, size_t offset) { return (float *)(model->bump+offset); }
+'''
+        run = r'''
+int main(void) {
+    g_model->bump_size=BUMP_BYTES;
+    g_model->bump=calloc(1,BUMP_BYTES);
+    if (!g_model->bump) return 1;
+    uint8_t kv[2][64]={{0}};
+    for (int i=0;i<2;++i) g_sequence_states[i]=(CKSequenceStateV8){.occupied=1,.handle=(uint64_t)(i+1),.kv=kv[i]};
+    g_model->bump[W_LAYER_1_W2]=5;
+    float logits[2][VOCAB_SIZE]={{0}};
+    CKModelBatchDecodeRowV8 rows[2]={
+        {.sequence_handle=1,.token=3,.position=0,.row_offset=0,.token_count=1,.logits=logits[0]},
+        {.sequence_handle=2,.token=7,.position=0,.row_offset=1,.token_count=1,.logits=logits[1]}
+    };
+    size_t bytes=0,alignment=0;
+    if (ck_model_batch_decode_projection_groups()!=8 || ck_model_batch_decode_shared_layers()!=2 ||
+        ck_model_batch_decode_packing_copy_bytes()<16384 ||
+        ck_model_batch_decode_workspace(&bytes,&alignment) || alignment!=64) return 2;
+    void *workspace=aligned_alloc(alignment,(bytes+alignment-1)/alignment*alignment);
+    if (!workspace || ck_model_decode_batch2(rows,2,workspace,bytes)) return 3;
+    if (logits[0][0]!=41.0f || logits[1][0]!=89.0f) return 4;
+    for (int i=0;i<2;++i) {
+        if (ck_model_sequence_state_activate((uint64_t)(i+1)) || g_model->pos!=1 ||
+            kv[i][0]!=(uint8_t)(i?7:3) || kv[i][16]!=(uint8_t)(i?7:3)) return 5;
+    }
+    free(workspace); free(g_model->bump);
+    return 0;
+}
+'''
+        source_text = prelude + stages + kernels + emit_full_layer_batch_api(plan) + run
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "two_layer.c"
+            binary = Path(directory) / "two_layer"
+
+            def execute(text: str) -> subprocess.CompletedProcess[str]:
+                source.write_text(text)
+                compiled = subprocess.run(["cc", "-std=c11", "-O0", "-Wall", "-Werror",
+                                           "-Wno-unused-function", "-Wno-unused-variable",
+                                           str(source), "-o", str(binary)],
+                                          capture_output=True, text=True)
+                self.assertEqual(compiled.returncode, 0, compiled.stderr)
+                return subprocess.run([str(binary)], capture_output=True, text=True)
+
+            self.assertEqual(execute(source_text).returncode, 0)
+            # Reintroducing the 16 KiB arena stride as the kernel's compact
+            # 8 KiB row stride corrupts only the second sequence's input.
+            broken = source_text.replace("i * 16384u, 8192u);", "i * 8192u, 8192u);", 1)
+            self.assertNotEqual(broken, source_text)
+            self.assertNotEqual(execute(broken).returncode, 0)
+            lost_cross_layer = re.sub(
+                r"(?m)^        ck_batch_memcpy\(g_model->bump \+ A_RESIDUAL, base \+ [^\n]+\n(?=        ck_batch_stage_8)",
+                "", source_text, count=1,
+            )
+            self.assertNotEqual(lost_cross_layer, source_text)
+            self.assertNotEqual(execute(lost_cross_layer).returncode, 0)
+            wrong_kv_owner = source_text.replace(
+                "g_active_sequence->kv[16+model->pos]=(uint8_t)token;",
+                "g_sequence_states[0].kv[16+model->pos]=(uint8_t)token;", 1,
+            )
+            self.assertNotEqual(wrong_kv_owner, source_text)
+            self.assertNotEqual(execute(wrong_kv_owner).returncode, 0)
 
     def test_in_place_liveness_ignores_argument_order(self) -> None:
         produced = {"args": [{"source": "output:x", "buffer_ref": "extra"}]}
@@ -462,10 +647,33 @@ int main(void) {
         _require_projection_groups(1, None)
         _require_projection_groups(2, 2)
         _require_projection_groups(4, 4)
+        _require_projection_groups(8, 8)
+        _require_projection_groups(72, 72)
         with self.assertRaisesRegex(AssertionError, "expected 2 shared projection groups"):
             _require_projection_groups(1, 2)
         with self.assertRaisesRegex(AssertionError, "expected 4 shared projection groups"):
             _require_projection_groups(2, 4)
+        with self.assertRaisesRegex(AssertionError, "invalid generated batch projection-group count"):
+            _require_projection_groups(7, None)
+
+    def test_native_timing_excludes_slow_validation_on_both_paths(self) -> None:
+        ticks = [0]
+
+        def native_call() -> int:
+            ticks[0] += 5_000_000
+            return 0
+
+        def slow_validation(status: int) -> int:
+            ticks[0] += 900_000_000
+            return status
+
+        with mock.patch("certify_batch_decode_v8.time.perf_counter_ns",
+                        side_effect=lambda: ticks[0]):
+            for path in ("isolated", "batched"):
+                with self.subTest(path=path):
+                    result, native_ms = _measure_native_call(native_call, slow_validation)
+                    self.assertEqual(result, 0)
+                    self.assertEqual(native_ms, 5.0)
 
     def test_hybrid_arena_capacity_does_not_change_decode_row_liveness(self) -> None:
         ops, layout, config = _layer_fixture()

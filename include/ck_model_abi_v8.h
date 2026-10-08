@@ -101,6 +101,9 @@ typedef struct CKModelBatchDecodeRowV8 {
 } CKModelBatchDecodeRowV8;
 
 typedef int (*ck_model_batch_decode_workspace_v8_fn)(size_t *bytes, size_t *alignment);
+/* Optional diagnostics on generated batch entries; absent on older bundles. */
+typedef int (*ck_model_batch_decode_projection_groups_v8_fn)(void);
+typedef int (*ck_model_batch_decode_shared_layers_v8_fn)(void);
 typedef int (*ck_model_decode_batch2_v8_fn)(const CKModelBatchDecodeRowV8 *rows,
                                              size_t count, void *workspace,
                                              size_t workspace_bytes);
