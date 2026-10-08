@@ -30,6 +30,28 @@ CHECKPOINT_TOLERANCES = {
 }
 
 
+def stage0_pool_weights(refs, first, tail):
+    """Effective weights for the connected first-stage generator graph."""
+    weights = refs.weights.copy()
+    for block, arrays in ((0, first), (1, tail), (2, tail)):
+        prefix = f'waveform_decoder.generator.resblocks.{block}'
+        fixture_prefix = '' if block == 0 else f'block{block}_'
+        for pair in range(3):
+            for side in (1, 2):
+                for key, name in (
+                    ('style_weight', f'{prefix}.adain{side}.{pair}.fc.weight'),
+                    ('style_bias', f'{prefix}.adain{side}.{pair}.fc.bias'),
+                    ('norm_weight', f'{prefix}.adain{side}.{pair}.norm.weight'),
+                    ('norm_bias', f'{prefix}.adain{side}.{pair}.norm.bias'),
+                    ('alpha', f'{prefix}.alpha{side}.{pair}.channel'),
+                    ('conv_weight', f'{prefix}.convs{side}.{pair}.weight'),
+                    ('conv_bias', f'{prefix}.convs{side}.{pair}.bias'),
+                ):
+                    weights[name] = arrays[
+                        f'{fixture_prefix}pair{pair}_{key}_c{side}']
+    return weights
+
+
 class KokoroGeneratorStage0PoolTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -46,22 +68,7 @@ class KokoroGeneratorStage0PoolTest(unittest.TestCase):
                 raise RuntimeError(f'generator fixture {field} identity differs')
         np.testing.assert_array_equal(cls.tail['input_join'],
                                       cls.first['input_join'])
-        weights = cls.refs.weights.copy()
-        for block, arrays in ((0, cls.first), (1, cls.tail), (2, cls.tail)):
-            prefix = f'waveform_decoder.generator.resblocks.{block}'
-            fixture_prefix = '' if block == 0 else f'block{block}_'
-            for pair in range(3):
-                for side in (1, 2):
-                    for key, name in (
-                        ('style_weight', f'{prefix}.adain{side}.{pair}.fc.weight'),
-                        ('style_bias', f'{prefix}.adain{side}.{pair}.fc.bias'),
-                        ('norm_weight', f'{prefix}.adain{side}.{pair}.norm.weight'),
-                        ('norm_bias', f'{prefix}.adain{side}.{pair}.norm.bias'),
-                        ('alpha', f'{prefix}.alpha{side}.{pair}.channel'),
-                        ('conv_weight', f'{prefix}.convs{side}.{pair}.weight'),
-                        ('conv_bias', f'{prefix}.convs{side}.{pair}.bias')):
-                        weights[name] = arrays[
-                            f'{fixture_prefix}pair{pair}_{key}_c{side}']
+        weights = stage0_pool_weights(cls.refs, cls.first, cls.tail)
         fixture = prepare_duration_fixture(root, connected_author.OUTPUT, weights)
         cls.encoder, cls.duration = fixture.encoder, fixture.duration
         cls.entries, cls.bump = fixture.entries, fixture.bump

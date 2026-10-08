@@ -50,6 +50,8 @@ GENERATOR_HOOKS = (
     "decoder.generator.noise_convs.0",
     "decoder.generator.noise_res.0",
     "decoder.generator.ups.0",
+    "decoder.generator.ups.1",
+    "decoder.generator.reflection_pad",
 )
 GENERATOR_RESIDUAL_PREFIX_HOOKS = (
     "decoder.generator.noise_res.0.adain1.0.fc",
@@ -280,6 +282,11 @@ def main() -> int:
                        out_dir, record["tensors"])
     hooks.append(modules["decoder.generator.resblocks.0"]
                  .register_forward_pre_hook(capture_generator_stage0_join))
+    def capture_generator_stage1_activation(_module, inputs):
+        capture_tensor(inputs[0], "decoder_generator_stage1_activation",
+                       out_dir, record["tensors"])
+    hooks.append(modules["decoder.generator.ups.1"]
+                 .register_forward_pre_hook(capture_generator_stage1_activation))
     for pair in (1, 2):
         name = f"decoder.generator.resblocks.0.adain1.{pair}"
         label = f"decoder_generator_resblocks_0_pair{pair - 1}_output"
@@ -388,6 +395,8 @@ def main() -> int:
             raise RuntimeError(f"pinned first source residual pair checkpoint not reached: {key}")
     if "decoder_generator_stage0_join" not in record["tensors"]:
         raise RuntimeError("pinned first generator source/main join was not captured")
+    if "decoder_generator_stage1_activation" not in record["tensors"]:
+        raise RuntimeError("pinned second generator activation was not captured")
     for pair in (0, 1):
         key = f"decoder_generator_resblocks_0_pair{pair}_output"
         if key not in record["tensors"]:
