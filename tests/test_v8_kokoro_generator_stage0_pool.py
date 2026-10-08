@@ -219,6 +219,7 @@ class KokoroGeneratorStage0PoolTest(unittest.TestCase):
                 np.testing.assert_array_equal(first, final)
         print('CKE_NUMERICAL_CASE ' + json.dumps({
             'case_id': 'kokoro.generator-stage0-pool.direct-input-v1',
+            'name': 'Kokoro first-stage generator pool with direct reference join',
             'provider': 'generated_generator_stage0_pool',
             'dtype': 'fp32', 'direction': 'inference',
             'oracle': 'pinned-full-model-block-hooks-and-explicit-mean',
@@ -316,6 +317,7 @@ class KokoroGeneratorStage0PoolTest(unittest.TestCase):
         difference = np.abs(actual[:, :2060] - self.tail['stage0_mean'][0])
         print('CKE_NUMERICAL_CASE ' + json.dumps({
             'case_id': 'kokoro.generator-stage0-pool.connected-v1',
+            'name': 'Kokoro connected first-stage generator pool source parity',
             'provider': 'generated_generator_stage0_pool',
             'dtype': 'fp32', 'direction': 'inference',
             'oracle': 'pinned-full-model-block-hooks-and-explicit-mean',
