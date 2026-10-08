@@ -154,6 +154,36 @@ void ck_session_v8_cancel(CKSessionV8 *session);
 int ck_session_v8_reset(CKSessionV8 *session);
 const char *ck_session_v8_last_error(const CKSessionV8 *session);
 
+/* Optional bounded two-slot decode mode. This mode owns the generated model
+ * until close and is mutually exclusive with generate/reset. Both prompts are
+ * prefilled independently using token IDs supplied by the caller. A step
+ * advances each ready, uncancelled slot at most once; when both are eligible
+ * it calls the generated two-row entry, otherwise ordinary single-row decode.
+ * Cancellation is sampled at the next step boundary: a request made during a
+ * native kernel can still allow that in-flight step to finish. On success,
+ * advanced_mask identifies exactly which slots advanced. On a native error,
+ * advancement is unknown and both slots are poisoned until individually reset.
+ * All functions except request_cancel must
+ * be serialized by the host; cancellation is thread-safe. This is a native
+ * scheduling primitive, not an HTTP admission queue or mixed prefill/decode.
+ * Prefill is synchronous and has no ticket until it returns; it is not yet
+ * independently cancellable through this API.
+ */
+/* max_extra_bytes is a mandatory admission budget for two state arenas plus
+ * the batch workspace. needed_bytes reports that requirement even when the
+ * budget is too small; alignment padding is handled by the allocator. */
+int ck_session_v8_batch2_enable(CKSessionV8 *session, size_t max_extra_bytes,
+                                size_t *needed_bytes);
+int ck_session_v8_batch2_prefill(CKSessionV8 *session, uint32_t slot,
+                                const int32_t *tokens, int32_t count,
+                                float *logits, uint64_t *ticket_out);
+int ck_session_v8_batch2_step(CKSessionV8 *session, const int32_t tokens[2],
+                             float *const logits[2], uint32_t *advanced_mask);
+int ck_session_v8_batch2_reset_slot(CKSessionV8 *session, uint32_t slot);
+int ck_session_v8_batch2_position(CKSessionV8 *session, uint32_t slot,
+                                 int32_t *position_out);
+void ck_session_v8_batch2_request_cancel(CKSessionV8 *session, uint64_t ticket);
+
 #ifdef __cplusplus
 }
 #endif

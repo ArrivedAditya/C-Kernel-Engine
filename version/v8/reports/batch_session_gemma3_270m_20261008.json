@@ -1,0 +1,42 @@
+{
+  "comparisons": [
+    {
+      "exact_kv": true,
+      "exact_logits": true,
+      "exact_position": true,
+      "position": 3,
+      "slot": 0
+    },
+    {
+      "exact_kv": true,
+      "exact_logits": true,
+      "exact_position": true,
+      "position": 2,
+      "slot": 1
+    }
+  ],
+  "engine": {
+    "method": "symbol_mapping_dev_inode_sha256",
+    "sha256": "a9e3b8154b11a1f95e86f879819ec61f832169a02d19119b56d7147fcf0dbd20",
+    "symbol": "gemm_nt_q5_1_q8_1_m2"
+  },
+  "manifest_sha256": "65733ddcd0f2a25e7119da44fe249dd30fe0b929590c5013e2f69a265cd3732f",
+  "model": {
+    "method": "symbol_mapping_dev_inode_sha256",
+    "sha256": "7ad3367fcf253bbe6e4cf99e83941dcf3e7fe764792b232a6d304ba776c3a684",
+    "symbol": "ck_model_decode_batch2"
+  },
+  "required_extra_bytes": 75565632,
+  "session": {
+    "method": "symbol_mapping_dev_inode_sha256",
+    "sha256": "ba2fa249e827bdf88da43219e7c7767cccccc904430f32daaf75381b799549ca",
+    "symbol": "ck_session_v8_batch2_step"
+  },
+  "status": "pass",
+  "tokenizer": {
+    "method": "symbol_mapping_dev_inode_sha256",
+    "sha256": "8c7ff175a64d23f10e17b2f7c349325582d9c8af65845ab2cd002b1385b2b2d2",
+    "symbol": "ck_tokenizer_encode"
+  },
+  "weights_sha256": "99c8ac567f96873936ef10d046e522a11e2f1679e7d55f6c6522663d8829b515"
+}
