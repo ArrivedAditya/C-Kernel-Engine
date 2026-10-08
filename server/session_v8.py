@@ -12,8 +12,12 @@ Duck-typed surface used by the live app factory (``server/live.py``):
   session.close() -> None
 
 ``SessionV8.open`` is the only constructor that touches the native library
-(``build/libck_session_v8.so``, built via ``make ck-session-v8``). Tests inject
-a fake session and never touch this module's ``ctypes`` path.
+(``build/libck_session_v8.so``, built via ``make ck-session-v8``). Most HTTP
+tests inject a fake session; the batch binding test exercises this ctypes path
+against a compiled fake generated model.
+
+``enable_batch2`` is an opt-in token/logit boundary for a future coordinated
+worker. It does not admit concurrent HTTP requests or perform sampling.
 """
 
 from __future__ import annotations
@@ -113,6 +117,55 @@ class _GenerateResult(ctypes.Structure):
     ]
 
 
+class _ModelDescriptor(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_uint32), ("abi_version", ctypes.c_uint32),
+        ("capabilities", ctypes.c_uint64), ("artifact_role", ctypes.c_uint32),
+        ("reserved0", ctypes.c_uint32), ("context_length", ctypes.c_int32),
+        ("vocab_size", ctypes.c_int32),
+        ("encoder_memory_tokens", ctypes.c_int32),
+        ("encoder_memory_dim", ctypes.c_int32),
+        ("primary_input_tokens", ctypes.c_int32),
+        ("primary_input_dim", ctypes.c_int32),
+        ("reserved", ctypes.c_uint64 * 8),
+    ]
+
+
+_BATCH_ABI = {
+    "ck_session_v8_get_model_descriptor": (
+        [ctypes.c_void_p, ctypes.POINTER(_ModelDescriptor), ctypes.c_size_t],
+        ctypes.c_int),
+    "ck_session_v8_batch2_enable": (
+        [ctypes.c_void_p, ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t)],
+        ctypes.c_int),
+    "ck_session_v8_batch2_prefill": (
+        [ctypes.c_void_p, ctypes.c_uint32, ctypes.POINTER(ctypes.c_int32),
+         ctypes.c_int32, ctypes.POINTER(ctypes.c_float),
+         ctypes.POINTER(ctypes.c_uint64)], ctypes.c_int),
+    "ck_session_v8_batch2_step": (
+        [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int32),
+         ctypes.POINTER(ctypes.POINTER(ctypes.c_float)),
+         ctypes.POINTER(ctypes.c_uint32)], ctypes.c_int),
+    "ck_session_v8_batch2_reset_slot": (
+        [ctypes.c_void_p, ctypes.c_uint32], ctypes.c_int),
+    "ck_session_v8_batch2_position": (
+        [ctypes.c_void_p, ctypes.c_uint32, ctypes.POINTER(ctypes.c_int32)],
+        ctypes.c_int),
+    "ck_session_v8_batch2_request_cancel": (
+        [ctypes.c_void_p, ctypes.c_uint64], None),
+}
+
+
+def _configure_batch_abi(lib: Any) -> None:
+    try:
+        for name, (argtypes, restype) in _BATCH_ABI.items():
+            fn = getattr(lib, name)
+            fn.argtypes = argtypes
+            fn.restype = restype
+    except AttributeError as exc:
+        raise SessionError(-5, "loaded session library lacks the batch2 ABI") from exc
+
+
 _TOKEN_CALLBACK = ctypes.CFUNCTYPE(
     ctypes.c_int,
     ctypes.c_void_p,
@@ -171,6 +224,96 @@ def _configure_lib(lib: Any) -> None:
         "ck_session_v8_last_error",
     ):
         _configure_abi(lib, name)
+
+
+def _raise_native_error(lib: Any, session: Any, operation: str, status: int) -> None:
+    if status == 0:
+        return
+    label = _SESSION_STATUS_NAMES.get(status, f"status={status}")
+    detail = _last_error(lib, session)
+    message = f"{operation} failed ({label})"
+    if detail:
+        message += f": {detail}"
+    raise _SESSION_STATUS_EXCEPTIONS.get(status, SessionError)(status, message)
+
+
+class Batch2SessionV8:
+    """Serialized native two-slot operations; cancellation may run concurrently.
+
+    This is a token/logit boundary. Logit arrays are reused and valid only
+    until the next operation that writes that slot; copy them to retain a
+    snapshot. The caller owns per-request sampling, stopping, output delivery,
+    and worker lifetime. It must join in-flight cancellation calls before
+    closing the parent session.
+    """
+
+    def __init__(self, parent: "SessionV8", vocab_size: int,
+                 required_bytes: int, native_required_bytes: int):
+        self.parent = parent
+        self.vocab_size = vocab_size
+        self.required_bytes = required_bytes
+        self.native_required_bytes = native_required_bytes
+        self._logits = ((ctypes.c_float * vocab_size)(),
+                        (ctypes.c_float * vocab_size)())
+        self._outputs = (ctypes.POINTER(ctypes.c_float) * 2)(*self._logits)
+
+    def _call(self, name: str, *args: Any) -> None:
+        with self.parent._lock:
+            if self.parent.session is None:
+                raise SessionError(-6, "batch2 session is closed")
+            status = getattr(self.parent.lib, name)(self.parent.session, *args)
+            _raise_native_error(self.parent.lib, self.parent.session, name, status)
+
+    def _validate_tokens(self, tokens: Sequence[int], count: int) -> None:
+        if len(tokens) != count or any(
+            type(token) is not int or token < 0 or token >= self.vocab_size
+            for token in tokens
+        ):
+            raise ValueError("batch2 token IDs must be integers in the loaded vocabulary")
+
+    def prefill(self, slot: int, tokens: Sequence[int]) -> tuple[int, Any]:
+        if type(slot) is not int or slot not in (0, 1) or not tokens:
+            raise ValueError("prefill requires slot 0 or 1 and nonempty tokens")
+        if len(tokens) > 0x7FFFFFFF:
+            raise ValueError("prefill token count exceeds int32 capacity")
+        self._validate_tokens(tokens, len(tokens))
+        token_values = (ctypes.c_int32 * len(tokens))(*tokens)
+        ticket = ctypes.c_uint64()
+        self._call("ck_session_v8_batch2_prefill", slot, token_values,
+                   len(tokens), self._logits[slot], ctypes.byref(ticket))
+        return ticket.value, self._logits[slot]
+
+    def step(self, tokens: tuple[int, int]) -> tuple[int, tuple[Any, Any]]:
+        if len(tokens) != 2:
+            raise ValueError("batch2 step requires exactly two token IDs")
+        self._validate_tokens(tokens, 2)
+        inputs = (ctypes.c_int32 * 2)(*tokens)
+        advanced = ctypes.c_uint32()
+        self._call("ck_session_v8_batch2_step", inputs, self._outputs,
+                   ctypes.byref(advanced))
+        return advanced.value, self._logits
+
+    def reset_slot(self, slot: int) -> None:
+        if type(slot) is not int or slot not in (0, 1):
+            raise ValueError("slot must be 0 or 1")
+        self._call("ck_session_v8_batch2_reset_slot", slot)
+
+    def position(self, slot: int) -> int:
+        if type(slot) is not int or slot not in (0, 1):
+            raise ValueError("slot must be 0 or 1")
+        position = ctypes.c_int32()
+        self._call("ck_session_v8_batch2_position", slot, ctypes.byref(position))
+        return position.value
+
+    def request_cancel(self, ticket: int) -> None:
+        if type(ticket) is not int or not 0 < ticket <= (1 << 63) - 1:
+            raise ValueError("ticket must be a positive batch2 ticket")
+        # Native cancellation is atomic and may run during a generated step.
+        # Session close remains the caller's responsibility after worker join.
+        if self.parent.session is None:
+            raise SessionError(-6, "batch2 session is closed")
+        self.parent.lib.ck_session_v8_batch2_request_cancel(
+            self.parent.session, ticket)
 
 
 def _detect_threads() -> int:
@@ -254,6 +397,7 @@ class SessionV8:
         self._lock = threading.Lock()
         self.lib: Any = None
         self.session: Any = None
+        self._batch2: Batch2SessionV8 | None = None
 
     @classmethod
     def open(
@@ -300,18 +444,86 @@ class SessionV8:
         self._lock = threading.Lock()
         self.lib = lib
         self.session = session
+        self._batch2 = None
         return self
 
     def count_tokens(self, text: str) -> int:
-        count = self.lib.ck_session_v8_encode(self.session, (text or "").encode(), None, 0)
-        if count < 0:
-            msg = "ck_session_v8_encode failed while validating request capacity"
-            native_msg = _last_error(self.lib, self.session)
-            if native_msg:
-                msg += f": {native_msg}"
-            exc_cls = _SESSION_STATUS_EXCEPTIONS.get(count, SessionError)
-            raise exc_cls(count, msg)
-        return int(count)
+        with self._lock:
+            if self.session is None:
+                raise SessionError(-6, "session is closed")
+            count = self.lib.ck_session_v8_encode(self.session, (text or "").encode(), None, 0)
+            if count < 0:
+                msg = "ck_session_v8_encode failed while validating request capacity"
+                native_msg = _last_error(self.lib, self.session)
+                if native_msg:
+                    msg += f": {native_msg}"
+                exc_cls = _SESSION_STATUS_EXCEPTIONS.get(count, SessionError)
+                raise exc_cls(count, msg)
+            return int(count)
+
+    def encode_ids(self, text: str) -> list[int]:
+        """Return exact native token IDs for a fully rendered prompt."""
+        payload = (text or "").encode()
+        with self._lock:
+            if self.session is None:
+                raise SessionError(-6, "session is closed")
+            count = self.lib.ck_session_v8_encode(self.session, payload, None, 0)
+            if count < 0:
+                _raise_native_error(self.lib, self.session, "ck_session_v8_encode", count)
+            if count == 0:
+                return []
+            output = (ctypes.c_int32 * count)()
+            written = self.lib.ck_session_v8_encode(self.session, payload, output, count)
+            if written < 0:
+                _raise_native_error(self.lib, self.session, "ck_session_v8_encode", written)
+            if written != count:
+                raise SessionError(-7, "native tokenizer count changed during encoding")
+            return list(output)
+
+    def enable_batch2(self, max_extra_bytes: int) -> Batch2SessionV8:
+        """Reserve two native slots and reusable host logits within one budget.
+
+        Enabling batch mode is irreversible for this loaded session and
+        excludes whole-request generate. No HTTP route enables it yet.
+        """
+        if type(max_extra_bytes) is not int or not 0 <= max_extra_bytes <= ctypes.c_size_t(-1).value:
+            raise ValueError("max_extra_bytes must fit size_t and be nonnegative")
+        with self._lock:
+            if self.session is None:
+                raise SessionError(-6, "session is closed")
+            if self._batch2 is not None:
+                if max_extra_bytes < self._batch2.required_bytes:
+                    raise SessionError(-8, f"batch2 requires {self._batch2.required_bytes} extra bytes; budget is {max_extra_bytes}")
+                return self._batch2
+            _configure_batch_abi(self.lib)
+            descriptor = _ModelDescriptor()
+            status = self.lib.ck_session_v8_get_model_descriptor(
+                self.session, ctypes.byref(descriptor), ctypes.sizeof(descriptor))
+            _raise_native_error(self.lib, self.session, "ck_session_v8_get_model_descriptor", status)
+            if descriptor.vocab_size <= 0:
+                raise SessionError(-5, "batch2 requires a positive loaded vocabulary size")
+            needed = ctypes.c_size_t()
+            status = self.lib.ck_session_v8_batch2_enable(
+                self.session, 0, ctypes.byref(needed))
+            if status == 0:
+                raise SessionError(-6, "batch2 is already enabled outside this host owner")
+            if status != -8:
+                _raise_native_error(self.lib, self.session, "ck_session_v8_batch2_enable", status)
+            host_bytes = 2 * descriptor.vocab_size * ctypes.sizeof(ctypes.c_float)
+            total_bytes = needed.value + host_bytes
+            if total_bytes > max_extra_bytes:
+                raise SessionError(-8, f"batch2 requires {total_bytes} extra bytes "
+                                   f"({needed.value} native + {host_bytes} logits); "
+                                   f"budget is {max_extra_bytes}")
+            # Allocate host outputs before enabling native mode, so a Python
+            # allocation failure cannot strand an enabled session.
+            batch = Batch2SessionV8(self, descriptor.vocab_size,
+                                    total_bytes, needed.value)
+            status = self.lib.ck_session_v8_batch2_enable(
+                self.session, max_extra_bytes - host_bytes, ctypes.byref(needed))
+            _raise_native_error(self.lib, self.session, "ck_session_v8_batch2_enable", status)
+            self._batch2 = batch
+            return self._batch2
 
     def generate(
         self,
@@ -420,5 +632,7 @@ class SessionV8:
         self.lib.ck_session_v8_cancel(self.session)
 
     def close(self) -> None:
-        self.lib.ck_session_v8_close(self.session)
-        self.session = None
+        with self._lock:
+            if self.session is not None:
+                self.lib.ck_session_v8_close(self.session)
+                self.session = None
