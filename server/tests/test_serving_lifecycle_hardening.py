@@ -4,6 +4,7 @@ import concurrent.futures
 import hashlib
 import json
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -171,6 +172,100 @@ def test_stale_owner_never_cancels_new_request_and_active_owner_retains_slot():
     current.release()
     current.release()
     assert not lock.locked()
+
+
+def test_bounded_admission_is_fifo_and_rejects_overflow():
+    lock = threading.Lock()
+    admission = live._FlightAdmission(lock, max_waiters=2)
+    assert lock.acquire(blocking=False)
+    release_first = threading.Event()
+    order = []
+
+    def wait_for_queue_size(size):
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            with admission.guard:
+                if len(admission.waiters) == size:
+                    return
+            threading.Event().wait(.001)
+        pytest.fail(f"expected {size} queued requests")
+
+    def contender(name):
+        result = admission.acquire(5)
+        order.append((name, result))
+        if result == "acquired":
+            if name == "first":
+                assert release_first.wait(5)
+            lock.release()
+            admission.notify_release()
+
+    first = threading.Thread(target=contender, args=("first",))
+    second = threading.Thread(target=contender, args=("second",))
+    first.start()
+    wait_for_queue_size(1)
+    second.start()
+    wait_for_queue_size(2)
+    assert admission.acquire(0) == "full"
+    lock.release()
+    admission.notify_release()
+    try:
+        deadline = time.monotonic() + 5
+        while not order and time.monotonic() < deadline:
+            threading.Event().wait(.001)
+        assert order == [("first", "acquired")]
+    finally:
+        release_first.set()
+        first.join(timeout=5)
+        second.join(timeout=5)
+    assert not first.is_alive() and not second.is_alive()
+    assert order == [("first", "acquired"), ("second", "acquired")]
+    assert not lock.locked()
+
+
+def test_timed_out_admission_removes_its_ticket():
+    lock = threading.Lock()
+    admission = live._FlightAdmission(lock, max_waiters=1)
+    lock.acquire()
+    assert admission.acquire(.01) == "timeout"
+    assert not admission.waiters
+    lock.release()
+    assert admission.acquire(0) == "acquired"
+    lock.release()
+
+
+@pytest.mark.parametrize("route", ["responses", "chat/completions"])
+def test_http_admission_overflow_does_not_start_native_work(monkeypatch, route):
+    monkeypatch.setattr(live, "_FLIGHT_MAX_WAITERS", 1)
+    monkeypatch.setattr(live, "_FLIGHT_WAIT_SECONDS", 5.0)
+    session = Session()
+    session.release.set()
+    app = create_app(session, model="test", chat_template=TEMPLATE)
+    client = TestClient(app)
+    payload = ({"model": "test", "input": "queued"} if route == "responses"
+               else {"model": "test", "messages": [{"role": "user", "content": "queued"}]})
+    assert app.state.flight_lock.acquire(blocking=False)
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            queued = pool.submit(client.post, f"/v1/{route}", json=payload)
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                with app.state.flight_admission.guard:
+                    if len(app.state.flight_admission.waiters) == 1:
+                        break
+                threading.Event().wait(.001)
+            else:
+                pytest.fail("request did not join admission queue")
+            full = client.post(f"/v1/{route}", json=payload)
+            assert full.status_code == 429
+            assert "queue is full" in full.json()["detail"]
+            assert session.calls == 0
+            app.state.flight_lock.release()
+            app.state.flight_admission.notify_release()
+            assert queued.result(timeout=5).status_code == 200
+    finally:
+        if app.state.flight_lock.locked():
+            app.state.flight_lock.release()
+    assert session.calls == 1
 
 
 def test_disconnect_before_stream_iteration_releases_reserved_slot():
