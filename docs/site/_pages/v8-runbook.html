@@ -1618,6 +1618,36 @@ version/v8/scripts/ck_serve_v8.py "$RUN_DIR" --run "$RUN_DIR" \
         single-flight execution; later layers, recurrent Qwen state, dynamic
         admission and mixed prefill/decode remain separate milestones.
     </p>
+    <p>
+        The subsequent two-row generated entry extends the checked graph-derived
+        plan across consecutive complete decoder layers. On the identified
+        Gemma3-270M Q5_K_M artifact, all 18 supported layers execute four
+        shared map-selected projection groups per layer (72 total); attention,
+        KV writes and positions remain sequence-local. The plan checks values
+        live across every split against the complete remaining graph. It rejects
+        an unsupported layer and leaves the rest of the decode path local rather
+        than assuming an unproven buffer extent or provider binding. Compact
+        row packing is required where a selected provider stride differs from
+        the live activation extent.
+    </p>
+    <p>
+        Run <code>certify_batch_decode_v8.py</code> with
+        <code>--expected-shared-layers 18 --expected-projection-groups 72</code>
+        against the identified local bundle and matching generated source. The retained
+        <code>batch_decode_gemma3_270m_multi_layer_20261008.json</code> report
+        compares complete finite logits, KV bytes and positions after each of
+        seven continuations: unequal prefixes, swapped rows, retirement and
+        slot reuse, cancellation, capacity rejection and recovery. A small
+        compiled two-layer regression runs in the standard test suite and
+        includes deliberately broken restoration and cache-ownership controls.
+        On the local i7-14700T, three artifact-identical diagnostic repetitions
+        compare six isolated decode tokens with three two-row steps; the reports
+        record full-step time, workspace and estimated copy volume. Optional
+        copy timing is separately labeled because instrumentation perturbs the
+        measurement. These are small-artifact results, not a general throughput
+        guarantee. HTTP remains single-flight; recurrent Qwen state, request
+        scheduling and mixed prefill/decode still need their own contracts.
+    </p>
 </div>
 
 <div class="card">

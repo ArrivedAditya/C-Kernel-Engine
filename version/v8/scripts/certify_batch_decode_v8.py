@@ -81,11 +81,20 @@ def _bind(model: ctypes.CDLL) -> None:
     model.ck_model_sequence_state_destroy.restype = ctypes.c_int
     model.ck_model_get_named_activation_ptr.argtypes = [ctypes.c_char_p]
     model.ck_model_get_named_activation_ptr.restype = ctypes.c_size_t
+    model.ck_model_get_active_tokens.restype = ctypes.c_int
     model.ck_model_batch_decode_workspace.argtypes = [
         ctypes.POINTER(ctypes.c_size_t), ctypes.POINTER(ctypes.c_size_t)]
     model.ck_model_batch_decode_workspace.restype = ctypes.c_int
     if hasattr(model, "ck_model_batch_decode_projection_groups"):
         model.ck_model_batch_decode_projection_groups.restype = ctypes.c_int
+    if hasattr(model, "ck_model_batch_decode_shared_layers"):
+        model.ck_model_batch_decode_shared_layers.restype = ctypes.c_int
+    for name in ("ck_model_batch_decode_snapshot_copy_bytes",
+                 "ck_model_batch_decode_packing_copy_bytes"):
+        if hasattr(model, name):
+            getattr(model, name).restype = ctypes.c_size_t
+    if hasattr(model, "ck_model_batch_decode_last_copy_ns"):
+        model.ck_model_batch_decode_last_copy_ns.restype = ctypes.c_uint64
     model.ck_model_decode_batch2.argtypes = [
         ctypes.POINTER(BatchRow), ctypes.c_size_t, ctypes.c_void_p, ctypes.c_size_t]
     model.ck_model_decode_batch2.restype = ctypes.c_int
@@ -94,7 +103,7 @@ def _bind(model: ctypes.CDLL) -> None:
 
 
 def _require_projection_groups(actual: int, expected: int | None) -> None:
-    if actual not in (1, 2, 4):
+    if actual not in (1, 2) and (actual < 4 or actual % 4):
         raise AssertionError("invalid generated batch projection-group count")
     if expected is not None and actual != expected:
         raise AssertionError(
@@ -103,7 +112,8 @@ def _require_projection_groups(actual: int, expected: int | None) -> None:
 
 
 def certify(bundle: Path, generated_source: Path,
-            expected_projection_groups: int | None = None) -> dict:
+            expected_projection_groups: int | None = None,
+            expected_shared_layers: int | None = None) -> dict:
     assets = {name: bundle / name for name in (
         "libmodel.so", "libckernel_engine.so", "libckernel_tokenizer.so",
         "weights.bump", "layout_decode.json", "config.json")}
@@ -119,6 +129,26 @@ def certify(bundle: Path, generated_source: Path,
             if hasattr(model, "ck_model_batch_decode_projection_groups") else 1
         )
         _require_projection_groups(projection_groups, expected_projection_groups)
+        shared_layers = (
+            int(model.ck_model_batch_decode_shared_layers())
+            if hasattr(model, "ck_model_batch_decode_shared_layers")
+            else 1 if projection_groups == 4 else 0
+        )
+        if (shared_layers < 0 or projection_groups >= 4 and
+                shared_layers * 4 != projection_groups):
+            raise AssertionError("generated shared-layer count disagrees with projection groups")
+        if expected_shared_layers is not None and shared_layers != expected_shared_layers:
+            raise AssertionError(
+                f"expected {expected_shared_layers} complete shared layers, loaded runtime has {shared_layers}"
+            )
+        snapshot_copy_bytes = (
+            int(model.ck_model_batch_decode_snapshot_copy_bytes())
+            if hasattr(model, "ck_model_batch_decode_snapshot_copy_bytes") else None
+        )
+        packing_copy_bytes = (
+            int(model.ck_model_batch_decode_packing_copy_bytes())
+            if hasattr(model, "ck_model_batch_decode_packing_copy_bytes") else None
+        )
         loaded = {}
         for name, symbol in (("libmodel.so", "ck_model_decode_batch2"),
                              ("libckernel_engine.so", "gemm_nt_q5_1_q8_1_m2"),
@@ -221,6 +251,7 @@ def certify(bundle: Path, generated_source: Path,
         create("b")
         comparisons: list[dict] = []
         batch_ms = 0.0
+        profiled_copy_ms = 0.0
         batch_steps_ms: list[dict] = []
 
         def activate(name: str) -> None:
@@ -241,13 +272,16 @@ def certify(bundle: Path, generated_source: Path,
             activate(name)
             if kv_digest() != expected_kv:
                 raise AssertionError(f"{name}[{index}] KV cache diverged")
+            position = int(model.ck_model_get_active_tokens())
+            if position != index + 1:
+                raise AssertionError(f"{name}[{index}] position {position} != {index + 1}")
             comparisons.append({"sequence": name, "step": index,
                                 "max_absolute_logit_error": max_abs,
                                 "exact_logits": actual == expected,
-                                "exact_kv": True})
+                                "exact_kv": True, "position": position})
 
         def batch(order: tuple[tuple[str, int], tuple[str, int]]) -> list[bytes]:
-            nonlocal batch_ms
+            nonlocal batch_ms, profiled_copy_ms
             destinations = [(ctypes.c_float * vocab)() for _ in range(2)]
             rows = (BatchRow * 2)(*[
                 BatchRow(handles[name], token_sets[name][index], index, row, 1,
@@ -260,9 +294,17 @@ def certify(bundle: Path, generated_source: Path,
             batch_ms += elapsed
             if status != 0:
                 raise RuntimeError(f"generated batch step failed: {status}")
+            copy_ms = (
+                float(model.ck_model_batch_decode_last_copy_ns()) / 1_000_000
+                if hasattr(model, "ck_model_batch_decode_last_copy_ns") and
+                os.environ.get("CK_BATCH_PROFILE_COPIES", "") not in ("", "0") else None
+            )
+            if copy_ms is not None:
+                profiled_copy_ms += copy_ms
             batch_steps_ms.append({
                 "rows": [f"{name}:{index}" for name, index in order],
                 "batch_step_ms": elapsed,
+                "profiled_copy_ms": copy_ms,
             })
             return [bytes(row) for row in destinations]
 
@@ -336,6 +378,10 @@ def certify(bundle: Path, generated_source: Path,
                 raise AssertionError("workspace/KV alias was accepted")
             if outputs[0][0] != 17.0 or outputs[1][0] != 17.0:
                 raise AssertionError("rejected batch modified output buffers")
+            for name, expected_position in (("a", 5), ("c", 0)):
+                activate(name)
+                if model.ck_model_get_active_tokens() != expected_position:
+                    raise AssertionError(f"rejected batch advanced {name}")
             for name, index, result in zip(
                 ("a", "c"), (5, 0), batch((("a", 5), ("c", 0)))):
                 compare(name, index, result)
@@ -359,6 +405,8 @@ def certify(bundle: Path, generated_source: Path,
         "schema": "cke.generated-batch-decode-v1",
         "status": "pass",
         "scope": (
+            "two_rows_shared_multiple_complete_layers_kv_only_not_continuous_batching"
+            if projection_groups > 4 else
             "two_rows_shared_one_complete_layer_kv_only_not_continuous_batching"
             if projection_groups == 4 else
             "two_rows_shared_first_layer_qk_and_gateup_kv_only_not_continuous_batching"
@@ -366,7 +414,13 @@ def certify(bundle: Path, generated_source: Path,
             "two_rows_shared_first_layer_qk_kv_only_not_continuous_batching"
         ),
         "shared_projection_groups": projection_groups,
+        "shared_complete_layers": shared_layers,
         "expected_projection_groups": expected_projection_groups,
+        "expected_shared_layers": expected_shared_layers,
+        "snapshot_copy_bytes_per_batch_step": snapshot_copy_bytes,
+        "packing_copy_bytes_per_batch_step": packing_copy_bytes,
+        "profiled_copy_ms_total": round(profiled_copy_ms, 3)
+        if os.environ.get("CK_BATCH_PROFILE_COPIES", "") not in ("", "0") else None,
         "capabilities": capabilities,
         "compiled_context_length": context,
         "vocab_size": vocab,
@@ -399,11 +453,13 @@ def main() -> int:
     parser.add_argument("--report", type=Path)
     parser.add_argument("--generated-source", type=Path, required=True,
                         help="C source whose prefix digest must match the loaded generated-library symbol")
-    parser.add_argument("--expected-projection-groups", type=int, choices=(1, 2, 4),
+    parser.add_argument("--expected-projection-groups", type=int,
                         help="fail certification unless the loaded generated entry has this many shared groups")
+    parser.add_argument("--expected-shared-layers", type=int,
+                        help="fail certification unless the loaded runtime shares this many complete layers")
     args = parser.parse_args()
     result = certify(args.bundle.resolve(), args.generated_source.resolve(),
-                     args.expected_projection_groups)
+                     args.expected_projection_groups, args.expected_shared_layers)
     result["generated_source_sha256"] = _sha256(args.generated_source.resolve())
     body = json.dumps(result, indent=2) + "\n"
     if args.report:
