@@ -398,6 +398,7 @@ class SessionV8:
         self.lib: Any = None
         self.session: Any = None
         self._batch2: Batch2SessionV8 | None = None
+        self.context_length: int | None = None
 
     @classmethod
     def open(
@@ -445,6 +446,7 @@ class SessionV8:
         self.lib = lib
         self.session = session
         self._batch2 = None
+        self.context_length = cfg.context_length
         return self
 
     def count_tokens(self, text: str) -> int:
