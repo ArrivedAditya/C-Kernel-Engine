@@ -318,6 +318,8 @@ static int gemm_nt_q8_0_q8_0_ggml_strict(const float *A,
 }
 
 void vec_dot_q8_0_q8_0_ref(int n, float *s, const void *vx, const void *vy);
+void gemm_q8_0_q8_0_m2n4_strided(float *C, int ldc, const void *W,
+                                  const void *A_q8, int M, int N, int K);
 
 static inline int ck_nearest_int_q8_0_ref(float fval)
 {
@@ -409,6 +411,37 @@ void gemv_q8_0_q8_0_contract(float *y,
     }
     quantize_row_q8_0(x, x_q8, K);
     gemv_q8_0_q8_0_x4(y, W, x_q8, M, K);
+}
+
+/* Two decode rows share each Q8_0 weight block.  Keep each row's integer
+ * accumulation and block-order FP32 reduction independent. */
+void gemm_nt_q8_0_q8_0_contract_m2(const float *A, const void *B,
+                                    const float *bias, float *C,
+                                    int M, int N, int K)
+{
+    if (!A || !B || !C || M != 2 || N <= 0 || K <= 0 ||
+        (K % QK8_0) != 0 || K / QK8_0 > CK_Q80_STACK_Q8_BLOCKS) return;
+    const int nb = K / QK8_0;
+    block_q8_0 x[2 * CK_Q80_STACK_Q8_BLOCKS];
+    if (ck_strict_parity_enabled()) {
+        quantize_row_q8_0_ref_local(A, x, K);
+        quantize_row_q8_0_ref_local(A + K, x + nb, K);
+    } else {
+        quantize_row_q8_0(A, x, K);
+        quantize_row_q8_0(A + K, x + nb, K);
+    }
+    if (ck_strict_parity_enabled()) {
+        gemv_q8_0_q8_0_ref_rows(C, B, x, N, K);
+        gemv_q8_0_q8_0_ref_rows(C + N, B, x + nb, N, K);
+    } else {
+        gemm_q8_0_q8_0_m2n4_strided(C, N, B, x, 2, N, K);
+    }
+    if (bias) {
+        for (int n = 0; n < N; ++n) {
+            C[n] += bias[n];
+            C[(size_t)N + n] += bias[n];
+        }
+    }
 }
 
 void gemm_nt_q8_0_q8_0_contract(const float *A,

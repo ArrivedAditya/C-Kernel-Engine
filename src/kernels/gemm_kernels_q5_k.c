@@ -979,6 +979,33 @@ void gemm_q5_k_q8_k_compact_rows4(float *output,
 #endif
 }
 
+/* Decode M=2 adapter: preserve canonical Q8_K input bytes and use the
+ * existing compact-row provider, which unpacks each Q5_K weight block once
+ * for both rows on AVX2. */
+void gemm_nt_q5_k_q8_k_m2(const float *A, const void *B,
+                           const float *bias, float *C,
+                           int M, int N, int K)
+{
+    if (!A || !B || !C || M != 2 || N <= 0 || K <= 0 ||
+        (K % QK_K) != 0 || K / QK_K > CK_Q5K_STACK_Q8_BLOCKS) return;
+    if (ck_q5k_debug_fp32_fallback()) {
+        gemv_q5_k_ref_fp32(C, B, A, N, K);
+        gemv_q5_k_ref_fp32(C + N, B, A + K, N, K);
+    } else {
+        block_q8_K x[2][CK_Q5K_STACK_Q8_BLOCKS];
+        quantize_row_q8_k(A, x[0], K);
+        quantize_row_q8_k(A + K, x[1], K);
+        const void *rows[4] = {x[0], x[1], NULL, NULL};
+        gemm_q5_k_q8_k_compact_rows4(C, N, B, rows, 2, N, K);
+    }
+    if (bias) {
+        for (int n = 0; n < N; ++n) {
+            C[n] += bias[n];
+            C[(size_t)N + n] += bias[n];
+        }
+    }
+}
+
 void gemv_q5_k(float *y, const void *W, const float *x, int M, int K)
 {
 #if defined(__AVX512F__)

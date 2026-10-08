@@ -1,0 +1,126 @@
+{
+  "schema": "cke.generated-batch-decode-v1",
+  "status": "pass",
+  "scope": "two_rows_shared_one_complete_layer_kv_only_not_continuous_batching",
+  "shared_projection_groups": 4,
+  "expected_projection_groups": 4,
+  "capabilities": 217215,
+  "compiled_context_length": 1024,
+  "vocab_size": 262144,
+  "full_logit_and_kv_comparisons": [
+    {
+      "sequence": "a",
+      "step": 2,
+      "max_absolute_logit_error": 0.0,
+      "exact_logits": true,
+      "exact_kv": true
+    },
+    {
+      "sequence": "b",
+      "step": 1,
+      "max_absolute_logit_error": 0.0,
+      "exact_logits": true,
+      "exact_kv": true
+    },
+    {
+      "sequence": "b",
+      "step": 2,
+      "max_absolute_logit_error": 0.0,
+      "exact_logits": true,
+      "exact_kv": true
+    },
+    {
+      "sequence": "a",
+      "step": 3,
+      "max_absolute_logit_error": 0.0,
+      "exact_logits": true,
+      "exact_kv": true
+    },
+    {
+      "sequence": "a",
+      "step": 4,
+      "max_absolute_logit_error": 0.0,
+      "exact_logits": true,
+      "exact_kv": true
+    },
+    {
+      "sequence": "a",
+      "step": 5,
+      "max_absolute_logit_error": 0.0,
+      "exact_logits": true,
+      "exact_kv": true
+    },
+    {
+      "sequence": "c",
+      "step": 0,
+      "max_absolute_logit_error": 0.0,
+      "exact_logits": true,
+      "exact_kv": true
+    }
+  ],
+  "batch_step_total_ms": 65.48,
+  "isolated_decode_total_ms": 91.531,
+  "timing_scope": "matched_six_decode_tokens_three_two_row_steps_diagnostic_not_task_throughput",
+  "matched_timing": {
+    "cpu": "Intel(R) Core(TM) i7-14700T",
+    "affinity_cpus": 28,
+    "isolated_sequential_ms": 184.341,
+    "batch_two_ms": 65.48,
+    "isolated_aggregate_tokens_per_s": 32.548,
+    "batch_two_aggregate_tokens_per_s": 91.631,
+    "isolated_mean_token_latency_ms": 30.724,
+    "batch_two_mean_token_latency_ms": 21.827,
+    "batch_steps": [
+      {
+        "rows": [
+          "a:2",
+          "b:1"
+        ],
+        "batch_step_ms": 24.748627096414566
+      },
+      {
+        "rows": [
+          "b:2",
+          "a:3"
+        ],
+        "batch_step_ms": 22.52507396042347
+      },
+      {
+        "rows": [
+          "a:5",
+          "c:0"
+        ],
+        "batch_step_ms": 18.206482753157616
+      }
+    ]
+  },
+  "kv_bytes_per_sequence": 37748736,
+  "batch_workspace_bytes": 68160,
+  "artifacts": {
+    "libmodel.so": "426d976cddc11880bd3f32c7ad326f200c1c2f8f39a2a7678443b33fd6249de5",
+    "libckernel_engine.so": "a9e3b8154b11a1f95e86f879819ec61f832169a02d19119b56d7147fcf0dbd20",
+    "libckernel_tokenizer.so": "8c7ff175a64d23f10e17b2f7c349325582d9c8af65845ab2cd002b1385b2b2d2",
+    "weights.bump": "99c8ac567f96873936ef10d046e522a11e2f1679e7d55f6c6522663d8829b515",
+    "layout_decode.json": "05115f8f6e54e79092ae15eaca2b457b8b770d26a8c404b58671c49a5371020d",
+    "config.json": "cb8125e7964d3b18c83fc8d0251c4ecda8ee7314acaa899265ef81fc4772815e"
+  },
+  "loaded_libraries": {
+    "libmodel.so": {
+      "method": "symbol_mapping_dev_inode_sha256",
+      "symbol": "ck_model_decode_batch2",
+      "sha256": "426d976cddc11880bd3f32c7ad326f200c1c2f8f39a2a7678443b33fd6249de5"
+    },
+    "libckernel_engine.so": {
+      "method": "symbol_mapping_dev_inode_sha256",
+      "symbol": "gemm_nt_q5_1_q8_1_m2",
+      "sha256": "a9e3b8154b11a1f95e86f879819ec61f832169a02d19119b56d7147fcf0dbd20"
+    },
+    "libckernel_tokenizer.so": {
+      "method": "symbol_mapping_dev_inode_sha256",
+      "symbol": "ck_tokenizer_encode",
+      "sha256": "8c7ff175a64d23f10e17b2f7c349325582d9c8af65845ab2cd002b1385b2b2d2"
+    }
+  },
+  "loaded_generated_source_prefix_sha256": "12fa5e6d8c4e53889faba100597e8a7895f1ae213b1274542b83000ad184b6e2",
+  "generated_source_sha256": "9b181a6660060675ab2e71d83878f333743d0a595155f3bde7a797d5affbe216"
+}

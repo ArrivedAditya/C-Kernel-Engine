@@ -1754,6 +1754,18 @@ void gemm_nt_q6_k_q8_k_m4_tile(const void *A_q8,
         A_q8, B, bias, C, M, N, K, m0, m1, n0, n1);
 }
 
+/* Decode M=2 uses the same row-preserving Q6_K/Q8_K arithmetic as prefill.
+ * The AVX2 tile unpacks each Q6_K weight block once for both sequences. */
+void gemm_nt_q6_k_q8_k_m2(const void *A_q8, const void *B,
+                           const float *bias, float *C,
+                           int M, int N, int K)
+{
+    if (!A_q8 || !B || !C || M != 2 || N <= 0 || K <= 0 ||
+        (K % QK_K) != 0) return;
+    gemm_nt_q6_k_q8_k_m4_tile(A_q8, B, bias, C, M, N, K,
+                                0, M, 0, N);
+}
+
 /**
  * @brief Experimental single-thread tiled NT GEMM wrapper.
  *

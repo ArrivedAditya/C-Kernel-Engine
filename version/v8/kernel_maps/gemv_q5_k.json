@@ -1,5 +1,6 @@
 {
   "id": "gemv_q5_k",
+  "batch_decode_two_rows": {"provider_id": "gemm_nt_q5_k"},
   "op": "gemv",
   "variant": "q5_k_w_fp32_a_fp32_out",
   "quant": {

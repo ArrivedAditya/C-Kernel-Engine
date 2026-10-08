@@ -1,5 +1,6 @@
 {
   "id": "gemv_q6_k_q8_k",
+  "batch_decode_two_rows": {"provider_id": "gemm_nt_q6_k_q8_k"},
   "op": "gemv",
   "variant": "q6_k_w_q8_k_a_fp32_out",
   "contract_schema_version": 1,
