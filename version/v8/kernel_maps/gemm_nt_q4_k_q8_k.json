@@ -41,6 +41,7 @@
     "diagnostic_providers": {"fp32_activation": "gemm_nt_q4_k", "row_quantized": "gemv_q4_k_q8_k"},
     "segmented_row_provider": {
       "function": "gemm_nt_q4_k_q8_k_segmented_pairwise_split_min_parallel_dispatch",
+      "singleton_tail_function": "gemm_nt_q4_k_q8_k_segmented_singleton_tail_parallel_dispatch",
       "segment_lengths_dtype": "i32",
       "boundary_semantics": "restart_row_group_at_each_segment",
       "fallback": "gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch"

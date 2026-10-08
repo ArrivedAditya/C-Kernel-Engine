@@ -1537,10 +1537,9 @@ void gemm_nt_q6_k_q8_k(const void *A_q8,
     }
 #endif
 
-    /* Prefill GEMM is the hot Qwen2/Qwen3.5 MLP-down path. Keep decode
-     * gemv_q6_k_q8_k() conservative, but allow GEMM/prefill to use the
-     * parity-gated SIMD dot helper by default. CK strict parity and
-     * CK_DEBUG_Q6K_Q8K_REF=1 still force the scalar reference reduction. */
+    /* Prefill GEMM uses the pinned x86 leaf reduction for short row groups
+     * and the tiled reduction for strict batches of at least eight rows.
+     * CK_DEBUG_Q6K_Q8K_REF=1 still forces the scalar reference leaf. */
     const block_q8_K *A = (const block_q8_K *)A_q8;
     const block_q6_K *W = (const block_q6_K *)B;
     const int blocks_per_vec = K / QK_K;
@@ -1704,14 +1703,18 @@ static inline float ck_dot_q6_k_q8_k_fast_or_ref(const block_q6_K *w,
                                                   const block_q8_K *x,
                                                   int K)
 {
-    if (ck_strict_parity_enabled() || ck_q6k_q8k_force_ref()) {
+    if (ck_q6k_q8k_force_ref()) {
         return dot_q6_k_q8_k_ref(w, x, K);
     }
 #if defined(__AVX2__)
+    /* Short strict prefill uses the pinned x86 graph's AVX2 leaf reduction.
+     * Batched strict prefill uses the separate tiled integer-slab kernel. */
     return dot_q6_k_q8_k_avx2(w, x, K);
 #elif defined(__AVX__)
+    if (ck_strict_parity_enabled()) return dot_q6_k_q8_k_ref(w, x, K);
     return dot_q6_k_q8_k_avx(w, x, K);
 #elif defined(__SSE4_1__)
+    if (ck_strict_parity_enabled()) return dot_q6_k_q8_k_ref(w, x, K);
     return dot_q6_k_q8_k_sse(w, x, K);
 #else
     return dot_q6_k_q8_k_ref(w, x, K);

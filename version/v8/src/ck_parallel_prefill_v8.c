@@ -3675,6 +3675,48 @@ void gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch(
     }
 }
 
+typedef void (*ck_quantized_gemm_dispatch_t)(
+    const void *, const void *, const float *, float *, int, int, int);
+
+static void ck_quantized_gemm_singleton_tail_dispatch(
+    ck_quantized_gemm_dispatch_t dispatch,
+    const void *A, const void *B, const float *bias, float *C,
+    int M, int N, int K, const int *segment_lengths, int num_segments)
+{
+    if (!A || !B || !C || M <= 0 || N <= 0 || K <= 0 || K % QK_K != 0 ||
+        !segment_lengths || num_segments != 3 ||
+        segment_lengths[0] < 0 || segment_lengths[0] > M ||
+        segment_lengths[1] < 0 || segment_lengths[1] > M - segment_lengths[0] ||
+        segment_lengths[2] != M - segment_lengths[0] - segment_lengths[1]) {
+        dispatch(A, B, bias, C, M, N, K);
+        return;
+    }
+
+    const size_t a_row_bytes = (size_t)(K / QK_K) * sizeof(block_q8_K);
+    int row = 0;
+    for (int group = 0; group < 2; ++group) {
+        const int count = segment_lengths[group];
+        if (count > 0) {
+            dispatch((const uint8_t *)A + (size_t)row * a_row_bytes,
+                     B, bias, C + (size_t)row * (size_t)N, count, N, K);
+        }
+        row += count;
+    }
+    for (; row < M; ++row) {
+        dispatch((const uint8_t *)A + (size_t)row * a_row_bytes,
+                 B, bias, C + (size_t)row * (size_t)N, 1, N, K);
+    }
+}
+
+void gemm_nt_q4_k_q8_k_segmented_singleton_tail_parallel_dispatch(
+    const void *A, const void *B, const float *bias, float *C,
+    int M, int N, int K, const int *segment_lengths, int num_segments)
+{
+    ck_quantized_gemm_singleton_tail_dispatch(
+        gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch,
+        A, B, bias, C, M, N, K, segment_lengths, num_segments);
+}
+
 void gemm_nt_q4_k_q8_k_segmented_pairwise_split_min_parallel_dispatch(
     const void *A, const void *B, const float *bias, float *C,
     int M, int N, int K, const int *segment_lengths, int num_segments)
@@ -3857,6 +3899,15 @@ void gemm_nt_q6_k_q8_k_segmented_parallel_dispatch(
         }
         row_offset += rows;
     }
+}
+
+void gemm_nt_q6_k_q8_k_segmented_singleton_tail_parallel_dispatch(
+    const void *A, const void *B, const float *bias, float *C,
+    int M, int N, int K, const int *segment_lengths, int num_segments)
+{
+    ck_quantized_gemm_singleton_tail_dispatch(
+        gemm_nt_q6_k_q8_k_parallel_dispatch,
+        A, B, bias, C, M, N, K, segment_lengths, num_segments);
 }
 
 void gemm_nt_q5_1_q8_1_parallel_dispatch(

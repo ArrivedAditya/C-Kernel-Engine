@@ -822,6 +822,14 @@ class V8Gemma4ScaffoldTests(unittest.TestCase):
         ]
         self.assertEqual(schedule["position_transition"], "runtime_offset")
         self.assertNotIn("position_transform", schedule)
+        self.assertEqual(
+            schedule["projection_row_group_boundaries"],
+            {
+                "policy": "restart_each_segment",
+                "operations": ["q_proj", "k_proj", "v_proj"],
+                "text_after_row_group": "single_token",
+            },
+        )
         build_ir_v8._validate_segmented_prefill_contract(
             template,
             source="test:gemma4",
@@ -838,6 +846,15 @@ class V8Gemma4ScaffoldTests(unittest.TestCase):
             build_ir_v8._validate_segmented_prefill_contract(
                 invalid,
                 source="test:gemma4-invalid",
+            )
+
+        invalid = copy.deepcopy(template)
+        invalid["contract"]["multimodal_bridge"]["prefill_schedules"][
+            "segmented_append"
+        ]["projection_row_group_boundaries"]["text_after_row_group"] = "unknown"
+        with self.assertRaisesRegex(RuntimeError, "invalid projection row-group"):
+            build_ir_v8._validate_segmented_prefill_contract(
+                invalid, source="test:gemma4-invalid-groups"
             )
 
     def test_gemma4_v_norm_is_unweighted_rmsnorm(self) -> None:

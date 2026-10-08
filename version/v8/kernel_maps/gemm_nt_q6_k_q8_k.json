@@ -68,6 +68,7 @@
     },
     "segmented_row_provider": {
       "function": "gemm_nt_q6_k_q8_k_segmented_parallel_dispatch",
+      "singleton_tail_function": "gemm_nt_q6_k_q8_k_segmented_singleton_tail_parallel_dispatch",
       "segment_lengths_dtype": "i32",
       "boundary_semantics": "restart_row_group_at_each_segment",
       "fallback": "gemm_nt_q6_k_q8_k_parallel_dispatch"

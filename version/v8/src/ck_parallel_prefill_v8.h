@@ -157,7 +157,15 @@ void gemm_nt_q4_k_q8_k_segmented_pairwise_split_min_parallel_dispatch(
     const void *A, const void *B, const float *bias, float *C,
     int M, int N, int K, const int *segment_lengths, int num_segments);
 
+void gemm_nt_q4_k_q8_k_segmented_singleton_tail_parallel_dispatch(
+    const void *A, const void *B, const float *bias, float *C,
+    int M, int N, int K, const int *segment_lengths, int num_segments);
+
 void gemm_nt_q6_k_q8_k_segmented_parallel_dispatch(
+    const void *A, const void *B, const float *bias, float *C,
+    int M, int N, int K, const int *segment_lengths, int num_segments);
+
+void gemm_nt_q6_k_q8_k_segmented_singleton_tail_parallel_dispatch(
     const void *A, const void *B, const float *bias, float *C,
     int M, int N, int K, const int *segment_lengths, int num_segments);
 
