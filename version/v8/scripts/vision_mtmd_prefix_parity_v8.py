@@ -27,6 +27,11 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def artifact_identity(path: Path) -> dict[str, str | int]:
+    resolved = path.resolve(strict=True)
+    return {"path": str(resolved), "size_bytes": resolved.stat().st_size, "sha256": sha256(resolved)}
+
+
 def validate_cke_report(report: dict, image: Path) -> tuple[Path, int, int]:
     if report.get("status") != "ok" or report.get("prefix_source") != "encoder":
         raise ValueError("CKE report must describe successful generated encoder execution")
@@ -167,8 +172,25 @@ def main() -> int:
     result = {
         "status": "pass" if passed else "fail",
         "lane": "independent_mtmd_encoder_prefix",
+        "input_provenance": "independently_decoded_and_preprocessed_from_same_p6",
         "metrics": metrics,
         "thresholds": {"max_rmse": args.max_rmse, "max_abs": args.max_abs},
+        "decoder_prefix_exports": {
+            "contract": "cke.decoder_prefix_f32.v1",
+            "tokens": tokens,
+            "row_dim": dim,
+            "ck": artifact_identity(cke_path),
+            "llama": artifact_identity(oracle_path),
+        },
+        "artifact_identity": {
+            "cke_bridge_report": artifact_identity(args.cke_report),
+            "cke_model_library": artifact_identity(Path(report["encoder_runtime"]["so_path"])),
+            "image": artifact_identity(image),
+            "oracle_model": artifact_identity(args.model),
+            "oracle_mmproj": artifact_identity(args.mmproj),
+            "oracle_probe": artifact_identity(probe),
+            **{name: artifact_identity(path) for name, path in library_paths.items()},
+        },
         "provenance": {
             "image_sha256": sha256(image),
             "cke_decoded_rgb8_sha256": report["encoder_report"]["decoded_rgb8_sha256"],
