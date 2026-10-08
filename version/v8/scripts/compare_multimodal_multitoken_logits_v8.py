@@ -1626,7 +1626,13 @@ def _capture_hidden_state_step(report: dict[str, Any], args: argparse.Namespace)
                     ck_dumps, runtime_config
                 )
             ck_dumps = _normalize_ck_recurrent_state_layout(ck_dumps, runtime_config)
-            llama_dumps = first_token._load_llama_dump_dir(llama_dir)
+            post_layer_embedding_layers = _xray_post_layer_embedding_layers(
+                inputs["runtime"]
+            )
+            llama_dumps = first_token._load_llama_dump_dir(
+                llama_dir,
+                post_layer_embedding_layers=post_layer_embedding_layers,
+            )
             oracle_name_map = dict(
                 getattr(args, "hidden_state_oracle_name_map", {}) or {}
             )
@@ -1642,11 +1648,13 @@ def _capture_hidden_state_step(report: dict[str, Any], args: argparse.Namespace)
                 ck_dumps,
                 layer_count=layer_count,
                 alias_after_attn="after_attn" in semantic_names,
+                post_layer_embedding_layers=post_layer_embedding_layers,
             )
             llama_dumps = first_token._augment_layer_input_aliases(
                 llama_dumps,
                 layer_count=layer_count,
                 alias_after_attn="after_attn" in semantic_names,
+                post_layer_embedding_layers=post_layer_embedding_layers,
             )
             ck_dumps = _filter_requested_dump_semantics(ck_dumps, semantic_names)
             llama_dumps = _filter_requested_dump_semantics(
@@ -2045,6 +2053,17 @@ def run_multimodal_multitoken_parity(args: argparse.Namespace) -> dict[str, Any]
     }
 
 
+def _xray_post_layer_embedding_layers(runtime: dict[str, Any]) -> frozenset[int]:
+    layers = first_token._post_layer_embedding_layers(runtime)
+    config = dict((runtime.get("manifest") or {}).get("config") or {})
+    if config.get("gemma4_per_layer_embedding") and not layers:
+        raise RuntimeError(
+            "per-layer embedding X-Ray alignment requires decode IR with "
+            "gemma4_per_layer_embed operations"
+        )
+    return layers
+
+
 def _configure_hidden_oracle_capture(
     inputs: dict[str, Any], args: argparse.Namespace
 ) -> None:
@@ -2070,6 +2089,9 @@ def _configure_hidden_oracle_capture(
     )
     runtime_config = dict((inputs["runtime"].get("manifest") or {}).get("config") or {})
     layer_count = int(runtime_config.get("num_layers", 0) or 0)
+    post_layer_embedding_layers = _xray_post_layer_embedding_layers(
+        inputs["runtime"]
+    )
     resolved: list[str] = []
     for requested_name in requested:
         match = re.match(r"^(.*?)-(\d+)$", requested_name)
@@ -2078,7 +2100,9 @@ def _configure_hidden_oracle_capture(
         oracle_name = oracle_name_map.get(semantic_name)
         if oracle_name is None:
             value = first_token._resolve_llama_dump_names(
-                requested_name, layer_count=layer_count
+                requested_name,
+                layer_count=layer_count,
+                post_layer_embedding_layers=post_layer_embedding_layers,
             )
         elif requested_layer is None:
             if layer_count <= 0:

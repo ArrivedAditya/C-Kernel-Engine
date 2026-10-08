@@ -68,6 +68,52 @@ class MultitokenEOSContractTests(unittest.TestCase):
         self.assertEqual(args.llama_persistent_dump_step, 0)
         self.assertEqual(args.llama_persistent_dump_names, "new_state-1")
 
+    def test_hidden_xray_resolves_post_layer_embedding_edges_from_decode_ir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ir1_decode.json").write_text(
+                json.dumps({"ops": [{"op": "gemma4_per_layer_embed", "layer": 8}]}),
+                encoding="utf-8",
+            )
+            runtime = {
+                "manifest": {"config": {
+                    "num_layers": 10,
+                    "gemma4_per_layer_embedding": True,
+                }},
+                "decode_layout_path": root / "layout_decode.json",
+            }
+            args = Namespace(
+                hidden_state_step=0,
+                hidden_state_layer=8,
+                hidden_state_names="layer_out,gemma4_per_layer_embed",
+                hidden_state_dir=root / "capture",
+                llama_persistent_dump_dir=None,
+                workdir=root,
+            )
+
+            self.runner._configure_hidden_oracle_capture({"runtime": runtime}, args)
+
+            self.assertEqual(args.llama_persistent_dump_names, "pe_in-8,l_out-8")
+
+            ordinary = Namespace(
+                hidden_state_step=0,
+                hidden_state_layer=7,
+                hidden_state_names="layer_out",
+                hidden_state_dir=root / "ordinary",
+                llama_persistent_dump_dir=None,
+                workdir=root,
+            )
+            self.runner._configure_hidden_oracle_capture({"runtime": runtime}, ordinary)
+            self.assertEqual(ordinary.llama_persistent_dump_names, "l_out-7")
+
+            missing_ir = {
+                "manifest": runtime["manifest"],
+            }
+            with self.assertRaisesRegex(RuntimeError, "requires decode IR"):
+                self.runner._configure_hidden_oracle_capture(
+                    {"runtime": missing_ir}, args
+                )
+
     def test_hidden_xray_accepts_explicit_dense_oracle_boundaries(self) -> None:
         args = Namespace(
             hidden_state_step=0,
@@ -1024,6 +1070,61 @@ class MultitokenEOSContractTests(unittest.TestCase):
             self.assertEqual(result["full_replay_control"], "not_applicable_prefill")
             self.assertEqual(result["results"], [])
             self.assertIsNone(result["first_issue"])
+            self.assertEqual(result["observational_neutrality"]["status"], "accepted")
+
+    def test_prefill_hidden_comparison_loads_post_layer_embedding_semantics(self) -> None:
+        class Library:
+            def ck_model_free(self):
+                return None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "decoder_v8.c"
+            source.write_text(
+                'ck_debug_export_hidden(model, 8, "layer_out", data, 128);\n',
+                encoding="utf-8",
+            )
+            (root / "ir1_decode.json").write_text(
+                json.dumps({"ops": [{"op": "gemma4_per_layer_embed", "layer": 8}]}),
+                encoding="utf-8",
+            )
+            runtime = {
+                "workdir": root,
+                "c_path": source,
+                "prefill_c_path": source,
+                "decode_layout_path": root / "layout_decode.json",
+                "manifest": {"config": {"num_layers": 10}},
+            }
+            inputs = {"runtime": runtime, "tokens_after": [1]}
+            logits = (ctypes.c_float * 3)(0.0, 0.0, 0.0)
+            report = {"steps": [{
+                "generated_prefix": [],
+                "ck_next": 0,
+                "llama_next": 0,
+                "ck_logits_sha256": self.runner._logits_sha256(
+                    np.zeros(3, dtype=np.float32)
+                ),
+            }]}
+            args = Namespace(
+                hidden_state_step=0,
+                hidden_state_layer=8,
+                hidden_state_names="layer_out",
+                hidden_state_dir=root / "capture",
+                hidden_state_atol=1.0e-5,
+                llama_persistent_dump_dir=root / "llama",
+                workdir=root,
+                ck_strict_parity=False,
+            )
+            with mock.patch.object(self.runner, "_prepare_inputs", return_value=inputs), \
+                 mock.patch.object(self.runner, "_init_ck_state", return_value=(Library(), logits, 3)), \
+                 mock.patch.object(self.runner, "_load_ck_hidden_exports", return_value=[]), \
+                 mock.patch.object(self.runner.first_token, "_load_llama_dump_dir", return_value=[]) as load_oracle:
+                result = self.runner._capture_hidden_state_step(report, args)
+
+            self.assertEqual(
+                load_oracle.call_args.kwargs["post_layer_embedding_layers"],
+                frozenset({8}),
+            )
             self.assertEqual(result["observational_neutrality"]["status"], "accepted")
 
     def test_hidden_capture_exports_bounded_kv_for_every_requested_layer(self) -> None:
