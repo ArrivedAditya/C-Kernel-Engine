@@ -54,6 +54,14 @@ def _aligned(size: int, alignment: int) -> tuple[ctypes.Array, ctypes.c_void_p]:
     return storage, ctypes.c_void_p(address)
 
 
+def _measure_native_call(run, validate):
+    """Time only the native invocation; validate and copy outputs afterward."""
+    begin = time.perf_counter_ns()
+    status = run()
+    native_ms = (time.perf_counter_ns() - begin) / 1_000_000
+    return validate(status), native_ms
+
+
 def _bind(model: ctypes.CDLL) -> None:
     model.ck_model_init.argtypes = [ctypes.c_char_p]
     model.ck_model_init.restype = ctypes.c_int
@@ -195,15 +203,21 @@ def certify(bundle: Path, generated_source: Path,
                 raise AssertionError("active KV pointer unavailable")
             return hashlib.sha256(ctypes.string_at(address, kv_bytes.value)).hexdigest()
 
-        def decode(token: int) -> bytes:
-            begin = time.perf_counter()
-            if model.ck_model_decode(token, output) != 0:
-                raise RuntimeError(f"isolated decode failed for token {token}")
+        def decode(token: int, timing_key: str | None = None) -> bytes:
+            def validate(status: int) -> bytes:
+                if status != 0:
+                    raise RuntimeError(f"isolated decode failed for token {token}")
+                if any(not math.isfinite(value) for value in output):
+                    raise AssertionError("isolated logits contain nonfinite values")
+                return bytes(output)
+
+            logits, native_ms = _measure_native_call(
+                lambda: model.ck_model_decode(token, output), validate)
             nonlocal isolated_ms
-            isolated_ms += (time.perf_counter() - begin) * 1000
-            if any(not math.isfinite(value) for value in output):
-                raise AssertionError("isolated logits contain nonfinite values")
-            return bytes(output)
+            isolated_ms += native_ms
+            if timing_key is not None:
+                isolated_steps_ms[timing_key] = native_ms
+            return logits
 
         def prefill(tokens: tuple[int, ...]) -> bytes:
             values = (ctypes.c_int32 * len(tokens))(*tokens)
@@ -227,9 +241,7 @@ def certify(bundle: Path, generated_source: Path,
                 rows.append((bytes(output), kv_digest()))
             for token in tokens[length:]:
                 index = len(rows)
-                begin = time.perf_counter()
-                logits = decode(token)
-                isolated_steps_ms[f"{name}:{index}"] = (time.perf_counter() - begin) * 1000
+                logits = decode(token, timing_key=f"{name}:{index}")
                 rows.append((logits, kv_digest()))
             reference[name] = rows
 
@@ -288,12 +300,15 @@ def certify(bundle: Path, generated_source: Path,
                          destinations[row])
                 for row, (name, index) in enumerate(order)
             ])
-            begin = time.perf_counter()
-            status = model.ck_model_decode_batch2(rows, 2, work, work_bytes)
-            elapsed = (time.perf_counter() - begin) * 1000
+            def validate(status: int) -> list[bytes]:
+                if status != 0:
+                    raise RuntimeError(f"generated batch step failed: {status}")
+                return [bytes(row) for row in destinations]
+
+            results, elapsed = _measure_native_call(
+                lambda: model.ck_model_decode_batch2(rows, 2, work, work_bytes),
+                validate)
             batch_ms += elapsed
-            if status != 0:
-                raise RuntimeError(f"generated batch step failed: {status}")
             copy_ms = (
                 float(model.ck_model_batch_decode_last_copy_ns()) / 1_000_000
                 if hasattr(model, "ck_model_batch_decode_last_copy_ns") and
@@ -306,7 +321,7 @@ def certify(bundle: Path, generated_source: Path,
                 "batch_step_ms": elapsed,
                 "profiled_copy_ms": copy_ms,
             })
-            return [bytes(row) for row in destinations]
+            return results
 
         try:
             activate("a")
@@ -427,7 +442,7 @@ def certify(bundle: Path, generated_source: Path,
         "full_logit_and_kv_comparisons": comparisons,
         "batch_step_total_ms": round(batch_ms, 3),
         "isolated_decode_total_ms": round(isolated_ms, 3),
-        "timing_scope": "matched_six_decode_tokens_three_two_row_steps_diagnostic_not_task_throughput",
+        "timing_scope": "native_calls_only_six_decode_tokens_three_two_row_steps_excludes_python_validation_and_copy_diagnostic_not_task_throughput",
         "matched_timing": {
             "cpu": cpu_name,
             "affinity_cpus": len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else None,

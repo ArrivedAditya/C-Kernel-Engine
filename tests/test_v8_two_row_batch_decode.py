@@ -14,13 +14,14 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "version/v8/scripts"))
 from batch_decode_contract_v8 import _crossing_at, resolve_two_row_batch_contract  # noqa: E402
 from batch_decode_codegen_v8 import emit_two_row_batch_api, emit_full_layer_batch_api  # noqa: E402
-from certify_batch_decode_v8 import _require_projection_groups  # noqa: E402
+from certify_batch_decode_v8 import _measure_native_call, _require_projection_groups  # noqa: E402
 from codegen_core_v8 import emit_decode_function  # noqa: E402
 from server.serving_bundle import verified_loaded_symbol_backing  # noqa: E402
 
@@ -210,6 +211,7 @@ class BatchContractTests(unittest.TestCase):
                           if stage["kind"] == "shared"], [3, 1, 1, 1])
         self.assertEqual(plan["extents"]["main_stream_q8"], 2336)
         emitted = emit_full_layer_batch_api(plan)
+        self.assertIn("clock_gettime(CLOCK_MONOTONIC, &now)", emitted)
         self.assertIn("gemm_nt_q8_0_q8_0_contract_m2", emitted)
         self.assertIn("gemm_nt_q5_k_q8_k_m2", emitted)
         self.assertIn("gemm_nt_q6_k_q8_k_m2", emitted)
@@ -232,6 +234,7 @@ class BatchContractTests(unittest.TestCase):
                                     for p in stage.get("projections", [])})
             )
             source.write_text(
+                "#define _POSIX_C_SOURCE 200809L\n"
                 "#include <stdint.h>\n#include <stddef.h>\n#include <stdlib.h>\n#include <string.h>\n"
                 "#define CK_EXPORT\n#define VOCAB_SIZE 32\n#define MAX_SEQ_LEN 16\n"
                 "#define KV_CACHE_SIZE 64\n" + defines + "\n"
@@ -331,6 +334,7 @@ class BatchContractTests(unittest.TestCase):
                                        for stage in plan["stages"]
                                        for projection in stage.get("projections", [])}))
         prelude = r'''
+#define _POSIX_C_SOURCE 200809L
 #include <stdint.h>
 #include <stddef.h>
 #include <stdlib.h>
@@ -454,10 +458,11 @@ int main(void) {
 
             def run(text: str) -> subprocess.CompletedProcess[str]:
                 source.write_text(text)
-                subprocess.run(["cc", "-std=c11", "-O0", "-Wall", "-Werror",
-                                "-Wno-unused-function", "-Wno-unused-variable",
-                                str(source), "-o", str(binary)],
-                               check=True, capture_output=True, text=True)
+                compiled = subprocess.run(["cc", "-std=c11", "-O0", "-Wall", "-Werror",
+                                           "-Wno-unused-function", "-Wno-unused-variable",
+                                           str(source), "-o", str(binary)],
+                                          capture_output=True, text=True)
+                self.assertEqual(compiled.returncode, 0, compiled.stderr)
                 return subprocess.run([str(binary)], capture_output=True, text=True)
 
             self.assertEqual(run(source_text).returncode, 0)
@@ -533,6 +538,7 @@ int main(void) {
             for index, stage in enumerate(plan["stages"]) if stage["kind"] == "local"
         )
         prelude = r'''
+#define _POSIX_C_SOURCE 200809L
 #include <stdint.h>
 #include <stddef.h>
 #include <stdlib.h>
@@ -600,10 +606,11 @@ int main(void) {
 
             def execute(text: str) -> subprocess.CompletedProcess[str]:
                 source.write_text(text)
-                subprocess.run(["cc", "-std=c11", "-O0", "-Wall", "-Werror",
-                                "-Wno-unused-function", "-Wno-unused-variable",
-                                str(source), "-o", str(binary)],
-                               check=True, capture_output=True, text=True)
+                compiled = subprocess.run(["cc", "-std=c11", "-O0", "-Wall", "-Werror",
+                                           "-Wno-unused-function", "-Wno-unused-variable",
+                                           str(source), "-o", str(binary)],
+                                          capture_output=True, text=True)
+                self.assertEqual(compiled.returncode, 0, compiled.stderr)
                 return subprocess.run([str(binary)], capture_output=True, text=True)
 
             self.assertEqual(execute(source_text).returncode, 0)
@@ -648,6 +655,25 @@ int main(void) {
             _require_projection_groups(2, 4)
         with self.assertRaisesRegex(AssertionError, "invalid generated batch projection-group count"):
             _require_projection_groups(7, None)
+
+    def test_native_timing_excludes_slow_validation_on_both_paths(self) -> None:
+        ticks = [0]
+
+        def native_call() -> int:
+            ticks[0] += 5_000_000
+            return 0
+
+        def slow_validation(status: int) -> int:
+            ticks[0] += 900_000_000
+            return status
+
+        with mock.patch("certify_batch_decode_v8.time.perf_counter_ns",
+                        side_effect=lambda: ticks[0]):
+            for path in ("isolated", "batched"):
+                with self.subTest(path=path):
+                    result, native_ms = _measure_native_call(native_call, slow_validation)
+                    self.assertEqual(result, 0)
+                    self.assertEqual(native_ms, 5.0)
 
     def test_hybrid_arena_capacity_does_not_change_decode_row_liveness(self) -> None:
         ops, layout, config = _layer_fixture()

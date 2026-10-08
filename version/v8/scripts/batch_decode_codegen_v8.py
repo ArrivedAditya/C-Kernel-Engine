@@ -94,7 +94,7 @@ static uint64_t g_ck_batch_copy_ns;
 static int g_ck_batch_profile_copies;
 static uint64_t ck_batch_clock_ns(void) {{
     struct timespec now;
-    if (timespec_get(&now, TIME_UTC) != TIME_UTC) return 0;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return 0;
     return (uint64_t)now.tv_sec * 1000000000u + (uint64_t)now.tv_nsec;
 }}
 static void ck_batch_memcpy(void *dst, const void *src, size_t bytes) {{

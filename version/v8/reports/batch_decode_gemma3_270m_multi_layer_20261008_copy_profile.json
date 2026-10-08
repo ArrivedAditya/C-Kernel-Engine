@@ -8,7 +8,7 @@
   "expected_shared_layers": 18,
   "snapshot_copy_bytes_per_batch_step": 4932672,
   "packing_copy_bytes_per_batch_step": 147456,
-  "profiled_copy_ms_total": 0.726,
+  "profiled_copy_ms_total": 0.748,
   "capabilities": 217215,
   "compiled_context_length": 1024,
   "vocab_size": 262144,
@@ -70,49 +70,49 @@
       "position": 1
     }
   ],
-  "batch_step_total_ms": 71.447,
-  "isolated_decode_total_ms": 85.985,
-  "timing_scope": "matched_six_decode_tokens_three_two_row_steps_diagnostic_not_task_throughput",
+  "batch_step_total_ms": 72.053,
+  "isolated_decode_total_ms": 90.89,
+  "timing_scope": "native_calls_only_six_decode_tokens_three_two_row_steps_excludes_python_validation_and_copy_diagnostic_not_task_throughput",
   "matched_timing": {
     "cpu": "Intel(R) Core(TM) i7-14700T",
     "affinity_cpus": 28,
-    "isolated_sequential_ms": 177.432,
-    "batch_two_ms": 71.447,
-    "isolated_aggregate_tokens_per_s": 33.816,
-    "batch_two_aggregate_tokens_per_s": 83.978,
-    "isolated_mean_token_latency_ms": 29.572,
-    "batch_two_mean_token_latency_ms": 23.816,
+    "isolated_sequential_ms": 60.864,
+    "batch_two_ms": 72.053,
+    "isolated_aggregate_tokens_per_s": 98.581,
+    "batch_two_aggregate_tokens_per_s": 83.273,
+    "isolated_mean_token_latency_ms": 10.144,
+    "batch_two_mean_token_latency_ms": 24.018,
     "batch_steps": [
       {
         "rows": [
           "a:2",
           "b:1"
         ],
-        "batch_step_ms": 23.856489919126034,
-        "profiled_copy_ms": 0.235951
+        "batch_step_ms": 24.11782,
+        "profiled_copy_ms": 0.236713
       },
       {
         "rows": [
           "b:2",
           "a:3"
         ],
-        "batch_step_ms": 23.87214731425047,
-        "profiled_copy_ms": 0.232317
+        "batch_step_ms": 24.123126,
+        "profiled_copy_ms": 0.270485
       },
       {
         "rows": [
           "a:5",
           "c:0"
         ],
-        "batch_step_ms": 23.718818090856075,
-        "profiled_copy_ms": 0.25786
+        "batch_step_ms": 23.811572,
+        "profiled_copy_ms": 0.241189
       }
     ]
   },
   "kv_bytes_per_sequence": 37748736,
   "batch_workspace_bytes": 84544,
   "artifacts": {
-    "libmodel.so": "e75040112d24d32d00c5e7ae0076c95d4547c5affdd9650d8deb3f6fef1adf62",
+    "libmodel.so": "76f33c8ae556e4f71a35c7fc07dcf061fd51c8d574ccb08f5074f9732ce70ec2",
     "libckernel_engine.so": "a9e3b8154b11a1f95e86f879819ec61f832169a02d19119b56d7147fcf0dbd20",
     "libckernel_tokenizer.so": "8c7ff175a64d23f10e17b2f7c349325582d9c8af65845ab2cd002b1385b2b2d2",
     "weights.bump": "99c8ac567f96873936ef10d046e522a11e2f1679e7d55f6c6522663d8829b515",
@@ -123,7 +123,7 @@
     "libmodel.so": {
       "method": "symbol_mapping_dev_inode_sha256",
       "symbol": "ck_model_decode_batch2",
-      "sha256": "e75040112d24d32d00c5e7ae0076c95d4547c5affdd9650d8deb3f6fef1adf62"
+      "sha256": "76f33c8ae556e4f71a35c7fc07dcf061fd51c8d574ccb08f5074f9732ce70ec2"
     },
     "libckernel_engine.so": {
       "method": "symbol_mapping_dev_inode_sha256",
@@ -136,6 +136,6 @@
       "sha256": "8c7ff175a64d23f10e17b2f7c349325582d9c8af65845ab2cd002b1385b2b2d2"
     }
   },
-  "loaded_generated_source_prefix_sha256": "8337266b3ffb2d143caa9975c589a627f884645d64df265e6c01c26e5a2b48c4",
-  "generated_source_sha256": "a7d1df680fcb7df707dd8b91bc73034332d2e2dce09bf5fabe53f961bfaf11ea"
+  "loaded_generated_source_prefix_sha256": "b06fab08bf799fa0c9eb97634bd21092433cb6b75fd8f9cfa78f22f5e061a321",
+  "generated_source_sha256": "ed43b3ad59a050db793ff59917c0463893aea41827e1c9d972115097df452072"
 }
