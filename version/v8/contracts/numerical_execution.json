@@ -541,6 +541,21 @@
       "position_transform": null,
       "description": "Checked group-one dense transposed Conv1D with [I,O,K] weights, caller-owned scratch and output-preserving rejection. FP32 FMA uses ascending input-channel/frame/tap order."
     },
+    "audio_reflect_pad1d_left_exact_fp32": {
+      "operator_family": "audio_reflect_pad1d_left",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "none", "output": "fp32"},
+      "compute": {"input": "fp32", "weight": "none", "accumulator": "fp32",
+        "contraction": "disabled",
+        "evaluation_order": "validate_all_inputs_then_copy_reflected_prefix_and_valid_rows"},
+      "rounding": {"mode": "none", "points": ["input_load", "output_store"]},
+      "reduction": {"kind": "none", "order": "none", "partial_accumulator": "none",
+        "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "independent_outputs",
+        "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Exact FP32 left reflection excluding the edge sample, with checked capacities, strides and output-preserving rejection."
+    },
     "runtime_extent_sum_checked_i32": {
       "operator_family": "runtime_extent_sum",
       "status": "validated",

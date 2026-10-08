@@ -896,6 +896,14 @@ TEST_SUITES = {
         "Model-Neutral Generated Dense Transposed Conv1D Graph", "inference",
         ROOT / "tests" / "test_v8_audio_dense_deconv_generated.py",
     ),
+    "tts_reflect_pad_oracle": TestSuite(
+        "TTS Left Reflection Independent Numerical Oracle", "kernels",
+        ROOT / "tests" / "test_v8_audio_reflect_pad_oracle.py",
+    ),
+    "tts_reflect_pad_generated": TestSuite(
+        "Model-Neutral Generated Left Reflection and Consumer", "inference",
+        ROOT / "tests" / "test_v8_audio_reflect_pad_generated.py",
+    ),
     "tts_runtime_extent_scale": TestSuite(
         "Checked Runtime Extent Scale", "kernels",
         ROOT / "tests" / "test_v8_runtime_extent_scale.py",
