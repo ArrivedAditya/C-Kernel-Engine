@@ -1,21 +1,21 @@
 {
-  "updated": "2026-10-08T09:48:30.169173Z",
+  "updated": "2026-10-08T16:53:52.008279Z",
   "reports": [
     {
       "date": "2026-10-08",
       "file": "report-2026-10-08.json",
       "summary": {
-        "total": 215,
-        "passed": 185,
-        "failed": 2,
-        "skipped": 28,
+        "total": 236,
+        "passed": 207,
+        "failed": 0,
+        "skipped": 29,
         "timeout": 0,
-        "sub_tests_total": 1507,
-        "sub_tests_passed": 1416,
-        "sub_tests_failed": 1,
-        "sub_tests_not_tested": 90
+        "sub_tests_total": 1613,
+        "sub_tests_passed": 1514,
+        "sub_tests_failed": 8,
+        "sub_tests_not_tested": 91
       },
-      "duration_sec": 4115.122782945633
+      "duration_sec": 4427.390102386475
     },
     {
       "date": "2026-10-07",
