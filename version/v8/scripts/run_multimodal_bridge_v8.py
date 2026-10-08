@@ -2256,6 +2256,41 @@ def _sync_runtime_engine(engine_path: Path, model_so: Path) -> Path:
     return destination
 
 
+def _dynamic_symbols(path: Path, *, defined: bool) -> set[str]:
+    mode = "--defined-only" if defined else "--undefined-only"
+    probe = subprocess.run(
+        ["nm", "-D", mode, str(path)], text=True, capture_output=True, check=False
+    )
+    if probe.returncode != 0:
+        raise RuntimeError(f"cannot inspect generated runtime symbols in {path}: {probe.stderr.strip()}")
+    return {line.split()[-1].split("@", 1)[0] for line in probe.stdout.splitlines() if line.split()}
+
+
+def _select_prebuilt_encoder_engine(
+    encoder_runtime: dict[str, Any], decoder_runtime: dict[str, Any]
+) -> Path:
+    selected = Path(encoder_runtime["engine_so"]).resolve()
+    decoder_sos = [Path(decoder_runtime[name]).resolve() for name in ("so_path", "prefill_so_path")]
+    original = Path(
+        decoder_runtime.get("engine_so") or decoder_sos[0].parent / "libckernel_engine.so"
+    ).resolve()
+    original_exports = _dynamic_symbols(original, defined=True)
+    selected_exports = _dynamic_symbols(selected, defined=True)
+    for model_so in decoder_sos:
+        required = _dynamic_symbols(model_so, defined=False) & original_exports
+        missing = sorted(required - selected_exports)
+        if missing:
+            raise RuntimeError(
+                "prebuilt encoder engine is incompatible with generated decoder: "
+                f"engine={selected} model={model_so} missing_symbols={missing[:8]}; "
+                "rebuild both components against a compatible CK engine"
+            )
+    for model_so in decoder_sos:
+        _sync_runtime_engine(selected, model_so)
+    decoder_runtime["engine_so"] = str(selected)
+    return selected
+
+
 def _engine_compiler_argv(stamp_path: Path | None = None) -> list[str]:
     stamp = stamp_path or (BUILD_DIR / ".ck_build_flags")
     if not stamp.is_file():
@@ -4605,10 +4640,7 @@ def main(argv: list[str] | None = None) -> int:
         # canonical engine SONAME, so select that superset engine explicitly
         # for the decoder as well.  The adjacent copy keeps standalone native
         # replay byte-identical to the in-process bridge.
-        canonical_engine = Path(encoder_runtime["engine_so"]).resolve()
-        _sync_runtime_engine(canonical_engine, Path(decoder_runtime["so_path"]))
-        _sync_runtime_engine(canonical_engine, Path(decoder_runtime["prefill_so_path"]))
-        decoder_runtime["engine_so"] = str(canonical_engine)
+        canonical_engine = _select_prebuilt_encoder_engine(encoder_runtime, decoder_runtime)
         _log_progress(f"decoder runtime selected prebuilt encoder engine={canonical_engine}")
 
     composition_evidence: dict[str, Any] | None = None
