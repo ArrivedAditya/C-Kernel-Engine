@@ -7,6 +7,7 @@ import ctypes
 import json
 import math
 import platform
+import re
 import struct
 import subprocess
 import sys
@@ -227,6 +228,7 @@ class BatchContractTests(unittest.TestCase):
                             "-Wno-unused-function", "-Wno-unused-variable", str(source)],
                            check=True, capture_output=True, text=True)
         for change in ("v_provider", "out_offset", "down_offset", "extra_live",
+                       "cross_layer_live",
                        "persistent_state", "partial_projection", "fp32_override",
                        "down_quant_extent", "projection_alias"):
             bad = copy.deepcopy(fixture)
@@ -251,6 +253,18 @@ class BatchContractTests(unittest.TestCase):
                 output = next(arg for arg in bad_ops[5]["args"] if arg["name"] == "y")
                 output["buffer_ref"] = "embedded_input"
                 output["expr"] = "(float*)(model->bump + A_EMBEDDED_INPUT)"
+            elif change == "cross_layer_live":
+                bad_layout["memory"]["activations"]["buffers"].append(
+                    {"name": "cross_layer_value", "size": 64, "abs_offset": 1 << 32,
+                     "define": "A_CROSS_LAYER_VALUE", "lifetime": "call", "mutable": True})
+                bad_ops[16]["args"].append(
+                    {"name": "cross_layer_out", "source": "output:cross_layer_out",
+                     "buffer_ref": "cross_layer_value",
+                     "expr": "(float*)(model->bump + A_CROSS_LAYER_VALUE)"})
+                bad_ops[21]["args"].append(
+                    {"name": "cross_layer_in", "source": "activation:cross_layer_in",
+                     "buffer_ref": "cross_layer_value",
+                     "expr": "(const float*)(model->bump + A_CROSS_LAYER_VALUE)"})
             else:
                 bad_layout["memory"]["activations"]["buffers"].append(
                     {"name": "extra", "size": 64, "abs_offset": 1 << 32,
@@ -268,6 +282,170 @@ class BatchContractTests(unittest.TestCase):
                 else:
                     self.assertIsNotNone(fallback)
                     self.assertNotIn("full_layer_plan", fallback)
+
+    def test_full_layer_entry_executes_four_groups_with_isolated_rows(self) -> None:
+        fixture = json.loads((ROOT / "tests/fixtures/batch_decode_gemma3_first_layer.json").read_text())
+        plan = resolve_two_row_batch_contract(
+            fixture["ops"], fixture["layout"], fixture["config"])["full_layer_plan"]
+        names = sorted(set(plan["buffers"].values()) |
+                       {projection["weight"] for stage in plan["stages"]
+                        for projection in stage.get("projections", [])})
+        defines = "\n".join(f"#define {name} {32768 * (index + 1)}" for index, name in enumerate(names))
+        weights = sorted({projection["weight"] for stage in plan["stages"]
+                          for projection in stage.get("projections", [])})
+        initialize_weights = "\n".join(
+            f"    g_model->bump[{name}] = {index + 1};" for index, name in enumerate(weights))
+        kernels = "\n".join(
+            f"static void {name}(const {'void' if dtype == 'q8_k' else 'float'} *input, "
+            "const void *weight, const float *bias, float *output, int rows, int channels, int width) "
+            "{ (void)bias; "
+            "for (int row=0; row<rows; ++row) for (int channel=0; channel<channels; ++channel) "
+            "output[row*channels+channel]="
+            + ("((const float *)((const uint8_t *)input+row*(width/256*292)))[0]"
+               if dtype == "q8_k" else "((const float *)input)[row*width]")
+            + "+((const uint8_t *)weight)[0]; }"
+            for name, dtype in sorted({(projection["function"], projection["dtype"])
+                                       for stage in plan["stages"]
+                                       for projection in stage.get("projections", [])}))
+        prelude = r'''
+#include <stdint.h>
+#include <stddef.h>
+#include <stdlib.h>
+#include <string.h>
+#define CK_EXPORT
+#define VOCAB_SIZE 16
+#define MAX_SEQ_LEN 16
+#define KV_CACHE_SIZE 64
+'''
+        prelude += defines + r'''
+typedef struct { uint64_t sequence_handle; int token, position; size_t row_offset, token_count; float *logits; } CKModelBatchDecodeRowV8;
+typedef struct { int occupied, pos; uint64_t handle; uint8_t *kv; } CKSequenceStateV8;
+typedef struct { uint8_t *bump; size_t bump_size; int pos; float logits[VOCAB_SIZE]; } CKModel;
+static CKModel object;
+static CKModel *g_model=&object;
+static CKSequenceStateV8 g_sequence_states[3];
+static CKSequenceStateV8 *g_active_sequence;
+static int g_ck_skip_decode_logits;
+static CKSequenceStateV8 *ck_sequence_find(uint64_t handle) {
+    for (int i=0;i<3;++i) if (g_sequence_states[i].occupied && g_sequence_states[i].handle==handle) return &g_sequence_states[i];
+    return NULL;
+}
+static int ck_model_sequence_state_activate(uint64_t handle) {
+    CKSequenceStateV8 *next=ck_sequence_find(handle);
+    if (!next) return -1;
+    if (g_active_sequence) g_active_sequence->pos=g_model->pos;
+    g_model->pos=next->pos;
+    g_active_sequence=next;
+    return 0;
+}
+static int ck_model_cancel_requested(void) { return 0; }
+static float *value(CKModel *model, size_t offset) { return (float *)(model->bump+offset); }
+static void ck_batch_stage_0(CKModel *model, int token) {
+    value(model,A_EMBEDDED_INPUT)[0]=(float)token;
+    value(model,A_RESIDUAL)[0]=(float)(10*token);
+}
+static void ck_batch_stage_2(CKModel *model, int token) {
+    float q=value(model,A_Q_SCRATCH)[0], k=value(model,A_K_SCRATCH)[0];
+    float v=value(model,A_V_SCRATCH)[0];
+    value(model,A_ATTN_SCRATCH)[0]=q+k+v;
+    value(model,A_RESIDUAL)[0]+=(float)token;
+    g_active_sequence->kv[g_model->pos]=(uint8_t)q;
+}
+static void ck_batch_stage_4(CKModel *model, int token) {
+    (void)token;
+    value(model,A_EMBEDDED_INPUT)[0]+=value(model,A_RESIDUAL)[0];
+}
+static void ck_batch_stage_6(CKModel *model, int token) {
+    (void)token;
+    value(model,A_MAIN_STREAM_Q8)[0]=value(model,A_MLP_SCRATCH)[0]+value(model,A_RESIDUAL)[0];
+}
+static void ck_batch_stage_8(CKModel *model, int token) {
+    (void)token;
+    model->logits[0]=value(model,A_EMBEDDED_INPUT)[0]+value(model,A_RESIDUAL)[0];
+    model->pos++;
+}
+static void project_one(CKModel *model, size_t input, size_t weight, size_t output) {
+    value(model,output)[0]=value(model,input)[0]+model->bump[weight];
+}
+'''
+        reference = r'''
+static void isolated_decode(CKModel *model, int token) {
+    ck_batch_stage_0(model,token);
+    project_one(model,A_EMBEDDED_INPUT,W_LAYER_0_WQ,A_Q_SCRATCH);
+    project_one(model,A_EMBEDDED_INPUT,W_LAYER_0_WK,A_K_SCRATCH);
+    project_one(model,A_EMBEDDED_INPUT,W_LAYER_0_WV,A_V_SCRATCH);
+    ck_batch_stage_2(model,token);
+    project_one(model,A_ATTN_SCRATCH,W_LAYER_0_WO,A_EMBEDDED_INPUT);
+    ck_batch_stage_4(model,token);
+    project_one(model,A_EMBEDDED_INPUT,W_LAYER_0_W1,A_MLP_SCRATCH);
+    ck_batch_stage_6(model,token);
+    project_one(model,A_MAIN_STREAM_Q8,W_LAYER_0_W2,A_EMBEDDED_INPUT);
+    ck_batch_stage_8(model,token);
+}
+int main(void) {
+    g_model->bump_size=16*32768;
+    g_model->bump=calloc(1,g_model->bump_size);
+    if (!g_model->bump) return 1;
+    uint8_t kv[2][64]={{0}};
+    for (int i=0;i<2;++i) g_sequence_states[i]=(CKSequenceStateV8){.occupied=1,.handle=(uint64_t)(i+1),.kv=kv[i]};
+'''
+        reference += initialize_weights + r'''
+    float expected[2]={0}, actual[2][VOCAB_SIZE]={{0}};
+    int expected_pos[2]={0}; uint8_t expected_kv[2]={0};
+    for (int i=0;i<2;++i) {
+        if (ck_model_sequence_state_activate((uint64_t)(i+1))) return 2;
+        isolated_decode(g_model,i ? 7 : 3);
+        expected[i]=g_model->logits[0];
+        expected_pos[i]=g_model->pos;
+        expected_kv[i]=kv[i][0];
+    }
+    memset(g_model->bump,0,g_model->bump_size);
+'''
+        reference += initialize_weights + r'''
+    memset(kv,0,sizeof(kv));
+    for (int i=0;i<2;++i) g_sequence_states[i].pos=0;
+    g_active_sequence=NULL; g_model->pos=0;
+    CKModelBatchDecodeRowV8 rows[2]={
+        {.sequence_handle=1,.token=3,.position=0,.row_offset=0,.token_count=1,.logits=actual[0]},
+        {.sequence_handle=2,.token=7,.position=0,.row_offset=1,.token_count=1,.logits=actual[1]}
+    };
+    size_t bytes=0,alignment=0;
+    if (ck_model_batch_decode_projection_groups()!=4 ||
+        ck_model_batch_decode_workspace(&bytes,&alignment) || alignment!=64) return 3;
+    void *workspace=aligned_alloc(alignment,(bytes+alignment-1)/alignment*alignment);
+    if (!workspace || ck_model_decode_batch2(rows,2,workspace,bytes)) return 4;
+    for (int i=0;i<2;++i) {
+        if (ck_model_sequence_state_activate((uint64_t)(i+1))) return 5;
+        if (actual[i][0]!=expected[i] || g_model->pos!=expected_pos[i] ||
+            kv[i][0]!=expected_kv[i]) return 6+i;
+    }
+    free(workspace); free(g_model->bump);
+    return 0;
+}
+'''
+        emitted = emit_full_layer_batch_api(plan)
+        source_text = prelude + kernels + emitted + reference
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "four_group.c"
+            binary = Path(directory) / "four_group"
+
+            def run(text: str) -> subprocess.CompletedProcess[str]:
+                source.write_text(text)
+                subprocess.run(["cc", "-std=c11", "-O0", "-Wall", "-Werror",
+                                "-Wno-unused-function", "-Wno-unused-variable",
+                                str(source), "-o", str(binary)],
+                               check=True, capture_output=True, text=True)
+                return subprocess.run([str(binary)], capture_output=True, text=True)
+
+            self.assertEqual(run(source_text).returncode, 0)
+            # This control removes one per-row restoration after shared Q/K/V.
+            # The same two distinct inputs must now diverge from isolation.
+            lost_q = re.sub(
+                r"(?m)^        memcpy\(g_model->bump \+ A_Q_SCRATCH, base \+ [^\n]+\n",
+                "", source_text, count=1,
+            )
+            self.assertNotEqual(lost_q, source_text)
+            self.assertNotEqual(run(lost_q).returncode, 0)
 
     def test_in_place_liveness_ignores_argument_order(self) -> None:
         produced = {"args": [{"source": "output:x", "buffer_ref": "extra"}]}

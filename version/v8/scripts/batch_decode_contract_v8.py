@@ -373,8 +373,9 @@ def _full_layer_plan(
         stages.append({"kind": "shared", "start": start, "stop": stop, "projections": group})
         cursor = stop
     stages.append({"kind": "local", "start": cursor, "stop": len(ops)})
-    # The final local stage runs all later layers; all preceding boundaries
-    # are within this one admitted layer.
+    # The final local stage runs all later layers. Liveness at every earlier
+    # cut must therefore include consumers in that complete suffix, not just
+    # consumers within the shared layer.
     extents: dict[str, int] = {}
     for projection in projections:
         for ref, count in ((projection["input"], projection["input_bytes"]),
@@ -414,10 +415,10 @@ def _full_layer_plan(
             or qargs.get("rows", {}).get("expr") != "1"
             or qargs.get("k", {}).get("expr") != str(down["input_dim"])):
         return None
-    replacements = _certified_full_writes(layer_ops, buffers) | {(gate["index"], gate["output"])}
+    replacements = _certified_full_writes(ops, buffers) | {(gate["index"], gate["output"])}
     for stage in stages[:-1]:
         cut = stage["stop"]
-        live = _crossing_at(layer_ops, cut, replacements)
+        live = _crossing_at(ops, cut, replacements)
         if not live or any(ref not in extents for ref in live):
             return None
         for ref in live:
