@@ -5482,13 +5482,13 @@ ck-cli-v7: $(BUILD_DIR)/ck-cli-v7
 	@echo ""
 
 # v8 Native CLI
-$(BUILD_DIR)/ck-cli-v8: $(CK_CLI_V8) $(CK_SAMPLER_V8) include/ck_model_abi_v8.h include/ck_sampler_v8.h include/ck_session_v8.h include/ckernel_audio.h $(LIB_TOKENIZER)
+$(BUILD_DIR)/ck-cli-v8: $(CK_CLI_V8) $(CK_SAMPLER_V8) include/ck_model_abi_v8.h include/ck_sampler_v8.h include/ck_session_v8.h version/v8/src/ck_session_batch_ticket_v8.h include/ckernel_audio.h $(LIB_TOKENIZER)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) -o $@ $(CK_CLI_V8) $(CK_SAMPLER_V8) -L$(BUILD_DIR) \
 		-Wl,--no-as-needed -lckernel_tokenizer -Wl,--as-needed \
 		-ldl -lpthread -lm -Wl,-rpath,$(BUILD_DIR)
 
-$(BUILD_DIR)/libck_session_v8.so: $(CK_CLI_V8) $(CK_SAMPLER_V8) include/ck_model_abi_v8.h include/ck_sampler_v8.h include/ck_session_v8.h include/ckernel_audio.h $(LIB_TOKENIZER)
+$(BUILD_DIR)/libck_session_v8.so: $(CK_CLI_V8) $(CK_SAMPLER_V8) include/ck_model_abi_v8.h include/ck_sampler_v8.h include/ck_session_v8.h version/v8/src/ck_session_batch_ticket_v8.h include/ckernel_audio.h $(LIB_TOKENIZER)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) -fPIC -shared -DCK_CLI_V8_NO_MAIN=1 -Wl,-soname,libck_session_v8.so \
 		-o $@ $(CK_CLI_V8) $(CK_SAMPLER_V8) -L$(BUILD_DIR) \
