@@ -1410,6 +1410,7 @@ test-v8-serve-native-jinja:
 .PHONY: test-native-session-v8
 test-native-session-v8: $(BUILD_DIR)/libckernel_engine.so ck-cli-v8 ck-session-v8
 	$(PYTHON) $(PYTHONFLAGS) -m unittest -v tests.test_v8_native_sampler
+	$(PYTHON) $(PYTHONFLAGS) -m unittest -v tests.test_v8_batch_session_scheduler
 	$(PYTHON) $(PYTHONFLAGS) -m unittest -v \
 		tests.test_v8_native_bridge_host.V8NativeBridgeHostTests.test_ck_session_v8_ffi_formats_tokenizes_and_streams_generation \
 		tests.test_v8_native_bridge_host.V8NativeBridgeHostTests.test_generated_prefill_cancellation_releases_native_session \

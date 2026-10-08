@@ -219,6 +219,12 @@ typedef struct {
     apply_generation_policy_t apply_generation_policy;
     set_gemm_schedule_t set_gemm_schedule;
     set_cancel_flag_t set_cancel_flag;
+    ck_model_sequence_state_requirements_v8_fn sequence_requirements;
+    ck_model_sequence_state_create_v8_fn sequence_create;
+    ck_model_sequence_state_activate_v8_fn sequence_activate;
+    ck_model_sequence_state_destroy_v8_fn sequence_destroy;
+    ck_model_batch_decode_workspace_v8_fn batch_workspace;
+    ck_model_decode_batch2_v8_fn decode_batch2;
 } ModelAPI;
 
 static void print_runtime_capabilities(const ModelAPI *api) {
@@ -1817,6 +1823,12 @@ static bool load_model_api(const char *lib_path, ModelAPI *api) {
     resolve_symbol(api->handle, "ck_model_set_cancel_flag", (void **)&api->set_cancel_flag, false);
     resolve_symbol(api->handle, "ck_model_forward", (void **)&api->forward, false);
     resolve_symbol(api->handle, "ck_model_decode", (void **)&api->decode, false);
+    resolve_symbol(api->handle, "ck_model_sequence_state_requirements", (void **)&api->sequence_requirements, false);
+    resolve_symbol(api->handle, "ck_model_sequence_state_create", (void **)&api->sequence_create, false);
+    resolve_symbol(api->handle, "ck_model_sequence_state_activate", (void **)&api->sequence_activate, false);
+    resolve_symbol(api->handle, "ck_model_sequence_state_destroy", (void **)&api->sequence_destroy, false);
+    resolve_symbol(api->handle, "ck_model_batch_decode_workspace", (void **)&api->batch_workspace, false);
+    resolve_symbol(api->handle, "ck_model_decode_batch2", (void **)&api->decode_batch2, false);
     /* ck_prefill - optional, only present when prefill IR was generated */
     resolve_symbol(api->handle, "ck_prefill", (void **)&api->prefill, false);
     resolve_symbol(api->handle, "ck_model_write_embeddings", (void **)&api->write_embeddings, false);
@@ -5621,6 +5633,20 @@ struct CKSessionV8 {
     volatile sig_atomic_t generation_thread_valid;
     int context_length;
     char last_error[256];
+    struct {
+        uint64_t handle;
+        void *arena;
+        int ready;
+        atomic_uint_fast64_t ticket;
+        atomic_uint_fast64_t cancel_ticket;
+    } batch_slot[2];
+    void *batch_workspace;
+    size_t batch_workspace_bytes;
+    size_t batch_extra_bytes;
+    uint64_t batch_next_ticket;
+    int batch_enabled;
+    int batch_poisoned;
+    unsigned batch_poison_reset_mask;
 };
 
 static int session_error(CKSessionV8 *session, int status, const char *message) {
@@ -5649,6 +5675,10 @@ int ck_session_v8_open(
     CKSessionV8 *session = (CKSessionV8 *)calloc(1, sizeof(*session));
     if (!session) return CK_SESSION_V8_ERROR_RUNTIME;
     atomic_init(&session->cancel_requested, 0);
+    for (int i = 0; i < 2; ++i) {
+        atomic_init(&session->batch_slot[i].ticket, 0);
+        atomic_init(&session->batch_slot[i].cancel_ticket, 0);
+    }
     int failure_status = CK_SESSION_V8_ERROR_INIT;
     if (pthread_mutex_init(&session->generation_lock, NULL) != 0) {
         free(session);
@@ -5716,6 +5746,14 @@ void ck_session_v8_close(CKSessionV8 *session) {
     if (!session) return;
     ck_session_v8_cancel(session);
     pthread_mutex_lock(&session->generation_lock);
+    if (session->batch_enabled) {
+        for (int i = 0; i < 2; ++i) {
+            if (session->batch_slot[i].handle && session->api.sequence_destroy)
+                session->api.sequence_destroy(session->batch_slot[i].handle);
+            free(session->batch_slot[i].arena);
+        }
+        free(session->batch_workspace);
+    }
     if (session->api.free_fn) session->api.free_fn();
     if (session->api.handle) dlclose(session->api.handle);
     pthread_mutex_unlock(&session->generation_lock);
@@ -5815,6 +5853,11 @@ int ck_session_v8_generate(
         return session_error(session, CK_SESSION_V8_ERROR_BUSY,
                              "session already has an active request");
     }
+    if (session->batch_enabled) {
+        pthread_mutex_unlock(&session->generation_lock);
+        return session_error(session, CK_SESSION_V8_ERROR_BUSY,
+                             "bounded batch mode owns the generated model");
+    }
 
     memset((char *)result + 2 * sizeof(uint32_t), 0,
             sizeof(*result) - 2 * sizeof(uint32_t));
@@ -5870,10 +5913,294 @@ int ck_session_v8_reset(CKSessionV8 *session) {
     if (pthread_mutex_trylock(&session->generation_lock) != 0) {
         return CK_SESSION_V8_ERROR_BUSY;
     }
+    if (session->batch_enabled) {
+        pthread_mutex_unlock(&session->generation_lock);
+        return CK_SESSION_V8_ERROR_BUSY;
+    }
     if (session->api.kv_reset) session->api.kv_reset();
     atomic_store_explicit(&session->cancel_requested, 0, memory_order_relaxed);
     pthread_mutex_unlock(&session->generation_lock);
     return CK_SESSION_V8_OK;
+}
+
+static int batch2_lock(CKSessionV8 *session) {
+    if (!session) return CK_SESSION_V8_ERROR_INVALID_ARGUMENT;
+    if (pthread_mutex_trylock(&session->generation_lock) != 0)
+        return CK_SESSION_V8_ERROR_BUSY;
+    return CK_SESSION_V8_OK;
+}
+
+int ck_session_v8_batch2_enable(CKSessionV8 *session, size_t max_extra_bytes,
+                                size_t *needed_bytes) {
+    if (!needed_bytes) return CK_SESSION_V8_ERROR_INVALID_ARGUMENT;
+    *needed_bytes = 0;
+    int status = batch2_lock(session);
+    if (status != CK_SESSION_V8_OK) return status;
+    if (session->batch_enabled) {
+        *needed_bytes = session->batch_extra_bytes;
+        pthread_mutex_unlock(&session->generation_lock);
+        return *needed_bytes <= max_extra_bytes
+            ? CK_SESSION_V8_OK : CK_SESSION_V8_ERROR_BUFFER_TOO_SMALL;
+    }
+    const uint64_t required = CK_MODEL_CAP_SEQUENCE_STATE_SWITCH |
+        CK_MODEL_CAP_BATCH_DECODE_TWO_ROWS;
+    if ((session->api.descriptor.capabilities & required) != required ||
+        !session->api.sequence_requirements || !session->api.sequence_create ||
+        !session->api.sequence_activate || !session->api.sequence_destroy ||
+        !session->api.batch_workspace || !session->api.decode_batch2 ||
+        !session->api.embed || !session->api.forward || !session->api.decode ||
+        !session->api.get_active_tokens || !session->api.get_vocab_size ||
+        !session->api.kv_reset) {
+        status = CK_SESSION_V8_ERROR_CAPABILITY;
+        goto done;
+    }
+    size_t state_bytes = 0, state_alignment = 0;
+    size_t work_bytes = 0, work_alignment = 0;
+    if (session->api.sequence_requirements(&state_bytes, &state_alignment) != 0 ||
+        session->api.batch_workspace(&work_bytes, &work_alignment) != 0 ||
+        !state_bytes || !work_bytes || state_alignment < sizeof(void *) ||
+        work_alignment < sizeof(void *) ||
+        (state_alignment & (state_alignment - 1)) ||
+        (work_alignment & (work_alignment - 1))) {
+        status = CK_SESSION_V8_ERROR_CAPABILITY;
+        goto done;
+    }
+    if (state_bytes > (SIZE_MAX - work_bytes) / 2) {
+        status = CK_SESSION_V8_ERROR_CAPABILITY;
+        goto done;
+    }
+    *needed_bytes = state_bytes * 2 + work_bytes;
+    if (*needed_bytes > max_extra_bytes) {
+        status = CK_SESSION_V8_ERROR_BUFFER_TOO_SMALL;
+        goto done;
+    }
+    for (int i = 0; i < 2; ++i) {
+        if (posix_memalign(&session->batch_slot[i].arena,
+                           state_alignment, state_bytes) != 0) {
+            status = CK_SESSION_V8_ERROR_RUNTIME;
+            goto fail;
+        }
+        if (session->api.sequence_create(session->batch_slot[i].arena,
+                    state_bytes, &session->batch_slot[i].handle) != 0 ||
+            !session->batch_slot[i].handle) {
+            status = CK_SESSION_V8_ERROR_RUNTIME;
+            goto fail;
+        }
+    }
+    if (posix_memalign(&session->batch_workspace,
+                       work_alignment, work_bytes) != 0) {
+        status = CK_SESSION_V8_ERROR_RUNTIME;
+        goto fail;
+    }
+    session->batch_workspace_bytes = work_bytes;
+    session->batch_extra_bytes = *needed_bytes;
+    session->batch_enabled = 1;
+    session->batch_next_ticket = 1;
+    status = CK_SESSION_V8_OK;
+    goto done;
+fail:
+    for (int i = 0; i < 2; ++i) {
+        if (session->batch_slot[i].handle)
+            session->api.sequence_destroy(session->batch_slot[i].handle);
+        session->batch_slot[i].handle = 0;
+        free(session->batch_slot[i].arena);
+        session->batch_slot[i].arena = NULL;
+    }
+    free(session->batch_workspace);
+    session->batch_workspace = NULL;
+done:
+    pthread_mutex_unlock(&session->generation_lock);
+    return status;
+}
+
+int ck_session_v8_batch2_prefill(CKSessionV8 *session, uint32_t slot,
+                                const int32_t *tokens, int32_t count,
+                                float *logits, uint64_t *ticket_out) {
+    if (!session || slot >= 2 || !tokens || count <= 0 || !logits ||
+        !ticket_out || count > session->context_length)
+        return CK_SESSION_V8_ERROR_INVALID_ARGUMENT;
+    int status = batch2_lock(session);
+    if (status != CK_SESSION_V8_OK) return status;
+    if (!session->batch_enabled || session->batch_poisoned ||
+        session->batch_slot[slot].ready) {
+        status = CK_SESSION_V8_ERROR_BUSY;
+        goto done;
+    }
+    if (session->api.sequence_activate(session->batch_slot[slot].handle) != 0) {
+        status = CK_SESSION_V8_ERROR_RUNTIME;
+        goto poison;
+    }
+    session->api.kv_reset();
+    if (session->api.embed(tokens, count) != 0 ||
+        session->api.forward(logits) != 0 ||
+        session->api.get_active_tokens() != count) {
+        status = CK_SESSION_V8_ERROR_RUNTIME;
+        goto poison;
+    }
+    if (!session->batch_next_ticket ||
+        session->batch_next_ticket == UINT64_MAX) {
+        status = CK_SESSION_V8_ERROR_RUNTIME;
+        goto poison;
+    }
+    const uint64_t ticket = session->batch_next_ticket++;
+    atomic_store_explicit(&session->batch_slot[slot].cancel_ticket, 0,
+                          memory_order_release);
+    atomic_store_explicit(&session->batch_slot[slot].ticket, ticket,
+                          memory_order_release);
+    session->batch_slot[slot].ready = 1;
+    *ticket_out = ticket;
+    status = CK_SESSION_V8_OK;
+    goto done;
+poison:
+    session->batch_poisoned = 1;
+    session->batch_poison_reset_mask = 0;
+done:
+    pthread_mutex_unlock(&session->generation_lock);
+    return status;
+}
+
+int ck_session_v8_batch2_step(CKSessionV8 *session, const int32_t tokens[2],
+                             float *const logits[2], uint32_t *advanced_mask) {
+    if (!session || !tokens || !logits || !advanced_mask)
+        return CK_SESSION_V8_ERROR_INVALID_ARGUMENT;
+    *advanced_mask = 0;
+    int status = batch2_lock(session);
+    if (status != CK_SESSION_V8_OK) return status;
+    if (!session->batch_enabled || session->batch_poisoned) {
+        status = CK_SESSION_V8_ERROR_BUSY;
+        goto done;
+    }
+    unsigned eligible = 0;
+    for (unsigned i = 0; i < 2; ++i) {
+        const uint64_t ticket = atomic_load_explicit(
+            &session->batch_slot[i].ticket, memory_order_acquire);
+        const uint64_t cancelled = atomic_load_explicit(
+            &session->batch_slot[i].cancel_ticket, memory_order_acquire);
+        if (session->batch_slot[i].ready && ticket != cancelled) {
+            if (!logits[i] || tokens[i] < 0 ||
+                tokens[i] >= session->api.get_vocab_size()) {
+                status = CK_SESSION_V8_ERROR_INVALID_ARGUMENT;
+                goto done;
+            }
+            eligible |= 1u << i;
+        }
+    }
+    if (eligible == 3) {
+        CKModelBatchDecodeRowV8 rows[2];
+        for (unsigned i = 0; i < 2; ++i) {
+            if (session->api.sequence_activate(session->batch_slot[i].handle) != 0) {
+                status = CK_SESSION_V8_ERROR_RUNTIME;
+                goto poison;
+            }
+            int position = session->api.get_active_tokens();
+            if (position < 0 || position >= session->context_length) {
+                status = CK_SESSION_V8_ERROR_INVALID_ARGUMENT;
+                goto done;
+            }
+            rows[i] = (CKModelBatchDecodeRowV8){
+                .sequence_handle = session->batch_slot[i].handle,
+                .token = tokens[i], .position = position,
+                .row_offset = i, .token_count = 1, .logits = logits[i]};
+        }
+        if (session->api.decode_batch2(rows, 2, session->batch_workspace,
+                                       session->batch_workspace_bytes) != 0) {
+            status = CK_SESSION_V8_ERROR_RUNTIME;
+            goto poison;
+        }
+    } else if (eligible) {
+        unsigned i = eligible == 1 ? 0 : 1;
+        if (session->api.sequence_activate(session->batch_slot[i].handle) != 0) {
+            status = CK_SESSION_V8_ERROR_RUNTIME;
+            goto poison;
+        }
+        int position = session->api.get_active_tokens();
+        if (position < 0 || position >= session->context_length) {
+            status = CK_SESSION_V8_ERROR_INVALID_ARGUMENT;
+            goto done;
+        }
+        if (session->api.decode(tokens[i], logits[i]) != 0) {
+            status = CK_SESSION_V8_ERROR_RUNTIME;
+            goto poison;
+        }
+    }
+    *advanced_mask = eligible;
+    status = CK_SESSION_V8_OK;
+    goto done;
+poison:
+    session->batch_poisoned = 1;
+    session->batch_poison_reset_mask = 0;
+done:
+    pthread_mutex_unlock(&session->generation_lock);
+    return status;
+}
+
+int ck_session_v8_batch2_reset_slot(CKSessionV8 *session, uint32_t slot) {
+    if (!session || slot >= 2) return CK_SESSION_V8_ERROR_INVALID_ARGUMENT;
+    int status = batch2_lock(session);
+    if (status != CK_SESSION_V8_OK) return status;
+    if (!session->batch_enabled) {
+        status = CK_SESSION_V8_ERROR_CAPABILITY;
+        goto done;
+    }
+    if (session->api.sequence_activate(session->batch_slot[slot].handle) != 0) {
+        status = CK_SESSION_V8_ERROR_RUNTIME;
+        goto done;
+    }
+    session->api.kv_reset();
+    session->batch_slot[slot].ready = 0;
+    atomic_store_explicit(&session->batch_slot[slot].ticket, 0,
+                          memory_order_release);
+    atomic_store_explicit(&session->batch_slot[slot].cancel_ticket, 0,
+                          memory_order_release);
+    if (session->batch_poisoned) {
+        session->batch_poison_reset_mask |= 1u << slot;
+        if (session->batch_poison_reset_mask == 3) {
+            session->batch_poisoned = 0;
+            session->batch_poison_reset_mask = 0;
+        }
+    }
+    status = CK_SESSION_V8_OK;
+done:
+    pthread_mutex_unlock(&session->generation_lock);
+    return status;
+}
+
+int ck_session_v8_batch2_position(CKSessionV8 *session, uint32_t slot,
+                                 int32_t *position_out) {
+    if (!session || slot >= 2 || !position_out)
+        return CK_SESSION_V8_ERROR_INVALID_ARGUMENT;
+    int status = batch2_lock(session);
+    if (status != CK_SESSION_V8_OK) return status;
+    if (!session->batch_enabled || !session->batch_slot[slot].ready) {
+        status = CK_SESSION_V8_ERROR_CAPABILITY;
+        goto done;
+    }
+    if (session->api.sequence_activate(session->batch_slot[slot].handle) != 0) {
+        status = CK_SESSION_V8_ERROR_RUNTIME;
+        goto done;
+    }
+    int position = session->api.get_active_tokens();
+    if (position < 0 || position > session->context_length) {
+        status = CK_SESSION_V8_ERROR_RUNTIME;
+        goto done;
+    }
+    *position_out = position;
+    status = CK_SESSION_V8_OK;
+done:
+    pthread_mutex_unlock(&session->generation_lock);
+    return status;
+}
+
+void ck_session_v8_batch2_request_cancel(CKSessionV8 *session, uint64_t ticket) {
+    if (!session || !ticket) return;
+    for (unsigned i = 0; i < 2; ++i) {
+        if (atomic_load_explicit(&session->batch_slot[i].ticket,
+                                 memory_order_acquire) == ticket) {
+            atomic_store_explicit(&session->batch_slot[i].cancel_ticket,
+                                  ticket, memory_order_release);
+            return;
+        }
+    }
 }
 
 const char *ck_session_v8_last_error(const CKSessionV8 *session) {
