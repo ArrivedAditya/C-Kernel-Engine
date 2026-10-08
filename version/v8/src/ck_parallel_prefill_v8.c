@@ -290,6 +290,18 @@ extern void gemm_nt_q4_k_packed_meta_q8_k_tile(const void *A_q8,
                                                int m0, int m1, int n0, int n1);
 extern void gemm_nt_q6_k_q8_k(const void *A, const void *B, const float *bias,
                                 float *C, int M, int N, int K);
+extern void gemm_nt_q6_k_q8_k_tiled_parity(const void *A, const void *B,
+                                            const float *bias, float *C,
+                                            int M, int N, int K);
+extern void gemm_nt_q6_k_q8_k_tiled_parity_tile(const void *A, const void *B,
+                                                 const float *bias, float *C,
+                                                 int M, int N, int K,
+                                                 int m0, int m1, int n0, int n1);
+#if defined(__AVX2__) && defined(__FMA__)
+#define CK_Q6_TILED_PARITY_AVAILABLE 1
+#else
+#define CK_Q6_TILED_PARITY_AVAILABLE 0
+#endif
 extern void gemm_nt_q8_0_q8_0_contract(const float *A, const void *B,
                                         const float *bias, float *C,
                                         int M, int N, int K);
@@ -425,6 +437,7 @@ typedef struct {
     int          tile_m;      /* 2D scheduler token tile height */
     int          tile_n;      /* 2D scheduler output tile width */
     int          use_q6_m4;   /* Reuse Q6 unpack across four token rows */
+    int          use_q6_tiled_parity; /* Batched GGML integer-slab reduction */
     int          use_q6_prepared; /* B is expanded Q6 integer metadata */
 } gemm_args_t;
 
@@ -2830,7 +2843,12 @@ static void work_gemm_nt_q6_k_q8_k(int ith, int nth, void *args)
     int r1 = (r0 + dr < a->M) ? (r0 + dr) : a->M;
     if (r0 >= a->M) return;
 
-    if (a->use_q6_prepared) {
+    if (a->use_q6_tiled_parity) {
+        gemm_nt_q6_k_q8_k_tiled_parity(
+            (const char *)a->A + (size_t)r0 * a->A_row_bytes,
+            a->B, a->bias, a->C + (size_t)r0 * a->N,
+            r1 - r0, a->N, a->K);
+    } else if (a->use_q6_prepared) {
         gemm_nt_q6_k_q8_k_prepared(
             (const char *)a->A + (size_t)r0 * a->A_row_bytes,
             a->B,
@@ -2866,7 +2884,10 @@ static inline void work_gemm_nt_q6_k_q8_k_2d_job(
     const int m1 = ck_min_int(m0 + tile_m, a->M);
     const int n0 = jn * tile_n;
     const int n1 = ck_min_int(n0 + tile_n, a->N);
-    if (a->use_q6_prepared) {
+    if (a->use_q6_tiled_parity) {
+        gemm_nt_q6_k_q8_k_tiled_parity_tile(a->A, a->B, a->bias, a->C,
+                                             a->M, a->N, a->K, m0, m1, n0, n1);
+    } else if (a->use_q6_prepared) {
         gemm_nt_q6_k_q8_k_prepared_tile(
             a->A, a->B, a->bias, a->C,
             a->M, a->N, a->K, m0, m1, n0, n1);
@@ -3768,6 +3789,8 @@ void gemm_nt_q6_k_q8_k_parallel_dispatch(
         .tile_m = ck_env_int_or2("CK_PREFILL_TILE_M", NULL, default_tile_m),
         .tile_n = ck_env_int_or2("CK_PREFILL_TILE_N", NULL, default_tile_n),
         .use_q6_m4 = !prepared && ck_should_use_q6k_q8k_m4_prefill(M, N, K),
+        .use_q6_tiled_parity = CK_Q6_TILED_PARITY_AVAILABLE &&
+                               !prepared && ck_strict_parity_enabled() && M >= 8,
         .use_q6_prepared = prepared != NULL
     };
     int active = ck_select_gemm_active_threads(pool, M, N, K);
