@@ -249,6 +249,7 @@ class BatchSessionSchedulerTests(unittest.TestCase):
                         time.sleep(0.001)
                     self.assertTrue(model.ck_fake_batch_entered())
                     session.ck_session_v8_batch2_request_cancel(handle, ticket_a)
+                    self.assertEqual(session.ck_session_v8_batch2_reset_slot(handle, 0), -6)
                 finally:
                     model.ck_fake_hold_batch(0)
                     worker.join(timeout=2)
