@@ -998,8 +998,8 @@
         }
       ]
     },
-    "rope_forward_q_split_direct_f32": {
-      "note": "Gemma4 assistant q-only split-half direct RoPE with per-layer theta/rotary_dim and optional frequency factors.",
+    "rope_forward_q_split_llama_f32": {
+      "note": "Gemma4 shared-KV q-only split-half RoPE with ggml CPU frequency recurrence.",
       "params": [
         {
           "cast": "float*",

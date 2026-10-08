@@ -4817,6 +4817,16 @@ void rope_forward_q_split_direct_f32(float *q,
                                      int pos_offset,
                                      int rotary_dim,
                                      float freq_base);
+void rope_forward_q_split_llama_f32(float *q,
+                                    const float *freq_factors,
+                                    int use_freq_factors,
+                                    int num_heads,
+                                    int num_tokens,
+                                    int head_dim,
+                                    int aligned_head_dim,
+                                    int pos_offset,
+                                    int rotary_dim,
+                                    float freq_base);
 
 void rope_forward_qk_gemma4_direct(float *q,
                                    float *k,

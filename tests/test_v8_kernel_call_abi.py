@@ -381,7 +381,9 @@ class V8KernelCallABITests(unittest.TestCase):
         operation = {
             "idx": 0,
             "kernel": "rope_forward_q_gemma4",
-            "function": "rope_forward_q_split_direct_f32",
+            "function": json.loads(
+                (MAPS / "rope_forward_q_gemma4.json").read_text()
+            )["impl"]["function"],
             "op": "rope_q",
             "layer": 0,
             "section": "body",

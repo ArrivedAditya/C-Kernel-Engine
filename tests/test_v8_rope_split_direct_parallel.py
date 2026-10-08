@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import json
 import os
 import subprocess
 import tempfile
@@ -146,6 +147,59 @@ class RoPESplitDirectParallelTests(unittest.TestCase):
                        4, 1, tokens, 256, 256, offset, 256, base)
                 np.testing.assert_array_equal(q.view(np.uint32), qr.view(np.uint32))
                 np.testing.assert_array_equal(k.view(np.uint32), kr.view(np.uint32))
+
+    def test_gemma4_selected_rope_matches_ggml_frequency_recurrence(self) -> None:
+        circuit = json.loads((ROOT / "version/v8/circuits/gemma4.json").read_text())
+        provider_id = circuit["kernels"]["rope_qk"]
+        provider = json.loads((ROOT / "version/v8/kernel_maps" / f"{provider_id}.json").read_text())
+        self.assertEqual(provider["operation_interface"], "rope.split_direct.llama_cpu.fp32.v1")
+        selected = getattr(self.lib, provider["impl"]["function"])
+        selected.argtypes = self.parallel.argtypes
+        p = ctypes.POINTER(ctypes.c_float)
+        cache = self.lib.rope_precompute_cache_llama_cpu
+        cache.argtypes = [p, p, ctypes.c_int, ctypes.c_int, ctypes.c_float,
+                          ctypes.c_int, ctypes.c_char_p, ctypes.c_float]
+        cached = self.lib.rope_forward_qk_with_rotary_dim
+        cached.argtypes = [p] * 4 + [ctypes.c_int] * 7
+
+        rng = np.random.default_rng(4104)
+        for tokens, offset in ((91, 0), (14, 77)):
+            with self.subTest(tokens=tokens, offset=offset):
+                q_source = rng.standard_normal((8, tokens, 256), dtype=np.float32)
+                k_source = rng.standard_normal((2, tokens, 256), dtype=np.float32)
+                q_selected, k_selected = q_source.copy(), k_source.copy()
+                q_expected, k_expected = q_source.copy(), k_source.copy()
+                q_direct, k_direct = q_source.copy(), k_source.copy()
+                cos = np.zeros((offset + tokens, 128), dtype=np.float32)
+                sin = np.zeros_like(cos)
+                cache(cos.ctypes.data_as(p), sin.ctypes.data_as(p),
+                      offset + tokens, 256, 10000.0, 256, b"none", 1.0)
+                cached(q_expected.ctypes.data_as(p), k_expected.ctypes.data_as(p),
+                       cos.ctypes.data_as(p), sin.ctypes.data_as(p),
+                       8, 2, tokens, 256, 256, offset, 256)
+                args = (None, 0, 8, 2, tokens, 256, 256, offset, 256, 10000.0)
+                selected(q_selected.ctypes.data_as(p), k_selected.ctypes.data_as(p), *args)
+                self.serial(q_direct.ctypes.data_as(p), k_direct.ctypes.data_as(p), *args)
+                np.testing.assert_array_equal(q_selected.view(np.uint32), q_expected.view(np.uint32))
+                np.testing.assert_array_equal(k_selected.view(np.uint32), k_expected.view(np.uint32))
+                self.assertTrue(np.any(q_direct.view(np.uint32) != q_expected.view(np.uint32)))
+
+        q_only_id = circuit["kernels"]["rope_q"]
+        q_only_provider = json.loads((ROOT / "version/v8/kernel_maps" / f"{q_only_id}.json").read_text())
+        q_only = getattr(self.lib, q_only_provider["impl"]["function"])
+        q_only.argtypes = [p, p] + [ctypes.c_int] * 7 + [ctypes.c_float]
+        old_q_only = self.lib.rope_forward_q_split_direct_f32
+        old_q_only.argtypes = q_only.argtypes
+        source = rng.standard_normal((8, 14, 256), dtype=np.float32)
+        selected_q, paired_q, direct_q = source.copy(), source.copy(), source.copy()
+        paired_k = np.zeros((2, 14, 256), dtype=np.float32)
+        q_only_args = (None, 0, 8, 14, 256, 256, 77, 256, 10000.0)
+        q_only(selected_q.ctypes.data_as(p), *q_only_args)
+        selected(paired_q.ctypes.data_as(p), paired_k.ctypes.data_as(p),
+                 None, 0, 8, 2, 14, 256, 256, 77, 256, 10000.0)
+        old_q_only(direct_q.ctypes.data_as(p), *q_only_args)
+        np.testing.assert_array_equal(selected_q.view(np.uint32), paired_q.view(np.uint32))
+        self.assertTrue(np.any(direct_q.view(np.uint32) != paired_q.view(np.uint32)))
 
 
 if __name__ == "__main__":
