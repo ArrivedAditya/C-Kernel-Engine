@@ -481,6 +481,7 @@ class V8NativeBridgeHostTests(unittest.TestCase):
             root = Path(tmpdir)
             selected = root / "selected-engine.so"
             selected.touch()
+            (root / "libencoder_v8.so").write_bytes(b"fixture encoder library")
             layout_path = root / "layout.json"
             layout_path.write_text(json.dumps({"config": {"model": "fixture"}}))
             runtime = {

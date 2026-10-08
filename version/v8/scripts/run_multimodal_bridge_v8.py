@@ -2447,6 +2447,7 @@ def _load_image_file(
         raise FileNotFoundError(f"image file not found: {image_path}")
     mean = _coerce_float_triplet(image_mean, [0.5, 0.5, 0.5])
     std = _coerce_float_triplet(image_std, [0.5, 0.5, 0.5])
+    source_sha256 = _sha256_path(image_path)
 
     suffix = image_path.suffix.lower()
     if suffix == ".ppm":
@@ -2458,6 +2459,8 @@ def _load_image_file(
             source_width, source_height = src.size
             rgb = src.convert("RGB")
             src_rgb = rgb.tobytes()
+    if _sha256_path(image_path) != source_sha256:
+        raise RuntimeError("image file changed during preprocessing")
     if resize_algorithm == "bilinear" and resize_padding == "none":
         pixels = _resize_rgb8_bilinear(src_rgb, source_width, source_height, width, height)
     elif resize_algorithm == "bicubic" and resize_padding in ("none", "center_ceil"):
@@ -2501,6 +2504,8 @@ def _load_image_file(
         "planar": planar,
         "image_source": "file",
         "image_path": str(image_path.resolve()),
+        "image_sha256": source_sha256,
+        "decoded_rgb8_sha256": hashlib.sha256(src_rgb).hexdigest(),
         "source_image_size": [source_width, source_height],
         "preprocess": f"{preprocess_prefix}_{width}x{height}_normalize_mean_std",
     }
@@ -3428,6 +3433,7 @@ def _run_encoder(
         os.environ["CK_PROFILE_CSV"] = str(profile_csv_path)
         os.environ.pop("CK_PROFILE_JSON", None)
     lib_load_t0 = time.perf_counter()
+    model_library_sha256 = _sha256_path(Path(runtime["so_path"]))
     runtime_engine = runtime.get("engine_so")
     if runtime_engine:
         lib = _load_encoder_lib(Path(runtime["so_path"]), engine_so=Path(runtime_engine))
@@ -3572,8 +3578,11 @@ def _run_encoder(
             "bridge_activation": bridge_name or str(bridge["fallback_buffer_name"]),
             "bridge_reason": str(bridge["reason"]),
             "image_source": str(image_report["image_source"]),
+            "model_library_sha256": model_library_sha256,
             "image_mode": image_report.get("image_mode"),
             "image_path": image_report.get("image_path"),
+            "image_sha256": image_report.get("image_sha256"),
+            "decoded_rgb8_sha256": image_report.get("decoded_rgb8_sha256"),
             "source_image_size": image_report.get("source_image_size"),
             "preprocess": str(image_report["preprocess"]),
             "image_height": image_height,
@@ -3591,6 +3600,8 @@ def _run_encoder(
                 "total_ms": (time.perf_counter() - encoder_t0) * 1000.0,
             },
         }
+        if _sha256_path(Path(runtime["so_path"])) != model_library_sha256:
+            raise RuntimeError("generated encoder library changed during execution")
         return report
     finally:
         release_t0 = time.perf_counter()
@@ -4841,6 +4852,7 @@ def main(argv: list[str] | None = None) -> int:
             "decoder": dict(decoder_report.get("weight_storage", {}) or {}),
         },
         "prefix_dump_path": dumped_prefix_path,
+        "prefix_dump_sha256": _sha256_path(Path(dumped_prefix_path)) if dumped_prefix_path else None,
         "total_prefill_tokens": len(prompt_prefix_token_ids) + prefix_tokens + len(token_ids),
         "decoder_runtime": {
             "source": "prebuilt" if args.decoder_runtime is not None else "gguf",
@@ -4880,6 +4892,9 @@ def main(argv: list[str] | None = None) -> int:
             "image_source": str(encoder_report["image_source"]),
             "image_mode": None if encoder_report["image_mode"] is None else str(encoder_report["image_mode"]),
             "image_path": encoder_report["image_path"],
+            "model_library_sha256": encoder_report.get("model_library_sha256"),
+            "image_sha256": encoder_report.get("image_sha256"),
+            "decoded_rgb8_sha256": encoder_report.get("decoded_rgb8_sha256"),
             "source_image_size": encoder_report["source_image_size"],
             "preprocess": str(encoder_report["preprocess"]),
             "image_size": int(
