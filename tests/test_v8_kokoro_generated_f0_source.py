@@ -80,7 +80,7 @@ class KokoroGeneratedF0SourceTest(unittest.TestCase):
         self.assertEqual(json.loads(author.OUTPUT.read_text()), author.build_circuit())
         self.assertEqual(self.calls['errors'], [])
         self.assertEqual([op['function'] for op in self.calls['operations'][-4:]],
-            ['ck_runtime_scale_i32_checked', 'audio_harmonic_source_checked_f32',
+            ['ck_runtime_scale_i32_checked', 'audio_harmonic_source_weighted_fma_checked_f32',
              'linear_rows_checked_f32', 'tanh_strided_f32_checked'])
         arena = self.arena()
         status, lengths = self.execute(arena)

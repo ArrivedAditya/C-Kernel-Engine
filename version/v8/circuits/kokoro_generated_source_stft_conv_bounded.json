@@ -10277,7 +10277,7 @@
           {
             "id": "source_harmonics",
             "op": "audio_harmonic_source_checked",
-            "kernel": "audio_harmonic_source_checked_f32",
+            "kernel": "audio_harmonic_source_weighted_fma_checked_f32",
             "returns_status": true,
             "consumes_runtime_lengths": [
               "upsampled_frames",

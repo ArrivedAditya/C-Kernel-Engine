@@ -152,6 +152,17 @@ int audio_harmonic_source_checked_f32(
     float sample_rate, float voiced_threshold,
     float sine_amp, float noise_std);
 
+/* Same geometry/state contract, with an explicit weighted FP32 FMA phase
+ * interpolation order matching the pinned PyTorch 2.8 CPU upsample path. */
+int audio_harmonic_source_weighted_fma_checked_f32(
+    const float *f0, size_t f0_capacity,
+    const float *gaussian, size_t gaussian_capacity,
+    float *output, size_t output_capacity,
+    float *phase_scratch, size_t scratch_capacity,
+    size_t frames, size_t upsample, size_t harmonics,
+    float sample_rate, float voiced_threshold,
+    float sine_amp, float noise_std);
+
 #ifdef __cplusplus
 }
 #endif

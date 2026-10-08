@@ -12,14 +12,14 @@
  * align_corners=false linear down/cumsum/up interpolation. The first-sample
  * phase perturbation in Kokoro's non-pulse reference is discarded by the
  * downsampling midpoint, so no initial-phase input is needed here. */
-int audio_harmonic_source_checked_f32(
+static int audio_harmonic_source_impl_f32(
     const float *f0, size_t f0_capacity,
     const float *gaussian, size_t gaussian_capacity,
     float *output, size_t output_capacity,
     float *phase_scratch, size_t scratch_capacity,
     size_t frames, size_t upsample, size_t harmonics,
     float sample_rate, float voiced_threshold,
-    float sine_amp, float noise_std) {
+    float sine_amp, float noise_std, int weighted_fma_interpolation) {
     if (!frames || upsample < 4 || !harmonics || !isfinite(sample_rate) ||
         !isfinite(voiced_threshold) || !isfinite(sine_amp) ||
         !isfinite(noise_std) || sample_rate <= 0.0f || sine_amp < 0.0f ||
@@ -86,7 +86,13 @@ int audio_harmonic_source_checked_f32(
         for (size_t harmonic = 0; harmonic < harmonics; ++harmonic) {
             const float a = phase_scratch[left * harmonics + harmonic];
             const float b = phase_scratch[right * harmonics + harmonic];
-            const float phase = a + (b - a) * right_weight;
+            /* Keep the two numerical contracts distinct. The pinned
+             * PyTorch 2.8 CPU linear-upsample path evaluates the weighted
+             * terms as fmaf(a, 1-w, b*w), whereas the original provider
+             * evaluates a + (b-a)*w. */
+            const float phase = weighted_fma_interpolation
+                ? fmaf(a, 1.0f - right_weight, b * right_weight)
+                : a + (b - a) * right_weight;
             const float value = sinf(phase) * sine_amp * uv +
                 amplitude * gaussian[sample * harmonics + harmonic];
             if (!isfinite(value)) return CK_AUDIO_EXTENT_INVALID;
@@ -95,4 +101,32 @@ int audio_harmonic_source_checked_f32(
     }
     memcpy(output, staged, output_need * sizeof(float));
     return CK_AUDIO_EXTENT_OK;
+}
+
+int audio_harmonic_source_checked_f32(
+    const float *f0, size_t f0_capacity,
+    const float *gaussian, size_t gaussian_capacity,
+    float *output, size_t output_capacity,
+    float *phase_scratch, size_t scratch_capacity,
+    size_t frames, size_t upsample, size_t harmonics,
+    float sample_rate, float voiced_threshold,
+    float sine_amp, float noise_std) {
+    return audio_harmonic_source_impl_f32(f0, f0_capacity, gaussian,
+        gaussian_capacity, output, output_capacity, phase_scratch,
+        scratch_capacity, frames, upsample, harmonics, sample_rate,
+        voiced_threshold, sine_amp, noise_std, 0);
+}
+
+int audio_harmonic_source_weighted_fma_checked_f32(
+    const float *f0, size_t f0_capacity,
+    const float *gaussian, size_t gaussian_capacity,
+    float *output, size_t output_capacity,
+    float *phase_scratch, size_t scratch_capacity,
+    size_t frames, size_t upsample, size_t harmonics,
+    float sample_rate, float voiced_threshold,
+    float sine_amp, float noise_std) {
+    return audio_harmonic_source_impl_f32(f0, f0_capacity, gaussian,
+        gaussian_capacity, output, output_capacity, phase_scratch,
+        scratch_capacity, frames, upsample, harmonics, sample_rate,
+        voiced_threshold, sine_amp, noise_std, 1);
 }
