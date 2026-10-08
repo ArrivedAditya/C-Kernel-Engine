@@ -14,6 +14,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / 'tests/fixtures/tts/audio_stft_mag_phase_torch_reference.npz'
 FLOAT = ctypes.POINTER(ctypes.c_float)
+DOUBLE = ctypes.POINTER(ctypes.c_double)
 SIZE = ctypes.c_size_t
 
 
@@ -22,6 +23,7 @@ class AudioStftMagnitudePhaseTest(unittest.TestCase):
     def setUpClass(cls):
         cls.temp = tempfile.TemporaryDirectory()
         cls.calls = []
+        cls.trace_calls = []
         for flag in ('-O0', '-O3'):
             library = Path(cls.temp.name) / f'stft_{flag}.so'
             subprocess.run(['cc', '-std=c11', flag, '-Wall', '-Wextra',
@@ -34,11 +36,15 @@ class AudioStftMagnitudePhaseTest(unittest.TestCase):
             run.argtypes = [FLOAT, SIZE, FLOAT, SIZE, FLOAT, FLOAT, SIZE,
                 FLOAT, SIZE, SIZE, FLOAT, SIZE, SIZE, SIZE, SIZE, SIZE]
             run.restype = ctypes.c_int
+            trace = native.audio_stft_mag_phase_trace_checked_f32
+            trace.argtypes = run.argtypes + [DOUBLE, SIZE]
+            trace.restype = ctypes.c_int
             plan = native.audio_stft_mag_phase_plan_f32
             plan.argtypes = [SIZE, SIZE, SIZE, ctypes.POINTER(SIZE),
                 ctypes.POINTER(SIZE)]
             plan.restype = ctypes.c_int
             cls.calls.append((run, plan))
+            cls.trace_calls.append(trace)
 
     @classmethod
     def tearDownClass(cls):
@@ -128,6 +134,30 @@ class AudioStftMagnitudePhaseTest(unittest.TestCase):
             self.assertNotEqual(plan(60, SIZE(-2).value, 5,
                 ctypes.byref(frames), ctypes.byref(elements)), 0)
             self.assertEqual((frames.value, elements.value), (99, 99))
+
+    def test_pre_atan2_trace_is_the_production_arithmetic(self):
+        samples = np.random.default_rng(197).normal(size=60).astype(np.float32)
+        frames = len(samples) // 5 + 1
+        for (run, _), trace_run in zip(self.calls, self.trace_calls):
+            status, expected, _, args, live = self.invoke(run, samples, 20, 5)
+            self.assertEqual(status, 0)
+            output = np.full_like(expected, -91.)
+            trace = np.full((11, frames, 2), 123., dtype=np.float64)
+            args[7] = self.pointer(output)
+            pointer = trace.ctypes.data_as(DOUBLE)
+            self.assertNotEqual(trace_run(*args, pointer, trace.size - 1), 0)
+            self.assertTrue(np.all(output == -91.))
+            self.assertTrue(np.all(trace == 123.))
+            self.assertNotEqual(trace_run(*args, ctypes.cast(args[7], DOUBLE),
+                trace.size), 0)
+            self.assertTrue(np.all(output == -91.))
+            self.assertEqual(trace_run(*args, pointer, trace.size), 0)
+            np.testing.assert_array_equal(output, expected)
+            actual_phase = np.arctan2(trace[:, :, 1],
+                                      trace[:, :, 0]).astype(np.float32)
+            np.testing.assert_allclose(actual_phase, output[11:, :frames],
+                                       rtol=0, atol=1e-7)
+            self.assertTrue(np.all(output[:, frames:] == -91.))
 
     def test_invalid_geometry_tables_and_aliasing(self):
         samples = np.arange(60, dtype=np.float32) / 60

@@ -25,12 +25,25 @@ int audio_stft_mag_phase_plan_f32(size_t samples, size_t n_fft, size_t hop,
  * Output rows are magnitude bins followed by phase bins, matching a channel
  * concatenation of torch.abs(torch.stft(...)) and torch.angle(...).
  * Tables and staging scratch are supplied by the caller. */
-int audio_stft_mag_phase_checked_f32(const float *samples, size_t samples_capacity,
+static int stft_trace_region(const double *trace, size_t elements) {
+    return trace && (uintptr_t)trace % _Alignof(double) == 0 &&
+        elements <= SIZE_MAX / sizeof(double) &&
+        (uintptr_t)trace <= UINTPTR_MAX - elements * sizeof(double);
+}
+
+static int stft_trace_overlaps(const double *trace, size_t elements,
+    const float *other, size_t other_elements) {
+    return (uintptr_t)trace < (uintptr_t)other + other_elements * sizeof(float) &&
+        (uintptr_t)other < (uintptr_t)trace + elements * sizeof(double);
+}
+
+static int stft_mag_phase_impl(const float *samples, size_t samples_capacity,
     const float *window, size_t window_capacity,
     const float *cos_table, const float *sin_table, size_t table_capacity,
     float *output, size_t output_capacity, size_t output_stride,
     float *scratch, size_t scratch_capacity,
-    size_t samples_count, size_t n_fft, size_t hop, size_t frames) {
+    size_t samples_count, size_t n_fft, size_t hop, size_t frames,
+    double *complex_trace, size_t complex_trace_capacity) {
     size_t required_frames, spectral_elements, span, bins, table_need;
     const int planned = audio_stft_mag_phase_plan_f32(samples_count, n_fft,
         hop, &required_frames, &spectral_elements);
@@ -65,6 +78,18 @@ int audio_stft_mag_phase_checked_f32(const float *samples, size_t samples_capaci
         !ck_checked_finite(cos_table, table_need) ||
         !ck_checked_finite(sin_table, table_need))
         return CK_AUDIO_EXTENT_INVALID;
+    if (complex_trace) {
+        if (complex_trace_capacity < spectral_elements)
+            return CK_AUDIO_EXTENT_LIMIT;
+        if (!stft_trace_region(complex_trace, spectral_elements) ||
+            stft_trace_overlaps(complex_trace, spectral_elements, samples, samples_count) ||
+            stft_trace_overlaps(complex_trace, spectral_elements, window, n_fft) ||
+            stft_trace_overlaps(complex_trace, spectral_elements, cos_table, table_need) ||
+            stft_trace_overlaps(complex_trace, spectral_elements, sin_table, table_need) ||
+            stft_trace_overlaps(complex_trace, spectral_elements, output, span) ||
+            stft_trace_overlaps(complex_trace, spectral_elements, scratch, spectral_elements))
+            return CK_AUDIO_EXTENT_INVALID;
+    } else if (complex_trace_capacity) return CK_AUDIO_EXTENT_INVALID;
     const size_t center = n_fft / 2;
     for (size_t frame = 0; frame < frames; ++frame) {
         for (size_t bin = 0; bin < bins; ++bin) {
@@ -90,6 +115,11 @@ int audio_stft_mag_phase_checked_f32(const float *samples, size_t samples_capaci
             const float phase = (float)atan2(imag, real);
             if (!isfinite(magnitude) || !isfinite(phase))
                 return CK_AUDIO_EXTENT_INVALID;
+            if (complex_trace) {
+                const size_t index = 2 * (bin * frames + frame);
+                complex_trace[index] = real;
+                complex_trace[index + 1] = imag;
+            }
             scratch[bin * frames + frame] = magnitude;
             scratch[(bins + bin) * frames + frame] = phase;
         }
@@ -98,4 +128,33 @@ int audio_stft_mag_phase_checked_f32(const float *samples, size_t samples_capaci
         memcpy(output + row * output_stride, scratch + row * frames,
             frames * sizeof(float));
     return CK_AUDIO_EXTENT_OK;
+}
+
+int audio_stft_mag_phase_checked_f32(const float *samples, size_t samples_capacity,
+    const float *window, size_t window_capacity,
+    const float *cos_table, const float *sin_table, size_t table_capacity,
+    float *output, size_t output_capacity, size_t output_stride,
+    float *scratch, size_t scratch_capacity,
+    size_t samples_count, size_t n_fft, size_t hop, size_t frames) {
+    return stft_mag_phase_impl(samples, samples_capacity, window,
+        window_capacity, cos_table, sin_table, table_capacity, output,
+        output_capacity, output_stride, scratch, scratch_capacity,
+        samples_count, n_fft, hop, frames, NULL, 0);
+}
+
+/* Diagnostic-only: records the actual FP64 real/imag values passed to atan2.
+ * Production calls the same implementation with no trace buffer. */
+int audio_stft_mag_phase_trace_checked_f32(const float *samples,
+    size_t samples_capacity, const float *window, size_t window_capacity,
+    const float *cos_table, const float *sin_table, size_t table_capacity,
+    float *output, size_t output_capacity, size_t output_stride,
+    float *scratch, size_t scratch_capacity,
+    size_t samples_count, size_t n_fft, size_t hop, size_t frames,
+    double *complex_trace, size_t complex_trace_capacity) {
+    if (!complex_trace) return CK_AUDIO_EXTENT_INVALID;
+    return stft_mag_phase_impl(samples, samples_capacity, window,
+        window_capacity, cos_table, sin_table, table_capacity, output,
+        output_capacity, output_stride, scratch, scratch_capacity,
+        samples_count, n_fft, hop, frames, complex_trace,
+        complex_trace_capacity);
 }
