@@ -9,6 +9,7 @@ import importlib.util
 import io
 import json
 import re
+import shutil
 import struct
 import subprocess
 import sys
@@ -345,6 +346,64 @@ class V8NativeBridgeHostTests(unittest.TestCase):
             self.assertEqual(metadata["compiler"]["command"], ["gcc"])
             self.assertEqual(metadata["compiler"]["version"], "gcc test compiler")
             self.assertEqual(copied.read_bytes(), b"engine")
+
+    @unittest.skipUnless(shutil.which("cc") and shutil.which("nm"), "C toolchain required")
+    def test_prebuilt_encoder_engine_rejects_missing_decoder_symbols_before_copy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            encoder_dir = root / "encoder"
+            decoder_dir = root / "decoder"
+            encoder_dir.mkdir()
+            decoder_dir.mkdir()
+
+            def compile_so(directory: Path, name: str, source: str) -> Path:
+                c_path = directory / f"{name}.c"
+                so_path = directory / f"{name}.so"
+                c_path.write_text(source, encoding="utf-8")
+                subprocess.run(["cc", "-shared", "-fPIC", str(c_path), "-o", str(so_path)], check=True)
+                return so_path
+
+            original = compile_so(
+                decoder_dir, "libckernel_engine",
+                "void ck_base(void) {}\nvoid rope_forward_q_split_llama_f32(void) {}\n",
+            )
+            selected = compile_so(encoder_dir, "libckernel_engine", "void ck_base(void) {}\n")
+            decode = compile_so(
+                decoder_dir, "libdecoder_v8",
+                "extern void rope_forward_q_split_llama_f32(void); "
+                "void decode(void) { rope_forward_q_split_llama_f32(); }\n",
+            )
+            prefill = compile_so(
+                decoder_dir, "libdecoder_v8_prefill",
+                "extern void ck_base(void); void prefill(void) { ck_base(); }\n",
+            )
+            encoder_runtime = {"engine_so": selected}
+            decoder_runtime = {"so_path": decode, "prefill_so_path": prefill}
+            original_bytes = original.read_bytes()
+            with self.assertRaisesRegex(RuntimeError, "missing_symbols=.*rope_forward_q_split_llama_f32"):
+                bridge_runner_v8._select_prebuilt_encoder_engine(encoder_runtime, decoder_runtime)
+            self.assertEqual(original.read_bytes(), original_bytes)
+            self.assertNotIn("engine_so", decoder_runtime)
+
+            compile_so(decoder_dir, "libdecoder_v8", "extern void ck_base(void); void decode(void) { ck_base(); }\n")
+            compile_so(
+                decoder_dir, "libdecoder_v8_prefill",
+                "extern void rope_forward_q_split_llama_f32(void); "
+                "void prefill(void) { rope_forward_q_split_llama_f32(); }\n",
+            )
+            with self.assertRaisesRegex(RuntimeError, "libdecoder_v8_prefill.*missing_symbols=.*rope_forward_q_split_llama_f32"):
+                bridge_runner_v8._select_prebuilt_encoder_engine(encoder_runtime, decoder_runtime)
+            self.assertEqual(original.read_bytes(), original_bytes)
+
+            compile_so(
+                encoder_dir, "libckernel_engine",
+                "void ck_base(void) {}\nvoid rope_forward_q_split_llama_f32(void) {}\n"
+                "void ck_extra(void) {}\n",
+            )
+            chosen = bridge_runner_v8._select_prebuilt_encoder_engine(encoder_runtime, decoder_runtime)
+            self.assertEqual(chosen, selected.resolve())
+            self.assertEqual(original.read_bytes(), selected.read_bytes())
+            self.assertEqual(decoder_runtime["engine_so"], str(selected.resolve()))
 
     def test_runtime_preflight_builds_engine_and_tokenizer_together(self) -> None:
         with mock.patch.object(bridge_runner_v8, "_run") as run, \
