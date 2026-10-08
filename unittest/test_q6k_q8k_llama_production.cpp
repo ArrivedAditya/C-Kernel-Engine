@@ -14,6 +14,7 @@
 #include <cstring>
 #include <fstream>
 #include <limits>
+#include <string>
 #include <vector>
 
 extern "C" {
@@ -22,6 +23,9 @@ void gemv_q6_k_q8_k(float *, const void *, const void *, int, int);
 void gemv_q6_k_q8_k_parallel_dispatch(float *, const void *, const void *, int, int);
 void gemm_nt_q6_k_q8_k_parallel_dispatch(
         const void *, const void *, const float *, float *, int, int, int);
+void gemm_nt_q6_k_q8_k(
+        const void *, const void *, const float *, float *, int, int, int);
+void ck_set_strict_parity(int);
 size_t ck_q6_k_prepared_block_size(void);
 void ck_q6_k_prepare_weight(const void *, void *, int, int);
 void gemm_nt_q6_k_q8_k_prepared(
@@ -283,6 +287,37 @@ static bool run_case(const case_spec &spec, bool prepared_only = false) {
                 prepared.data(), ck.data(), prepared.size());
     }
     if (!llama_graph(weights, activations, canonical, spec.m, spec.n, spec.k, false)) return false;
+    const bool tiled_graph = ggml_cpu_has_avx2() && ggml_cpu_has_fma();
+    if (spec.m >= 8 && tiled_graph) {
+        std::vector<float> strict(canonical.size()), strict_2d(canonical.size());
+        std::vector<float> strict_bias(canonical.size()), expected_bias(canonical);
+        std::vector<float> bias(spec.n);
+        for (int n = 0; n < spec.n; ++n) bias[n] = 0.01f * float(n % 7 - 3);
+        for (int m = 0; m < spec.m; ++m) for (int n = 0; n < spec.n; ++n)
+            expected_bias[static_cast<size_t>(m) * spec.n + n] += bias[n];
+        ck_set_strict_parity(1);
+        gemm_nt_q6_k_q8_k_parallel_dispatch(ck_q8.data(), weights.data(),
+                nullptr, strict.data(), spec.m, spec.n, spec.k);
+        const char *prior_force_2d = std::getenv("CK_FORCE_Q6K_Q8K_2D_PREFILL");
+        const std::string saved_force_2d = prior_force_2d ? prior_force_2d : "";
+        setenv("CK_FORCE_Q6K_Q8K_2D_PREFILL", "1", 1);
+        gemm_nt_q6_k_q8_k_parallel_dispatch(ck_q8.data(), weights.data(),
+                nullptr, strict_2d.data(), spec.m, spec.n, spec.k);
+        gemm_nt_q6_k_q8_k_parallel_dispatch(ck_q8.data(), weights.data(),
+                bias.data(), strict_bias.data(), spec.m, spec.n, spec.k);
+        if (prior_force_2d) setenv("CK_FORCE_Q6K_Q8K_2D_PREFILL", saved_force_2d.c_str(), 1);
+        else unsetenv("CK_FORCE_Q6K_Q8K_2D_PREFILL");
+        ck_set_strict_parity(0);
+        pass &= compare_f32("CK strict batched vs llama graph",
+                strict.data(), canonical.data(), strict.size());
+        pass &= compare_f32("CK strict 2D vs llama graph",
+                strict_2d.data(), canonical.data(), strict_2d.size());
+        pass &= compare_f32("CK strict tiled with bias",
+                strict_bias.data(), expected_bias.data(), strict_bias.size());
+    } else if (spec.m >= 8) {
+        std::printf("  %-34s x86 AVX2/FMA contract unavailable [SKIP]\n",
+                "CK strict tiled vs llama graph");
+    }
     const auto reference = dequantized_reference(weights, ck_q8, spec.m, spec.n, spec.k);
     pass &= compare_reference("CK vs dequantized reference", ck, reference);
     pass &= compare_reference("llama graph vs reference", canonical, reference);
@@ -332,36 +367,63 @@ static bool run_xray_artifact_case() {
         return false;
     }
 
+    const int m = std::atoi(std::getenv("CK_Q6_XRAY_M") ? std::getenv("CK_Q6_XRAY_M") : "1");
     const int k = std::atoi(std::getenv("CK_Q6_XRAY_K") ? std::getenv("CK_Q6_XRAY_K") : "4096");
     const int n = std::atoi(std::getenv("CK_Q6_XRAY_N") ? std::getenv("CK_Q6_XRAY_N") : "1024");
+    if (m <= 0 || n <= 0 || k <= 0 || k % QK_K != 0) {
+        std::fprintf(stderr, "invalid Q6 X-ray geometry M=%d N=%d K=%d\n", m, n, k);
+        return false;
+    }
     const auto input_bytes = read_bytes(input_path);
     const auto weights = read_bytes(weights_path);
     const auto output_bytes = read_bytes(output_path);
     const size_t q6_row = static_cast<size_t>(k / QK_K) * sizeof(block_q6_K);
-    if (input_bytes.size() != static_cast<size_t>(k) * sizeof(float)
+    if (input_bytes.size() != static_cast<size_t>(m) * k * sizeof(float)
             || weights.size() != static_cast<size_t>(n) * q6_row
-            || output_bytes.size() != static_cast<size_t>(n) * sizeof(float)) {
+            || output_bytes.size() != static_cast<size_t>(m) * n * sizeof(float)) {
         std::fprintf(stderr, "invalid Q6 X-ray artifact extents: input=%zu weights=%zu output=%zu\n",
                 input_bytes.size(), weights.size(), output_bytes.size());
         return false;
     }
 
-    std::vector<float> input(k), expected(n), leaf(n), graph(n), ck(n);
+    std::vector<float> input(static_cast<size_t>(m) * k);
+    std::vector<float> expected(static_cast<size_t>(m) * n), leaf(expected.size());
+    std::vector<float> graph(expected.size()), ck(expected.size());
+    std::vector<float> dispatched(expected.size());
     std::memcpy(input.data(), input_bytes.data(), input_bytes.size());
     std::memcpy(expected.data(), output_bytes.data(), output_bytes.size());
-    std::vector<block_q8_K> q8(static_cast<size_t>(k / QK_K));
-    quantize_row_q8_k(input.data(), q8.data(), k);
-    for (int row = 0; row < n; ++row) {
-        ggml_vec_dot_q6_K_q8_K(k, &leaf[row], 0,
-                weights.data() + static_cast<size_t>(row) * q6_row, 0, q8.data(), 0, 1);
+    const size_t q8_row = static_cast<size_t>(k / QK_K);
+    std::vector<block_q8_K> q8(static_cast<size_t>(m) * q8_row);
+    for (int token = 0; token < m; ++token) {
+        quantize_row_q8_k(input.data() + static_cast<size_t>(token) * k,
+                q8.data() + static_cast<size_t>(token) * q8_row, k);
+        for (int row = 0; row < n; ++row) {
+            ggml_vec_dot_q6_K_q8_K(k, &leaf[static_cast<size_t>(token) * n + row], 0,
+                    weights.data() + static_cast<size_t>(row) * q6_row, 0,
+                    q8.data() + static_cast<size_t>(token) * q8_row, 0, 1);
+        }
     }
-    gemv_q6_k_q8_k_parallel_dispatch(ck.data(), weights.data(), q8.data(), n, k);
-    if (!llama_graph(weights, input, graph, 1, n, k, false)) return false;
+    if (m == 1) {
+        gemv_q6_k_q8_k_parallel_dispatch(ck.data(), weights.data(), q8.data(), n, k);
+    } else {
+        ck_set_strict_parity(1);
+        gemm_nt_q6_k_q8_k(q8.data(), weights.data(), nullptr, ck.data(), m, n, k);
+        ck_set_strict_parity(0);
+    }
+    if (!llama_graph(weights, input, graph, m, n, k, false)) return false;
+    ck_set_strict_parity(1);
+    gemm_nt_q6_k_q8_k_parallel_dispatch(q8.data(), weights.data(), nullptr,
+            dispatched.data(), m, n, k);
+    ck_set_strict_parity(0);
 
-    std::printf("\nxray_artifact M=1 N=%d K=%d\n", n, k);
-    bool pass = compare_f32("llama leaf vs graph", leaf.data(), graph.data(), n);
-    pass &= compare_f32("CK vs llama graph", ck.data(), graph.data(), n);
-    pass &= compare_f32("llama graph vs captured V", graph.data(), expected.data(), n);
+    std::printf("\nxray_artifact M=%d N=%d K=%d\n", m, n, k);
+    const size_t count = expected.size();
+    bool pass = compare_f32("llama leaf vs graph", leaf.data(), graph.data(), count, m == 1);
+    pass &= compare_f32("CK vs llama graph", ck.data(), graph.data(), count, m == 1);
+    if (m >= 8 && ggml_cpu_has_avx2() && ggml_cpu_has_fma()) {
+        pass &= compare_f32("CK dispatched vs llama graph", dispatched.data(), graph.data(), count);
+    }
+    pass &= compare_f32("llama graph vs captured V", graph.data(), expected.data(), count);
     return pass;
 }
 
@@ -390,12 +452,17 @@ int main(int argc, char **argv) {
         {"decode_leaf_shape", 1, 64, 256},
         {"decode_practical", 1, 1024, 4096},
         {"short_prefill", 5, 512, 1024},
+        {"tiled_threshold", 8, 64, 1024},
+        {"tiled_tail", 9, 64, 1024},
+        {"vision_v_projection", 72, 512, 2560},
         {"multirow_prefill", 33, 512, 1024},
     };
     const case_spec full_cases[] = {
         {"decode_leaf_shape", 1, 64, 256},
         {"decode_practical", 1, 4096, 4096},
         {"short_prefill", 5, 1024, 4096},
+        {"tiled_threshold", 8, 64, 1024},
+        {"tiled_tail", 9, 64, 1024},
         {"multirow_prefill", 33, 1024, 4096},
         {"long_k_prefill", 16, 512, 11008},
     };

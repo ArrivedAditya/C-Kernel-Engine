@@ -1512,6 +1512,12 @@ void gemm_q6_k_q8_k(float *Y,
  * @param N Output dimension
  * @param K Input dimension
  */
+void gemm_nt_q6_k_q8_k_tiled_parity(const void *A_q8,
+                                    const void *B,
+                                    const float *bias,
+                                    float *C,
+                                    int M, int N, int K);
+
 void gemm_nt_q6_k_q8_k(const void *A_q8,
                         const void *B,
                         const float *bias,
@@ -1524,6 +1530,12 @@ void gemm_nt_q6_k_q8_k(const void *A_q8,
     if (M <= 0 || N <= 0 || K <= 0) {
         return;
     }
+#if defined(__AVX2__) && defined(__FMA__)
+    if (M >= 8 && ck_strict_parity_enabled()) {
+        gemm_nt_q6_k_q8_k_tiled_parity(A_q8, B, bias, C, M, N, K);
+        return;
+    }
+#endif
 
     /* Prefill GEMM is the hot Qwen2/Qwen3.5 MLP-down path. Keep decode
      * gemv_q6_k_q8_k() conservative, but allow GEMM/prefill to use the
@@ -1543,6 +1555,56 @@ void gemm_nt_q6_k_q8_k(const void *A_q8,
             c_row[n] = ck_dot_q6_k_q8_k_fast_or_ref(w_row, a_row, K) + b;
         }
     }
+}
+
+/* The pinned x86 GGML tiled graph reduces each 256-value slab in integer
+ * arithmetic, then applies FP32 scales with one fused accumulation per slab. */
+void gemm_nt_q6_k_q8_k_tiled_parity_tile(const void *A_q8,
+                                         const void *B,
+                                         const float *bias,
+                                         float *C,
+                                         int M, int N, int K,
+                                         int m0, int m1, int n0, int n1)
+{
+    if (!A_q8 || !B || !C || M <= 0 || N <= 0 || K <= 0 || K % QK_K) return;
+    if (m0 < 0 || n0 < 0 || m1 > M || n1 > N || m0 >= m1 || n0 >= n1) return;
+    const block_q8_K *A = (const block_q8_K *) A_q8;
+    const block_q6_K *W = (const block_q6_K *) B;
+    const int nb = K / QK_K;
+    for (int m = m0; m < m1; ++m) {
+        for (int n = n0; n < n1; ++n) {
+            float acc = 0.0f;
+            for (int b = 0; b < nb; ++b) {
+                const block_q6_K *w = W + (size_t)n * (size_t)nb + b;
+                const block_q8_K *a = A + (size_t)m * (size_t)nb + b;
+                int32_t dot = 0;
+                for (int e = 0; e < QK_K; ++e) {
+                    const int group = (e / 128) * 128;
+                    const int pos = e % 128;
+                    const int lane = pos % 32;
+                    const int ql_off = group / 2 + lane + ((pos / 32) & 1) * 32;
+                    const int qh_off = group / 4 + lane;
+                    const int ql_shift = (pos >= 64) ? 4 : 0;
+                    const int qh_shift = (pos / 32) * 2;
+                    const int code = ((w->ql[ql_off] >> ql_shift) & 15) |
+                                     (((w->qh[qh_off] >> qh_shift) & 3) << 4);
+                    dot += (code - 32) * (int)w->scales[e / 16] * (int)a->qs[e];
+                }
+                acc = fmaf(GGML_FP16_TO_FP32(w->d) * (float)dot, a->d, acc);
+            }
+            C[(size_t)m * (size_t)N + n] = acc + (bias ? bias[n] : 0.0f);
+        }
+    }
+}
+
+void gemm_nt_q6_k_q8_k_tiled_parity(const void *A_q8,
+                                    const void *B,
+                                    const float *bias,
+                                    float *C,
+                                    int M, int N, int K)
+{
+    gemm_nt_q6_k_q8_k_tiled_parity_tile(A_q8, B, bias, C,
+                                        M, N, K, 0, M, 0, N);
 }
 
 static void gemm_nt_q6_k_q8_k_prepared_tile_impl(
