@@ -27,6 +27,7 @@ if str(REPO_ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 from gguf_tokenizer import GGUFTokenizer  # type: ignore  # noqa: E402
+from vision_mtmd_prefix_parity_v8 import compare_prefixes as compare_mtmd_prefixes  # type: ignore  # noqa: E402
 
 
 def _load_module(name: str, path: Path):
@@ -407,8 +408,14 @@ def _sha256_file(path: Path) -> str:
 def _verify_encoder_prefix_report(
     report_path: Path, ck_prefix: Path, llama_prefix: Path,
     prefix_tokens: int, prefix_row_dim: int,
+    bridge_report_path: Path | None = None,
 ) -> dict[str, Any]:
     report = json.loads(report_path.read_text(encoding="utf-8"))
+    if isinstance(report, dict) and report.get("lane") == "independent_mtmd_encoder_prefix":
+        return _verify_mtmd_prefix_report(
+            report_path, report, ck_prefix, llama_prefix, prefix_tokens,
+            prefix_row_dim, bridge_report_path,
+        )
     if not isinstance(report, dict) or report.get("status") != "complete":
         raise ValueError("encoder prefix report is not complete")
     preprocess = report.get("preprocess_evidence")
@@ -468,6 +475,115 @@ def _verify_encoder_prefix_report(
         "input_provenance": report["input_provenance"],
         "artifact_hashes": {name: identity["sha256"] for name, identity in identities.items()},
     }
+
+
+def _verify_mtmd_prefix_report(
+    report_path: Path, report: dict[str, Any], ck_prefix: Path, llama_prefix: Path,
+    prefix_tokens: int, prefix_row_dim: int, bridge_report_path: Path | None,
+) -> dict[str, Any]:
+    if (report.get("status") != "pass"
+            or report.get("input_provenance") != "independently_decoded_and_preprocessed_from_same_p6"
+            or bridge_report_path is None):
+        raise ValueError("MTMD prefix report lacks passing independent image evidence")
+    metrics = report.get("metrics")
+    thresholds = report.get("thresholds")
+    if (not isinstance(metrics, dict) or not isinstance(thresholds, dict)
+            or type(metrics.get("tokens")) is not int or metrics["tokens"] != prefix_tokens
+            or type(metrics.get("embed_dim")) is not int or metrics["embed_dim"] != prefix_row_dim):
+        raise ValueError("MTMD prefix report has invalid tensor geometry")
+    for name, limit in (("rmse", "max_rmse"), ("max_abs", "max_abs")):
+        value = metrics.get(name)
+        bound = thresholds.get(limit)
+        if (type(value) not in (int, float) or type(bound) not in (int, float)
+                or not math.isfinite(value) or not math.isfinite(bound)
+                or value < 0 or bound < 0 or value > bound):
+            raise ValueError(f"MTMD prefix report has invalid {name} verdict")
+
+    exports = report.get("decoder_prefix_exports")
+    if (not isinstance(exports, dict) or exports.get("contract") != "cke.decoder_prefix_f32.v1"
+            or type(exports.get("tokens")) is not int or exports["tokens"] != prefix_tokens
+            or type(exports.get("row_dim")) is not int or exports["row_dim"] != prefix_row_dim):
+        raise ValueError("MTMD prefix report lacks complete decoder-prefix exports")
+    for role, path in (("ck", ck_prefix), ("llama", llama_prefix)):
+        identity = exports.get(role)
+        if (not isinstance(identity, dict) or identity.get("path") != str(path.resolve())
+                or identity.get("size_bytes") != prefix_tokens * prefix_row_dim * 4
+                or identity.get("sha256") != _sha256_file(path)):
+            raise ValueError(f"MTMD prefix report {role} export identity mismatch")
+    recomputed = compare_mtmd_prefixes(ck_prefix, llama_prefix, prefix_tokens, prefix_row_dim)
+    for name in ("rmse", "max_abs"):
+        if not math.isclose(metrics[name], recomputed[name], rel_tol=1.0e-12, abs_tol=1.0e-12):
+            raise ValueError(f"MTMD prefix report {name} disagrees with exported tensors")
+
+    identities = report.get("artifact_identity")
+    required = {
+        "cke_bridge_report", "cke_model_library", "image", "oracle_model",
+        "oracle_mmproj", "oracle_probe", "libmtmd", "libllama", "libggml",
+        "libggml-base", "libggml-cpu",
+    }
+    if not isinstance(identities, dict) or not required.issubset(identities):
+        raise ValueError("MTMD prefix report lacks artifact identities")
+    for name in required:
+        identity = identities[name]
+        if not isinstance(identity, dict) or not isinstance(identity.get("path"), str):
+            raise ValueError(f"MTMD prefix report has invalid {name} identity")
+        path = Path(identity["path"])
+        if (not path.is_file() or type(identity.get("size_bytes")) is not int
+                or identity["size_bytes"] != path.stat().st_size
+                or identity.get("sha256") != _sha256_file(path)):
+            raise ValueError(f"MTMD prefix report {name} artifact changed")
+    if identities["cke_bridge_report"]["path"] != str(bridge_report_path.resolve()):
+        raise ValueError("MTMD prefix report refers to a different CKE bridge run")
+    bridge = json.loads(bridge_report_path.read_text(encoding="utf-8"))
+    encoder = bridge.get("encoder_report") or {}
+    provenance = report.get("provenance")
+    if (not isinstance(provenance, dict) or bridge.get("status") != "ok"
+            or bridge.get("prefix_source") != "encoder"
+            or bridge.get("prefix_dump_path") != str(ck_prefix.resolve())
+            or bridge.get("prefix_dump_sha256") != exports["ck"]["sha256"]
+            or provenance.get("cke_prefix_sha256") != exports["ck"]["sha256"]
+            or provenance.get("oracle_prefix_sha256") != exports["llama"]["sha256"]
+            or provenance.get("image_sha256") != identities["image"]["sha256"]
+            or encoder.get("image_sha256") != identities["image"]["sha256"]
+            or encoder.get("decoded_rgb8_sha256") != provenance.get("cke_decoded_rgb8_sha256")
+            or provenance.get("cke_decoded_rgb8_sha256") != provenance.get("oracle_decoded_rgb8_sha256")
+            or encoder.get("model_library_sha256") != identities["cke_model_library"]["sha256"]
+            or provenance.get("cke_encoder_library_sha256") != identities["cke_model_library"]["sha256"]
+            or str((bridge.get("encoder_runtime") or {}).get("so_path")) != identities["cke_model_library"]["path"]
+            or str((bridge.get("decoder_runtime") or {}).get("gguf")) != identities["oracle_model"]["path"]):
+        raise ValueError("MTMD prefix report and generated bridge provenance disagree")
+    if any(
+        provenance.get(key) != identities[name]["sha256"]
+        for key, name in (("oracle_model_sha256", "oracle_model"),
+                          ("oracle_mmproj_sha256", "oracle_mmproj"),
+                          ("oracle_probe_sha256", "oracle_probe"))
+    ) or any(
+        (provenance.get("oracle_library_sha256") or {}).get(name) != identities[name]["sha256"]
+        for name in ("libmtmd", "libllama", "libggml", "libggml-base", "libggml-cpu")
+    ):
+        raise ValueError("MTMD prefix report has inconsistent oracle identities")
+    tree = subprocess.check_output(
+        ["git", "-C", str(REPO_ROOT), "ls-tree", "HEAD", "llama.cpp"], text=True,
+    ).split()
+    if len(tree) != 4 or provenance.get("oracle_revision") != tree[2]:
+        raise ValueError("MTMD prefix report uses a different llama.cpp revision")
+    return {
+        "report_sha256": _sha256_file(report_path),
+        "input_provenance": report["input_provenance"],
+        "artifact_hashes": {name: identities[name]["sha256"] for name in sorted(required)},
+        "numerical_contract": dict(thresholds),
+    }
+
+
+def _comparison_status(
+    *, separate_prefixes: bool, producers_verified: bool,
+    numerical_contract_declared: bool, numerical_match: bool,
+) -> str:
+    if not separate_prefixes:
+        return "pass" if numerical_match else "fail"
+    if not producers_verified or not numerical_contract_declared:
+        return "incomplete"
+    return "pass" if numerical_match else "fail"
 
 
 def _load_llama_dump_dir(
@@ -2024,7 +2140,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("--require-top1-match", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--min-topk-overlap", type=float, default=0.50)
-    ap.add_argument("--max-abs-threshold", type=float, default=1.0e9)
+    ap.add_argument("--max-abs-threshold", type=float, default=None)
+    ap.add_argument("--max-rmse-threshold", type=float, default=None)
     ap.add_argument("--dump-dir", type=Path, default=None, help="Optional directory to capture CK and llama decoder dumps")
     ap.add_argument(
         "--dump-names",
@@ -2038,6 +2155,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--ck-strict-parity", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--json-out", type=Path, default=None, help="Optional explicit JSON report path")
     args = ap.parse_args(argv)
+    for name, value in (("max-abs-threshold", args.max_abs_threshold),
+                        ("max-rmse-threshold", args.max_rmse_threshold)):
+        if value is not None and (not math.isfinite(value) or value < 0):
+            ap.error(f"--{name} must be finite and nonnegative")
 
     if args.llama_prefix_f32 is not None and args.dump_dir is not None:
         ap.error("--dump-dir is not a decoder-arithmetic comparison with separate prefixes")
@@ -2063,6 +2184,14 @@ def main(argv: list[str] | None = None) -> int:
     workdir.mkdir(parents=True, exist_ok=True)
     decoder_dir = workdir / "decoder"
     json_out = args.json_out.resolve() if args.json_out is not None else workdir / "decoder_first_token_parity_report.json"
+    protected = [gguf_path, args.bridge_report, args.encoder_prefix_report,
+                 args.prefix_f32, args.llama_prefix_f32]
+    if bridge_report is not None and bridge_report.get("prefix_dump_path"):
+        protected.append(Path(str(bridge_report["prefix_dump_path"])))
+    if any(path is not None and json_out == Path(path).resolve() for path in protected):
+        raise ValueError("decoder parity output must not overwrite an input artifact")
+    json_out.parent.mkdir(parents=True, exist_ok=True)
+    json_out.unlink(missing_ok=True)
 
     requested_ctx_source = args.ctx_len
     if requested_ctx_source is None and bridge_report is not None and bridge_report.get("decoder_context_len") is not None:
@@ -2117,6 +2246,7 @@ def main(argv: list[str] | None = None) -> int:
         _verify_encoder_prefix_report(
             args.encoder_prefix_report.resolve(), resolved_prefix_path,
             llama_prefix_path, prefix_tokens, prefix_row_dim,
+            args.bridge_report.resolve() if args.bridge_report is not None else None,
         ) if args.encoder_prefix_report is not None else None
     )
     total_prompt_tokens = len(token_ids_before) + len(token_ids_after)
@@ -2224,13 +2354,23 @@ def main(argv: list[str] | None = None) -> int:
 
     overlap_ok = cmp["topk_overlap_ratio"] >= float(args.min_topk_overlap)
     top1_ok = (not bool(args.require_top1_match)) or bool(cmp["top1_match"])
-    max_abs_ok = cmp["max_abs_diff"] <= float(args.max_abs_threshold)
-    passed = bool(top1_ok and overlap_ok and max_abs_ok)
+    max_abs_limit = float(args.max_abs_threshold) if args.max_abs_threshold is not None else 1.0e9
+    max_abs_ok = cmp["max_abs_diff"] <= max_abs_limit
+    rmse_ok = args.max_rmse_threshold is None or cmp["rmse"] <= float(args.max_rmse_threshold)
+    passed = bool(top1_ok and overlap_ok and max_abs_ok and rmse_ok)
+    numerical_contract_declared = args.max_abs_threshold is not None and args.max_rmse_threshold is not None
+    status = _comparison_status(
+        separate_prefixes=separate_prefixes,
+        producers_verified=prefix_provenance is not None,
+        numerical_contract_declared=numerical_contract_declared,
+        numerical_match=passed,
+    )
 
     report = {
-        "status": ("incomplete" if passed else "fail") if separate_prefixes else ("pass" if passed else "fail"),
-        "pass": passed and not separate_prefixes,
+        "status": status,
+        "pass": status == "pass",
         "diagnostic_comparison_pass": passed if separate_prefixes else None,
+        "comparison_scope": "independent_image_to_first_logit" if separate_prefixes else "shared_prefix_decoder_first_logit",
         "gguf_path": str(gguf_path),
         "workdir": str(workdir),
         "decoder_runtime": {
@@ -2280,7 +2420,9 @@ def main(argv: list[str] | None = None) -> int:
         "thresholds": {
             "require_top1_match": bool(args.require_top1_match),
             "min_topk_overlap": float(args.min_topk_overlap),
-            "max_abs_threshold": float(args.max_abs_threshold),
+            "max_abs_threshold": max_abs_limit,
+            "max_rmse_threshold": args.max_rmse_threshold,
+            "numerical_contract_declared": numerical_contract_declared,
         },
         "ck": {
             "vocab": int(ck["vocab_size"]),
@@ -2314,7 +2456,7 @@ def main(argv: list[str] | None = None) -> int:
     json_out.parent.mkdir(parents=True, exist_ok=True)
     json_out.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(json.dumps(report, indent=2))
-    return (4 if passed else 3) if separate_prefixes else (0 if passed else 3)
+    return 0 if status == "pass" else 3 if status == "fail" else 4
 
 
 if __name__ == "__main__":

@@ -37,6 +37,25 @@ decoder_parity_v8 = _load_module("decoder_first_token_parity_v8_tests", V8_DECOD
 
 
 class V8DecoderFirstTokenParityTests(unittest.TestCase):
+    def test_failed_replay_removes_stale_pass_without_overwriting_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            gguf = root / "decoder.gguf"
+            gguf.write_bytes(b"fixture")
+            output = root / "report.json"
+            output.write_text('{"status":"pass"}', encoding="utf-8")
+            argv = ["--gguf", str(gguf), "--workdir", str(root / "work"),
+                    "--json-out", str(output)]
+            with mock.patch.object(
+                decoder_parity_v8.bridge_runner_v8, "_prepare_decoder_runtime",
+                side_effect=RuntimeError("stale runtime"),
+            ), self.assertRaisesRegex(RuntimeError, "stale runtime"):
+                decoder_parity_v8.main(argv)
+            self.assertFalse(output.exists())
+            with self.assertRaisesRegex(ValueError, "must not overwrite"):
+                decoder_parity_v8.main([*argv[:-1], str(gguf)])
+            self.assertEqual(gguf.read_bytes(), b"fixture")
+
     def test_bridge_prefix_decode_policy_fails_closed(self) -> None:
         self.assertEqual(decoder_parity_v8._prefix_decode_policy(None), "causal_mixed_prefix")
         self.assertEqual(
@@ -119,6 +138,100 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
             artifact.write_bytes(b"stale")
             with self.assertRaisesRegex(ValueError, "artifact changed"):
                 verify(report)
+
+    def test_mtmd_prefix_report_binds_independent_image_and_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            ck = root / "ck.f32"
+            oracle = root / "oracle.f32"
+            image = root / "image.ppm"
+            bridge_path = root / "bridge.json"
+            report_path = root / "prefix-parity.json"
+            ck.write_bytes(array("f", [1.0, 2.0, 3.0, 4.0]).tobytes())
+            oracle.write_bytes(array("f", [1.0, 2.0, 3.0, 4.0]).tobytes())
+            image.write_bytes(b"P6\n2 1\n255\n" + bytes((255, 0, 0, 0, 0, 255)))
+            names = ("cke_model_library", "oracle_model", "oracle_mmproj", "oracle_probe",
+                     "libmtmd", "libllama", "libggml", "libggml-base", "libggml-cpu")
+            files = {name: root / name for name in names}
+            for name, path in files.items():
+                path.write_bytes(name.encode())
+
+            def identity(path: Path) -> dict:
+                return {"path": str(path.resolve()), "size_bytes": path.stat().st_size,
+                        "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+
+            pixels_hash = hashlib.sha256(bytes((255, 0, 0, 0, 0, 255))).hexdigest()
+            bridge = {
+                "status": "ok", "prefix_source": "encoder", "prefix_dump_path": str(ck.resolve()),
+                "prefix_dump_sha256": identity(ck)["sha256"],
+                "encoder_report": {
+                    "image_sha256": identity(image)["sha256"],
+                    "decoded_rgb8_sha256": pixels_hash,
+                    "model_library_sha256": identity(files["cke_model_library"])["sha256"],
+                },
+                "encoder_runtime": {"so_path": str(files["cke_model_library"].resolve())},
+                "decoder_runtime": {"gguf": str(files["oracle_model"].resolve())},
+            }
+            bridge_path.write_text(json.dumps(bridge), encoding="utf-8")
+            revision = decoder_parity_v8.subprocess.check_output(
+                ["git", "-C", str(ROOT), "ls-tree", "HEAD", "llama.cpp"], text=True,
+            ).split()[2]
+            artifacts = {name: identity(path) for name, path in files.items()}
+            artifacts.update({"image": identity(image), "cke_bridge_report": identity(bridge_path)})
+            report = {
+                "status": "pass", "lane": "independent_mtmd_encoder_prefix",
+                "input_provenance": "independently_decoded_and_preprocessed_from_same_p6",
+                "metrics": {"tokens": 2, "embed_dim": 2, "rmse": 0.0, "max_abs": 0.0},
+                "thresholds": {"max_rmse": 0.1, "max_abs": 0.1},
+                "decoder_prefix_exports": {
+                    "contract": "cke.decoder_prefix_f32.v1", "tokens": 2, "row_dim": 2,
+                    "ck": identity(ck), "llama": identity(oracle),
+                },
+                "artifact_identity": artifacts,
+                "provenance": {
+                    "cke_prefix_sha256": identity(ck)["sha256"],
+                    "oracle_prefix_sha256": identity(oracle)["sha256"],
+                    "image_sha256": identity(image)["sha256"],
+                    "cke_encoder_library_sha256": artifacts["cke_model_library"]["sha256"],
+                    "cke_decoded_rgb8_sha256": pixels_hash,
+                    "oracle_decoded_rgb8_sha256": pixels_hash,
+                    "oracle_model_sha256": artifacts["oracle_model"]["sha256"],
+                    "oracle_mmproj_sha256": artifacts["oracle_mmproj"]["sha256"],
+                    "oracle_probe_sha256": artifacts["oracle_probe"]["sha256"],
+                    "oracle_library_sha256": {
+                        name: artifacts[name]["sha256"] for name in names if name.startswith("lib")
+                    },
+                    "oracle_revision": revision,
+                },
+            }
+
+            def verify(candidate: dict) -> dict:
+                report_path.write_text(json.dumps(candidate), encoding="utf-8")
+                return decoder_parity_v8._verify_encoder_prefix_report(
+                    report_path, ck, oracle, 2, 2, bridge_path,
+                )
+
+            self.assertEqual(verify(report)["input_provenance"], report["input_provenance"])
+            for mutate in (
+                lambda row: row.update(status="fail"),
+                lambda row: row["metrics"].update(rmse=0.2),
+                lambda row: row["metrics"].update(rmse=0.01),
+                lambda row: row["metrics"].update(max_abs=float("nan")),
+                lambda row: row["decoder_prefix_exports"]["llama"].update(sha256="0" * 64),
+                lambda row: row["artifact_identity"]["image"].update(sha256="0" * 64),
+                lambda row: row["provenance"].update(cke_prefix_sha256="0" * 64),
+                lambda row: row["provenance"].update(oracle_decoded_rgb8_sha256="0" * 64),
+                lambda row: row["provenance"].update(oracle_revision="0" * 40),
+            ):
+                candidate = copy.deepcopy(report)
+                mutate(candidate)
+                with self.subTest(mutate=mutate), self.assertRaises(ValueError):
+                    verify(candidate)
+            verify(report)
+            with self.assertRaisesRegex(ValueError, "bridge run"):
+                decoder_parity_v8._verify_encoder_prefix_report(
+                    report_path, ck, oracle, 2, 2, root / "other-bridge.json",
+                )
 
     def test_xray_verifies_planner_memory_contract_without_recomputing_extent(self) -> None:
         with tempfile.TemporaryDirectory(prefix="v8_memory_contract_") as tmpdir:
@@ -1531,6 +1644,27 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
                     report["prefix_input_identity"]["ck_sha256"],
                     report["prefix_input_identity"]["llama_sha256"],
                 )
+                verified_argv = [*argv, "--encoder-prefix-report", str(tmp / "producer.json")]
+                with mock.patch.object(
+                    decoder_parity_v8, "_verify_encoder_prefix_report",
+                    return_value={"input_provenance": "independently_decoded_and_preprocessed_from_same_p6"},
+                ):
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        self.assertEqual(decoder_parity_v8.main(verified_argv), 4)
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        self.assertEqual(decoder_parity_v8.main([
+                            *verified_argv, "--max-abs-threshold", "0.2",
+                            "--max-rmse-threshold", "0.2",
+                        ]), 0)
+                    verified_report = json.loads(report_path.read_text(encoding="utf-8"))
+                    self.assertEqual(verified_report["status"], "pass")
+                    self.assertEqual(verified_report["comparison_scope"], "independent_image_to_first_logit")
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        self.assertEqual(decoder_parity_v8.main([
+                            *verified_argv, "--max-abs-threshold", "0.01",
+                            "--max-rmse-threshold", "0.01",
+                        ]), 3)
+                    self.assertEqual(json.loads(report_path.read_text(encoding="utf-8"))["status"], "fail")
                 llama_prefix.write_bytes(array("f", [1.0, 2.0]).tobytes())
                 run_llama.reset_mock()
                 run_decoder.reset_mock()
@@ -1559,10 +1693,21 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
                     **llama_result,
                     "logits": np.array([2.0, 0.0, 0.1, -0.5], dtype=np.float32),
                 }
+                with mock.patch.object(
+                    decoder_parity_v8, "_verify_encoder_prefix_report",
+                    return_value={"input_provenance": "independently_decoded_and_preprocessed_from_same_p6"},
+                ):
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        self.assertEqual(decoder_parity_v8.main(verified_argv), 4)
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        self.assertEqual(decoder_parity_v8.main([
+                            *verified_argv, "--max-abs-threshold", "0.2",
+                            "--max-rmse-threshold", "0.2",
+                        ]), 3)
                 with contextlib.redirect_stdout(io.StringIO()):
-                    self.assertEqual(decoder_parity_v8.main(argv), 3)
+                    self.assertEqual(decoder_parity_v8.main(argv), 4)
                 report = json.loads(report_path.read_text(encoding="utf-8"))
-                self.assertEqual(report["status"], "fail")
+                self.assertEqual(report["status"], "incomplete")
                 self.assertFalse(report["diagnostic_comparison_pass"])
 
     def test_main_passes_ctx_len_into_decoder_runtime_prep(self) -> None:
