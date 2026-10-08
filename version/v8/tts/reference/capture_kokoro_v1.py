@@ -68,6 +68,11 @@ GENERATOR_RESIDUAL_BLOCK_TAIL_HOOKS = tuple(
     for pair in (1, 2)
     for module in ("adain1", "adain2")
 )
+GENERATOR_MAIN_RESBLOCK0_HOOKS = (
+    'decoder.generator.resblocks.0',
+    *(f'decoder.generator.resblocks.0.{side}.{pair}'
+      for pair in range(3) for side in ('convs1', 'convs2')),
+)
 
 
 def sha256(path: Path) -> str:
@@ -213,13 +218,13 @@ def main() -> int:
         "predictor.duration_proj", "predictor.shared", "predictor.F0_proj",
         "predictor.N_proj", "text_encoder", "decoder", "decoder.generator",
         "decoder.generator.conv_post",
-    ) + FINE_PREDICTOR_HOOKS + PROSODY_BRANCH_HOOKS + DECODER_HOOKS + GENERATOR_HOOKS + GENERATOR_RESIDUAL_PREFIX_HOOKS + GENERATOR_RESIDUAL_BLOCK_TAIL_HOOKS
+    ) + FINE_PREDICTOR_HOOKS + PROSODY_BRANCH_HOOKS + DECODER_HOOKS + GENERATOR_HOOKS + GENERATOR_RESIDUAL_PREFIX_HOOKS + GENERATOR_RESIDUAL_BLOCK_TAIL_HOOKS + GENERATOR_MAIN_RESBLOCK0_HOOKS
     modules = dict(model.named_modules())
     hooks = []
     for name in module_names:
         module = modules.get(name)
         if module is None:
-            if name in FINE_PREDICTOR_HOOKS + PROSODY_BRANCH_HOOKS + DECODER_HOOKS + GENERATOR_HOOKS + GENERATOR_RESIDUAL_PREFIX_HOOKS + GENERATOR_RESIDUAL_BLOCK_TAIL_HOOKS:
+            if name in FINE_PREDICTOR_HOOKS + PROSODY_BRANCH_HOOKS + DECODER_HOOKS + GENERATOR_HOOKS + GENERATOR_RESIDUAL_PREFIX_HOOKS + GENERATOR_RESIDUAL_BLOCK_TAIL_HOOKS + GENERATOR_MAIN_RESBLOCK0_HOOKS:
                 raise RuntimeError(f"pinned predictor checkpoint module missing: {name}")
             record.setdefault("unavailable_hooks", []).append(name)
             continue
@@ -267,6 +272,12 @@ def main() -> int:
                        out_dir, record["tensors"])
     hooks.append(modules["decoder.generator.resblocks.0"]
                  .register_forward_pre_hook(capture_generator_stage0_join))
+    for pair in (1, 2):
+        name = f"decoder.generator.resblocks.0.adain1.{pair}"
+        label = f"decoder_generator_resblocks_0_pair{pair - 1}_output"
+        def capture_main_pair(_module, inputs, label=label):
+            capture_tensor(inputs[0], label, out_dir, record["tensors"])
+        hooks.append(modules[name].register_forward_pre_hook(capture_main_pair))
     stft = model.decoder.generator.stft
     capture_tensor(stft.window, "generator_stft_window", out_dir,
                    record["tensors"])
@@ -345,6 +356,9 @@ def main() -> int:
     for name in GENERATOR_RESIDUAL_BLOCK_TAIL_HOOKS:
         if name.replace(".", "_") not in record["tensors"]:
             raise RuntimeError(f"pinned residual tail checkpoint not reached: {name}")
+    for name in GENERATOR_MAIN_RESBLOCK0_HOOKS:
+        if name.replace(".", "_") not in record["tensors"]:
+            raise RuntimeError(f"pinned main residual checkpoint not reached: {name}")
     if "decoder_generator_noise_res_0_snake0" not in record["tensors"]:
         raise RuntimeError("pinned first source Snake input was not captured")
     for key in ("decoder_generator_noise_res_0_snake1",
@@ -356,6 +370,10 @@ def main() -> int:
             raise RuntimeError(f"pinned first source residual pair checkpoint not reached: {key}")
     if "decoder_generator_stage0_join" not in record["tensors"]:
         raise RuntimeError("pinned first generator source/main join was not captured")
+    for pair in (0, 1):
+        key = f"decoder_generator_resblocks_0_pair{pair}_output"
+        if key not in record["tensors"]:
+            raise RuntimeError(f"pinned main residual pair was not captured: {key}")
     record["fine_predictor_hooks"] = list(FINE_PREDICTOR_HOOKS)
     record["prosody_branch_hooks"] = list(PROSODY_BRANCH_HOOKS)
     record["decoder_hooks"] = list(DECODER_HOOKS)
@@ -363,6 +381,7 @@ def main() -> int:
     record["generator_residual_prefix_hooks"] = list(GENERATOR_RESIDUAL_PREFIX_HOOKS)
     record["generator_residual_block_tail_hooks"] = list(
         GENERATOR_RESIDUAL_BLOCK_TAIL_HOOKS)
+    record["generator_main_resblock0_hooks"] = list(GENERATOR_MAIN_RESBLOCK0_HOOKS)
     capture_tensor(output.pred_dur, "predicted_duration", out_dir, record["tensors"])
     durations = output.pred_dur.detach().cpu().reshape(-1).to(torch.int64)
     if len(durations) != len(ids) or (durations < 1).any():

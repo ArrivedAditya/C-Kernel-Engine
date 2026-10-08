@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -25,63 +26,73 @@ sys.path.insert(0, str(ROOT / 'version/v8/tts'))
 import build_kokoro_generator_stage0_join_circuit as author
 
 
+def join_weights_and_references():
+    """Load the identity-checked pinned inputs shared with later generator tests."""
+    (weights, _, direct_meta, encode, encode_meta,
+     _, decode_meta) = decoder_weights_and_references()
+    main, main_meta = verified_fixture('generator_stage0')
+    source, source_meta = pair_support.load_fixture('kokoro_source_pinned')
+    prefix, prefix_meta = pair_support.load_fixture(
+        'kokoro_source_residual_prefix_pinned')
+    first_pair, first_pair_meta = pair_support.load_fixture(
+        'kokoro_source_residual_first_pair_pinned')
+    block, block_meta = pair_support.load_fixture(
+        'kokoro_source_residual_block0_pinned')
+    join, join_meta = pair_support.load_fixture(
+        'kokoro_generator_stage0_join_pinned')
+    for meta in (encode_meta, *decode_meta.values(), main_meta):
+        require_matching_reference_identity(direct_meta, meta)
+    for meta in (source_meta, prefix_meta, first_pair_meta,
+                 block_meta, join_meta):
+        for field in ('model_pin', 'code_pin', 'asset_sha256'):
+            if meta[field] != main_meta[field]:
+                raise RuntimeError(f'generator join {field} identities disagree')
+    for name, value in main.items():
+        if name.startswith('waveform_decoder.'):
+            weights[name] = value
+    for key, name in (
+            ('linear_weight', 'waveform_decoder.generator.m_source.l_linear.weight'),
+            ('linear_bias', 'waveform_decoder.generator.m_source.l_linear.bias'),
+            ('source_conv_weight', 'waveform_decoder.generator.noise_convs.0.weight'),
+            ('source_conv_bias', 'waveform_decoder.generator.noise_convs.0.bias')):
+        weights[name] = source[key]
+    weight_prefix = 'waveform_decoder.generator.noise_res.0'
+    for arrays, side in ((prefix, 1), (first_pair, 2)):
+        for key, name in (
+                ('style_weight', f'{weight_prefix}.adain{side}.0.fc.weight'),
+                ('style_bias', f'{weight_prefix}.adain{side}.0.fc.bias'),
+                ('norm_weight', f'{weight_prefix}.adain{side}.0.norm.weight'),
+                ('norm_bias', f'{weight_prefix}.adain{side}.0.norm.bias'),
+                ('alpha', f'{weight_prefix}.alpha{side}.0.channel'),
+                ('conv_weight', f'{weight_prefix}.convs{side}.0.weight'),
+                ('conv_bias', f'{weight_prefix}.convs{side}.0.bias')):
+            weights[name] = arrays[key]
+    for pair in (1, 2):
+        for side in (1, 2):
+            for key, name in (
+                    ('style_weight', f'{weight_prefix}.adain{side}.{pair}.fc.weight'),
+                    ('style_bias', f'{weight_prefix}.adain{side}.{pair}.fc.bias'),
+                    ('norm_weight', f'{weight_prefix}.adain{side}.{pair}.norm.weight'),
+                    ('norm_bias', f'{weight_prefix}.adain{side}.{pair}.norm.bias'),
+                    ('alpha', f'{weight_prefix}.alpha{side}.{pair}.channel'),
+                    ('conv_weight', f'{weight_prefix}.convs{side}.{pair}.weight'),
+                    ('conv_bias', f'{weight_prefix}.convs{side}.{pair}.bias')):
+                weights[name] = block[f'pair{pair}_{key}_c{side}']
+    return SimpleNamespace(weights=weights, main=main, source=source,
+        prefix=prefix, first_pair=first_pair, block=block, join=join,
+        join_meta=join_meta, encode=encode)
+
+
 class KokoroGeneratorStage0JoinTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.temp = tempfile.TemporaryDirectory()
         root = Path(cls.temp.name)
-        (weights, _, direct_meta, encode, encode_meta,
-         _, decode_meta) = decoder_weights_and_references()
-        cls.main, main_meta = verified_fixture('generator_stage0')
-        cls.source, source_meta = pair_support.load_fixture('kokoro_source_pinned')
-        cls.prefix, prefix_meta = pair_support.load_fixture(
-            'kokoro_source_residual_prefix_pinned')
-        cls.first_pair, first_pair_meta = pair_support.load_fixture(
-            'kokoro_source_residual_first_pair_pinned')
-        cls.block, block_meta = pair_support.load_fixture(
-            'kokoro_source_residual_block0_pinned')
-        cls.join, join_meta = pair_support.load_fixture(
-            'kokoro_generator_stage0_join_pinned')
-        cls.join_meta = join_meta
-        for meta in (encode_meta, *decode_meta.values(), main_meta):
-            require_matching_reference_identity(direct_meta, meta)
-        for meta in (source_meta, prefix_meta, first_pair_meta,
-                     block_meta, join_meta):
-            for field in ('model_pin', 'code_pin', 'asset_sha256'):
-                if meta[field] != main_meta[field]:
-                    raise RuntimeError(f'generator join {field} identities disagree')
-        for name, value in cls.main.items():
-            if name.startswith('waveform_decoder.'):
-                weights[name] = value
-        for key, name in (
-                ('linear_weight', 'waveform_decoder.generator.m_source.l_linear.weight'),
-                ('linear_bias', 'waveform_decoder.generator.m_source.l_linear.bias'),
-                ('source_conv_weight', 'waveform_decoder.generator.noise_convs.0.weight'),
-                ('source_conv_bias', 'waveform_decoder.generator.noise_convs.0.bias')):
-            weights[name] = cls.source[key]
-        prefix = 'waveform_decoder.generator.noise_res.0'
-        for arrays, side in ((cls.prefix, 1), (cls.first_pair, 2)):
-            for key, name in (
-                    ('style_weight', f'{prefix}.adain{side}.0.fc.weight'),
-                    ('style_bias', f'{prefix}.adain{side}.0.fc.bias'),
-                    ('norm_weight', f'{prefix}.adain{side}.0.norm.weight'),
-                    ('norm_bias', f'{prefix}.adain{side}.0.norm.bias'),
-                    ('alpha', f'{prefix}.alpha{side}.0.channel'),
-                    ('conv_weight', f'{prefix}.convs{side}.0.weight'),
-                    ('conv_bias', f'{prefix}.convs{side}.0.bias')):
-                weights[name] = arrays[key]
-        for pair in (1, 2):
-            for side in (1, 2):
-                for key, name in (
-                        ('style_weight', f'{prefix}.adain{side}.{pair}.fc.weight'),
-                        ('style_bias', f'{prefix}.adain{side}.{pair}.fc.bias'),
-                        ('norm_weight', f'{prefix}.adain{side}.{pair}.norm.weight'),
-                        ('norm_bias', f'{prefix}.adain{side}.{pair}.norm.bias'),
-                        ('alpha', f'{prefix}.alpha{side}.{pair}.channel'),
-                        ('conv_weight', f'{prefix}.convs{side}.{pair}.weight'),
-                        ('conv_bias', f'{prefix}.convs{side}.{pair}.bias')):
-                    weights[name] = cls.block[f'pair{pair}_{key}_c{side}']
-        fixture = prepare_duration_fixture(root, author.OUTPUT, weights)
+        refs = join_weights_and_references()
+        for name, value in vars(refs).items():
+            if name != 'weights':
+                setattr(cls, name, value)
+        fixture = prepare_duration_fixture(root, author.OUTPUT, refs.weights)
         cls.encoder = fixture.encoder
         cls.duration = fixture.duration
         cls.entries = fixture.entries
@@ -94,7 +105,7 @@ class KokoroGeneratorStage0JoinTest(unittest.TestCase):
                        cls.layout['memory']['activations']['buffers']}
         cls.weight_layout = {item['name']: item for item in
                              cls.layout['memory']['weights']['entries']}
-        cls.decoder_style = encode['decoder_style'].ravel()
+        cls.decoder_style = refs.encode['decoder_style'].ravel()
 
     @classmethod
     def tearDownClass(cls):
