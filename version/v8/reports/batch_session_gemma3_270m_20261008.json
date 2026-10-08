@@ -29,7 +29,7 @@
   "required_extra_bytes": 75565632,
   "session": {
     "method": "symbol_mapping_dev_inode_sha256",
-    "sha256": "863520386bb6b03a0e0458644a842723b085ee0c8102f45203555d5ce014aefa",
+    "sha256": "ba2fa249e827bdf88da43219e7c7767cccccc904430f32daaf75381b799549ca",
     "symbol": "ck_session_v8_batch2_step"
   },
   "status": "pass",

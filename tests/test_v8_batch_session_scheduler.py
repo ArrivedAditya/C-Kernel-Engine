@@ -15,12 +15,15 @@ SESSION = ROOT / "build/libck_session_v8.so"
 
 MODEL_SOURCE = r'''
 #include "ck_model_abi_v8.h"
+#include "ck_session_batch_ticket_v8.h"
 #include <stdatomic.h>
 #include <string.h>
 
 typedef struct { int position; int value; } State;
 static State *states[2], *active;
 static int create_calls, fail_create_call, batch_calls, single_calls;
+static int embed_calls, reset_calls, activate_calls;
+static atomic_uint_fast64_t cancel_race_state;
 static atomic_int hold_batch, batch_entered;
 static const uint64_t caps = CK_MODEL_CAP_INIT |
     CK_MODEL_CAP_AUTOREGRESSIVE_DECODE | CK_MODEL_CAP_TEXT_ENCODE |
@@ -46,7 +49,9 @@ int ck_model_get_context_window(void) { return 16; }
 int ck_model_get_vocab_size(void) { return 16; }
 int ck_model_get_active_tokens(void) { return active ? active->position : 0; }
 int ck_model_kv_cache_enable(int count) { (void)count; return 0; }
-void ck_model_kv_cache_reset(void) { if (active) memset(active, 0, sizeof(*active)); }
+void ck_model_kv_cache_reset(void) {
+    reset_calls++; if (active) memset(active, 0, sizeof(*active));
+}
 int ck_model_sequence_state_requirements(size_t *bytes, size_t *alignment) {
     *bytes=64; *alignment=64; return 0;
 }
@@ -61,6 +66,7 @@ int ck_model_sequence_state_create(void *arena, size_t bytes, uint64_t *handle) 
 }
 int ck_model_sequence_state_activate(uint64_t handle) {
     if (handle < 1 || handle > 2 || !states[handle-1]) return -1;
+    activate_calls++;
     active=states[handle-1]; return 0;
 }
 int ck_model_sequence_state_destroy(uint64_t handle) {
@@ -70,6 +76,7 @@ int ck_model_sequence_state_destroy(uint64_t handle) {
 }
 int ck_model_embed_tokens(const int32_t *tokens, int count) {
     if (!active || !tokens || count < 1) return -1;
+    embed_calls++;
     for (int i=0; i<count; ++i) active->value += tokens[i];
     active->position += count; return 0;
 }
@@ -112,6 +119,14 @@ void ck_fake_hold_batch(int value) {
 }
 int ck_fake_batch_entered(void) { return atomic_load(&batch_entered); }
 void ck_fake_fail_create_on_call(int call) { fail_create_call=call; }
+int ck_fake_mutation_calls(void) { return activate_calls + reset_calls + embed_calls; }
+void ck_fake_cancel_state_set(uint64_t ticket, int cancelled) {
+    atomic_store(&cancel_race_state, ck_batch_ticket_state(ticket) | (cancelled ? 1u : 0u));
+}
+uint64_t ck_fake_cancel_state_observe(void) { return atomic_load(&cancel_race_state); }
+int ck_fake_cancel_state_try(uint64_t observed, uint64_t ticket) {
+    return ck_batch_ticket_try_cancel_observed(&cancel_race_state, observed, ticket);
+}
 '''
 
 
@@ -153,8 +168,41 @@ class BatchSessionSchedulerTests(unittest.TestCase):
             model_path = Path(temporary) / "libmodel.so"
             source.write_text(MODEL_SOURCE)
             subprocess.run(["cc", "-shared", "-fPIC", "-I", str(ROOT / "include"),
+                            "-I", str(ROOT / "version/v8/src"),
                             str(source), "-o", str(model_path)], check=True)
             model = ctypes.CDLL(str(model_path))
+            model.ck_fake_cancel_state_set.argtypes = [ctypes.c_uint64, ctypes.c_int]
+            model.ck_fake_cancel_state_observe.restype = ctypes.c_uint64
+            model.ck_fake_cancel_state_try.argtypes = [ctypes.c_uint64, ctypes.c_uint64]
+            model.ck_fake_cancel_state_try.restype = ctypes.c_int
+
+            # Pause an old cancellation after its load. Admission and a newer
+            # cancellation must not be undone when the old CAS resumes.
+            observed = threading.Event()
+            resume = threading.Event()
+            stale_result = []
+            model.ck_fake_cancel_state_set(41, 0)
+
+            def delayed_cancel():
+                old_state = model.ck_fake_cancel_state_observe()
+                observed.set()
+                self.assertTrue(resume.wait(timeout=2))
+                stale_result.append(model.ck_fake_cancel_state_try(old_state, 41))
+
+            stale_worker = threading.Thread(target=delayed_cancel)
+            stale_worker.start()
+            try:
+                self.assertTrue(observed.wait(timeout=2))
+                model.ck_fake_cancel_state_set(42, 0)
+                current = model.ck_fake_cancel_state_observe()
+                self.assertEqual(model.ck_fake_cancel_state_try(current, 42), 1)
+            finally:
+                resume.set()
+                stale_worker.join(timeout=2)
+            self.assertFalse(stale_worker.is_alive())
+            self.assertEqual(stale_result, [0])
+            self.assertEqual(model.ck_fake_cancel_state_observe(), (42 << 1) | 1)
+
             session = ctypes.CDLL(str(SESSION))
             session.ck_session_v8_open.argtypes = [ctypes.POINTER(Config), ctypes.POINTER(ctypes.c_void_p)]
             session.ck_session_v8_open.restype = ctypes.c_int
@@ -208,6 +256,21 @@ class BatchSessionSchedulerTests(unittest.TestCase):
                     handle, needed.value, ctypes.byref(needed)), 0)
                 outputs = [(ctypes.c_float * 16)() for _ in range(2)]
                 output_ptrs = (ctypes.POINTER(ctypes.c_float) * 2)(*outputs)
+
+                # Bad prompt IDs must be rejected before activation, reset,
+                # embedding, ticket publication, or output modification.
+                for bad_prompt in ([-1, 1], [1, 16]):
+                    output = outputs[0]
+                    output[0] = 123.5
+                    ticket = ctypes.c_uint64(999)
+                    before = model.ck_fake_mutation_calls()
+                    values = (ctypes.c_int32 * len(bad_prompt))(*bad_prompt)
+                    self.assertEqual(session.ck_session_v8_batch2_prefill(
+                        handle, 0, values, len(bad_prompt), output,
+                        ctypes.byref(ticket)), -1)
+                    self.assertEqual(model.ck_fake_mutation_calls(), before)
+                    self.assertEqual(output[0], 123.5)
+                    self.assertEqual(ticket.value, 999)
 
                 def prefill(slot, tokens):
                     values = (ctypes.c_int32 * len(tokens))(*tokens)

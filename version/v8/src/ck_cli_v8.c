@@ -47,6 +47,7 @@
 #include "ck_model_abi_v8.h"
 #include "ck_sampler_v8.h"
 #include "ck_session_v8.h"
+#include "ck_session_batch_ticket_v8.h"
 #include "ckernel_audio.h"
 #include "ck_threadpool.h"
 
@@ -5637,8 +5638,7 @@ struct CKSessionV8 {
         uint64_t handle;
         void *arena;
         int ready;
-        atomic_uint_fast64_t ticket;
-        atomic_uint_fast64_t cancel_ticket;
+        atomic_uint_fast64_t ticket_state;
     } batch_slot[2];
     void *batch_workspace;
     size_t batch_workspace_bytes;
@@ -5676,8 +5676,7 @@ int ck_session_v8_open(
     if (!session) return CK_SESSION_V8_ERROR_RUNTIME;
     atomic_init(&session->cancel_requested, 0);
     for (int i = 0; i < 2; ++i) {
-        atomic_init(&session->batch_slot[i].ticket, 0);
-        atomic_init(&session->batch_slot[i].cancel_ticket, 0);
+        atomic_init(&session->batch_slot[i].ticket_state, 0);
     }
     int failure_status = CK_SESSION_V8_ERROR_INIT;
     if (pthread_mutex_init(&session->generation_lock, NULL) != 0) {
@@ -6026,6 +6025,17 @@ int ck_session_v8_batch2_prefill(CKSessionV8 *session, uint32_t slot,
         status = CK_SESSION_V8_ERROR_BUSY;
         goto done;
     }
+    const int32_t vocab_size = session->api.get_vocab_size();
+    if (vocab_size <= 0) {
+        status = CK_SESSION_V8_ERROR_RUNTIME;
+        goto done;
+    }
+    for (int32_t i = 0; i < count; ++i) {
+        if (tokens[i] < 0 || tokens[i] >= vocab_size) {
+            status = CK_SESSION_V8_ERROR_INVALID_ARGUMENT;
+            goto done;
+        }
+    }
     if (session->api.sequence_activate(session->batch_slot[slot].handle) != 0) {
         status = CK_SESSION_V8_ERROR_RUNTIME;
         goto poison;
@@ -6038,14 +6048,13 @@ int ck_session_v8_batch2_prefill(CKSessionV8 *session, uint32_t slot,
         goto poison;
     }
     if (!session->batch_next_ticket ||
-        session->batch_next_ticket == UINT64_MAX) {
+        session->batch_next_ticket > (UINT64_MAX >> 1)) {
         status = CK_SESSION_V8_ERROR_RUNTIME;
         goto poison;
     }
     const uint64_t ticket = session->batch_next_ticket++;
-    atomic_store_explicit(&session->batch_slot[slot].cancel_ticket, 0,
-                          memory_order_release);
-    atomic_store_explicit(&session->batch_slot[slot].ticket, ticket,
+    atomic_store_explicit(&session->batch_slot[slot].ticket_state,
+                          ck_batch_ticket_state(ticket),
                           memory_order_release);
     session->batch_slot[slot].ready = 1;
     *ticket_out = ticket;
@@ -6072,11 +6081,9 @@ int ck_session_v8_batch2_step(CKSessionV8 *session, const int32_t tokens[2],
     }
     unsigned eligible = 0;
     for (unsigned i = 0; i < 2; ++i) {
-        const uint64_t ticket = atomic_load_explicit(
-            &session->batch_slot[i].ticket, memory_order_acquire);
-        const uint64_t cancelled = atomic_load_explicit(
-            &session->batch_slot[i].cancel_ticket, memory_order_acquire);
-        if (session->batch_slot[i].ready && ticket != cancelled) {
+        const uint_fast64_t state = atomic_load_explicit(
+            &session->batch_slot[i].ticket_state, memory_order_acquire);
+        if (session->batch_slot[i].ready && state && !(state & 1u)) {
             if (!logits[i] || tokens[i] < 0 ||
                 tokens[i] >= session->api.get_vocab_size()) {
                 status = CK_SESSION_V8_ERROR_INVALID_ARGUMENT;
@@ -6148,9 +6155,7 @@ int ck_session_v8_batch2_reset_slot(CKSessionV8 *session, uint32_t slot) {
     }
     session->api.kv_reset();
     session->batch_slot[slot].ready = 0;
-    atomic_store_explicit(&session->batch_slot[slot].ticket, 0,
-                          memory_order_release);
-    atomic_store_explicit(&session->batch_slot[slot].cancel_ticket, 0,
+    atomic_store_explicit(&session->batch_slot[slot].ticket_state, 0,
                           memory_order_release);
     if (session->batch_poisoned) {
         session->batch_poison_reset_mask |= 1u << slot;
@@ -6194,10 +6199,10 @@ done:
 void ck_session_v8_batch2_request_cancel(CKSessionV8 *session, uint64_t ticket) {
     if (!session || !ticket) return;
     for (unsigned i = 0; i < 2; ++i) {
-        if (atomic_load_explicit(&session->batch_slot[i].ticket,
-                                 memory_order_acquire) == ticket) {
-            atomic_store_explicit(&session->batch_slot[i].cancel_ticket,
-                                  ticket, memory_order_release);
+        uint_fast64_t observed = atomic_load_explicit(
+            &session->batch_slot[i].ticket_state, memory_order_acquire);
+        if (ck_batch_ticket_try_cancel_observed(
+                &session->batch_slot[i].ticket_state, observed, ticket)) {
             return;
         }
     }
