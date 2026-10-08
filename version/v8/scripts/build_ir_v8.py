@@ -1732,6 +1732,33 @@ def _validate_segmented_prefill_contract(
             schedule_core.pop("deepstack_injection", None)
             if isinstance(schedule_core, dict) else None
         )
+        projection_groups = (
+            schedule_core.pop("projection_row_group_boundaries", None)
+            if isinstance(schedule_core, dict) else None
+        )
+        if projection_groups is not None:
+            operations = (
+                projection_groups.get("operations")
+                if isinstance(projection_groups, dict) else None
+            )
+            if (
+                not isinstance(projection_groups, dict)
+                or set(projection_groups) not in (
+                    {"policy", "operations"},
+                    {"policy", "operations", "text_after_row_group"},
+                )
+                or projection_groups.get("policy") != "restart_each_segment"
+                or not isinstance(operations, list)
+                or not operations
+                or any(not isinstance(op, str) or not op for op in operations)
+                or len(set(operations)) != len(operations)
+                or projection_groups.get("text_after_row_group", "segment")
+                not in {"segment", "single_token"}
+            ):
+                raise RuntimeError(
+                    "HARD CONTRACT FAULT: invalid projection row-group boundaries "
+                    f"in {source}."
+                )
         expected = expected_schedule_core.get(name)
         if expected is None or not isinstance(schedule_core, dict):
             raise RuntimeError(

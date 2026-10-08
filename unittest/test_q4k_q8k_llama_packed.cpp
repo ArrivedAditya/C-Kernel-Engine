@@ -31,6 +31,9 @@ void gemm_nt_q4_k_q8_k_parallel_dispatch(
 void gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch(
         const void * a_q8, const void * w, const float * bias, float * out,
         int m, int n, int k);
+void gemm_nt_q4_k_q8_k_segmented_singleton_tail_parallel_dispatch(
+        const void * a_q8, const void * w, const float * bias, float * out,
+        int m, int n, int k, const int * segment_lengths, int num_segments);
 void gemv_q4_k_q8_k_repacked_parallel_dispatch(
         float * y, const void * w, const void * x_q8, int n, int k);
 void gemv_q4_k_q8_k_parallel_dispatch(
@@ -806,6 +809,34 @@ static bool run_case(const case_spec & spec) {
             gemv_q4_k_q8_k_repacked_parallel_dispatch(
                     ck_repacked_output.data(), weights.data(), ck_q8.data(), spec.n, spec.k);
         } else {
+            if (spec.m == 16 && spec.n == 512 && spec.k == 1024) {
+                const int groups[3] = {3, 9, 4};
+                std::vector<float> expected(ck_output.size());
+                std::vector<float> guarded(static_cast<size_t>(spec.m + 2) * spec.n, -1234.5f);
+                int row = 0;
+                for (int group = 0; group < 3; ++group) {
+                    const int count = group == 2 ? 1 : groups[group];
+                    for (int consumed = 0; consumed < groups[group]; consumed += count) {
+                        gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch(
+                                ck_repack_q8.data() + static_cast<size_t>(row) * q8_row_bytes,
+                                weights.data(), spec.with_bias ? bias.data() : nullptr,
+                                expected.data() + static_cast<size_t>(row) * spec.n,
+                                count, spec.n, spec.k);
+                        row += count;
+                    }
+                }
+                gemm_nt_q4_k_q8_k_segmented_singleton_tail_parallel_dispatch(
+                        ck_repack_q8.data(), weights.data(),
+                        spec.with_bias ? bias.data() : nullptr,
+                        guarded.data() + spec.n, spec.m, spec.n, spec.k, groups, 3);
+                passed &= compare_f32("Q4 singleton-tail segment dispatch",
+                        guarded.data() + spec.n, expected.data(), spec.m, spec.n);
+                for (int col = 0; col < spec.n; ++col) {
+                    if (guarded[col] != -1234.5f ||
+                        guarded[static_cast<size_t>(spec.m + 1) * spec.n + col] != -1234.5f)
+                        passed = false;
+                }
+            }
             gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch(
                     ck_repack_q8.data(), weights.data(), spec.with_bias ? bias.data() : nullptr,
                     ck_repacked_output.data(), spec.m, spec.n, spec.k);

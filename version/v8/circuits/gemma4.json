@@ -147,7 +147,12 @@
         "segmented_append": {
           "segments": ["text_before", "visual", "text_after"],
           "cache_transition": "append_preserve",
-          "position_transition": "runtime_offset"
+          "position_transition": "runtime_offset",
+          "projection_row_group_boundaries": {
+            "policy": "restart_each_segment",
+            "operations": ["q_proj", "k_proj", "v_proj"],
+            "text_after_row_group": "single_token"
+          }
         }
       }
     }

@@ -212,6 +212,46 @@ class TestV8PrefillCodegen(unittest.TestCase):
         self.assertIn("g_multimodal_prefill_segment_lengths", emitted)
         self.assertIn("gemm_nt_q6_k_q8_k(", emitted)
 
+    def test_q6_projection_selects_declared_singleton_tail_provider(self) -> None:
+        op = self._q4_segmented_projection_op("v_proj")
+        op["function"] = "gemm_nt_q6_k_q8_k"
+        op["resolved_execution"]["numerical_contract"] = (
+            "q6_k_weight_q8_k_input_llama_fp32_output"
+        )
+        implementation = op["resolved_execution"]["implementation"]
+        implementation["weight_storage"] = {
+            "format": "q6_k", "block_elements": 256, "block_bytes": 210,
+        }
+        implementation["segmented_row_provider"] = {
+            "function": "gemm_nt_q6_k_q8_k_segmented_parallel_dispatch",
+            "singleton_tail_function": (
+                "gemm_nt_q6_k_q8_k_segmented_singleton_tail_parallel_dispatch"
+            ),
+            "segment_lengths_dtype": "i32",
+            "boundary_semantics": "restart_row_group_at_each_segment",
+            "fallback": "gemm_nt_q6_k_q8_k_parallel_dispatch",
+        }
+        config = self._segment_preserving_config()
+        boundaries = config["multimodal_bridge_contract"]["prefill_schedule"][
+            "projection_row_group_boundaries"
+        ]
+        boundaries["operations"] = ["v_proj"]
+        boundaries["text_after_row_group"] = "single_token"
+        emitted = codegen_prefill_v8.emit_prefill_op(
+            op, 9, config, segment_plan_available=True
+        )
+        self.assertIn(
+            "gemm_nt_q6_k_q8_k_segmented_singleton_tail_parallel_dispatch(", emitted
+        )
+        self.assertIn("g_multimodal_prefill_segment_lengths", emitted)
+        self.assertIn("gemm_nt_q6_k_q8_k(", emitted)
+
+        del implementation["segmented_row_provider"]["singleton_tail_function"]
+        with self.assertRaisesRegex(RuntimeError, "map-owned singleton-tail provider"):
+            codegen_prefill_v8.emit_prefill_op(
+                op, 9, config, segment_plan_available=True
+            )
+
     def test_attention_uses_map_owned_segmented_query_provider(self) -> None:
         base_arg_names = [
             "q", "k_cache", "v_cache", "output", "num_heads", "num_kv_heads",

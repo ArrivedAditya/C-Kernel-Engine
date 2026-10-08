@@ -23,6 +23,9 @@ void gemv_q6_k_q8_k(float *, const void *, const void *, int, int);
 void gemv_q6_k_q8_k_parallel_dispatch(float *, const void *, const void *, int, int);
 void gemm_nt_q6_k_q8_k_parallel_dispatch(
         const void *, const void *, const float *, float *, int, int, int);
+void gemm_nt_q6_k_q8_k_segmented_singleton_tail_parallel_dispatch(
+        const void *, const void *, const float *, float *, int, int, int,
+        const int *, int);
 void gemm_nt_q6_k_q8_k(
         const void *, const void *, const float *, float *, int, int, int);
 void ck_set_strict_parity(int);
@@ -288,6 +291,15 @@ static bool run_case(const case_spec &spec, bool prepared_only = false) {
     }
     if (!llama_graph(weights, activations, canonical, spec.m, spec.n, spec.k, false)) return false;
     const bool tiled_graph = ggml_cpu_has_avx2() && ggml_cpu_has_fma();
+    if (spec.m > 1 && spec.m < 8 && tiled_graph) {
+        std::vector<float> strict(canonical.size());
+        ck_set_strict_parity(1);
+        gemm_nt_q6_k_q8_k_parallel_dispatch(ck_q8.data(), weights.data(),
+                nullptr, strict.data(), spec.m, spec.n, spec.k);
+        ck_set_strict_parity(0);
+        pass &= compare_f32("CK strict short prefill vs llama graph",
+                strict.data(), canonical.data(), strict.size());
+    }
     if (spec.m >= 8 && tiled_graph) {
         std::vector<float> strict(canonical.size()), strict_2d(canonical.size());
         std::vector<float> strict_bias(canonical.size()), expected_bias(canonical);
@@ -419,11 +431,76 @@ static bool run_xray_artifact_case() {
     std::printf("\nxray_artifact M=%d N=%d K=%d\n", m, n, k);
     const size_t count = expected.size();
     bool pass = compare_f32("llama leaf vs graph", leaf.data(), graph.data(), count, m == 1);
-    pass &= compare_f32("CK vs llama graph", ck.data(), graph.data(), count, m == 1);
-    if (m >= 8 && ggml_cpu_has_avx2() && ggml_cpu_has_fma()) {
-        pass &= compare_f32("CK dispatched vs llama graph", dispatched.data(), graph.data(), count);
+    pass &= compare_f32("CK vs llama graph", ck.data(), graph.data(), count,
+            m <= 5 && ggml_cpu_has_avx2());
+    if (ggml_cpu_has_avx2() && ggml_cpu_has_fma()) {
+        pass &= compare_f32("CK dispatched vs llama graph",
+                dispatched.data(), graph.data(), count, m <= 5);
     }
     pass &= compare_f32("llama graph vs captured V", graph.data(), expected.data(), count);
+    return pass;
+}
+
+static bool run_segmented_singleton_tail_case() {
+    if (!ggml_cpu_has_avx2() || !ggml_cpu_has_fma()) return true;
+    constexpr int m = 24, n = 64, k = 1024;
+    const int segments[3] = {5, 16, 3};
+    std::vector<float> activations(static_cast<size_t>(m) * k);
+    std::vector<float> weights_f32(static_cast<size_t>(n) * k);
+    for (int r = 0; r < m; ++r) for (int c = 0; c < k; ++c)
+        activations[static_cast<size_t>(r) * k + c] = fixture(r, c, 0.31f, 0.19f);
+    for (int r = 0; r < n; ++r) for (int c = 0; c < k; ++c)
+        weights_f32[static_cast<size_t>(r) * k + c] = fixture(r, c, 0.13f, 0.47f);
+
+    const size_t q8_row = static_cast<size_t>(k / QK_K) * sizeof(block_q8_K);
+    const size_t q6_row = static_cast<size_t>(k / QK_K) * sizeof(block_q6_K);
+    std::vector<unsigned char> q8(static_cast<size_t>(m) * q8_row);
+    std::vector<unsigned char> weights(static_cast<size_t>(n) * q6_row);
+    for (int r = 0; r < m; ++r)
+        quantize_row_q8_k(activations.data() + static_cast<size_t>(r) * k,
+                q8.data() + static_cast<size_t>(r) * q8_row, k);
+    for (int r = 0; r < n; ++r)
+        quantize_row_q6_K_ref(weights_f32.data() + static_cast<size_t>(r) * k,
+                reinterpret_cast<block_q6_K *>(weights.data() + static_cast<size_t>(r) * q6_row), k);
+
+    std::vector<float> expected(static_cast<size_t>(m) * n);
+    int row = 0;
+    for (int segment = 0; segment < 3; ++segment) {
+        const int group = segment == 2 ? 1 : segments[segment];
+        for (int consumed = 0; consumed < segments[segment]; consumed += group) {
+            std::vector<float> input(
+                    activations.begin() + static_cast<size_t>(row) * k,
+                    activations.begin() + static_cast<size_t>(row + group) * k);
+            std::vector<float> output(static_cast<size_t>(group) * n);
+            if (!llama_graph(weights, input, output, group, n, k, false)) return false;
+            std::copy(output.begin(), output.end(), expected.begin() + static_cast<size_t>(row) * n);
+            row += group;
+        }
+    }
+
+    std::vector<float> guarded(static_cast<size_t>(m + 2) * n, -1234.5f);
+    ck_set_strict_parity(1);
+    gemm_nt_q6_k_q8_k_segmented_singleton_tail_parallel_dispatch(
+            q8.data(), weights.data(), nullptr, guarded.data() + n,
+            m, n, k, segments, 3);
+    ck_set_strict_parity(0);
+    bool pass = compare_f32("CK segmented singleton tail vs llama graph",
+            guarded.data() + n, expected.data(), expected.size());
+    for (int i = 0; i < n; ++i) {
+        if (guarded[i] != -1234.5f || guarded[static_cast<size_t>(m + 1) * n + i] != -1234.5f)
+            pass = false;
+    }
+    std::printf("  %-34s %s\n", "segmented output guards", pass ? "[PASS]" : "[FAIL]");
+    std::vector<float> unified(expected.size());
+    ck_set_strict_parity(1);
+    gemm_nt_q6_k_q8_k_parallel_dispatch(
+            q8.data(), weights.data(), nullptr, unified.data(), m, n, k);
+    ck_set_strict_parity(0);
+    const bool detects_missing_groups = std::memcmp(
+            unified.data(), expected.data(), expected.size() * sizeof(float)) != 0;
+    std::printf("  %-34s %s\n", "missing group boundaries detected",
+            detects_missing_groups ? "[PASS]" : "[FAIL]");
+    pass &= detects_missing_groups;
     return pass;
 }
 
@@ -475,6 +552,7 @@ int main(int argc, char **argv) {
         if (!run_case(cases[i], prepared_only)) ++failed;
     }
     if (!prepared_only && !run_xray_artifact_case()) ++failed;
+    if (!prepared_only && !run_segmented_singleton_tail_case()) ++failed;
     ck_threadpool_global_destroy();
     std::printf("\nQ6_K x Q8_K %s: %s (%zu cases, %d failed)\n",
             prepared_only ? "prepared/established exactness" : "llama.cpp production parity",

@@ -40,7 +40,10 @@ def resolved_quantized_linear_emission(op: Dict[str, Any]) -> Dict[str, Any] | N
             "boundary_semantics",
             "fallback",
         }
-        if set(segmented_provider) != required_segmented:
+        if set(segmented_provider) not in (
+            required_segmented,
+            required_segmented | {"singleton_tail_function"},
+        ):
             raise RuntimeError(
                 "segmented-row linear provider must define exact function, segment "
                 "length dtype, boundary semantics, and fallback"

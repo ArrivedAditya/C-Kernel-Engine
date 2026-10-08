@@ -196,6 +196,7 @@
           "required": ["function", "segment_lengths_dtype", "boundary_semantics", "fallback"],
           "properties": {
             "function": {"type": "string", "minLength": 1},
+            "singleton_tail_function": {"type": "string", "minLength": 1},
             "segment_lengths_dtype": {"const": "i32"},
             "boundary_semantics": {"const": "restart_row_group_at_each_segment"},
             "fallback": {"type": "string", "minLength": 1}

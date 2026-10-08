@@ -2088,6 +2088,18 @@ def _segmented_row_provider(op: Dict, config: Dict) -> str:
         )
     if provider.get("boundary_semantics") != "restart_row_group_at_each_segment":
         raise RuntimeError("segmented-row provider has incompatible boundary semantics")
+    bridge = config["multimodal_bridge_contract"]
+    boundaries = bridge["prefill_schedule"]["projection_row_group_boundaries"]
+    tail_policy = boundaries.get("text_after_row_group", "segment")
+    if tail_policy == "single_token":
+        singleton = provider.get("singleton_tail_function")
+        if not isinstance(singleton, str) or not singleton:
+            raise RuntimeError(
+                f"operation {op.get('op')!r} requires a map-owned singleton-tail provider"
+            )
+        return singleton
+    if tail_policy != "segment":
+        raise RuntimeError(f"unsupported text-after projection row group: {tail_policy!r}")
     return str(provider["function"])
 
 
