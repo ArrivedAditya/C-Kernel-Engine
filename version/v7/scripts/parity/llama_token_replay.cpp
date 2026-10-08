@@ -511,8 +511,7 @@ int main(int argc, char ** argv) {
 
     llama_model_params mparams = llama_model_default_params();
     mparams.n_gpu_layers = 0;
-    mparams.use_mmap = true;
-    mparams.use_mlock = false;
+    mparams.load_mode = LLAMA_LOAD_MODE_MMAP;
 
     llama_model * model = llama_model_load_from_file(args.model_path.c_str(), mparams);
     if (!model) {
