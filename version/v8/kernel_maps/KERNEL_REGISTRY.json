@@ -35450,6 +35450,15 @@
     },
     {
       "id": "gemm_nt_q5_k",
+      "batch_decode_two_rows": {
+        "decode_provider_id": "gemv_q5_k",
+        "decode_function": "gemv_q5_k",
+        "function": "gemm_nt_q5_k_q8_k_m2",
+        "input_dtype": "fp32",
+        "max_input_dim": 8192,
+        "numerical_contract": "q5_k_weight_q8_k_input_avx2_fma_fp32_output",
+        "rows": 2
+      },
       "op": "gemm",
       "operation_interface": "gemm.fp32_activation.q5_k_weight.fp32_output.v1",
       "selection": {
@@ -35869,6 +35878,15 @@
     },
     {
       "id": "gemm_nt_q6_k_q8_k",
+      "batch_decode_two_rows": {
+        "decode_provider_id": "gemv_q6_k_q8_k",
+        "decode_function": "gemv_q6_k_q8_k",
+        "function": "gemm_nt_q6_k_q8_k_m2",
+        "input_dtype": "q8_k",
+        "max_input_dim": 8192,
+        "numerical_contract": "q6_k_x_q8_k_fp32_block_order",
+        "rows": 2
+      },
       "op": "gemm",
       "selection": {
         "status": "production",
@@ -36766,6 +36784,16 @@
     },
     {
       "id": "gemm_nt_q8_0_q8_0_contract",
+      "numerical_contract": "q8_0_weight_fp32_input_internal_q8_0_llama_fp32_output",
+      "batch_decode_two_rows": {
+        "decode_provider_id": "gemv_q8_0_q8_0_contract",
+        "decode_function": "gemv_q8_0_q8_0_contract",
+        "function": "gemm_nt_q8_0_q8_0_contract_m2",
+        "input_dtype": "fp32",
+        "max_input_dim": 8192,
+        "numerical_contract": "q8_0_weight_fp32_input_internal_q8_0_llama_fp32_output",
+        "rows": 2
+      },
       "op": "gemm",
       "variant": "q8_0_w_fp32_a_fp32_out_contract",
       "quant": {
@@ -38954,6 +38982,9 @@
     },
     {
       "id": "gemv_q5_k",
+      "batch_decode_two_rows": {
+        "provider_id": "gemm_nt_q5_k"
+      },
       "op": "gemv",
       "variant": "q5_k_w_fp32_a_fp32_out",
       "quant": {
@@ -39147,6 +39178,9 @@
     },
     {
       "id": "gemv_q6_k_q8_k",
+      "batch_decode_two_rows": {
+        "provider_id": "gemm_nt_q6_k_q8_k"
+      },
       "op": "gemv",
       "variant": "q6_k_w_q8_k_a_fp32_out",
       "contract_schema_version": 1,
@@ -39608,6 +39642,9 @@
     },
     {
       "id": "gemv_q8_0_q8_0_contract",
+      "batch_decode_two_rows": {
+        "provider_id": "gemm_nt_q8_0_q8_0_contract"
+      },
       "op": "gemv",
       "variant": "q8_0_w_fp32_a_fp32_out_contract",
       "quant": {

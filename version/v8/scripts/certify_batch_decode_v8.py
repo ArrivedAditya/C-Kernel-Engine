@@ -13,6 +13,8 @@ import ctypes
 import hashlib
 import json
 import math
+import os
+import platform
 import sys
 import time
 from pathlib import Path
@@ -92,7 +94,7 @@ def _bind(model: ctypes.CDLL) -> None:
 
 
 def _require_projection_groups(actual: int, expected: int | None) -> None:
-    if actual not in (1, 2):
+    if actual not in (1, 2, 4):
         raise AssertionError("invalid generated batch projection-group count")
     if expected is not None and actual != expected:
         raise AssertionError(
@@ -155,6 +157,7 @@ def certify(bundle: Path, generated_source: Path,
         output = (ctypes.c_float * vocab)()
         reference: dict[str, list[tuple[bytes, str]]] = {}
         isolated_ms = 0.0
+        isolated_steps_ms: dict[str, float] = {}
 
         def kv_digest() -> str:
             address = model.ck_model_get_named_activation_ptr(b"kv_cache")
@@ -193,7 +196,11 @@ def certify(bundle: Path, generated_source: Path,
                 rows.extend([(b"", "")] * (length - 1))
                 rows.append((bytes(output), kv_digest()))
             for token in tokens[length:]:
-                rows.append((decode(token), kv_digest()))
+                index = len(rows)
+                begin = time.perf_counter()
+                logits = decode(token)
+                isolated_steps_ms[f"{name}:{index}"] = (time.perf_counter() - begin) * 1000
+                rows.append((logits, kv_digest()))
             reference[name] = rows
 
         default = model.ck_model_sequence_state_default()
@@ -214,6 +221,7 @@ def certify(bundle: Path, generated_source: Path,
         create("b")
         comparisons: list[dict] = []
         batch_ms = 0.0
+        batch_steps_ms: list[dict] = []
 
         def activate(name: str) -> None:
             if model.ck_model_sequence_state_activate(handles[name]) != 0:
@@ -248,9 +256,14 @@ def certify(bundle: Path, generated_source: Path,
             ])
             begin = time.perf_counter()
             status = model.ck_model_decode_batch2(rows, 2, work, work_bytes)
-            batch_ms += (time.perf_counter() - begin) * 1000
+            elapsed = (time.perf_counter() - begin) * 1000
+            batch_ms += elapsed
             if status != 0:
                 raise RuntimeError(f"generated batch step failed: {status}")
+            batch_steps_ms.append({
+                "rows": [f"{name}:{index}" for name, index in order],
+                "batch_step_ms": elapsed,
+            })
             return [bytes(row) for row in destinations]
 
         try:
@@ -335,12 +348,23 @@ def certify(bundle: Path, generated_source: Path,
     finally:
         model.ck_model_free()
 
+    matched_isolated_ms = sum(
+        isolated_steps_ms[key]
+        for step in batch_steps_ms for key in step["rows"]
+    )
+    cpu_name = next((line.partition(":")[2].strip() for line in
+                     Path("/proc/cpuinfo").read_text().splitlines()
+                     if line.startswith("model name")), platform.processor())
     return {
         "schema": "cke.generated-batch-decode-v1",
         "status": "pass",
-        "scope": ("two_rows_shared_first_layer_qk_and_gateup_kv_only_not_continuous_batching"
-                  if projection_groups == 2 else
-                  "two_rows_shared_first_layer_qk_kv_only_not_continuous_batching"),
+        "scope": (
+            "two_rows_shared_one_complete_layer_kv_only_not_continuous_batching"
+            if projection_groups == 4 else
+            "two_rows_shared_first_layer_qk_and_gateup_kv_only_not_continuous_batching"
+            if projection_groups == 2 else
+            "two_rows_shared_first_layer_qk_kv_only_not_continuous_batching"
+        ),
         "shared_projection_groups": projection_groups,
         "expected_projection_groups": expected_projection_groups,
         "capabilities": capabilities,
@@ -349,7 +373,18 @@ def certify(bundle: Path, generated_source: Path,
         "full_logit_and_kv_comparisons": comparisons,
         "batch_step_total_ms": round(batch_ms, 3),
         "isolated_decode_total_ms": round(isolated_ms, 3),
-        "timing_scope": "diagnostic_nonmatched_workloads_no_speedup_claim",
+        "timing_scope": "matched_six_decode_tokens_three_two_row_steps_diagnostic_not_task_throughput",
+        "matched_timing": {
+            "cpu": cpu_name,
+            "affinity_cpus": len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else None,
+            "isolated_sequential_ms": round(matched_isolated_ms, 3),
+            "batch_two_ms": round(batch_ms, 3),
+            "isolated_aggregate_tokens_per_s": round(6000 / matched_isolated_ms, 3),
+            "batch_two_aggregate_tokens_per_s": round(6000 / batch_ms, 3),
+            "isolated_mean_token_latency_ms": round(matched_isolated_ms / 6, 3),
+            "batch_two_mean_token_latency_ms": round(batch_ms / 3, 3),
+            "batch_steps": batch_steps_ms,
+        },
         "kv_bytes_per_sequence": kv_bytes.value,
         "batch_workspace_bytes": work_bytes.value,
         "artifacts": {name: _sha256(path) for name, path in assets.items()},
@@ -364,7 +399,7 @@ def main() -> int:
     parser.add_argument("--report", type=Path)
     parser.add_argument("--generated-source", type=Path, required=True,
                         help="C source whose prefix digest must match the loaded generated-library symbol")
-    parser.add_argument("--expected-projection-groups", type=int, choices=(1, 2),
+    parser.add_argument("--expected-projection-groups", type=int, choices=(1, 2, 4),
                         help="fail certification unless the loaded generated entry has this many shared groups")
     args = parser.parse_args()
     result = certify(args.bundle.resolve(), args.generated_source.resolve(),

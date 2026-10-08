@@ -1,5 +1,14 @@
 {
   "id": "gemm_nt_q6_k_q8_k",
+  "batch_decode_two_rows": {
+    "decode_provider_id": "gemv_q6_k_q8_k",
+    "decode_function": "gemv_q6_k_q8_k",
+    "function": "gemm_nt_q6_k_q8_k_m2",
+    "input_dtype": "q8_k",
+    "max_input_dim": 8192,
+    "numerical_contract": "q6_k_x_q8_k_fp32_block_order",
+    "rows": 2
+  },
   "op": "gemm",
   "selection": {
     "status": "production",

@@ -7,6 +7,7 @@ import ctypes
 import json
 import math
 import platform
+import re
 import struct
 import subprocess
 import sys
@@ -18,7 +19,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "version/v8/scripts"))
 from batch_decode_contract_v8 import _crossing_at, resolve_two_row_batch_contract  # noqa: E402
-from batch_decode_codegen_v8 import emit_two_row_batch_api  # noqa: E402
+from batch_decode_codegen_v8 import emit_two_row_batch_api, emit_full_layer_batch_api  # noqa: E402
 from certify_batch_decode_v8 import _require_projection_groups  # noqa: E402
 from codegen_core_v8 import emit_decode_function  # noqa: E402
 from server.serving_bundle import verified_loaded_symbol_backing  # noqa: E402
@@ -120,6 +121,332 @@ def _avx2_available() -> bool:
 
 
 class BatchContractTests(unittest.TestCase):
+    def test_q8_two_row_provider_preserves_compact_row_stride(self) -> None:
+        for flags in ([], ["-mavx2", "-mfma"] if _avx2_available() else []):
+            with self.subTest(flags=flags), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                stub = root / "stubs.c"
+                stub.write_text(
+                    "int ck_strict_parity_enabled(void) { return 0; }\n"
+                    "const void *ck_strict_consume_next_gemm_a(void) { return 0; }\n"
+                    "void quantize_row_q8_k(void) {}\n"
+                )
+                library = root / "libq8.so"
+                subprocess.run(
+                    ["cc", "-shared", "-fPIC", "-O2", *flags, "-I", str(ROOT / "include"),
+                     str(ROOT / "src/kernels/gemm_kernels_q8_0_q8_0_contract.c"),
+                     str(ROOT / "src/kernels/gemm_kernels_q8_0.c"), str(stub),
+                     "-lm", "-o", str(library)],
+                    check=True, capture_output=True, text=True,
+                )
+                native = ctypes.CDLL(str(library))
+                single = native.gemv_q8_0_q8_0_contract
+                single.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.c_void_p,
+                                   ctypes.POINTER(ctypes.c_float), ctypes.c_int, ctypes.c_int]
+                batch = native.gemm_nt_q8_0_q8_0_contract_m2
+                batch.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.c_void_p,
+                                  ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float),
+                                  ctypes.c_int, ctypes.c_int, ctypes.c_int]
+                for width in (32, 64, 640):
+                    channels = 8
+                    packed = bytearray()
+                    for channel in range(channels):
+                        for block in range(width // 32):
+                            values = [((channel * 13 + block * 7 + j * 11) % 251) - 125
+                                      for j in range(32)]
+                            packed += struct.pack("<e", 0.02 * (channel + block + 1))
+                            packed += struct.pack("<32b", *values)
+                    weights = ctypes.create_string_buffer(bytes(packed))
+                    values = [((i * 17) % 53 - 26) / 13 for i in range(2 * width)]
+                    inputs = (ctypes.c_float * len(values))(*values)
+                    bias = (ctypes.c_float * channels)(*((i - 4) / 9 for i in range(channels)))
+                    actual = (ctypes.c_float * (2 * channels))()
+                    batch(inputs, weights, bias, actual, 2, channels, width)
+                    for row in range(2):
+                        isolated = (ctypes.c_float * channels)()
+                        input_row = ctypes.cast(ctypes.byref(inputs, row * width * 4),
+                                                ctypes.POINTER(ctypes.c_float))
+                        single(isolated, weights, input_row, channels, width)
+                        for channel in range(channels):
+                            self.assertEqual(actual[row * channels + channel],
+                                             ctypes.c_float(isolated[channel] + bias[channel]).value)
+
+    def test_complete_layer_plan_follows_ir_and_rejects_unsafe_changes(self) -> None:
+        fixture = json.loads((ROOT / "tests/fixtures/batch_decode_gemma3_first_layer.json").read_text())
+        ops, layout, config = fixture["ops"], fixture["layout"], fixture["config"]
+        contract = resolve_two_row_batch_contract(ops, layout, config)
+        self.assertIsNotNone(contract)
+        plan = contract["full_layer_plan"]
+        self.assertEqual(
+            [(stage["kind"], stage["start"], stage["stop"]) for stage in plan["stages"]],
+            [("local", 0, 3), ("shared", 3, 6), ("local", 6, 10),
+             ("shared", 10, 11), ("local", 11, 15), ("shared", 15, 16),
+             ("local", 16, 18), ("shared", 18, 19), ("local", 19, 22)],
+        )
+        self.assertEqual([len(stage["projections"]) for stage in plan["stages"]
+                          if stage["kind"] == "shared"], [3, 1, 1, 1])
+        self.assertEqual(plan["extents"]["main_stream_q8"], 2336)
+        emitted = emit_full_layer_batch_api(plan)
+        self.assertIn("gemm_nt_q8_0_q8_0_contract_m2", emitted)
+        self.assertIn("gemm_nt_q5_k_q8_k_m2", emitted)
+        self.assertIn("gemm_nt_q6_k_q8_k_m2", emitted)
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "full_layer_entry.c"
+            defines = "\n".join(f"#define {name} 0" for name in
+                                sorted(set(plan["buffers"].values()) |
+                                       {p["weight"] for s in plan["stages"]
+                                        for p in s.get("projections", [])}))
+            stages = "\n".join(
+                f"static void ck_batch_stage_{i}(CKModel *model, int token) "
+                "{ (void)model; (void)token; }"
+                for i, stage in enumerate(plan["stages"]) if stage["kind"] == "local"
+            )
+            kernels = "\n".join(
+                f"static void {name}(const void *a, const void *b, const float *bias, "
+                "float *c, int m, int n, int k) "
+                "{ (void)a; (void)b; (void)bias; (void)c; (void)m; (void)n; (void)k; }"
+                for name in sorted({p["function"] for stage in plan["stages"]
+                                    for p in stage.get("projections", [])})
+            )
+            source.write_text(
+                "#include <stdint.h>\n#include <stddef.h>\n#include <stdlib.h>\n#include <string.h>\n"
+                "#define CK_EXPORT\n#define VOCAB_SIZE 32\n#define MAX_SEQ_LEN 16\n"
+                "#define KV_CACHE_SIZE 64\n" + defines + "\n"
+                "typedef struct { uint64_t sequence_handle; int token, position; "
+                "size_t row_offset, token_count; float *logits; } CKModelBatchDecodeRowV8;\n"
+                "typedef struct { int occupied, pos; uint64_t handle; uint8_t *kv; } CKSequenceStateV8;\n"
+                "typedef struct { uint8_t *bump; size_t bump_size; int pos; float logits[32]; } CKModel;\n"
+                "static CKModel *g_model; static CKSequenceStateV8 g_sequence_states[3];\n"
+                "static CKSequenceStateV8 *g_active_sequence; static int g_ck_skip_decode_logits;\n"
+                "static int ck_model_cancel_requested(void) { return 0; }\n"
+                "static CKSequenceStateV8 *ck_sequence_find(uint64_t h) "
+                "{ (void)h; return &g_sequence_states[0]; }\n"
+                "static int ck_model_sequence_state_activate(uint64_t h) "
+                "{ (void)h; return 0; }\n" + stages + "\n" + kernels + "\n" + emitted
+            )
+            subprocess.run(["cc", "-std=c11", "-fsyntax-only", "-Werror",
+                            "-Wno-unused-function", "-Wno-unused-variable", str(source)],
+                           check=True, capture_output=True, text=True)
+        for change in ("v_provider", "out_offset", "down_offset", "extra_live",
+                       "cross_layer_live",
+                       "persistent_state", "partial_projection", "fp32_override",
+                       "down_quant_extent", "projection_alias"):
+            bad = copy.deepcopy(fixture)
+            bad_ops, bad_layout = bad["ops"], bad["layout"]
+            if change == "v_provider":
+                bad_ops[5]["call_abi"]["kernel_id"] = "gemv_q5_0"
+            elif change == "out_offset":
+                next(arg for arg in bad_ops[10]["args"] if arg["name"] == "x")["expr"] += " + 4"
+            elif change == "down_offset":
+                next(arg for arg in bad_ops[18]["args"] if arg["name"] == "x_q8")["expr"] += " + 4"
+            elif change == "persistent_state":
+                bad_layout["memory"]["activations"]["buffers"].append(
+                    {"name": "new_state", "size": 64, "abs_offset": 1 << 32,
+                     "define": "A_NEW_STATE", "lifetime": "sequence", "mutable": True})
+            elif change == "partial_projection":
+                next(arg for arg in bad_ops[15]["args"] if arg["name"] == "y")["expr"] += " + 4"
+            elif change == "fp32_override":
+                bad["config"]["out_proj_input_policy"] = "force_fp32"
+            elif change == "down_quant_extent":
+                next(arg for arg in bad_ops[17]["args"] if arg["name"] == "k")["expr"] = "1024"
+            elif change == "projection_alias":
+                output = next(arg for arg in bad_ops[5]["args"] if arg["name"] == "y")
+                output["buffer_ref"] = "embedded_input"
+                output["expr"] = "(float*)(model->bump + A_EMBEDDED_INPUT)"
+            elif change == "cross_layer_live":
+                bad_layout["memory"]["activations"]["buffers"].append(
+                    {"name": "cross_layer_value", "size": 64, "abs_offset": 1 << 32,
+                     "define": "A_CROSS_LAYER_VALUE", "lifetime": "call", "mutable": True})
+                bad_ops[16]["args"].append(
+                    {"name": "cross_layer_out", "source": "output:cross_layer_out",
+                     "buffer_ref": "cross_layer_value",
+                     "expr": "(float*)(model->bump + A_CROSS_LAYER_VALUE)"})
+                bad_ops[21]["args"].append(
+                    {"name": "cross_layer_in", "source": "activation:cross_layer_in",
+                     "buffer_ref": "cross_layer_value",
+                     "expr": "(const float*)(model->bump + A_CROSS_LAYER_VALUE)"})
+            else:
+                bad_layout["memory"]["activations"]["buffers"].append(
+                    {"name": "extra", "size": 64, "abs_offset": 1 << 32,
+                     "define": "A_EXTRA", "lifetime": "call", "mutable": True})
+                bad_ops[9]["args"].append(
+                    {"name": "extra_out", "source": "output:extra", "buffer_ref": "extra",
+                     "expr": "(float*)(model->bump + A_EXTRA)"})
+                bad_ops[11]["args"].append(
+                    {"name": "extra_in", "source": "activation:extra", "buffer_ref": "extra",
+                     "expr": "(const float*)(model->bump + A_EXTRA)"})
+            with self.subTest(change=change):
+                fallback = resolve_two_row_batch_contract(bad_ops, bad_layout, bad["config"])
+                if change == "persistent_state":
+                    self.assertIsNone(fallback)
+                else:
+                    self.assertIsNotNone(fallback)
+                    self.assertNotIn("full_layer_plan", fallback)
+
+    def test_full_layer_entry_executes_four_groups_with_isolated_rows(self) -> None:
+        fixture = json.loads((ROOT / "tests/fixtures/batch_decode_gemma3_first_layer.json").read_text())
+        plan = resolve_two_row_batch_contract(
+            fixture["ops"], fixture["layout"], fixture["config"])["full_layer_plan"]
+        names = sorted(set(plan["buffers"].values()) |
+                       {projection["weight"] for stage in plan["stages"]
+                        for projection in stage.get("projections", [])})
+        defines = "\n".join(f"#define {name} {32768 * (index + 1)}" for index, name in enumerate(names))
+        weights = sorted({projection["weight"] for stage in plan["stages"]
+                          for projection in stage.get("projections", [])})
+        initialize_weights = "\n".join(
+            f"    g_model->bump[{name}] = {index + 1};" for index, name in enumerate(weights))
+        kernels = "\n".join(
+            f"static void {name}(const {'void' if dtype == 'q8_k' else 'float'} *input, "
+            "const void *weight, const float *bias, float *output, int rows, int channels, int width) "
+            "{ (void)bias; "
+            "for (int row=0; row<rows; ++row) for (int channel=0; channel<channels; ++channel) "
+            "output[row*channels+channel]="
+            + ("((const float *)((const uint8_t *)input+row*(width/256*292)))[0]"
+               if dtype == "q8_k" else "((const float *)input)[row*width]")
+            + "+((const uint8_t *)weight)[0]; }"
+            for name, dtype in sorted({(projection["function"], projection["dtype"])
+                                       for stage in plan["stages"]
+                                       for projection in stage.get("projections", [])}))
+        prelude = r'''
+#include <stdint.h>
+#include <stddef.h>
+#include <stdlib.h>
+#include <string.h>
+#define CK_EXPORT
+#define VOCAB_SIZE 16
+#define MAX_SEQ_LEN 16
+#define KV_CACHE_SIZE 64
+'''
+        prelude += defines + r'''
+typedef struct { uint64_t sequence_handle; int token, position; size_t row_offset, token_count; float *logits; } CKModelBatchDecodeRowV8;
+typedef struct { int occupied, pos; uint64_t handle; uint8_t *kv; } CKSequenceStateV8;
+typedef struct { uint8_t *bump; size_t bump_size; int pos; float logits[VOCAB_SIZE]; } CKModel;
+static CKModel object;
+static CKModel *g_model=&object;
+static CKSequenceStateV8 g_sequence_states[3];
+static CKSequenceStateV8 *g_active_sequence;
+static int g_ck_skip_decode_logits;
+static CKSequenceStateV8 *ck_sequence_find(uint64_t handle) {
+    for (int i=0;i<3;++i) if (g_sequence_states[i].occupied && g_sequence_states[i].handle==handle) return &g_sequence_states[i];
+    return NULL;
+}
+static int ck_model_sequence_state_activate(uint64_t handle) {
+    CKSequenceStateV8 *next=ck_sequence_find(handle);
+    if (!next) return -1;
+    if (g_active_sequence) g_active_sequence->pos=g_model->pos;
+    g_model->pos=next->pos;
+    g_active_sequence=next;
+    return 0;
+}
+static int ck_model_cancel_requested(void) { return 0; }
+static float *value(CKModel *model, size_t offset) { return (float *)(model->bump+offset); }
+static void ck_batch_stage_0(CKModel *model, int token) {
+    value(model,A_EMBEDDED_INPUT)[0]=(float)token;
+    value(model,A_RESIDUAL)[0]=(float)(10*token);
+}
+static void ck_batch_stage_2(CKModel *model, int token) {
+    float q=value(model,A_Q_SCRATCH)[0], k=value(model,A_K_SCRATCH)[0];
+    float v=value(model,A_V_SCRATCH)[0];
+    value(model,A_ATTN_SCRATCH)[0]=q+k+v;
+    value(model,A_RESIDUAL)[0]+=(float)token;
+    g_active_sequence->kv[g_model->pos]=(uint8_t)q;
+}
+static void ck_batch_stage_4(CKModel *model, int token) {
+    (void)token;
+    value(model,A_EMBEDDED_INPUT)[0]+=value(model,A_RESIDUAL)[0];
+}
+static void ck_batch_stage_6(CKModel *model, int token) {
+    (void)token;
+    value(model,A_MAIN_STREAM_Q8)[0]=value(model,A_MLP_SCRATCH)[0]+value(model,A_RESIDUAL)[0];
+}
+static void ck_batch_stage_8(CKModel *model, int token) {
+    (void)token;
+    model->logits[0]=value(model,A_EMBEDDED_INPUT)[0]+value(model,A_RESIDUAL)[0];
+    model->pos++;
+}
+static void project_one(CKModel *model, size_t input, size_t weight, size_t output) {
+    value(model,output)[0]=value(model,input)[0]+model->bump[weight];
+}
+'''
+        reference = r'''
+static void isolated_decode(CKModel *model, int token) {
+    ck_batch_stage_0(model,token);
+    project_one(model,A_EMBEDDED_INPUT,W_LAYER_0_WQ,A_Q_SCRATCH);
+    project_one(model,A_EMBEDDED_INPUT,W_LAYER_0_WK,A_K_SCRATCH);
+    project_one(model,A_EMBEDDED_INPUT,W_LAYER_0_WV,A_V_SCRATCH);
+    ck_batch_stage_2(model,token);
+    project_one(model,A_ATTN_SCRATCH,W_LAYER_0_WO,A_EMBEDDED_INPUT);
+    ck_batch_stage_4(model,token);
+    project_one(model,A_EMBEDDED_INPUT,W_LAYER_0_W1,A_MLP_SCRATCH);
+    ck_batch_stage_6(model,token);
+    project_one(model,A_MAIN_STREAM_Q8,W_LAYER_0_W2,A_EMBEDDED_INPUT);
+    ck_batch_stage_8(model,token);
+}
+int main(void) {
+    g_model->bump_size=16*32768;
+    g_model->bump=calloc(1,g_model->bump_size);
+    if (!g_model->bump) return 1;
+    uint8_t kv[2][64]={{0}};
+    for (int i=0;i<2;++i) g_sequence_states[i]=(CKSequenceStateV8){.occupied=1,.handle=(uint64_t)(i+1),.kv=kv[i]};
+'''
+        reference += initialize_weights + r'''
+    float expected[2]={0}, actual[2][VOCAB_SIZE]={{0}};
+    int expected_pos[2]={0}; uint8_t expected_kv[2]={0};
+    for (int i=0;i<2;++i) {
+        if (ck_model_sequence_state_activate((uint64_t)(i+1))) return 2;
+        isolated_decode(g_model,i ? 7 : 3);
+        expected[i]=g_model->logits[0];
+        expected_pos[i]=g_model->pos;
+        expected_kv[i]=kv[i][0];
+    }
+    memset(g_model->bump,0,g_model->bump_size);
+'''
+        reference += initialize_weights + r'''
+    memset(kv,0,sizeof(kv));
+    for (int i=0;i<2;++i) g_sequence_states[i].pos=0;
+    g_active_sequence=NULL; g_model->pos=0;
+    CKModelBatchDecodeRowV8 rows[2]={
+        {.sequence_handle=1,.token=3,.position=0,.row_offset=0,.token_count=1,.logits=actual[0]},
+        {.sequence_handle=2,.token=7,.position=0,.row_offset=1,.token_count=1,.logits=actual[1]}
+    };
+    size_t bytes=0,alignment=0;
+    if (ck_model_batch_decode_projection_groups()!=4 ||
+        ck_model_batch_decode_workspace(&bytes,&alignment) || alignment!=64) return 3;
+    void *workspace=aligned_alloc(alignment,(bytes+alignment-1)/alignment*alignment);
+    if (!workspace || ck_model_decode_batch2(rows,2,workspace,bytes)) return 4;
+    for (int i=0;i<2;++i) {
+        if (ck_model_sequence_state_activate((uint64_t)(i+1))) return 5;
+        if (actual[i][0]!=expected[i] || g_model->pos!=expected_pos[i] ||
+            kv[i][0]!=expected_kv[i]) return 6+i;
+    }
+    free(workspace); free(g_model->bump);
+    return 0;
+}
+'''
+        emitted = emit_full_layer_batch_api(plan)
+        source_text = prelude + kernels + emitted + reference
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "four_group.c"
+            binary = Path(directory) / "four_group"
+
+            def run(text: str) -> subprocess.CompletedProcess[str]:
+                source.write_text(text)
+                subprocess.run(["cc", "-std=c11", "-O0", "-Wall", "-Werror",
+                                "-Wno-unused-function", "-Wno-unused-variable",
+                                str(source), "-o", str(binary)],
+                               check=True, capture_output=True, text=True)
+                return subprocess.run([str(binary)], capture_output=True, text=True)
+
+            self.assertEqual(run(source_text).returncode, 0)
+            # This control removes one per-row restoration after shared Q/K/V.
+            # The same two distinct inputs must now diverge from isolation.
+            lost_q = re.sub(
+                r"(?m)^        memcpy\(g_model->bump \+ A_Q_SCRATCH, base \+ [^\n]+\n",
+                "", source_text, count=1,
+            )
+            self.assertNotEqual(lost_q, source_text)
+            self.assertNotEqual(run(lost_q).returncode, 0)
+
     def test_in_place_liveness_ignores_argument_order(self) -> None:
         produced = {"args": [{"source": "output:x", "buffer_ref": "extra"}]}
         read = {"source": "activation:x", "buffer_ref": "extra"}
@@ -134,8 +461,11 @@ class BatchContractTests(unittest.TestCase):
     def test_milestone_requires_two_projection_groups(self) -> None:
         _require_projection_groups(1, None)
         _require_projection_groups(2, 2)
+        _require_projection_groups(4, 4)
         with self.assertRaisesRegex(AssertionError, "expected 2 shared projection groups"):
             _require_projection_groups(1, 2)
+        with self.assertRaisesRegex(AssertionError, "expected 4 shared projection groups"):
+            _require_projection_groups(2, 4)
 
     def test_hybrid_arena_capacity_does_not_change_decode_row_liveness(self) -> None:
         ops, layout, config = _layer_fixture()

@@ -1,5 +1,14 @@
 {
   "id": "gemm_nt_q5_k",
+  "batch_decode_two_rows": {
+    "decode_provider_id": "gemv_q5_k",
+    "decode_function": "gemv_q5_k",
+    "function": "gemm_nt_q5_k_q8_k_m2",
+    "input_dtype": "fp32",
+    "max_input_dim": 8192,
+    "numerical_contract": "q5_k_weight_q8_k_input_avx2_fma_fp32_output",
+    "rows": 2
+  },
   "op": "gemm",
   "operation_interface": "gemm.fp32_activation.q5_k_weight.fp32_output.v1",
   "selection": {
