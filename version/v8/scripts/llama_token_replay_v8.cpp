@@ -308,7 +308,7 @@ static bool parse_args(int argc, char ** argv, Args & args, std::string & err) {
                 << "[--prefix-grid-x N --prefix-grid-y N] [--prefix-row-dim N] [--prefix-text-pos N] [--ctx N] [--top-k K] [--threads N] "
                 << "[--decode-mode batched|sequential] [--prefix-decode-mode batched|sequential] "
                 << "[--flash-attn disabled|auto|enabled] "
-                << "[--dump-dir dir --dump-names a,b,c] [--dump-greedy-decode-step N] "
+                << "[--dump-dir dir --dump-names a,b,matmul_weight:WEIGHT] [--dump-greedy-decode-step N] "
                 << "[--profile-layers-out path.csv] "
                 << "[--dump-list-only] [--no-repack]\n";
             std::exit(0);
@@ -465,17 +465,22 @@ static bool should_dump_tensor(const DumpState * state, const ggml_tensor * t) {
         state->current_greedy_decode_step != state->requested_greedy_decode_step) {
         return false;
     }
-    const char * raw_name = ggml_get_name(t);
-    if (!raw_name || !raw_name[0]) {
-        return false;
-    }
     if (state->dump_all) {
         return true;
     }
     if (state->names.empty()) {
         return false;
     }
-    return state->names.find(raw_name) != state->names.end();
+    const char * raw_name = ggml_get_name(t);
+    if (raw_name && raw_name[0] && state->names.find(raw_name) != state->names.end()) {
+        return true;
+    }
+    if (t->op == GGML_OP_MUL_MAT && t->src[0]) {
+        const char * weight_name = ggml_get_name(t->src[0]);
+        return weight_name && weight_name[0] &&
+            state->names.find(std::string("matmul_weight:") + weight_name) != state->names.end();
+    }
+    return false;
 }
 
 static std::string json_escape(const std::string & s) {
@@ -693,10 +698,19 @@ static bool dump_eval_callback(struct ggml_tensor * t, bool ask, void * user_dat
     }
 
     const char * raw_name = ggml_get_name(t);
-    if (!raw_name || !raw_name[0]) {
+    std::string base_name = raw_name ? raw_name : "";
+    if (t->op == GGML_OP_MUL_MAT && t->src[0]) {
+        const char * weight_name = ggml_get_name(t->src[0]);
+        if (weight_name && weight_name[0]) {
+            const std::string selected = std::string("matmul_weight:") + weight_name;
+            if (mut->names.find(selected) != mut->names.end()) {
+                base_name = selected;
+            }
+        }
+    }
+    if (base_name.empty()) {
         return true;
     }
-    std::string base_name(raw_name);
 
     if (wants_profile && mut->profile_batch_started) {
         const auto now = std::chrono::steady_clock::now();

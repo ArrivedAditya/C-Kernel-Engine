@@ -252,6 +252,45 @@ class TestV8PrefillCodegen(unittest.TestCase):
                 op, 9, config, segment_plan_available=True
             )
 
+    def test_q4_output_projection_restarts_rows_at_mixed_prefix_boundaries(self) -> None:
+        op = self._q4_segmented_projection_op("out_proj")
+        op["resolved_execution"]["implementation"]["segmented_row_provider"][
+            "singleton_tail_function"
+        ] = "gemm_nt_q4_k_q8_k_segmented_singleton_tail_parallel_dispatch"
+        config = self._segment_preserving_config()
+        boundaries = config["multimodal_bridge_contract"]["prefill_schedule"][
+            "projection_row_group_boundaries"
+        ]
+        boundaries["operations"] = ["out_proj"]
+        boundaries["text_after_row_group"] = "single_token"
+        emitted = codegen_prefill_v8.emit_prefill_op(
+            op, 0, config, segment_plan_available=True
+        )
+        self.assertIn(
+            "gemm_nt_q4_k_q8_k_segmented_singleton_tail_parallel_dispatch(", emitted
+        )
+        self.assertIn("g_multimodal_prefill_segment_lengths", emitted)
+        self.assertIn("_ck_projection_segments, 3", emitted)
+        self.assertIn("g_multimodal_prefill_segment_lengths[2] +", emitted)
+        self.assertIn("gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch(", emitted)
+
+        del op["resolved_execution"]["implementation"]["segmented_row_provider"][
+            "singleton_tail_function"
+        ]
+        with self.assertRaisesRegex(RuntimeError, "map-owned singleton-tail provider"):
+            codegen_prefill_v8.emit_prefill_op(
+                op, 0, config, segment_plan_available=True
+            )
+        op["resolved_execution"]["implementation"]["segmented_row_provider"][
+            "singleton_tail_function"
+        ] = "gemm_nt_q4_k_q8_k_segmented_singleton_tail_parallel_dispatch"
+
+        boundaries["operations"] = ["q_proj", "k_proj", "v_proj"]
+        unsegmented = codegen_prefill_v8.emit_prefill_op(
+            op, 0, config, segment_plan_available=True
+        )
+        self.assertNotIn("segmented_singleton_tail_parallel_dispatch(", unsegmented)
+
     def test_attention_uses_map_owned_segmented_query_provider(self) -> None:
         base_arg_names = [
             "q", "k_cache", "v_cache", "output", "num_heads", "num_kv_heads",

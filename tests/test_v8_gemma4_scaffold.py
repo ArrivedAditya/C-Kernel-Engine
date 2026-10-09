@@ -826,7 +826,7 @@ class V8Gemma4ScaffoldTests(unittest.TestCase):
             schedule["projection_row_group_boundaries"],
             {
                 "policy": "restart_each_segment",
-                "operations": ["q_proj", "k_proj", "v_proj"],
+                "operations": ["q_proj", "k_proj", "v_proj", "out_proj"],
                 "text_after_row_group": "single_token",
             },
         )
