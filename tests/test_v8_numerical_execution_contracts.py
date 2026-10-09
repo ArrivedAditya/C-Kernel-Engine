@@ -970,6 +970,29 @@ class NumericalExecutionContractTests(unittest.TestCase):
                                  "rmsnorm_llama_cpu_production_fp32_output")
                 self.assertEqual(plan["kernel"]["function"], expected_function)
 
+    def test_gemma4_qk_norm_resolves_llama_production_provider(self):
+        circuit_doc = resolver.load_json(
+            ROOT / "version" / "v8" / "circuits" / "gemma4.json"
+        )
+        self.assertEqual(
+            circuit_doc["kernels"]["qk_norm"],
+            "qk_norm_forward_llama_production",
+        )
+        for phase, expected_function in (
+            ("prefill", "qk_norm_forward_llama_production_parallel_dispatch"),
+            ("decode", "qk_norm_forward_llama_production"),
+        ):
+            with self.subTest(phase=phase):
+                plan = resolver.resolve_contract(
+                    circuit_doc, self.contracts, self.kernels,
+                    "decoder.qk_norm", phase, mode="production",
+                )
+                self.assertEqual(
+                    plan["contract"]["id"],
+                    "rmsnorm_llama_cpu_production_fp32_output",
+                )
+                self.assertEqual(plan["kernel"]["function"], expected_function)
+
     def test_qwen35_recurrent_core_resolves_exact_llama_avx2_provider(self):
         circuit_doc = resolver.load_json(
             ROOT / "version" / "v8" / "circuits" / "qwen35.json"

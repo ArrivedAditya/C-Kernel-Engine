@@ -240,6 +240,29 @@
         "logical_layout": "token_major",
         "axis_names": ["token", "channel"]
       }
+    },
+    "decoder.qk_norm": {
+      "operation_interface": "qk_norm.fp32_inplace.v1",
+      "op": "qk_norm",
+      "template_ops": ["qk_norm"],
+      "phases": {
+        "prefill": {
+          "contract_id": "rmsnorm_llama_cpu_production_fp32_output",
+          "validation": "validated",
+          "evidence": "Pinned Gemma4 mixed-prefix replay: exact projected Q/K inputs produce bit-exact normalized Q/K with the llama-production provider; generic RMSNorm straddles FP16 K-cache rounding midpoints."
+        },
+        "decode": {
+          "contract_id": "rmsnorm_llama_cpu_production_fp32_output",
+          "validation": "validated",
+          "evidence": "Single-token decode uses the same per-head llama.cpp-compatible normalization contract as prefill."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.qk_norm.output",
+        "producer": "qk_norm",
+        "logical_layout": "head_major",
+        "axis_names": ["head", "token", "channel"]
+      }
     }
   },
   "kernels": {
@@ -248,6 +271,7 @@
     "ffn_norm": "rmsnorm_forward_llama_production",
     "post_ffn_norm": "rmsnorm_forward_llama_production",
     "final_rmsnorm": "rmsnorm_forward_llama_production",
+    "qk_norm": "qk_norm_forward_llama_production",
     "geglu": "geglu_forward_ggml_native",
     "rope_qk": "rope_forward_qk_split_llama",
     "rope_q": "rope_forward_q_gemma4",
