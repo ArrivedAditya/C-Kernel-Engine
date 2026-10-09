@@ -302,6 +302,22 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--batch-http-prompt-cap", type=int, default=256,
         help="Maximum rendered prompt tokens in experimental batch HTTP mode",
     )
+    parser.add_argument(
+        "--batch-http-delivery-consumers", type=int, default=4,
+        help="Maximum admitted batch HTTP responses awaiting delivery",
+    )
+    parser.add_argument(
+        "--batch-http-output-byte-cap", type=int, default=1 << 20,
+        help="Maximum decoded output bytes buffered per batch HTTP response",
+    )
+    parser.add_argument(
+        "--batch-http-output-token-cap", type=int, default=4096,
+        help="Maximum output token events buffered per batch HTTP response",
+    )
+    parser.add_argument(
+        "--batch-http-delivery-timeout", type=float, default=30.0,
+        help="Maximum seconds allowed for each batch HTTP stream write",
+    )
 
     sampler = parser.add_argument_group(
         "sampling (server-level defaults; request body overrides)"
@@ -565,6 +581,10 @@ def main(argv: list[str] | None = None) -> int:
             max_extra_bytes=args.batch_http_extra_bytes,
             max_prompt_tokens=args.batch_http_prompt_cap,
             stop_ids=session.generated_stop_ids(),
+            max_delivery_consumers=args.batch_http_delivery_consumers,
+            max_output_tokens=args.batch_http_output_token_cap,
+            max_output_bytes=args.batch_http_output_byte_cap,
+            delivery_timeout=args.batch_http_delivery_timeout,
         )
 
     try:

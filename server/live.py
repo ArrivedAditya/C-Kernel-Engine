@@ -19,6 +19,7 @@ client to execute. Unsupported tool types are rejected before generation.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import copy
 import json
@@ -1506,20 +1507,47 @@ class _FlightLease:
 
 
 class _OwnedStreamingResponse(StreamingResponse):
-    def __init__(self, *args, lease, on_disconnect=None, **kwargs):
+    def __init__(self, *args, lease, on_disconnect=None,
+                 delivery_timeout=None, on_delivery_timeout=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.lease = lease
         self.on_disconnect = on_disconnect
+        self.delivery_timeout = delivery_timeout
+        self.on_delivery_timeout = on_delivery_timeout
 
     async def __call__(self, scope, receive, send):
+        async def bounded_send(message):
+            try:
+                await asyncio.wait_for(send(message), timeout=self.delivery_timeout)
+            except asyncio.TimeoutError as exc:
+                raise _DeliveryTimeout from exc
+
         try:
-            await super().__call__(scope, receive, send)
+            await super().__call__(
+                scope, receive,
+                bounded_send if self.delivery_timeout is not None else send,
+            )
+        except _DeliveryTimeout:
+            # Headers may already be sent. End this client's stream and keep
+            # the native owner available to finish/cancel other requests.
+            self.lease.cancel()
+            if self.on_delivery_timeout is not None:
+                self.on_delivery_timeout()
         finally:
             try:
                 self.lease.disconnect()
             finally:
-                if self.on_disconnect is not None:
-                    self.on_disconnect()
+                try:
+                    if self.on_disconnect is not None:
+                        self.on_disconnect()
+                finally:
+                    delivery_done = getattr(self.lease, "delivery_done", None)
+                    if delivery_done is not None:
+                        delivery_done()
+
+
+class _DeliveryTimeout(Exception):
+    pass
 
 
 # --- app factory --------------------------------------------------------------
@@ -1624,6 +1652,10 @@ def create_app(
     if batch_http is not None:
         effective_serving["execution_mode"] = "experimental_batch2_http"
         effective_serving["batch_prompt_token_cap"] = batch_http.max_prompt_tokens
+        effective_serving["batch_delivery_consumer_cap"] = batch_http.max_delivery_consumers
+        effective_serving["batch_output_token_cap"] = batch_http.max_output_tokens
+        effective_serving["batch_output_byte_cap"] = batch_http.max_output_bytes
+        effective_serving["batch_delivery_timeout_seconds"] = batch_http.delivery_timeout
 
     def _conversation_echo(body) -> dict[str, Any] | None:
         conv = body.conversation
@@ -1822,6 +1854,14 @@ def create_app(
                     code="prompt_bytes_limit_exceeded",
                 )
         if context_length is not None:
+            if batch_http is not None and tok_limit > batch_http.max_output_tokens:
+                raise _harness_error(
+                    413,
+                    f"requested output has {tok_limit} tokens, exceeding the batch "
+                    f"HTTP delivery cap {batch_http.max_output_tokens}",
+                    err_type="invalid_request_error",
+                    code="batch_output_limit_exceeded",
+                )
             if tok_limit >= context_length:
                 raise _harness_error(
                     400,
@@ -2788,6 +2828,13 @@ def create_app(
                 stored["status"] = ResponseStatus.cancelled
                 stored["completed_at"] = int(time.time())
 
+    def _settle_delivery_timeout(response_id):
+        with response_store_lock:
+            stored = response_store.get(response_id)
+            if stored is not None and stored["status"] == ResponseStatus.in_progress:
+                stored["status"] = ResponseStatus.cancelled
+                stored["completed_at"] = int(time.time())
+
 
     def _acquire_flight_or_429(timeout: float | None = None) -> None:
         """Take the single-flight lock through bounded FIFO admission.
@@ -2825,7 +2872,7 @@ def create_app(
                     lease = batch_http.reserve()
                 except SessionBusyError as exc:
                     raise _harness_error(
-                        429, "Both batch slots are busy; retry later.",
+                        429, "Batch HTTP slots or delivery capacity are full; retry later.",
                         err_type="rate_limit_error", code="rate_limit_exceeded",
                         retry_after=_FLIGHT_WAIT_SECONDS,
                     ) from exc
@@ -2865,6 +2912,11 @@ def create_app(
                 lease=lease,
                 on_disconnect=lambda: _settle_unstarted_stream(
                     stream_response_id, lease
+                ),
+                delivery_timeout=(batch_http.delivery_timeout if batch_http is not None else None),
+                on_delivery_timeout=(
+                    (lambda: _settle_delivery_timeout(stream_response_id))
+                    if batch_http is not None else None
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -2981,6 +3033,8 @@ def create_app(
             if monitor_thread is not None:
                 monitor_thread.join(timeout=1.0)
             lease.release()
+            if batch_http is not None:
+                lease.delivery_done()
         text = truncate_stop_markers("".join(chunks), all_stop_markers)
         thinking = None
         reasoning_tokens = 0

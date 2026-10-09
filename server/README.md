@@ -44,24 +44,9 @@ chat template from the model name.
 
 ## Experimental two-request HTTP decode
 
-`--batch-http-extra-bytes BYTES --batch-http-prompt-cap TOKENS
---request-output-cap TOKENS` enables a separate two-slot path. It still uses
-the loaded bundle's selected Jinja, tokenizer and output protocol through the
-ordinary Responses handler. One worker owns native prefill/decode; each HTTP
-request has its own slot, cancellation, detokenization and output stream.
-The third simultaneous request receives 429. Startup requires a KV-only
-generated batch entry and a sufficient explicit memory budget; unsupported
-models fail rather than switching modes. The default server remains
-single-flight.
-
-This is an experimental correctness path, not yet practical continuous
-batching. Prefill is synchronous and cannot be interrupted inside one native
-operation; the prompt cap limits admission but is not a time bound. Generated
-stop-token IDs come from
-the loaded native session. Native per-request prefill/decode timing is not yet
-available, so reports mark it unavailable instead of recording zero latency.
-Do not use this mode for unattended harness work until bounded cancellable
-prefill and real tool-task recovery are certified for the exact artifact.
+The opt-in flags, delivery limits, failure behavior and certification boundary
+are documented in the
+[v8 serving runbook](https://c-kernel-engine.github.io/C-Kernel-Engine/v8-runbook.html#experimental-batch-http).
 
 ## Qwen Code profiles
 

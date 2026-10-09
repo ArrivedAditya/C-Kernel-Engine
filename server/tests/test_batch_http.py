@@ -15,7 +15,7 @@ import uvicorn
 from server.batch_decode import BatchTick, CompletionEvent, TokenEvent
 from server.batch_http import Batch2HTTPOwner
 from server.live import create_app
-from server.session_v8 import CK_SESSION_REQUEST_RAW_PROMPT, SessionBusyError
+from server.session_v8 import CK_SESSION_REQUEST_RAW_PROMPT, SessionBusyError, SessionError
 
 
 class FakeSession:
@@ -123,6 +123,12 @@ class FailOnceLoop(FakeLoop):
         return super().advance()
 
 
+class RaisingAdvanceLoop(FakeLoop):
+    def advance(self):
+        assert self.gate.wait(5)
+        raise RuntimeError("injected native owner failure")
+
+
 class TextStopLoop(ToolLoop):
     def submit(self, slot, ids, *, max_tokens, **_):
         with self.guard:
@@ -199,6 +205,174 @@ def test_slot_overflow_and_reuse():
         b.release()
     c = owner.reserve()
     c.release()
+    owner.close()
+
+
+def test_owner_exception_fails_active_and_pending_consumers_once():
+    loop = RaisingAdvanceLoop()
+    owner = Batch2HTTPOwner(FakeSession(), max_extra_bytes=1,
+                            max_prompt_tokens=8, loop=loop)
+    a, b = owner.reserve(), owner.reserve()
+    assert a.start_worker(None) and b.start_worker(None)
+    def generate(lease, text):
+        return lease.session.generate(None, text, max_tokens=4,
+                                      temperature=0, top_p=1,
+                                      on_token=lambda *_: 0,
+                                      flags=CK_SESSION_REQUEST_RAW_PROMPT)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        fa = pool.submit(generate, a, "A")
+        deadline = time.monotonic() + 3
+        while not loop.active_tickets() and time.monotonic() < deadline:
+            time.sleep(0.001)
+        assert loop.active_tickets()
+        fb = pool.submit(generate, b, "B")
+        deadline = time.monotonic() + 3
+        while owner.pending.qsize() != 1 and time.monotonic() < deadline:
+            time.sleep(0.001)
+        assert owner.pending.qsize() == 1
+        loop.gate.set()
+        for future in (fa, fb):
+            try:
+                future.result(timeout=3)
+            except SessionError:
+                pass
+            else:
+                raise AssertionError("failed owner returned a successful response")
+    assert owner.poisoned and not owner.worker.is_alive()
+    assert not owner.slots and owner.pending.empty()
+    assert a.client.events.empty() and b.client.events.empty()
+    try:
+        owner.reserve()
+    except SessionError:
+        pass
+    else:
+        raise AssertionError("poisoned owner accepted another request")
+    a.release()
+    b.release()
+    owner.close()
+
+
+def test_owner_exception_rejects_a_request_still_tokenizing():
+    class BlockingEncode(FakeSession):
+        def __init__(self):
+            self.entered = threading.Event()
+            self.resume = threading.Event()
+
+        def encode_ids(self, prompt):
+            if prompt == "B":
+                self.entered.set()
+                assert self.resume.wait(5)
+            return super().encode_ids(prompt)
+
+    session = BlockingEncode()
+    loop = RaisingAdvanceLoop()
+    owner = Batch2HTTPOwner(session, max_extra_bytes=1,
+                            max_prompt_tokens=8, loop=loop)
+    a, b = owner.reserve(), owner.reserve()
+    assert a.start_worker(None) and b.start_worker(None)
+    def generate(lease, text):
+        return lease.session.generate(None, text, max_tokens=4,
+                                      temperature=0, top_p=1,
+                                      on_token=lambda *_: 0,
+                                      flags=CK_SESSION_REQUEST_RAW_PROMPT)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        fa = pool.submit(generate, a, "A")
+        deadline = time.monotonic() + 3
+        while not loop.active_tickets() and time.monotonic() < deadline:
+            time.sleep(0.001)
+        assert loop.active_tickets()
+        fb = pool.submit(generate, b, "B")
+        assert session.entered.wait(3)
+        loop.gate.set()
+        try:
+            fa.result(timeout=3)
+        except SessionError:
+            pass
+        else:
+            raise AssertionError("active request did not observe owner failure")
+        session.resume.set()
+        try:
+            fb.result(timeout=3)
+        except SessionError:
+            pass
+        else:
+            raise AssertionError("tokenizing request did not observe owner failure")
+    assert not owner.slots and owner.pending.empty()
+    assert b.client.events.get_nowait() == ("done", "runtime_error")
+    assert b.client.events.empty()
+    a.release()
+    b.release()
+    owner.close()
+
+
+def test_completed_slow_consumers_have_a_separate_admission_cap():
+    loop = FakeLoop()
+    loop.gate.set()
+    owner = Batch2HTTPOwner(FakeSession(), max_extra_bytes=1,
+                            max_prompt_tokens=8, loop=loop,
+                            max_delivery_consumers=2)
+    for text in ("A", "B"):
+        lease = owner.reserve()
+        assert lease.start_worker(None)
+        assert lease.session.generate(None, text, max_tokens=1,
+                                      temperature=0, top_p=1,
+                                      on_token=lambda *_: 0,
+                                      flags=CK_SESSION_REQUEST_RAW_PROMPT)["generated_tokens"] == 1
+        lease.release()
+    assert not owner.slots
+    assert len(owner.clients) == 2
+    try:
+        owner.reserve()
+    except SessionBusyError:
+        pass
+    else:
+        raise AssertionError("slow delivery did not bound admission")
+    first = next(iter(owner.clients.values()))
+    owner.delivery_done(first)
+    newer = owner.reserve()
+    newer.release()
+    owner.close()
+
+
+def test_decoded_output_byte_cap_fails_only_that_consumer():
+    loop = FakeLoop()
+    loop.gate.set()
+    session = FakeSession()
+    owner = Batch2HTTPOwner(session, max_extra_bytes=1,
+                            max_prompt_tokens=8, loop=loop,
+                            max_output_bytes=2)
+    app = create_app(session, model="m", context_length=128,
+                     chat_template="{{ messages[0].content }}", batch_http=owner)
+    client = TestClient(app)
+    failed = client.post("/v1/responses", json={
+        "model": "m", "input": "A", "max_output_tokens": 3})
+    assert failed.status_code == 200
+    assert failed.json()["status"] == "failed"
+    recovered = client.post("/v1/responses", json={
+        "model": "m", "input": "B", "max_output_tokens": 2})
+    assert recovered.status_code == 200
+    assert recovered.json()["output_text"] == "BB"
+    owner.close()
+
+
+def test_output_token_delivery_cap_rejects_before_native_execution():
+    loop = FakeLoop()
+    loop.gate.set()
+    session = FakeSession()
+    owner = Batch2HTTPOwner(session, max_extra_bytes=1,
+                            max_prompt_tokens=8, loop=loop,
+                            max_output_tokens=2)
+    app = create_app(session, model="m", context_length=128,
+                     chat_template="{{ messages[0].content }}", batch_http=owner)
+    client = TestClient(app)
+    rejected = client.post("/v1/responses", json={
+        "model": "m", "input": "A", "max_output_tokens": 3})
+    assert rejected.status_code == 413
+    assert rejected.json()["error"]["code"] == "batch_output_limit_exceeded"
+    assert not loop.calls
+    followup = client.post("/v1/responses", json={
+        "model": "m", "input": "B", "max_output_tokens": 1})
+    assert followup.json()["output_text"] == "B"
     owner.close()
 
 
@@ -415,6 +589,7 @@ def test_stream_socket_disconnect_releases_only_its_batch_slot():
         while not any(c.cancelled.is_set() for c in owner.slots.values()) and time.monotonic() < deadline:
             time.sleep(0.01)
         assert any(c.cancelled.is_set() for c in owner.slots.values())
+        assert len(owner.clients) == 1, "disconnected consumer lost native ownership early"
         loop.gate.set()
         deadline = time.monotonic() + 3
         while owner.slots and time.monotonic() < deadline:
@@ -442,25 +617,26 @@ def test_blocked_stream_send_does_not_hold_completed_native_slot():
     loop.gate.set()
     session = FakeSession()
     owner = Batch2HTTPOwner(session, max_extra_bytes=1,
-                            max_prompt_tokens=8, loop=loop)
+                            max_prompt_tokens=8, loop=loop,
+                            max_delivery_consumers=2)
     app = create_app(session, model="m", context_length=128,
                      chat_template="{{ messages[0].content }}", batch_http=owner)
-    payload = json.dumps({"model": "m", "input": "A", "stream": True,
-                          "max_output_tokens": 4}).encode()
     scope = {"type": "http", "asgi": {"version": "3.0"},
              "http_version": "1.1", "method": "POST", "scheme": "http",
              "path": "/v1/responses", "raw_path": b"/v1/responses",
              "query_string": b"", "root_path": "",
              "headers": [(b"content-type", b"application/json")],
              "client": ("127.0.0.1", 10000), "server": ("127.0.0.1", 80)}
-    blocked = threading.Event()
-    unblock = threading.Event()
+    blocked = [threading.Event(), threading.Event()]
+    unblock = [threading.Event(), threading.Event()]
     errors = []
 
-    def serve():
+    def serve(index):
         async def exchange():
             received = False
             body_sends = 0
+            payload = json.dumps({"model": "m", "input": "AB"[index],
+                                  "stream": True, "max_output_tokens": 4}).encode()
 
             async def receive():
                 nonlocal received
@@ -475,8 +651,8 @@ def test_blocked_stream_send_does_not_hold_completed_native_slot():
                 if message["type"] == "http.response.body":
                     body_sends += 1
                     if body_sends == 3:
-                        blocked.set()
-                        await asyncio.to_thread(unblock.wait)
+                        blocked[index].set()
+                        await asyncio.to_thread(unblock[index].wait)
 
             await app(scope, receive, send)
 
@@ -485,23 +661,96 @@ def test_blocked_stream_send_does_not_hold_completed_native_slot():
         except Exception as exc:
             errors.append(exc)
 
-    thread = threading.Thread(target=serve, daemon=True)
-    thread.start()
+    threads = [threading.Thread(target=serve, args=(index,), daemon=True)
+               for index in range(2)]
+    for thread in threads:
+        thread.start()
     try:
-        assert blocked.wait(3), "stream did not reach blocked send"
+        assert all(event.wait(3) for event in blocked), "streams did not reach blocked sends"
         deadline = time.monotonic() + 3
         while owner.slots and time.monotonic() < deadline:
             time.sleep(0.01)
         assert not owner.slots, "completed native work retained a slow reader's slot"
+        assert len(owner.clients) == 2
+        overflow = TestClient(app).post("/v1/responses", json={
+            "model": "m", "input": "C", "max_output_tokens": 1})
+        assert overflow.status_code == 429
+        unblock[0].set()
+        threads[0].join(timeout=3)
+        assert not threads[0].is_alive()
+        followup = TestClient(app).post("/v1/responses", json={
+            "model": "m", "input": "C", "max_output_tokens": 1})
+        assert followup.json()["output_text"] == "C"
+    finally:
+        for event in unblock:
+            event.set()
+        for thread in threads:
+            thread.join(timeout=3)
+        owner.close()
+    assert all(not thread.is_alive() for thread in threads)
+    assert not errors
+
+
+def test_stalled_stream_send_times_out_without_stalling_owner():
+    loop = FakeLoop()
+    loop.gate.set()
+    session = FakeSession()
+    owner = Batch2HTTPOwner(session, max_extra_bytes=1,
+                            max_prompt_tokens=8, loop=loop,
+                            delivery_timeout=0.1)
+    app = create_app(session, model="m", context_length=128,
+                     chat_template="{{ messages[0].content }}", batch_http=owner)
+    payload = json.dumps({"model": "m", "input": "A", "stream": True,
+                          "max_output_tokens": 4}).encode()
+    scope = {"type": "http", "asgi": {"version": "3.0"},
+             "http_version": "1.1", "method": "POST", "scheme": "http",
+             "path": "/v1/responses", "raw_path": b"/v1/responses",
+             "query_string": b"", "root_path": "",
+             "headers": [(b"content-type", b"application/json")],
+             "client": ("127.0.0.1", 10000), "server": ("127.0.0.1", 80)}
+    blocked = threading.Event()
+    errors = []
+    sent_bodies = []
+
+    def serve():
+        async def exchange():
+            received = False
+            async def receive():
+                nonlocal received
+                if not received:
+                    received = True
+                    return {"type": "http.request", "body": payload,
+                            "more_body": False}
+                await asyncio.Event().wait()
+
+            async def send(message):
+                if message["type"] == "http.response.body":
+                    sent_bodies.append(message.get("body", b""))
+                    blocked.set()
+                    await asyncio.Event().wait()
+
+            await app(scope, receive, send)
+        try:
+            asyncio.run(exchange())
+        except Exception as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    try:
+        assert blocked.wait(3)
+        thread.join(timeout=3)
+        assert not thread.is_alive(), "stalled delivery did not terminate"
+        assert not errors
+        assert not owner.clients
+        response_id = re.search(rb"resp_[0-9a-f]{24}", b"".join(sent_bodies)).group().decode()
+        stored = TestClient(app).get(f"/v1/responses/{response_id}")
+        assert stored.json()["status"] == "cancelled"
         followup = TestClient(app).post("/v1/responses", json={
             "model": "m", "input": "B", "max_output_tokens": 1})
         assert followup.json()["output_text"] == "B"
     finally:
-        unblock.set()
-        thread.join(timeout=3)
         owner.close()
-    assert not thread.is_alive()
-    assert not errors
 
 
 def test_http_cancel_waits_for_batch_step_then_allows_followup():

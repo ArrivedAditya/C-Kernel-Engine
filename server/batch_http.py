@@ -28,9 +28,12 @@ class _Client:
     events: queue.Queue = field(default_factory=queue.Queue)
     cancelled: threading.Event = field(default_factory=threading.Event)
     finished: threading.Event = field(default_factory=threading.Event)
+    delivered: threading.Event = field(default_factory=threading.Event)
+    native_done: threading.Event = field(default_factory=threading.Event)
     ticket: int | None = None
     started: bool = False
     worker_started: bool = False
+    terminal_sent: bool = False
 
 
 class _Proxy:
@@ -56,11 +59,18 @@ class _Proxy:
         if not (flags & CK_SESSION_REQUEST_RAW_PROMPT):
             raise ValueError("batch HTTP requires an already rendered raw prompt")
         ids = self.owner.session.encode_ids(prompt)
+        with self.owner.guard:
+            if self.owner.poisoned:
+                raise SessionError(-7, "batch HTTP owner failed while preparing the prompt")
         if not ids or len(ids) > self.owner.max_prompt_tokens:
             raise ValueError("batch HTTP prompt exceeds its configured token cap")
         if len(ids) + max_tokens - 1 > self.owner.context_length:
             raise ValueError("batch HTTP prompt and output exceed context capacity")
+        if max_tokens > self.owner.max_output_tokens:
+            raise ValueError("batch HTTP output exceeds its configured delivery cap")
         with self.owner.guard:
+            if self.owner.poisoned:
+                raise SessionError(-7, "batch HTTP owner is unavailable after native failure")
             if self.owner.shutdown.is_set() or self.client.cancelled.is_set():
                 return {"prompt_tokens": len(ids), "generated_tokens": 0,
                         "stop_reason": 3, "timing_unavailable": True}
@@ -101,6 +111,9 @@ class _Proxy:
                     continue
                 output_ids.append(value)
                 decoded = self.owner.session.decode_ids(output_ids)
+                if len(decoded) > self.owner.max_output_bytes:
+                    self.cancel()
+                    raise SessionError(-7, "batch HTTP response exceeded its delivery byte cap")
                 if not decoded.startswith(visible_bytes):
                     self.cancel()
                     raise SessionError(-7, "batch detokenization changed already emitted text")
@@ -153,6 +166,9 @@ class _Lease:
                 self.client.finished.set()
                 self.owner.release(self.client)
 
+    def delivery_done(self):
+        self.owner.delivery_done(self.client)
+
     def cancel(self):
         with self.guard:
             if self.active:
@@ -173,12 +189,22 @@ class Batch2HTTPOwner:
     """At most two admitted HTTP requests; one native execution thread."""
 
     def __init__(self, session, *, max_extra_bytes: int,
-                 max_prompt_tokens: int, stop_ids=(), loop=None):
+                 max_prompt_tokens: int, stop_ids=(), loop=None,
+                 max_delivery_consumers: int = 4,
+                 max_output_tokens: int = 4096,
+                 max_output_bytes: int = 1 << 20,
+                 delivery_timeout: float = 30.0):
         if max_prompt_tokens <= 0 or session.context_length is None:
             raise ValueError("batch HTTP needs positive prompt and context limits")
+        if min(max_delivery_consumers, max_output_tokens, max_output_bytes) <= 0 or delivery_timeout <= 0:
+            raise ValueError("batch HTTP delivery limits must be positive")
         self.session = session
         self.context_length = session.context_length
         self.max_prompt_tokens = max_prompt_tokens
+        self.max_delivery_consumers = max_delivery_consumers
+        self.max_output_tokens = max_output_tokens
+        self.max_output_bytes = max_output_bytes
+        self.delivery_timeout = delivery_timeout
         self.stop_ids = tuple(stop_ids)
         self.loop = loop if loop is not None else Batch2RequestLoop(
             session.enable_batch2(max_extra_bytes))
@@ -199,6 +225,8 @@ class Batch2HTTPOwner:
                 raise SessionError(-6, "batch HTTP owner is shutting down")
             if self.poisoned:
                 raise SessionError(-7, "batch HTTP owner is unavailable after native failure")
+            if len(self.clients) >= self.max_delivery_consumers:
+                raise SessionBusyError(-6, "batch HTTP delivery consumers are full")
             for slot in (0, 1):
                 if slot not in self.slots:
                     client = _Client(slot)
@@ -211,38 +239,74 @@ class Batch2HTTPOwner:
         client.cancelled.set()
         with self.guard:
             ticket = client.ticket
-        if ticket is not None:
+            poisoned = self.poisoned
+        if ticket is not None and not poisoned:
             self.loop.request_cancel(ticket)
 
     def release(self, client: _Client):
         with self.guard:
-            self.clients.pop(id(client), None)
             if not client.started and self.slots.get(client.slot) is client:
                 del self.slots[client.slot]
+                client.native_done.set()
+            if not client.worker_started or (client.delivered.is_set() and
+                                             client.native_done.is_set()):
+                self.clients.pop(id(client), None)
         if client.started:
             self.cancel(client)
+
+    def delivery_done(self, client: _Client):
+        client.delivered.set()
+        with self.guard:
+            if client.native_done.is_set():
+                self.clients.pop(id(client), None)
+
+    def _send_terminal(self, client: _Client, reason: str):
+        with self.guard:
+            if client.terminal_sent:
+                return
+            client.terminal_sent = True
+        client.events.put(("done", reason))
 
     def _finish(self, ticket: int, reason: str):
         with self.guard:
             client = self.tickets.pop(ticket, None)
             if client is not None and self.slots.get(client.slot) is client:
                 del self.slots[client.slot]
+            if client is not None:
+                client.native_done.set()
+                if client.delivered.is_set():
+                    self.clients.pop(id(client), None)
         if client is not None:
-            client.events.put(("done", reason))
+            self._send_terminal(client, reason)
 
-    def _fail_active(self):
-        # A failed prefill may reset both native slots. No older request may
-        # keep waiting for a token from state that no longer exists.
+    def _poison_all(self):
+        # A native exception may invalidate every slot, including a request
+        # pending prefill. Preparing consumers observe poison after encoding.
         with self.guard:
-            active = tuple(self.tickets.values())
+            self.poisoned = True
+            admitted = tuple(self.clients.values())
             self.tickets.clear()
-            for client in active:
-                if self.slots.get(client.slot) is client:
-                    del self.slots[client.slot]
-        for client in active:
-            client.events.put(("done", "runtime_error"))
+            self.slots.clear()
+            while True:
+                try:
+                    self.pending.get_nowait()
+                except queue.Empty:
+                    break
+            for client in admitted:
+                client.native_done.set()
+                if client.delivered.is_set():
+                    self.clients.pop(id(client), None)
+        for client in admitted:
+            if client.worker_started:
+                self._send_terminal(client, "runtime_error")
 
     def _run(self):
+        try:
+            self._run_owned()
+        except Exception:
+            self._poison_all()
+
+    def _run_owned(self):
         while True:
             if self.shutdown.is_set() and not self.loop.active_tickets() and self.pending.empty():
                 return
@@ -258,39 +322,29 @@ class Batch2HTTPOwner:
                     with self.guard:
                         if self.slots.get(client.slot) is client:
                             del self.slots[client.slot]
-                    client.events.put(("done", "cancelled"))
+                        client.native_done.set()
+                        if client.delivered.is_set():
+                            self.clients.pop(id(client), None)
+                    self._send_terminal(client, "cancelled")
                 else:
-                    try:
-                        ticket = self.loop.submit(
-                            client.slot, ids, max_tokens=max_tokens,
-                            stop_ids=self.stop_ids, temperature=temperature,
-                            top_p=top_p, seed=secrets.randbits(63))
-                        with self.guard:
-                            client.ticket = ticket
-                            self.tickets[ticket] = client
-                        if client.cancelled.is_set():
-                            self.loop.request_cancel(ticket)
-                    except Exception:
-                        with self.guard:
-                            if self.slots.get(client.slot) is client:
-                                del self.slots[client.slot]
-                        client.events.put(("done", "runtime_error"))
-                        if not self.loop.active_tickets():
-                            self._fail_active()
+                    ticket = self.loop.submit(
+                        client.slot, ids, max_tokens=max_tokens,
+                        stop_ids=self.stop_ids, temperature=temperature,
+                        top_p=top_p, seed=secrets.randbits(63))
+                    with self.guard:
+                        client.ticket = ticket
+                        self.tickets[ticket] = client
+                    if client.cancelled.is_set():
+                        self.loop.request_cancel(ticket)
             if not self.loop.active_tickets():
                 continue
-            try:
-                tick = self.loop.advance()
-            except Exception:
-                with self.guard:
-                    self.poisoned = True
-                self._fail_active()
-                return
+            tick = self.loop.advance()
             for event in tick.tokens:
                 with self.guard:
                     recipient = self.tickets.get(event.ticket)
                 if recipient is not None:
-                    recipient.events.put(("token", event.token_id))
+                    if not recipient.terminal_sent:
+                        recipient.events.put(("token", event.token_id))
             for event in tick.completed:
                 self._finish(event.ticket, event.reason)
             if tick.advanced_mask == 3:
