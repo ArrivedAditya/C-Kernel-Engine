@@ -126,10 +126,15 @@ class KokoroGeneratedProsodyCompleteTest(unittest.TestCase):
                                  ctypes.byref(doubled)), 0)
         self.assertEqual((frames.value, doubled.value), (103, 206))
         worst = (0., None)
+        f0_stage_errors = []
         for branch, stem in (('F0', 'f0'), ('N', 'n')):
             first_block = self.view(arena, f'{stem}_block0_output').reshape(512, 128)
             first_expected = self.direct[f'predictor_{branch}_0']
             first_error = np.abs(first_block[:, :103] - first_expected)
+            if branch == 'F0':
+                f0_stage_errors.append(('block0', first_error,
+                                        first_block[:, :103], first_expected,
+                                        1e-4))
             self.assertTrue(np.isfinite(first_block[:, :103]).all())
             self.assertLessEqual(float(np.max(first_error)), 1e-4)
             self.assertTrue(np.all(first_block[:, 103:] == -777.))
@@ -137,6 +142,9 @@ class KokoroGeneratedProsodyCompleteTest(unittest.TestCase):
             expected = self.direct[f'predictor_{branch}_1']
             self.assertTrue(np.isfinite(actual[:, :206]).all())
             error = np.abs(actual[:, :206] - expected)
+            if branch == 'F0':
+                f0_stage_errors.append(('block1', error,
+                                        actual[:, :206], expected, 1e-4))
             point = np.unravel_index(np.argmax(error), error.shape)
             if float(error[point]) > worst[0]:
                 worst = (float(error[point]),
@@ -147,6 +155,9 @@ class KokoroGeneratedProsodyCompleteTest(unittest.TestCase):
             third = self.view(arena, f'{stem}_block2_output').reshape(256, 256)
             third_expected = self.direct[f'predictor_{branch}_2']
             third_error = np.abs(third[:, :206] - third_expected)
+            if branch == 'F0':
+                f0_stage_errors.append(('block2', third_error,
+                                        third[:, :206], third_expected, 1e-4))
             third_point = np.unravel_index(np.argmax(third_error),
                                            third_error.shape)
             self.assertTrue(np.isfinite(third[:, :206]).all())
@@ -158,6 +169,9 @@ class KokoroGeneratedProsodyCompleteTest(unittest.TestCase):
             final_expected = self.direct[f'predictor_{branch}_proj']
             self.assertTrue(np.isfinite(final[:, :206]).all())
             final_error = np.abs(final[:, :206] - final_expected)
+            if branch == 'F0':
+                f0_stage_errors.append(('projection', final_error,
+                                        final[:, :206], final_expected, 5e-4))
             final_point = np.unravel_index(np.argmax(final_error),
                                            final_error.shape)
             projection_weight, projection_bias = self.projection_weights[branch]
@@ -185,6 +199,30 @@ class KokoroGeneratedProsodyCompleteTest(unittest.TestCase):
                 (branch, 'projection', final_point,
                  float(final_error[final_point])))
             self.assertTrue(np.all(final[:, 206:] == -91.))
+        for stage, error, actual, reference, limit in f0_stage_errors:
+            point = np.unravel_index(np.argmax(error), error.shape)
+            print('CKE_NUMERICAL_CASE ' + json.dumps({
+                'case_id': f'kokoro.complete-prosody.F0-{stage}.drift-v1',
+                'name': f'Kokoro generated F0 {stage} full-model drift',
+                'provider': 'generated_prosody_complete',
+                'dtype': 'fp32', 'direction': 'inference',
+                'oracle': 'pinned-full-kmodel-pytorch28',
+                'backend_version': self.direct_meta['environment']['torch'],
+                'status': 'pass' if float(error[point]) <= limit else 'fail',
+                'gate': 'diagnostic', 'blocking': False,
+                'reason': 'coarse full-model checkpoint; first divergent '
+                          'operation still requires identical-input replay',
+                'max_diff': float(error[point]),
+                'worst_index': list(map(int, point)),
+                'actual': float(actual[point]),
+                'reference': float(reference[point]),
+                'rmse': float(np.sqrt(np.mean(error.astype(np.float64) ** 2))),
+                'tolerance': limit,
+                'configuration': '36 phonemes; A=103; 2A=206; af_heart',
+                'reproduction_command': 'python3 -m unittest '
+                    'tests.test_v8_kokoro_generated_prosody_complete.'
+                    'KokoroGeneratedProsodyCompleteTest.'
+                    'test_second_blocks_match_direct_full_model_hooks'}))
         print('CKE_NUMERICAL_CASE ' + json.dumps({
             'case_id': 'kokoro.complete-prosody.generated-v1',
             'name': 'generated complete F0/noise outputs versus direct pinned KModel hooks',
