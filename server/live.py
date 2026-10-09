@@ -19,6 +19,7 @@ client to execute. Unsupported tool types are rejected before generation.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import copy
 import json
@@ -385,6 +386,13 @@ def _sse(event_type: str, data: Any) -> str:
 
 
 def _performance_profile(result: dict[str, Any]) -> dict[str, Any]:
+    if result.get("timing_unavailable"):
+        return {
+            "prompt_tokens": int(result.get("prompt_tokens") or 0),
+            "generated_tokens": int(result.get("generated_tokens") or 0),
+            "timing_status": "unavailable",
+            "stop_reason": stop_reason_name(result.get("stop_reason")),
+        }
     prompt_tokens = int(result.get("prompt_tokens") or 0)
     generated_tokens = int(result.get("generated_tokens") or 0)
     prefill_ms = float(result.get("prefill_time_ms") or 0.0)
@@ -413,6 +421,10 @@ def _performance_profile(result: dict[str, Any]) -> dict[str, Any]:
 
 def _log_performance(model: str, perf: dict[str, Any] | None) -> None:
     if not perf:
+        return
+    if perf.get("timing_status") == "unavailable":
+        print(f"{C_GRAY}{model} - native batch timing unavailable; "
+              f"stop: {perf['stop_reason']}{C_RESET}", flush=True)
         return
     line = (
         f"eval time = {perf['prefill_ms']:.1f} ms prompt, "
@@ -1495,20 +1507,47 @@ class _FlightLease:
 
 
 class _OwnedStreamingResponse(StreamingResponse):
-    def __init__(self, *args, lease, on_disconnect=None, **kwargs):
+    def __init__(self, *args, lease, on_disconnect=None,
+                 delivery_timeout=None, on_delivery_timeout=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.lease = lease
         self.on_disconnect = on_disconnect
+        self.delivery_timeout = delivery_timeout
+        self.on_delivery_timeout = on_delivery_timeout
 
     async def __call__(self, scope, receive, send):
+        async def bounded_send(message):
+            try:
+                await asyncio.wait_for(send(message), timeout=self.delivery_timeout)
+            except asyncio.TimeoutError as exc:
+                raise _DeliveryTimeout from exc
+
         try:
-            await super().__call__(scope, receive, send)
+            await super().__call__(
+                scope, receive,
+                bounded_send if self.delivery_timeout is not None else send,
+            )
+        except _DeliveryTimeout:
+            # Headers may already be sent. End this client's stream and keep
+            # the native owner available to finish/cancel other requests.
+            self.lease.cancel()
+            if self.on_delivery_timeout is not None:
+                self.on_delivery_timeout()
         finally:
             try:
                 self.lease.disconnect()
             finally:
-                if self.on_disconnect is not None:
-                    self.on_disconnect()
+                try:
+                    if self.on_disconnect is not None:
+                        self.on_disconnect()
+                finally:
+                    delivery_done = getattr(self.lease, "delivery_done", None)
+                    if delivery_done is not None:
+                        delivery_done()
+
+
+class _DeliveryTimeout(Exception):
+    pass
 
 
 # --- app factory --------------------------------------------------------------
@@ -1538,6 +1577,7 @@ def create_app(
     cancel_wait_seconds: float = 10.0,
     viz_html: str | None = None,
     extra_route_registrar: Callable[[APIRouter, Callable[..., Any]], None] | None = None,
+    batch_http=None,
 ):
     """Build the live Responses FastAPI app around a session (real or fake).
 
@@ -1564,6 +1604,8 @@ def create_app(
         type(request_prompt_byte_cap) is not int or request_prompt_byte_cap <= 0
     ):
         raise ValueError("request_prompt_byte_cap must be a positive byte count")
+    if batch_http is not None and context_length != batch_http.context_length:
+        raise ValueError("batch HTTP context must match the loaded native session")
 
     router = APIRouter()
     if loaded_identity is not None and loaded_identity.get("schema") != "cke.loaded_serving_identity.v1":
@@ -1607,6 +1649,13 @@ def create_app(
         effective_serving["request_output_cap"] = request_output_cap
     if request_prompt_byte_cap is not None:
         effective_serving["request_prompt_byte_cap"] = request_prompt_byte_cap
+    if batch_http is not None:
+        effective_serving["execution_mode"] = "experimental_batch2_http"
+        effective_serving["batch_prompt_token_cap"] = batch_http.max_prompt_tokens
+        effective_serving["batch_delivery_consumer_cap"] = batch_http.max_delivery_consumers
+        effective_serving["batch_output_token_cap"] = batch_http.max_output_tokens
+        effective_serving["batch_output_byte_cap"] = batch_http.max_output_bytes
+        effective_serving["batch_delivery_timeout_seconds"] = batch_http.delivery_timeout
 
     def _conversation_echo(body) -> dict[str, Any] | None:
         conv = body.conversation
@@ -1805,6 +1854,14 @@ def create_app(
                     code="prompt_bytes_limit_exceeded",
                 )
         if context_length is not None:
+            if batch_http is not None and tok_limit > batch_http.max_output_tokens:
+                raise _harness_error(
+                    413,
+                    f"requested output has {tok_limit} tokens, exceeding the batch "
+                    f"HTTP delivery cap {batch_http.max_output_tokens}",
+                    err_type="invalid_request_error",
+                    code="batch_output_limit_exceeded",
+                )
             if tok_limit >= context_length:
                 raise _harness_error(
                     400,
@@ -1841,6 +1898,14 @@ def create_app(
                         f"capacity {context_length}; at most {available} output tokens remain",
                         err_type="invalid_request_error",
                         code="context_length_exceeded",
+                    )
+                if batch_http is not None and prompt_tokens > batch_http.max_prompt_tokens:
+                    raise _harness_error(
+                        413,
+                        f"rendered prompt has {prompt_tokens} tokens, exceeding "
+                        f"the batch HTTP cap {batch_http.max_prompt_tokens}",
+                        err_type="invalid_request_error",
+                        code="batch_prompt_limit_exceeded",
                     )
         return prompt, tok_limit, temperature_eff, top_p_eff, effective_flags, generation_prefix
 
@@ -2102,7 +2167,7 @@ def create_app(
 
         def worker():
             try:
-                result = session.generate(
+                result = lease.session.generate(
                     None,
                     prompt,
                     max_tokens=max_tokens,
@@ -2763,6 +2828,13 @@ def create_app(
                 stored["status"] = ResponseStatus.cancelled
                 stored["completed_at"] = int(time.time())
 
+    def _settle_delivery_timeout(response_id):
+        with response_store_lock:
+            stored = response_store.get(response_id)
+            if stored is not None and stored["status"] == ResponseStatus.in_progress:
+                stored["status"] = ResponseStatus.cancelled
+                stored["completed_at"] = int(time.time())
+
 
     def _acquire_flight_or_429(timeout: float | None = None) -> None:
         """Take the single-flight lock through bounded FIFO admission.
@@ -2792,9 +2864,24 @@ def create_app(
         lease = None
         try:
             _validate_request(body)
-            _acquire_flight_or_429()
+            if batch_http is None:
+                _acquire_flight_or_429()
+                lease = _FlightLease(_flight_lock, session, _flight_admission.notify_release)
+            else:
+                try:
+                    lease = batch_http.reserve()
+                except SessionBusyError as exc:
+                    raise _harness_error(
+                        429, "Batch HTTP slots or delivery capacity are full; retry later.",
+                        err_type="rate_limit_error", code="rate_limit_exceeded",
+                        retry_after=_FLIGHT_WAIT_SECONDS,
+                    ) from exc
+                except SessionError as exc:
+                    raise _harness_error(
+                        503, str(exc), err_type="server_error",
+                        code="batch_owner_unavailable",
+                    ) from exc
             acquired = True
-            lease = _FlightLease(_flight_lock, session, _flight_admission.notify_release)
             prompt, tok_limit, temperature_eff, top_p_eff, effective_flags, generation_prefix = (
                 _prepare_request(body)
             )
@@ -2825,6 +2912,11 @@ def create_app(
                 lease=lease,
                 on_disconnect=lambda: _settle_unstarted_stream(
                     stream_response_id, lease
+                ),
+                delivery_timeout=(batch_http.delivery_timeout if batch_http is not None else None),
+                on_delivery_timeout=(
+                    (lambda: _settle_delivery_timeout(stream_response_id))
+                    if batch_http is not None else None
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -2880,7 +2972,7 @@ def create_app(
                         chunks.append(text)
                     return -1 if disconnect_cancelled.is_set() else 0
 
-                result = session.generate(
+                result = lease.session.generate(
                     None,
                     prompt,
                     max_tokens=tok_limit,
@@ -2941,6 +3033,8 @@ def create_app(
             if monitor_thread is not None:
                 monitor_thread.join(timeout=1.0)
             lease.release()
+            if batch_http is not None:
+                lease.delivery_done()
         text = truncate_stop_markers("".join(chunks), all_stop_markers)
         thinking = None
         reasoning_tokens = 0

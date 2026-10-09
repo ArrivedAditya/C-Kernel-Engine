@@ -294,6 +294,30 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--request-prompt-byte-cap", type=int, default=None,
         help="Optional rendered-prompt UTF-8 byte limit, independent of model token capacity",
     )
+    parser.add_argument(
+        "--batch-http-extra-bytes", type=int, default=None,
+        help="Opt in to two-slot generated HTTP decode with this native+host memory budget",
+    )
+    parser.add_argument(
+        "--batch-http-prompt-cap", type=int, default=256,
+        help="Maximum rendered prompt tokens in experimental batch HTTP mode",
+    )
+    parser.add_argument(
+        "--batch-http-delivery-consumers", type=int, default=4,
+        help="Maximum admitted batch HTTP responses awaiting delivery",
+    )
+    parser.add_argument(
+        "--batch-http-output-byte-cap", type=int, default=1 << 20,
+        help="Maximum decoded output bytes buffered per batch HTTP response",
+    )
+    parser.add_argument(
+        "--batch-http-output-token-cap", type=int, default=4096,
+        help="Maximum output token events buffered per batch HTTP response",
+    )
+    parser.add_argument(
+        "--batch-http-delivery-timeout", type=float, default=30.0,
+        help="Maximum seconds allowed for each batch HTTP stream write",
+    )
 
     sampler = parser.add_argument_group(
         "sampling (server-level defaults; request body overrides)"
@@ -545,39 +569,66 @@ def main(argv: list[str] | None = None) -> int:
 
     log("Typed media disabled: this native serving path is text-only", C_GRAY)
 
-    app = create_app(
-        session,
-        model=args.model_name,
-        context_length=runtime_context_length,
-        stats=args.stats,
-        viz=not args.no_viz,
-        temperature=args.temperature,
-        top_p=args.top_p,
-        max_tokens=args.max_tokens,
-        request_output_cap=args.request_output_cap,
-        request_prompt_byte_cap=args.request_prompt_byte_cap,
-        stop_on_text=list(dict.fromkeys([
-            *(resolved_serving.get("stop_text", []) if resolved_serving else []),
-            *args.stop_on_text,
-        ])),
-        stop_at_eos=args.stop_at_eos,
-        flags=(
-            CK_SESSION_REQUEST_RAW_PROMPT
-            if (args.no_chat_template and args.allow_raw_prompt)
-            else 0
-        ),
-        chat_contract=chat_contract,
-        chat_template=chat_template,
-        chat_templates=chat_templates,
-        tool_protocol=selected_tool_protocol,
-        loaded_identity=loaded_identity,
-        renderer_tokens=renderer_tokens,
-        allow_untemplated=args.no_chat_template and args.allow_raw_prompt,
-    )
+    batch_http = None
+    if args.batch_http_extra_bytes is not None:
+        from server.batch_http import Batch2HTTPOwner
+        if args.batch_http_extra_bytes <= 0 or args.batch_http_prompt_cap <= 0:
+            raise ValueError("batch HTTP memory budget and prompt cap must be positive")
+        if args.request_output_cap is None:
+            raise ValueError("batch HTTP requires an explicit --request-output-cap")
+        batch_http = Batch2HTTPOwner(
+            session,
+            max_extra_bytes=args.batch_http_extra_bytes,
+            max_prompt_tokens=args.batch_http_prompt_cap,
+            stop_ids=session.generated_stop_ids(),
+            max_delivery_consumers=args.batch_http_delivery_consumers,
+            max_output_tokens=args.batch_http_output_token_cap,
+            max_output_bytes=args.batch_http_output_byte_cap,
+            delivery_timeout=args.batch_http_delivery_timeout,
+        )
+
+    try:
+        app = create_app(
+            session,
+            model=args.model_name,
+            context_length=runtime_context_length,
+            stats=args.stats,
+            viz=not args.no_viz,
+            temperature=args.temperature,
+            top_p=args.top_p,
+            max_tokens=args.max_tokens,
+            request_output_cap=args.request_output_cap,
+            request_prompt_byte_cap=args.request_prompt_byte_cap,
+            stop_on_text=list(dict.fromkeys([
+                *(resolved_serving.get("stop_text", []) if resolved_serving else []),
+                *args.stop_on_text,
+            ])),
+            stop_at_eos=args.stop_at_eos,
+            flags=(
+                CK_SESSION_REQUEST_RAW_PROMPT
+                if (args.no_chat_template and args.allow_raw_prompt)
+                else 0
+            ),
+            chat_contract=chat_contract,
+            chat_template=chat_template,
+            chat_templates=chat_templates,
+            tool_protocol=selected_tool_protocol,
+            loaded_identity=loaded_identity,
+            renderer_tokens=renderer_tokens,
+            allow_untemplated=args.no_chat_template and args.allow_raw_prompt,
+            batch_http=batch_http,
+        )
+    except Exception:
+        if batch_http is not None:
+            batch_http.close()
+        session.close()
+        raise
 
     try:
         import uvicorn
     except ImportError as exc:
+        if batch_http is not None:
+            batch_http.close()
         session.close()
         raise ImportError(
             "uvicorn is required to run the server. Install server requirements:\n"
@@ -590,8 +641,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     if not args.no_viz:
         log(f"Visualizer: http://{args.host}:{args.port}/viz", C_GREEN)
-    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
-    session.close()
+    try:
+        uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    finally:
+        if batch_http is not None:
+            batch_http.close()
+        session.close()
     return 0
 
 

@@ -189,6 +189,13 @@ def _configure_abi(lib: Any, name: str) -> None:
             ctypes.POINTER(ctypes.c_int32),
             ctypes.c_int32,
         ]
+    elif name == "ck_session_v8_decode":
+        fn.restype = ctypes.c_int
+        fn.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int32),
+                       ctypes.c_int32, ctypes.c_void_p, ctypes.c_int32]
+    elif name == "ck_session_v8_get_stop_token_ids":
+        fn.restype = ctypes.c_int
+        fn.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int32), ctypes.c_int32]
     elif name == "ck_session_v8_generate":
         fn.restype = ctypes.c_int
         fn.argtypes = [
@@ -218,6 +225,7 @@ def _configure_lib(lib: Any) -> None:
     for name in (
         "ck_session_v8_open",
         "ck_session_v8_encode",
+        "ck_session_v8_decode",
         "ck_session_v8_generate",
         "ck_session_v8_cancel",
         "ck_session_v8_close",
@@ -449,6 +457,27 @@ class SessionV8:
         self.context_length = cfg.context_length
         return self
 
+    def generated_stop_ids(self) -> tuple[int, ...]:
+        """Read the generated model's declared stop IDs from its loaded library."""
+        if self.session is None:
+            raise SessionError(-6, "session has no loaded model")
+        with self._lock:
+            try:
+                _configure_abi(self.lib, "ck_session_v8_get_stop_token_ids")
+            except AttributeError as exc:
+                raise SessionError(-5, "loaded session library lacks stop-token metadata ABI") from exc
+            count = self.lib.ck_session_v8_get_stop_token_ids(self.session, None, 0)
+            if count < 0:
+                _raise_native_error(self.lib, self.session, "ck_session_v8_get_stop_token_ids", count)
+            output = (ctypes.c_int32 * max(1, count))()
+            written = self.lib.ck_session_v8_get_stop_token_ids(self.session, output, count)
+            if written < 0:
+                _raise_native_error(self.lib, self.session,
+                                    "ck_session_v8_get_stop_token_ids", written)
+            if written != count:
+                raise SessionError(-7, "generated stop-token count changed")
+            return tuple(int(output[i]) for i in range(count))
+
     def count_tokens(self, text: str) -> int:
         with self._lock:
             if self.session is None:
@@ -481,6 +510,28 @@ class SessionV8:
             if written != count:
                 raise SessionError(-7, "native tokenizer count changed during encoding")
             return list(output)
+
+    def decode_ids(self, tokens: Sequence[int]) -> bytes:
+        """Decode one request's token sequence without sharing detokenizer state."""
+        if not tokens:
+            return b""
+        if len(tokens) > 0x7FFFFFFF:
+            raise ValueError("token count exceeds int32 capacity")
+        values = (ctypes.c_int32 * len(tokens))(*tokens)
+        with self._lock:
+            if self.session is None:
+                raise SessionError(-6, "session is closed")
+            count = self.lib.ck_session_v8_decode(self.session, values, len(tokens), None, 0)
+            if count < 0:
+                _raise_native_error(self.lib, self.session, "ck_session_v8_decode", count)
+            output = ctypes.create_string_buffer(count + 1)
+            written = self.lib.ck_session_v8_decode(
+                self.session, values, len(tokens), output, count + 1)
+            if written < 0:
+                _raise_native_error(self.lib, self.session, "ck_session_v8_decode", written)
+            if written != count:
+                raise SessionError(-7, "native tokenizer decode length changed")
+            return output.raw[:written]
 
     def enable_batch2(self, max_extra_bytes: int) -> Batch2SessionV8:
         """Reserve two native slots and reusable host logits within one budget.

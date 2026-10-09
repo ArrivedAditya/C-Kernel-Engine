@@ -7,7 +7,8 @@ clients such as Qwen Code through the same Responses implementation.
 The HTTP layer remains a development server. Current boundaries are:
 
 - stores are process-local and non-durable;
-- one generation may use a loaded session at a time;
+- ordinary serving admits one generation at a time; an experimental opt-in
+  two-slot path is available only for generated KV-only batch-capable models;
 - there is no authentication or durable request queue;
 - the Chat Completions route intentionally rejects options it cannot preserve.
 
@@ -40,6 +41,12 @@ KV/recurrent state by default; callers must explicitly set
 The current session ABI deliberately fails closed when a generated model lacks
 the required tokenizer or chat capability. It does not infer a tokenizer or
 chat template from the model name.
+
+## Experimental two-request HTTP decode
+
+The opt-in flags, delivery limits, failure behavior and certification boundary
+are documented in the
+[v8 serving runbook](https://c-kernel-engine.github.io/C-Kernel-Engine/v8-runbook.html#experimental-batch-http).
 
 ## Qwen Code profiles
 
