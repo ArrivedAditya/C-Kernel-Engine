@@ -376,6 +376,21 @@ def test_output_token_delivery_cap_rejects_before_native_execution():
     owner.close()
 
 
+def test_full_token_queue_cannot_block_terminal_owner_failure():
+    owner = Batch2HTTPOwner(FakeSession(), max_extra_bytes=1,
+                            max_prompt_tokens=8, loop=FakeLoop(),
+                            max_output_tokens=1)
+    lease = owner.reserve()
+    lease.client.events.put_nowait(("token", ord("A")))
+    lease.client.events.put_nowait(("token", ord("B")))
+    owner._send_terminal(lease.client, "delivery_overflow")
+    owner._send_terminal(lease.client, "runtime_error")
+    assert lease.client.events.get_nowait() == ("done", "delivery_overflow")
+    assert lease.client.events.empty()
+    lease.release()
+    owner.close()
+
+
 def test_http_overflow_is_429_and_native_failure_recovers():
     loop = FailOnceLoop()
     class CountingSession(FakeSession):

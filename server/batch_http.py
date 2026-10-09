@@ -25,7 +25,7 @@ from .session_v8 import (
 @dataclass
 class _Client:
     slot: int
-    events: queue.Queue = field(default_factory=queue.Queue)
+    events: queue.Queue
     cancelled: threading.Event = field(default_factory=threading.Event)
     finished: threading.Event = field(default_factory=threading.Event)
     delivered: threading.Event = field(default_factory=threading.Event)
@@ -123,6 +123,8 @@ class _Proxy:
             elif kind == "done":
                 if value == "runtime_error":
                     raise SessionError(-7, "native batch step failed; active slots were reset")
+                if value == "delivery_overflow":
+                    raise SessionError(-7, "batch HTTP token delivery queue overflowed")
                 if not self.client.cancelled.is_set():
                     tail = utf8.decode(b"", final=True)
                     if tail:
@@ -229,7 +231,7 @@ class Batch2HTTPOwner:
                 raise SessionBusyError(-6, "batch HTTP delivery consumers are full")
             for slot in (0, 1):
                 if slot not in self.slots:
-                    client = _Client(slot)
+                    client = _Client(slot, queue.Queue(maxsize=self.max_output_tokens + 1))
                     self.slots[slot] = client
                     self.clients[id(client)] = client
                     return _Lease(self, client)
@@ -265,7 +267,16 @@ class Batch2HTTPOwner:
             if client.terminal_sent:
                 return
             client.terminal_sent = True
-        client.events.put(("done", reason))
+        try:
+            client.events.put_nowait(("done", reason))
+        except queue.Full:
+            # Never let a stalled consumer block the shared native owner.
+            while True:
+                try:
+                    client.events.get_nowait()
+                except queue.Empty:
+                    break
+            client.events.put_nowait(("done", reason))
 
     def _finish(self, ticket: int, reason: str):
         with self.guard:
@@ -344,7 +355,11 @@ class Batch2HTTPOwner:
                     recipient = self.tickets.get(event.ticket)
                 if recipient is not None:
                     if not recipient.terminal_sent:
-                        recipient.events.put(("token", event.token_id))
+                        try:
+                            recipient.events.put_nowait(("token", event.token_id))
+                        except queue.Full:
+                            self.cancel(recipient)
+                            self._send_terminal(recipient, "delivery_overflow")
             for event in tick.completed:
                 self._finish(event.ticket, event.reason)
             if tick.advanced_mask == 3:

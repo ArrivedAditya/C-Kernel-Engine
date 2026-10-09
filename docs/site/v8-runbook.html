@@ -2569,7 +2569,9 @@ version/v8/scripts/ck_serve_v8.py "$RUN_DIR" --run "$RUN_DIR" \
         <code>--batch-http-output-byte-cap</code> and
         <code>--batch-http-delivery-timeout</code>. A stalled stream is cancelled
         without blocking the shared native owner; an exceeded output-byte cap
-        fails that response. An owner failure poisons the owner, wakes active
+        fails that response. Token event queues are bounded and terminal
+        failure notification cannot wait behind a full queue. An owner failure
+        poisons the owner, wakes active
         and queued consumers, and rejects new submissions rather than leaving
         a request waiting forever.
     </p>
