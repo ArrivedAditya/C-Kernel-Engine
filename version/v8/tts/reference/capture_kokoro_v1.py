@@ -49,6 +49,8 @@ GENERATOR_HOOKS = (
     "decoder.generator.m_source.l_sin_gen",
     "decoder.generator.noise_convs.0",
     "decoder.generator.noise_res.0",
+    "decoder.generator.noise_convs.1",
+    "decoder.generator.noise_res.1",
     "decoder.generator.ups.0",
     "decoder.generator.ups.1",
     "decoder.generator.reflection_pad",
