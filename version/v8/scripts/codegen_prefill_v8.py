@@ -715,6 +715,9 @@ def emit_prefill_op(
         n_expr = arg_expr_by_name.get("n")
         k_expr = arg_expr_by_name.get("k")
         fp32_func = linear_emission["fp32_activation_function"]
+        segmented_row_function = (
+            _segmented_row_provider(op, config) if segment_plan_available else ""
+        )
         if a_expr and b_expr and c_expr and n_expr and k_expr:
             lines.append("    if (debug_outproj_fp32 && ck_debug_outproj_fp32_input != NULL) {")
             lines.append(f"        {fp32_func}(")
@@ -727,15 +730,34 @@ def emit_prefill_op(
             lines.append(f"            {k_expr}")
             lines.append("        );")
             lines.append("    } else {")
-            lines.append(f"        {func}(")
-            lines.append(f"            {a_expr},")
-            lines.append(f"            {b_expr},")
-            lines.append(f"            {bias_expr},")
-            lines.append(f"            {c_expr},")
-            lines.append(f"            {m_expr},")
-            lines.append(f"            {n_expr},")
-            lines.append(f"            {k_expr}")
-            lines.append("        );")
+            if segmented_row_function:
+                # Static-capacity calls retain their padded rows in the final group.
+                lines.append(
+                    f"        if (ck_multimodal_prefill_has_segment_plan(num_tokens) "
+                    f"&& ({m_expr}) >= num_tokens) {{"
+                )
+                lines.append("            const int _ck_projection_segments[3] = {")
+                lines.append("                g_multimodal_prefill_segment_lengths[0],")
+                lines.append("                g_multimodal_prefill_segment_lengths[1],")
+                lines.append(
+                    f"                g_multimodal_prefill_segment_lengths[2] + "
+                    f"(({m_expr}) - num_tokens)"
+                )
+                lines.append("            };")
+                lines.append(f"            {segmented_row_function}(")
+                for arg in (a_expr, b_expr, bias_expr, c_expr, m_expr, n_expr, k_expr):
+                    lines.append(f"                {arg},")
+                lines.append("                _ck_projection_segments, 3")
+                lines.append("            );")
+                lines.append("        } else {")
+            indent = "            " if segmented_row_function else "        "
+            lines.append(f"{indent}{func}(")
+            for arg in (a_expr, b_expr, bias_expr, c_expr, m_expr, n_expr):
+                lines.append(f"{indent}    {arg},")
+            lines.append(f"{indent}    {k_expr}")
+            lines.append(f"{indent});")
+            if segmented_row_function:
+                lines.append("        }")
             lines.append("    }")
             if profile:
                 lines.append(f'    CK_PROFILE_END("prefill", "{func}", "{op_type}", {layer});')
