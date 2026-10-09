@@ -7,7 +7,8 @@ clients such as Qwen Code through the same Responses implementation.
 The HTTP layer remains a development server. Current boundaries are:
 
 - stores are process-local and non-durable;
-- one generation may use a loaded session at a time;
+- ordinary serving admits one generation at a time; an experimental opt-in
+  two-slot path is available only for generated KV-only batch-capable models;
 - there is no authentication or durable request queue;
 - the Chat Completions route intentionally rejects options it cannot preserve.
 
@@ -40,6 +41,27 @@ KV/recurrent state by default; callers must explicitly set
 The current session ABI deliberately fails closed when a generated model lacks
 the required tokenizer or chat capability. It does not infer a tokenizer or
 chat template from the model name.
+
+## Experimental two-request HTTP decode
+
+`--batch-http-extra-bytes BYTES --batch-http-prompt-cap TOKENS
+--request-output-cap TOKENS` enables a separate two-slot path. It still uses
+the loaded bundle's selected Jinja, tokenizer and output protocol through the
+ordinary Responses handler. One worker owns native prefill/decode; each HTTP
+request has its own slot, cancellation, detokenization and output stream.
+The third simultaneous request receives 429. Startup requires a KV-only
+generated batch entry and a sufficient explicit memory budget; unsupported
+models fail rather than switching modes. The default server remains
+single-flight.
+
+This is an experimental correctness path, not yet practical continuous
+batching. Prefill is synchronous and cannot be interrupted inside one native
+operation; the prompt cap limits admission but is not a time bound. Generated
+stop-token IDs come from
+the loaded native session. Native per-request prefill/decode timing is not yet
+available, so reports mark it unavailable instead of recording zero latency.
+Do not use this mode for unattended harness work until bounded cancellable
+prefill and real tool-task recovery are certified for the exact artifact.
 
 ## Qwen Code profiles
 

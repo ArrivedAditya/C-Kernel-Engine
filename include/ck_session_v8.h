@@ -136,6 +136,11 @@ int ck_session_v8_decode(
     char *output,
     int32_t capacity);
 
+/* Stop IDs from the actually loaded generated model. NULL output queries the
+ * count; a caller buffer smaller than that count is rejected. */
+int ck_session_v8_get_stop_token_ids(
+    CKSessionV8 *session, int32_t *output, int32_t capacity);
+
 int ck_session_v8_format_chat(
     CKSessionV8 *session,
     const char *system_text,

@@ -5819,6 +5819,25 @@ int ck_session_v8_decode(
     return written;
 }
 
+int ck_session_v8_get_stop_token_ids(
+    CKSessionV8 *session, int32_t *output, int32_t capacity) {
+    if (!session || capacity < 0) return CK_SESSION_V8_ERROR_INVALID_ARGUMENT;
+    if (!session->api.get_num_stop_tokens || !session->api.get_stop_tokens) {
+        return session_error(session, CK_SESSION_V8_ERROR_CAPABILITY,
+                             "generated stop-token metadata is unavailable");
+    }
+    int count = session->api.get_num_stop_tokens();
+    const int32_t *ids = session->api.get_stop_tokens();
+    if (count < 0 || count > 64 || (count && !ids)) {
+        return session_error(session, CK_SESSION_V8_ERROR_RUNTIME,
+                             "invalid generated stop-token metadata");
+    }
+    if (!output) return count;
+    if (capacity < count) return CK_SESSION_V8_ERROR_BUFFER_TOO_SMALL;
+    if (count) memcpy(output, ids, (size_t)count * sizeof(*output));
+    return count;
+}
+
 int ck_session_v8_format_chat(
     CKSessionV8 *session,
     const char *system_text,

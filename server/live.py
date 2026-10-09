@@ -385,6 +385,13 @@ def _sse(event_type: str, data: Any) -> str:
 
 
 def _performance_profile(result: dict[str, Any]) -> dict[str, Any]:
+    if result.get("timing_unavailable"):
+        return {
+            "prompt_tokens": int(result.get("prompt_tokens") or 0),
+            "generated_tokens": int(result.get("generated_tokens") or 0),
+            "timing_status": "unavailable",
+            "stop_reason": stop_reason_name(result.get("stop_reason")),
+        }
     prompt_tokens = int(result.get("prompt_tokens") or 0)
     generated_tokens = int(result.get("generated_tokens") or 0)
     prefill_ms = float(result.get("prefill_time_ms") or 0.0)
@@ -413,6 +420,10 @@ def _performance_profile(result: dict[str, Any]) -> dict[str, Any]:
 
 def _log_performance(model: str, perf: dict[str, Any] | None) -> None:
     if not perf:
+        return
+    if perf.get("timing_status") == "unavailable":
+        print(f"{C_GRAY}{model} - native batch timing unavailable; "
+              f"stop: {perf['stop_reason']}{C_RESET}", flush=True)
         return
     line = (
         f"eval time = {perf['prefill_ms']:.1f} ms prompt, "
@@ -1538,6 +1549,7 @@ def create_app(
     cancel_wait_seconds: float = 10.0,
     viz_html: str | None = None,
     extra_route_registrar: Callable[[APIRouter, Callable[..., Any]], None] | None = None,
+    batch_http=None,
 ):
     """Build the live Responses FastAPI app around a session (real or fake).
 
@@ -1564,6 +1576,8 @@ def create_app(
         type(request_prompt_byte_cap) is not int or request_prompt_byte_cap <= 0
     ):
         raise ValueError("request_prompt_byte_cap must be a positive byte count")
+    if batch_http is not None and context_length != batch_http.context_length:
+        raise ValueError("batch HTTP context must match the loaded native session")
 
     router = APIRouter()
     if loaded_identity is not None and loaded_identity.get("schema") != "cke.loaded_serving_identity.v1":
@@ -1607,6 +1621,9 @@ def create_app(
         effective_serving["request_output_cap"] = request_output_cap
     if request_prompt_byte_cap is not None:
         effective_serving["request_prompt_byte_cap"] = request_prompt_byte_cap
+    if batch_http is not None:
+        effective_serving["execution_mode"] = "experimental_batch2_http"
+        effective_serving["batch_prompt_token_cap"] = batch_http.max_prompt_tokens
 
     def _conversation_echo(body) -> dict[str, Any] | None:
         conv = body.conversation
@@ -1841,6 +1858,14 @@ def create_app(
                         f"capacity {context_length}; at most {available} output tokens remain",
                         err_type="invalid_request_error",
                         code="context_length_exceeded",
+                    )
+                if batch_http is not None and prompt_tokens > batch_http.max_prompt_tokens:
+                    raise _harness_error(
+                        413,
+                        f"rendered prompt has {prompt_tokens} tokens, exceeding "
+                        f"the batch HTTP cap {batch_http.max_prompt_tokens}",
+                        err_type="invalid_request_error",
+                        code="batch_prompt_limit_exceeded",
                     )
         return prompt, tok_limit, temperature_eff, top_p_eff, effective_flags, generation_prefix
 
@@ -2102,7 +2127,7 @@ def create_app(
 
         def worker():
             try:
-                result = session.generate(
+                result = lease.session.generate(
                     None,
                     prompt,
                     max_tokens=max_tokens,
@@ -2792,9 +2817,24 @@ def create_app(
         lease = None
         try:
             _validate_request(body)
-            _acquire_flight_or_429()
+            if batch_http is None:
+                _acquire_flight_or_429()
+                lease = _FlightLease(_flight_lock, session, _flight_admission.notify_release)
+            else:
+                try:
+                    lease = batch_http.reserve()
+                except SessionBusyError as exc:
+                    raise _harness_error(
+                        429, "Both batch slots are busy; retry later.",
+                        err_type="rate_limit_error", code="rate_limit_exceeded",
+                        retry_after=_FLIGHT_WAIT_SECONDS,
+                    ) from exc
+                except SessionError as exc:
+                    raise _harness_error(
+                        503, str(exc), err_type="server_error",
+                        code="batch_owner_unavailable",
+                    ) from exc
             acquired = True
-            lease = _FlightLease(_flight_lock, session, _flight_admission.notify_release)
             prompt, tok_limit, temperature_eff, top_p_eff, effective_flags, generation_prefix = (
                 _prepare_request(body)
             )
@@ -2880,7 +2920,7 @@ def create_app(
                         chunks.append(text)
                     return -1 if disconnect_cancelled.is_set() else 0
 
-                result = session.generate(
+                result = lease.session.generate(
                     None,
                     prompt,
                     max_tokens=tok_limit,

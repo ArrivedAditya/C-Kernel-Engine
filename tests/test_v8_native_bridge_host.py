@@ -2127,6 +2127,16 @@ class V8NativeBridgeHostTests(unittest.TestCase):
             self.assertEqual(model.ck_model_is_stop_token(eos), 1)
             self.assertEqual(model.ck_model_is_stop_token(eos + 1), 0)
 
+            # The HTTP batch owner must read stop IDs from the loaded native
+            # session, not from a possibly replaced bundle pathname.
+            (Path(tmpdir) / "libmodel.so").symlink_to(so_path.name)
+            from server.session_v8 import SessionV8
+            session = SessionV8.open(Path(tmpdir), context_length=32, num_threads=2)
+            try:
+                self.assertIn(eos, session.generated_stop_ids())
+            finally:
+                session.close()
+
             result = subprocess.run(
                 [
                     str(CK_CLI_V8),
