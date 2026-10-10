@@ -1100,7 +1100,7 @@
 
 
 <details open>
-    <summary>GEMM (Matrix Multiplication) (275)</summary>
+    <summary>GEMM (Matrix Multiplication) (277)</summary>
     <div class="accordion-content">
 
 
@@ -3010,7 +3010,7 @@
                 <span class="badge badge-green" style="margin-left: 0.5rem;">Forward</span>
             </div>
             <pre style="margin: 0.5rem 0; font-size: 0.8rem; overflow-x: auto;">void gemm_nt_q6_k_q8_k(const void * A_q8, const void * B, const float * bias, float * C, int M, int N, int K)</pre>
-            <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;">NT GEMM: C = A @ B^T where A is Q8_K and B is Q6_K.</p>
+            <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;"></p>
         </div>
 
 
@@ -3101,6 +3101,26 @@
             </div>
             <pre style="margin: 0.5rem 0; font-size: 0.8rem; overflow-x: auto;">void gemm_nt_q6_k_q8_k_tiled(const void * A_q8, const void * B, const float * bias, float * C, int M, int N, int K)</pre>
             <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;">Experimental single-thread tiled NT GEMM wrapper.</p>
+        </div>
+
+
+        <div class="card" style="margin-bottom: 1rem;">
+            <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem;">
+                <code style="font-size: 1rem; background: none; color: var(--orange); padding: 0;">gemm_nt_q6_k_q8_k_tiled_parity</code>
+                <span class="badge badge-green" style="margin-left: 0.5rem;">Forward</span>
+            </div>
+            <pre style="margin: 0.5rem 0; font-size: 0.8rem; overflow-x: auto;">void gemm_nt_q6_k_q8_k_tiled_parity(const void * A_q8, const void * B, const float * bias, float * C, int M, int N, int K)</pre>
+            <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;">NT GEMM: C = A @ B^T where A is Q8_K and B is Q6_K.</p>
+        </div>
+
+
+        <div class="card" style="margin-bottom: 1rem;">
+            <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem;">
+                <code style="font-size: 1rem; background: none; color: var(--orange); padding: 0;">gemm_nt_q6_k_q8_k_tiled_parity_tile</code>
+                <span class="badge badge-green" style="margin-left: 0.5rem;">Forward</span>
+            </div>
+            <pre style="margin: 0.5rem 0; font-size: 0.8rem; overflow-x: auto;">void gemm_nt_q6_k_q8_k_tiled_parity_tile(const void * A_q8, const void * B, const float * bias, float * C, int M, int N, int K, int m0, int m1, int n0, int n1)</pre>
+            <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;"></p>
         </div>
 
 
@@ -9202,7 +9222,7 @@ test_rope.py::TestRoPECache::test_cache_values</p>
 
 
 <details open>
-    <summary>Other Functions (1473)</summary>
+    <summary>Other Functions (1475)</summary>
     <div class="accordion-content">
 
 
@@ -10004,6 +10024,16 @@ test_multi_layer_parity.py::TestMultiLayerParity::test_residual_add</p>
                 <span class="badge badge-green" style="margin-left: 0.5rem;">Forward</span>
             </div>
             <pre style="margin: 0.5rem 0; font-size: 0.8rem; overflow-x: auto;">int audio_preemphasis_f32(const float * input, float * output, int frames, float coefficient)</pre>
+            <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;"></p>
+        </div>
+
+
+        <div class="card" style="margin-bottom: 1rem;">
+            <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem;">
+                <code style="font-size: 1rem; background: none; color: var(--orange); padding: 0;">audio_reflect_pad1d_left_channel_major_f32_checked</code>
+                <span class="badge badge-green" style="margin-left: 0.5rem;">Forward</span>
+            </div>
+            <pre style="margin: 0.5rem 0; font-size: 0.8rem; overflow-x: auto;">int audio_reflect_pad1d_left_channel_major_f32_checked(const float * input, size_t input_elements, size_t input_stride, float * output, size_t output_elements, size_t output_stride, size_t channels, size_t input_frames, size_t left_padding, size_t output_frames)</pre>
             <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;"></p>
         </div>
 
@@ -14483,6 +14513,16 @@ hugepage_mode
                 <span class="badge badge-green" style="margin-left: 0.5rem;">Forward</span>
             </div>
             <pre style="margin: 0.5rem 0; font-size: 0.8rem; overflow-x: auto;">int ck_session_v8_get_model_descriptor(const CKSessionV8 * session, CKModelRuntimeDescriptorV8 * descriptor, size_t descriptor_size)</pre>
+            <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;"></p>
+        </div>
+
+
+        <div class="card" style="margin-bottom: 1rem;">
+            <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem;">
+                <code style="font-size: 1rem; background: none; color: var(--orange); padding: 0;">ck_session_v8_get_stop_token_ids</code>
+                <span class="badge badge-green" style="margin-left: 0.5rem;">Forward</span>
+            </div>
+            <pre style="margin: 0.5rem 0; font-size: 0.8rem; overflow-x: auto;">int ck_session_v8_get_stop_token_ids(CKSessionV8 * session, int32_t * output, int32_t capacity)</pre>
             <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;"></p>
         </div>
 
@@ -24214,7 +24254,7 @@ rmsnorm_backward(d_norm_out, input, gamma, rstd_cache, d_input, d_gamma, tokens,
             </div>
             <div style="text-align: right;">
                 <p style="color: #606060; font-size: 0.75rem; margin: 0;">Static docs · C-first execution</p>
-                <p style="color: #606060; font-size: 0.75rem; margin: 0.5rem 0 0 0;">2026-10-08</p>
+                <p style="color: #606060; font-size: 0.75rem; margin: 0.5rem 0 0 0;">2026-10-10</p>
             </div>
         </div>
     </footer>
