@@ -38,6 +38,64 @@ int ck_rwkv7_token_shift_lerp(const float *x,
     return 0;
 }
 
+int ck_rwkv7_time_mix_shifts(const float *x,
+                             const float *shift_in,
+                             const float *mu_r,
+                             const float *mu_w,
+                             const float *mu_k,
+                             const float *mu_v,
+                             const float *mu_a,
+                             const float *mu_g,
+                             float *xr,
+                             float *xw,
+                             float *xk,
+                             float *xv,
+                             float *xa,
+                             float *xg,
+                             float *shift_out,
+                             int dim) {
+    if (!x || !shift_in || !mu_r || !mu_w || !mu_k || !mu_v || !mu_a ||
+        !mu_g || !xr || !xw || !xk || !xv || !xa || !xg || !shift_out ||
+        dim <= 0) {
+        return -1;
+    }
+    const size_t bytes = (size_t)dim * sizeof(float);
+    float *outs[] = {xr, xw, xk, xv, xa, xg, shift_out};
+    for (int a = 0; a < 7; ++a) {
+        for (int b = a + 1; b < 7; ++b) {
+            if (overlaps(outs[a], bytes, outs[b], bytes)) return -1;
+        }
+    }
+    const float *inputs[] = {x, shift_in, mu_r, mu_w, mu_k, mu_v, mu_a, mu_g};
+    for (int j = 0; j < 8; ++j) {
+        for (int o = 0; o < 7; ++o) {
+            if (outs[o] == inputs[j] &&
+                !(outs[o] == shift_out && inputs[j] == shift_in)) {
+                return -1;
+            }
+            if (outs[o] != inputs[j] &&
+                overlaps(outs[o], bytes, inputs[j], bytes)) {
+                return -1;
+            }
+        }
+    }
+    /* Fused per-index pass: each lane reads x[i]/shift_in[i] once, so the
+     * shared shift is written exactly once instead of six times. */
+    for (int i = 0; i < dim; ++i) {
+        const float current = x[i];
+        const float previous = shift_in[i];
+        const float d = previous - current;
+        xr[i] = current + mu_r[i] * d;
+        xw[i] = current + mu_w[i] * d;
+        xk[i] = current + mu_k[i] * d;
+        xv[i] = current + mu_v[i] * d;
+        xa[i] = current + mu_a[i] * d;
+        xg[i] = current + mu_g[i] * d;
+        shift_out[i] = current;
+    }
+    return 0;
+}
+
 int ck_rwkv7_norm_kk(const float *kk_in,
                          float *kk_out,
                          int num_heads,
@@ -75,7 +133,20 @@ int ck_rwkv7_scale_k(const float *k_in,
         return -1;
     }
     for (int i = 0; i < dim; ++i) {
-        k_out[i] = k_in[i] * (1.0f + (a[i] - 1.0f) * k_a[i]);
+        k_out[i] = k_in[i] * (1.0f + (k_a[i] - 1.0f) * a[i]);
+    }
+    return 0;
+}
+
+int ck_rwkv7_apply_kk_factor(const float *k,
+                             const float *k_k,
+                             float *kk_raw,
+                             int dim) {
+    if (!k || !k_k || !kk_raw || dim <= 0) {
+        return -1;
+    }
+    for (int i = 0; i < dim; ++i) {
+        kk_raw[i] = k[i] * k_k[i];
     }
     return 0;
 }
@@ -427,6 +498,190 @@ int ck_rwkv7_channelmix_decode(const float *x,
             acc += row[j] * hidden[j];
         }
         out[i] = acc;
+    }
+    return 0;
+}
+
+size_t ck_rwkv7_time_mix_scratch_elems(int dim) {
+    if (dim <= 0 || (size_t)dim > SIZE_MAX / (7u * sizeof(float))) {
+        return 0;
+    }
+    return (size_t)dim * 7u;
+}
+
+int ck_rwkv7_time_mix_tail(const float *r,
+                           const float *k_raw,
+                           const float *v_in,
+                           const float *v_first_in,
+                           const float *xw,
+                           const float *xa,
+                           const float *xg,
+                           const float *xv,
+                           const float *w1,
+                           const float *w2,
+                           const float *w0,
+                           const float *a1,
+                           const float *a2,
+                           const float *a0,
+                           const float *g1,
+                           const float *g2,
+                           const float *v1,
+                           const float *v2,
+                           const float *v0,
+                           const float *k_k,
+                           const float *k_a,
+                           const float *rk,
+                           const float *ln_w,
+                           const float *ln_b,
+                           float norm_eps,
+                           const float *state_in,
+                           float *state_out,
+                           float *y_preproj,
+                           float *v_first_out,
+                           int dim,
+                           int num_heads,
+                           int head_dim,
+                           int rank_w,
+                           int rank_a,
+                           int rank_g,
+                           int rank_v,
+                           float *scratch,
+                           size_t scratch_elems) {
+    const int layer0 = (xv == NULL);
+    if (!r || !k_raw || !v_in || !xw || !xa || !xg || !w1 || !w2 || !w0 ||
+        !a1 || !a2 || !a0 || !g1 || !g2 || !k_k || !k_a || !rk || !ln_w ||
+        !ln_b || !state_in || !state_out || !y_preproj || !v_first_out ||
+        !scratch || dim <= 0 || num_heads <= 0 || head_dim <= 0 ||
+        num_heads > 256 || head_dim > 512 || rank_w <= 0 || rank_w > 512 ||
+        rank_a <= 0 || rank_a > 512 || rank_g <= 0 || rank_g > 512 ||
+        !(norm_eps > 0.0f) || !isfinite(norm_eps) ||
+        !isfinite(norm_eps * (float)head_dim)) {
+        return -1;
+    }
+    if ((size_t)dim != (size_t)num_heads * (size_t)head_dim) {
+        return -1;
+    }
+    if (layer0) {
+        /* Layer 0 produces v_first: no residual v state exists yet, so the
+         * residual inputs must be NULL (produce-only path never reads them). */
+        if (v_first_in || v1 || v2 || v0) {
+            return -1;
+        }
+    } else {
+        if (!v_first_in || !v1 || !v2 || !v0 || rank_v <= 0 || rank_v > 512) {
+            return -1;
+        }
+    }
+    if (scratch_elems < (size_t)dim * 7u) {
+        return -1;
+    }
+    const size_t vec_bytes = (size_t)dim * sizeof(float);
+    if (vec_bytes / sizeof(float) != (size_t)dim) return -1;
+    if ((size_t)head_dim > SIZE_MAX / vec_bytes) return -1;
+    const size_t state_bytes = vec_bytes * (size_t)head_dim;
+    const size_t scratch_bytes = vec_bytes * 7u;
+    /* Scratch must be disjoint from every other argument. */
+    const void *ptrs[] = {r, k_raw, v_in, v_first_in, xw, xa, xg, xv,
+                          w1, w2, w0, a1, a2, a0, g1, g2, v1, v2, v0,
+                          k_k, k_a, rk, ln_w, ln_b, state_in, state_out,
+                          y_preproj, v_first_out};
+    /* LoRA factor sizes: down [C,R], up [R,C], bias [C]. State is [H,N,N]. */
+    size_t lens[] = {(size_t)dim, (size_t)dim, (size_t)dim, (size_t)dim,
+                     (size_t)dim, (size_t)dim, (size_t)dim, (size_t)dim,
+                     (size_t)dim * (size_t)rank_w, (size_t)rank_w * (size_t)dim, (size_t)dim,
+                     (size_t)dim * (size_t)rank_a, (size_t)rank_a * (size_t)dim, (size_t)dim,
+                     (size_t)dim * (size_t)rank_g, (size_t)rank_g * (size_t)dim,
+                     0, 0, 0,
+                     (size_t)dim, (size_t)dim,
+                     (size_t)num_heads * (size_t)head_dim, (size_t)dim, (size_t)dim,
+                     state_bytes / sizeof(float), state_bytes / sizeof(float),
+                     (size_t)dim, (size_t)dim};
+    if (!layer0) {
+        lens[16] = (size_t)dim * (size_t)rank_v;
+        lens[17] = (size_t)rank_v * (size_t)dim;
+        lens[18] = (size_t)dim;
+    }
+    for (int j = 0; j < 28; ++j) {
+        if (!ptrs[j] || lens[j] == 0) continue;
+        if (lens[j] > SIZE_MAX / sizeof(float)) return -1;
+        if (overlaps(scratch, scratch_bytes, ptrs[j], lens[j] * sizeof(float))) return -1;
+    }
+    /* Outputs disjoint from each other; state_out may == state_in,
+     * v_first_out may == v_first_in. All other output-input overlaps fail. */
+    if (overlaps(state_out, state_bytes, y_preproj, vec_bytes) ||
+        overlaps(state_out, state_bytes, v_first_out, vec_bytes) ||
+        overlaps(y_preproj, vec_bytes, v_first_out, vec_bytes)) {
+        return -1;
+    }
+    const void *ro_inputs[] = {r, k_raw, v_in, xw, xa, xg, xv, w1, w2, w0,
+                               a1, a2, a0, g1, g2, v1, v2, v0, k_k, k_a,
+                               rk, ln_w, ln_b};
+    size_t ro_lens[] = {(size_t)dim, (size_t)dim, (size_t)dim, (size_t)dim,
+                        (size_t)dim, (size_t)dim, (size_t)dim,
+                        (size_t)dim * (size_t)rank_w, (size_t)rank_w * (size_t)dim, (size_t)dim,
+                        (size_t)dim * (size_t)rank_a, (size_t)rank_a * (size_t)dim, (size_t)dim,
+                        (size_t)dim * (size_t)rank_g, (size_t)rank_g * (size_t)dim,
+                        0, 0, 0,
+                        (size_t)dim, (size_t)dim, (size_t)dim, (size_t)dim, (size_t)dim};
+    if (!layer0) {
+        ro_lens[15] = (size_t)dim * (size_t)rank_v;
+        ro_lens[16] = (size_t)rank_v * (size_t)dim;
+        ro_lens[17] = (size_t)dim;
+    }
+    for (int j = 0; j < 23; ++j) {
+        if (!ro_inputs[j] || ro_lens[j] == 0) continue;
+        size_t n = ro_lens[j];
+        if (overlaps(y_preproj, vec_bytes, ro_inputs[j], n * sizeof(float))) return -1;
+        if (overlaps(v_first_out, vec_bytes, ro_inputs[j], n * sizeof(float))) return -1;
+        if (state_out != state_in &&
+            overlaps(state_out, state_bytes, ro_inputs[j], n * sizeof(float))) return -1;
+    }
+    if (v_first_in && v_first_out != v_first_in &&
+        overlaps(v_first_out, vec_bytes, v_first_in, vec_bytes)) {
+        return -1;
+    }
+    if (state_out != state_in &&
+        overlaps(state_out, state_bytes, state_in, state_bytes)) {
+        return -1;
+    }
+
+    float *w_log = scratch;
+    float *a_buf = scratch + (size_t)dim;
+    float *g_buf = scratch + (size_t)dim * 2u;
+    float *v_buf = scratch + (size_t)dim * 3u;
+    float *kk_raw = scratch + (size_t)dim * 4u;
+    float *kk = scratch + (size_t)dim * 5u;
+    float *k_sc = scratch + (size_t)dim * 6u;
+
+    if (ck_rwkv7_lora_gates(xw, xa, xg, w1, w2, w0, a1, a2, a0, g1, g2,
+                            dim, rank_w, rank_a, rank_g,
+                            w_log, a_buf, g_buf) != 0) {
+        return -1;
+    }
+    if (layer0) {
+        if (ck_rwkv7_vgate_vmix(v_in, NULL, NULL, NULL, NULL, NULL,
+                                dim, 1, v_buf, v_first_out, NULL) != 0) {
+            return -1;
+        }
+    } else {
+        if (ck_rwkv7_vgate_vmix(v_in, v_first_in, xv, v1, v2, v0,
+                                dim, rank_v, v_buf, v_first_out, NULL) != 0) {
+            return -1;
+        }
+    }
+    if (ck_rwkv7_apply_kk_factor(k_raw, k_k, kk_raw, dim) != 0) {
+        return -1;
+    }
+    if (ck_rwkv7_norm_kk(kk_raw, kk, num_heads, head_dim) != 0) {
+        return -1;
+    }
+    if (ck_rwkv7_scale_k(k_raw, a_buf, k_a, k_sc, dim) != 0) {
+        return -1;
+    }
+    if (ck_rwkv7_wkv_decode(r, w_log, k_sc, v_buf, kk, a_buf, g_buf, rk,
+                            ln_w, ln_b, norm_eps, state_in, state_out,
+                            y_preproj, num_heads, head_dim) != 0) {
+        return -1;
     }
     return 0;
 }

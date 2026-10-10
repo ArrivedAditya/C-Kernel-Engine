@@ -1,0 +1,73 @@
+{%- if not add_generation_prompt is defined -%}
+    {%- set add_generation_prompt = true -%}
+{%- endif -%}
+{%- set ns = namespace(system_prompt='') -%}
+{%- for message in messages -%}
+    {%- if message['role'] == 'system' -%}
+        {%- set ns.system_prompt = message['content'] -%}
+    {%- endif -%}
+{%- endfor -%}
+{{bos_token}}
+{%- if tools is defined and tools %}
+{{- 'System: Tools:\n<tools>\n' -}}
+{%- for tool in tools %}
+{%- if tool['function'] is defined -%}
+{%- set tool = tool['function'] -%}
+{%- endif -%}
+{{- '- ' + tool['name'] + ': ' + tool|tojson + '\n' -}}
+{%- endfor %}
+{{- '</tools>\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{"name": <function-name>, "arguments": <args-json-object>}\n</tool_call>\n\n' -}}
+{%- endif %}
+{%- if ns.system_prompt != '' -%}
+{{- 'System: ' + ns.system_prompt + '\n\n' -}}
+{%- endif -%}
+{%- for message in messages -%}
+    {%- if message['role'] == 'user' -%}
+        {{- 'User: ' + message['content']|trim + '\n\n' -}}
+    {%- endif -%}
+    {%- if message['role'] == 'assistant' -%}
+        {%- if message['tool_calls'] is defined and message['tool_calls'] -%}
+            {{- 'Assistant: ' -}}
+            {%- if message['content'] is not none and message['content']|trim != '' -%}
+                {{- message['content']|trim + '\n' -}}
+            {%- endif -%}
+            {%- for tool_call in message['tool_calls'] -%}
+                {%- if tool_call['function'] is defined -%}
+                    {%- set tool_call = tool_call['function'] -%}
+                {%- endif -%}
+                {{- '<tool_call>\n{"name": "' + tool_call['name'] + '", "arguments": ' -}}
+                {%- if tool_call['arguments'] is string -%}
+                    {{- tool_call['arguments'] -}}
+                {%- else -%}
+                    {{- tool_call['arguments']|tojson -}}
+                {%- endif -%}
+                {{- '}\n</tool_call>\n' -}}
+            {%- endfor -%}
+            {{- '\n' -}}
+        {%- elif message['content'] is not none -%}
+            {%- set content = message['content'] -%}
+            {%- if '</think>' in content -%}
+                {%- set content = content.split('</think>')[-1] -%}
+            {%- endif -%}
+            {{- 'Assistant: ' + content|trim + '\n\n' -}}
+        {%- endif -%}
+    {%- endif -%}
+    {%- if message['role'] == 'tool' -%}
+        {%- if loop.previtem is not defined or loop.previtem['role'] != 'tool' -%}
+            {{- 'User: ' -}}
+        {%- endif -%}
+        {{- '<tool_response>\n' + message['content']|trim + '\n</tool_response>\n' -}}
+        {%- if loop.nextitem is not defined or loop.nextitem['role'] != 'tool' -%}
+            {{- '\n' -}}
+        {%- endif -%}
+    {%- endif -%}
+{%- endfor -%}
+{%- if add_generation_prompt -%}
+    {{- 'Assistant:' -}}
+    {%- if enable_thinking is defined and enable_thinking is false %}
+        {{- ' <think>\n</think>' }}
+    {%- endif %}
+    {%- if enable_thinking is defined and enable_thinking is true %}
+        {{- ' <think>' }}
+    {%- endif %}
+{%- endif -%}

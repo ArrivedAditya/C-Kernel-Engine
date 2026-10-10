@@ -24,13 +24,20 @@ extern "C" {
  * output projection stays with the caller's GEMV.
  * v-mixing towards v_first and the LoRA chains are separate units below;
  * the WKV takes final w_log/k/v/kk/a/g (kk L2-normalised, k scaled by
- * 1+(a-1)*k_a).
+ * 1+(k_a-1)*a per the RWKV-7-rc4a diagram's Lerp(k_a,1) box; this
+ * intentionally differs from modeling_rwkv7.py:501's 1+(a-1)*k_a).
  *
  * Layouts (all FP32, row-major, flat C = H*N):
  *  - vectors: [C]; rk: [H,N] (row per head)
  *  - state:   [H,N,N], head h at offset h*N*N, row i at +i*N+j
  *  - LoRA down factors [C,R], up factors [R,C]; biases [C] (g has none)
  *  - channelmix Wk [K,C] (expand), Wv [C,K] (project)
+ *
+ * Time-mix tail order (single entry point below, mirrors
+ * modeling_rwkv7.py Rwkv7Attention.forward without its GEMVs/LayerNorms):
+ *   lora_gates -> vgate_vmix -> kk_raw = k_raw*k_k -> norm_kk ->
+ *   scale_k -> wkv_decode. The kk factor multiply is also exposed alone;
+ *   the final CxC output projection stays with the caller's GEMV.
  *
  * Limits (violations are hard errors): head_dim <= 512, num_heads <= 256,
  * LoRA ranks <= 512, hidden_dim <= 8192, norm_eps > 0.
@@ -52,18 +59,52 @@ int ck_rwkv7_token_shift_lerp(const float *x,
 /* Each output may exactly alias an input. The two outputs must be disjoint;
  * shifted/partial output-input overlaps are rejected before any write. */
 
+/* Six-way time-mix shift bundle (one entry point for the diagram's bottom
+ * Lerp row): xr/xw/xk/xv/xa/xg[i] = x[i] + mu_*[i]*(shift_in[i]-x[i]) with
+ * shift_out = x. The fused per-index loop reads x[i]/shift_in[i] once, so a
+ * single pass replaces six ck_rwkv7_token_shift_lerp calls and the shared
+ * shift is written exactly once. The seven outputs must be pairwise
+ * disjoint; shift_out may exactly alias shift_in (in-place carry). All other
+ * output-input overlaps (including exact output == x aliasing, which would
+ * let sibling mixes collide) are rejected before any write. Read-only inputs
+ * may overlap each other. */
+int ck_rwkv7_time_mix_shifts(const float *x,
+                             const float *shift_in,
+                             const float *mu_r,
+                             const float *mu_w,
+                             const float *mu_k,
+                             const float *mu_v,
+                             const float *mu_a,
+                             const float *mu_g,
+                             float *xr,
+                             float *xw,
+                             float *xk,
+                             float *xv,
+                             float *xa,
+                             float *xg,
+                             float *shift_out,
+                             int dim);
+
 /* kk_raw -> per-head L2-normalised kk (divisor max(norm,1e-12)). */
 int ck_rwkv7_norm_kk(const float *kk_in,
                          float *kk_out,
                          int num_heads,
                          int head_dim);
 
-/* k_out = k_in * (1 + (a-1) * k_a), elementwise over [C]. */
+/* k_out = k_in * (1 + (k_a-1) * a), elementwise over [C] (diagram Lerp(k_a,1)
+ * box with mix weight a; intentionally differs from modeling_rwkv7.py:501). */
 int ck_rwkv7_scale_k(const float *k_in,
                          const float *a,
                          const float *k_a,
                          float *k_out,
                          int dim);
+
+/* kk_raw = k .* k_k, elementwise over [C] (reference: kk = k * k_k before
+ * per-head L2 normalisation). kk_raw may exactly alias k or k_k. */
+int ck_rwkv7_apply_kk_factor(const float *k,
+                             const float *k_k,
+                             float *kk_raw,
+                             int dim);
 
 /* Unfused FP32 LoRA chains (decode, B=1,T=1).
  * Computes w_log = -e^-0.5*sigmoid(tanh(xw@w1)@w2+w0),
@@ -146,6 +187,61 @@ int ck_rwkv7_wkv_decode(const float *r,
 /* Scratch elements needed by ck_rwkv7_channelmix_decode (xk + hidden);
  * 0 on bad args. */
 size_t ck_rwkv7_channelmix_scratch_elems(int dim, int hidden_dim);
+
+/* Scratch elements needed by ck_rwkv7_time_mix_tail (w_log + a + g + v +
+ * kk_raw + kk + k_scaled = 7*dim floats); 0 on bad args. */
+size_t ck_rwkv7_time_mix_scratch_elems(int dim);
+
+/* Single-token time-mix tail (composition of the units above, no GEMV/LayerNorm).
+ * Inputs are post-shift/post-projection vectors: r/k_raw/v_in [C], LoRA inputs
+ * xw/xa/xg/xv [C] (xv == NULL selects the layer-0 produce-only v path, in
+ * which case v_first_in/v1/v2/v0 must also be NULL and rank_v is unchecked).
+ * Computes w_log/a/g via lora_gates, v via vgate_vmix, kk_raw = k_raw*k_k,
+ * kk via norm_kk, k via scale_k, then wkv_decode into state_out/y_preproj.
+ * y_preproj is (groupnorm(y)+bonus)*g; the final CxC output projection stays
+ * with the caller's GEMV. Requires dim == num_heads*head_dim.
+ * `scratch` must hold ck_rwkv7_time_mix_scratch_elems(dim) floats and be
+ * disjoint from every other argument. state_out may exactly alias state_in;
+ * v_first_out may exactly alias v_first_in. All other output-input and
+ * output-output overlaps are rejected before any write. */
+int ck_rwkv7_time_mix_tail(const float *r,
+                           const float *k_raw,
+                           const float *v_in,
+                           const float *v_first_in,
+                           const float *xw,
+                           const float *xa,
+                           const float *xg,
+                           const float *xv,
+                           const float *w1,
+                           const float *w2,
+                           const float *w0,
+                           const float *a1,
+                           const float *a2,
+                           const float *a0,
+                           const float *g1,
+                           const float *g2,
+                           const float *v1,
+                           const float *v2,
+                           const float *v0,
+                           const float *k_k,
+                           const float *k_a,
+                           const float *rk,
+                           const float *ln_w,
+                           const float *ln_b,
+                           float norm_eps,
+                           const float *state_in,
+                           float *state_out,
+                           float *y_preproj,
+                           float *v_first_out,
+                           int dim,
+                           int num_heads,
+                           int head_dim,
+                           int rank_w,
+                           int rank_a,
+                           int rank_g,
+                           int rank_v,
+                           float *scratch,
+                           size_t scratch_elems);
 
 /* Squared-ReLU feedforward decode step with caller-provided scratch.
  * xk = x + mu*(shift_in-x); hidden = relu(Wk@xk)^2, Wk [K,C] row-major;
