@@ -5638,6 +5638,8 @@ struct CKSessionV8 {
         uint64_t handle;
         void *arena;
         int ready;
+        int32_t prefill_total;
+        int32_t prefill_done;
         atomic_uint_fast64_t ticket_state;
     } batch_slot[2];
     void *batch_workspace;
@@ -6040,7 +6042,8 @@ int ck_session_v8_batch2_prefill(CKSessionV8 *session, uint32_t slot,
     int status = batch2_lock(session);
     if (status != CK_SESSION_V8_OK) return status;
     if (!session->batch_enabled || session->batch_poisoned ||
-        session->batch_slot[slot].ready) {
+        session->batch_slot[slot].ready ||
+        session->batch_slot[slot].prefill_total) {
         status = CK_SESSION_V8_ERROR_BUSY;
         goto done;
     }
@@ -6077,6 +6080,129 @@ int ck_session_v8_batch2_prefill(CKSessionV8 *session, uint32_t slot,
                           memory_order_release);
     session->batch_slot[slot].ready = 1;
     *ticket_out = ticket;
+    status = CK_SESSION_V8_OK;
+    goto done;
+poison:
+    session->batch_poisoned = 1;
+    session->batch_poison_reset_mask = 0;
+done:
+    pthread_mutex_unlock(&session->generation_lock);
+    return status;
+}
+
+int ck_session_v8_batch2_prefill_begin(CKSessionV8 *session, uint32_t slot,
+                                      int32_t total_tokens,
+                                      uint64_t *ticket_out) {
+    if (!session || slot >= 2 || !ticket_out || total_tokens <= 0 ||
+        total_tokens > session->context_length)
+        return CK_SESSION_V8_ERROR_INVALID_ARGUMENT;
+    int status = batch2_lock(session);
+    if (status != CK_SESSION_V8_OK) return status;
+    if (!session->batch_enabled || session->batch_poisoned ||
+        session->batch_slot[slot].ready ||
+        session->batch_slot[slot].prefill_total) {
+        status = CK_SESSION_V8_ERROR_BUSY;
+        goto done;
+    }
+    if (!session->batch_next_ticket ||
+        session->batch_next_ticket > (UINT64_MAX >> 1)) {
+        status = CK_SESSION_V8_ERROR_RUNTIME;
+        goto done;
+    }
+    if (session->api.sequence_activate(session->batch_slot[slot].handle) != 0) {
+        status = CK_SESSION_V8_ERROR_RUNTIME;
+        goto poison;
+    }
+    session->api.kv_reset();
+    if (session->api.get_active_tokens() != 0) {
+        status = CK_SESSION_V8_ERROR_RUNTIME;
+        goto poison;
+    }
+    const uint64_t ticket = session->batch_next_ticket++;
+    session->batch_slot[slot].prefill_total = total_tokens;
+    session->batch_slot[slot].prefill_done = 0;
+    atomic_store_explicit(&session->batch_slot[slot].ticket_state,
+                          ck_batch_ticket_state(ticket), memory_order_release);
+    *ticket_out = ticket;
+    status = CK_SESSION_V8_OK;
+    goto done;
+poison:
+    session->batch_poisoned = 1;
+    session->batch_poison_reset_mask = 0;
+done:
+    pthread_mutex_unlock(&session->generation_lock);
+    return status;
+}
+
+int ck_session_v8_batch2_prefill_append(CKSessionV8 *session, uint32_t slot,
+                                       uint64_t ticket, const int32_t *tokens,
+                                       int32_t count, float *scratch_logits,
+                                       int32_t *consumed_out) {
+    if (!session || slot >= 2 || !ticket || !tokens || count <= 0 ||
+        !scratch_logits || !consumed_out)
+        return CK_SESSION_V8_ERROR_INVALID_ARGUMENT;
+    int status = batch2_lock(session);
+    if (status != CK_SESSION_V8_OK) return status;
+    if (!session->batch_enabled || session->batch_poisoned) {
+        status = CK_SESSION_V8_ERROR_BUSY;
+        goto done;
+    }
+    const uint_fast64_t state = atomic_load_explicit(
+        &session->batch_slot[slot].ticket_state, memory_order_acquire);
+    if ((state >> 1) != ticket || !session->batch_slot[slot].prefill_total ||
+        session->batch_slot[slot].ready) {
+        status = CK_SESSION_V8_ERROR_INVALID_ARGUMENT;
+        goto done;
+    }
+    if (state & 1u) {
+        status = CK_SESSION_V8_ERROR_CANCELLED;
+        goto done;
+    }
+    const int32_t remaining = session->batch_slot[slot].prefill_total -
+        session->batch_slot[slot].prefill_done;
+    if (count > remaining) {
+        status = CK_SESSION_V8_ERROR_INVALID_ARGUMENT;
+        goto done;
+    }
+    const int32_t vocab_size = session->api.get_vocab_size();
+    if (vocab_size <= 0) {
+        status = CK_SESSION_V8_ERROR_RUNTIME;
+        goto poison;
+    }
+    for (int32_t i = 0; i < count; ++i) {
+        if (tokens[i] < 0 || tokens[i] >= vocab_size) {
+            status = CK_SESSION_V8_ERROR_INVALID_ARGUMENT;
+            goto done;
+        }
+    }
+    if (session->api.sequence_activate(session->batch_slot[slot].handle) != 0 ||
+        session->api.get_active_tokens() != session->batch_slot[slot].prefill_done) {
+        status = CK_SESSION_V8_ERROR_RUNTIME;
+        goto poison;
+    }
+    for (int32_t i = 0; i < count; ++i) {
+        if (atomic_load_explicit(&session->batch_slot[slot].ticket_state,
+                                 memory_order_acquire) & 1u) {
+            status = CK_SESSION_V8_ERROR_CANCELLED;
+            goto done;
+        }
+        if (session->api.decode(tokens[i], scratch_logits) != 0 ||
+            session->api.get_active_tokens() !=
+                session->batch_slot[slot].prefill_done + 1) {
+            status = CK_SESSION_V8_ERROR_RUNTIME;
+            goto poison;
+        }
+        ++session->batch_slot[slot].prefill_done;
+        *consumed_out = session->batch_slot[slot].prefill_done;
+    }
+    if (atomic_load_explicit(&session->batch_slot[slot].ticket_state,
+                             memory_order_acquire) & 1u) {
+        status = CK_SESSION_V8_ERROR_CANCELLED;
+        goto done;
+    }
+    if (session->batch_slot[slot].prefill_done ==
+        session->batch_slot[slot].prefill_total)
+        session->batch_slot[slot].ready = 1;
     status = CK_SESSION_V8_OK;
     goto done;
 poison:
@@ -6174,6 +6300,8 @@ int ck_session_v8_batch2_reset_slot(CKSessionV8 *session, uint32_t slot) {
     }
     session->api.kv_reset();
     session->batch_slot[slot].ready = 0;
+    session->batch_slot[slot].prefill_total = 0;
+    session->batch_slot[slot].prefill_done = 0;
     atomic_store_explicit(&session->batch_slot[slot].ticket_state, 0,
                           memory_order_release);
     if (session->batch_poisoned) {

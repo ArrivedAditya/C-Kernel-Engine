@@ -40,7 +40,8 @@ enum CKSessionStatusV8 {
     CK_SESSION_V8_ERROR_CAPABILITY = -5,
     CK_SESSION_V8_ERROR_BUSY = -6,
     CK_SESSION_V8_ERROR_RUNTIME = -7,
-    CK_SESSION_V8_ERROR_BUFFER_TOO_SMALL = -8
+    CK_SESSION_V8_ERROR_BUFFER_TOO_SMALL = -8,
+    CK_SESSION_V8_ERROR_CANCELLED = -9
 };
 
 enum CKSessionStopReasonV8 {
@@ -171,8 +172,8 @@ const char *ck_session_v8_last_error(const CKSessionV8 *session);
  * All functions except request_cancel must
  * be serialized by the host; cancellation is thread-safe. This is a native
  * scheduling primitive, not an HTTP admission queue or mixed prefill/decode.
- * Prefill is synchronous and has no ticket until it returns; it is not yet
- * independently cancellable through this API.
+ * The legacy whole-prompt prefill is synchronous and has no ticket until it
+ * returns. The staged decode-replay prefill below has a ticket before work.
  */
 /* max_extra_bytes is a mandatory admission budget for two state arenas plus
  * the batch workspace. needed_bytes reports that requirement even when the
@@ -182,6 +183,27 @@ int ck_session_v8_batch2_enable(CKSessionV8 *session, size_t max_extra_bytes,
 int ck_session_v8_batch2_prefill(CKSessionV8 *session, uint32_t slot,
                                 const int32_t *tokens, int32_t count,
                                 float *logits, uint64_t *ticket_out);
+/* Staged prefill reserves a slot and publishes its ticket before model work.
+ * Append replays at most count tokens through the generated single-token
+ * decoder. The caller chooses a bounded count and may schedule another ready
+ * slot between calls. Logits are scratch until the full prompt is consumed;
+ * the slot becomes decode-eligible only after exactly total_tokens tokens.
+ * Cancellation is observed between token calls, not inside a kernel. A
+ * cancelled or failed partial prefill must be reset before slot reuse.
+ * scratch_logits must point to vocab_size writable floats, remain valid for
+ * the duration of the call, and not alias native model or sequence memory.
+ * consumed_out is updated after each completed token; it is unchanged when
+ * validation or a previously requested cancellation rejects the call.
+ * Decode replay can differ numerically from the generated batched prefill
+ * path; callers must certify their selected artifact before using this mode.
+ * This ABI does not perform mixed prefill/decode projection batching. */
+int ck_session_v8_batch2_prefill_begin(CKSessionV8 *session, uint32_t slot,
+                                      int32_t total_tokens,
+                                      uint64_t *ticket_out);
+int ck_session_v8_batch2_prefill_append(CKSessionV8 *session, uint32_t slot,
+                                       uint64_t ticket, const int32_t *tokens,
+                                       int32_t count, float *scratch_logits,
+                                       int32_t *consumed_out);
 int ck_session_v8_batch2_step(CKSessionV8 *session, const int32_t tokens[2],
                              float *const logits[2], uint32_t *advanced_mask);
 int ck_session_v8_batch2_reset_slot(CKSessionV8 *session, uint32_t slot);

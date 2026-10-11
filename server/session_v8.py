@@ -53,6 +53,7 @@ _SESSION_STATUS_NAMES: dict[int, str] = {
     -6: "busy",
     -7: "runtime",
     -8: "buffer_too_small",
+    -9: "cancelled",
 }
 
 
@@ -155,6 +156,16 @@ _BATCH_ABI = {
         [ctypes.c_void_p, ctypes.c_uint64], None),
 }
 
+_STAGED_PREFILL_ABI = {
+    "ck_session_v8_batch2_prefill_begin": (
+        [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_int32,
+         ctypes.POINTER(ctypes.c_uint64)], ctypes.c_int),
+    "ck_session_v8_batch2_prefill_append": (
+        [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint64,
+         ctypes.POINTER(ctypes.c_int32), ctypes.c_int32,
+         ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_int32)], ctypes.c_int),
+}
+
 
 def _configure_batch_abi(lib: Any) -> None:
     try:
@@ -164,6 +175,16 @@ def _configure_batch_abi(lib: Any) -> None:
             fn.restype = restype
     except AttributeError as exc:
         raise SessionError(-5, "loaded session library lacks the batch2 ABI") from exc
+
+
+def _configure_staged_prefill_abi(lib: Any) -> None:
+    try:
+        for name, (argtypes, restype) in _STAGED_PREFILL_ABI.items():
+            fn = getattr(lib, name)
+            fn.argtypes = argtypes
+            fn.restype = restype
+    except AttributeError as exc:
+        raise SessionError(-5, "loaded session library lacks staged prefill") from exc
 
 
 _TOKEN_CALLBACK = ctypes.CFUNCTYPE(
@@ -290,6 +311,30 @@ class Batch2SessionV8:
         self._call("ck_session_v8_batch2_prefill", slot, token_values,
                    len(tokens), self._logits[slot], ctypes.byref(ticket))
         return ticket.value, self._logits[slot]
+
+    def begin_prefill(self, slot: int, total_tokens: int) -> int:
+        if type(slot) is not int or slot not in (0, 1) or \
+                type(total_tokens) is not int or not 0 < total_tokens <= 0x7FFFFFFF:
+            raise ValueError("staged prefill requires a slot and positive int32 token count")
+        ticket = ctypes.c_uint64()
+        _configure_staged_prefill_abi(self.parent.lib)
+        self._call("ck_session_v8_batch2_prefill_begin", slot, total_tokens,
+                   ctypes.byref(ticket))
+        return ticket.value
+
+    def append_prefill(self, slot: int, ticket: int,
+                       tokens: Sequence[int]) -> int:
+        if type(slot) is not int or slot not in (0, 1) or \
+                type(ticket) is not int or ticket <= 0 or not tokens or \
+                len(tokens) > 0x7FFFFFFF:
+            raise ValueError("staged prefill requires a slot, ticket, and nonempty chunk")
+        self._validate_tokens(tokens, len(tokens))
+        token_values = (ctypes.c_int32 * len(tokens))(*tokens)
+        consumed = ctypes.c_int32()
+        _configure_staged_prefill_abi(self.parent.lib)
+        self._call("ck_session_v8_batch2_prefill_append", slot, ticket,
+                   token_values, len(tokens), self._logits[slot], ctypes.byref(consumed))
+        return consumed.value
 
     def step(self, tokens: tuple[int, int]) -> tuple[int, tuple[Any, Any]]:
         if len(tokens) != 2:
@@ -537,7 +582,7 @@ class SessionV8:
         """Reserve two native slots and reusable host logits within one budget.
 
         Enabling batch mode is irreversible for this loaded session and
-        excludes whole-request generate. No HTTP route enables it yet.
+        excludes whole-request generate. HTTP batching is opt-in.
         """
         if type(max_extra_bytes) is not int or not 0 <= max_extra_bytes <= ctypes.c_size_t(-1).value:
             raise ValueError("max_extra_bytes must fit size_t and be nonnegative")
