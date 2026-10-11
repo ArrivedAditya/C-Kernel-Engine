@@ -6,6 +6,7 @@
 
 #include "ck_threadpool.h"
 #include "ckernel_quant.h"
+#include "bf16_utils.h"
 
 typedef struct {
     ck_half d;
@@ -14,6 +15,8 @@ typedef struct {
     uint8_t qh[QK_K / 8];
     uint8_t qs[QK_K / 2];
 } ck_gemma4_block_q5_K;
+
+#define CK_GEMMA4_MAX_EMBED_DIM 16384
 
 static inline float ck_bf16_to_f32(uint16_t v)
 {
@@ -25,9 +28,13 @@ static inline float ck_bf16_to_f32(uint16_t v)
 
 static inline float ck_gemma4_gelu(float x)
 {
+    if (x <= -10.0f) return 0.0f;
+    if (x >= 10.0f) return x;
+    x = CK_FP16_TO_FP32(CK_FP32_TO_FP16(x));
     const float c0 = 0.7978845608028654f;
     const float c1 = 0.044715f;
-    return 0.5f * x * (1.0f + tanhf(c0 * x * (1.0f + c1 * x * x)));
+    const float y = 0.5f * x * (1.0f + tanhf(c0 * x * (1.0f + c1 * x * x)));
+    return CK_FP16_TO_FP32(CK_FP32_TO_FP16(y));
 }
 
 static inline void ck_gemma4_unpack_q5_k_scales(const uint8_t *scales, uint8_t *sc, uint8_t *m)
@@ -121,6 +128,10 @@ static void ck_gemma4_prepare_q5_range(int begin, int end, void *opaque)
         const int token = args->token_ids[t];
         if (token < 0 || token >= args->vocab_size) continue;
         const float *h = args->hidden + (size_t)t * (size_t)args->embed_dim;
+        float rounded_hidden[args->embed_dim];
+        for (int j = 0; j < args->embed_dim; ++j) {
+            rounded_hidden[j] = bf16_to_float(float_to_bf16(h[j]));
+        }
         for (int layer = 0; layer < args->num_layers; ++layer) {
             float *dst = args->per_layer_input +
                 ((size_t)t * (size_t)args->num_layers + (size_t)layer) *
@@ -140,7 +151,7 @@ static void ck_gemma4_prepare_q5_range(int begin, int end, void *opaque)
                     (size_t)i * (size_t)args->embed_dim;
                 float acc = 0.0f;
                 for (int j = 0; j < args->embed_dim; ++j) {
-                    acc += ck_bf16_to_f32(row[j]) * h[j];
+                    acc += ck_bf16_to_f32(row[j]) * rounded_hidden[j];
                 }
                 proj_vec[i] = acc * model_scale;
             }
@@ -171,6 +182,10 @@ static void ck_gemma4_prepare_bf16_range(int begin, int end, void *opaque)
         const int token = args->token_ids[t];
         if (token < 0 || token >= args->vocab_size) continue;
         const float *h = args->hidden + (size_t)t * (size_t)args->embed_dim;
+        float rounded_hidden[args->embed_dim];
+        for (int j = 0; j < args->embed_dim; ++j) {
+            rounded_hidden[j] = bf16_to_float(float_to_bf16(h[j]));
+        }
         for (int layer = 0; layer < args->num_layers; ++layer) {
             float *dst = args->per_layer_input +
                 ((size_t)t * (size_t)args->num_layers + (size_t)layer) *
@@ -190,7 +205,7 @@ static void ck_gemma4_prepare_bf16_range(int begin, int end, void *opaque)
                     (size_t)i * (size_t)args->embed_dim;
                 float acc = 0.0f;
                 for (int j = 0; j < args->embed_dim; ++j) {
-                    acc += ck_bf16_to_f32(row[j]) * h[j];
+                    acc += ck_bf16_to_f32(row[j]) * rounded_hidden[j];
                 }
                 proj_vec[i] = acc * model_scale;
             }
@@ -230,7 +245,8 @@ void gemma4_per_layer_prepare_forward(float *per_layer_input,
 {
     if (!per_layer_input || !hidden || !token_ids || !per_layer_token_emb ||
         !per_layer_model_proj || !per_layer_proj_norm || tokens <= 0 ||
-        num_layers <= 0 || embed_dim <= 0 || per_layer_dim != QK_K || vocab_size <= 0) {
+        num_layers <= 0 || embed_dim <= 0 || embed_dim > CK_GEMMA4_MAX_EMBED_DIM ||
+        per_layer_dim != QK_K || vocab_size <= 0) {
         return;
     }
 
@@ -266,7 +282,8 @@ void gemma4_per_layer_prepare_bf16_forward(float *per_layer_input,
 {
     if (!per_layer_input || !hidden || !token_ids || !per_layer_token_emb ||
         !per_layer_model_proj || !per_layer_proj_norm || tokens <= 0 ||
-        num_layers <= 0 || embed_dim <= 0 || per_layer_dim <= 0 || vocab_size <= 0) {
+        num_layers <= 0 || embed_dim <= 0 || embed_dim > CK_GEMMA4_MAX_EMBED_DIM ||
+        per_layer_dim <= 0 || vocab_size <= 0) {
         return;
     }
 

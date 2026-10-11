@@ -38094,7 +38094,7 @@
           }
         ]
       },
-      "notes": "Gemma4 per-layer embedding branch with dynamic independent-token scheduling for prefill. Each token retains its projection and RMSNorm reduction order.",
+      "notes": "Gemma4 per-layer embedding branch with dynamic independent-token scheduling for prefill. GELU uses FP16-rounded input and output at the selected oracle contract, while each token retains its projection and RMSNorm reduction order.",
       "name": "gemma4_per_layer_embed_forward",
       "_source_file": "gemma4_per_layer_embed_forward.json"
     },
@@ -38312,7 +38312,7 @@
           }
         ]
       },
-      "notes": "Prepare Gemma4 per-layer input stream from BF16 safetensors token embeddings and BF16 projection weights. Prefill dynamically partitions independent token rows through the persistent thread pool while retaining each row's projection reduction order.",
+      "notes": "Prepare Gemma4 per-layer input stream from BF16 safetensors token embeddings and BF16 projection weights. The projection rounds each FP32 hidden input to BF16 (round-to-nearest-even) before multiplication. Supported embed_dim is at most 16384. Prefill dynamically partitions independent token rows through the persistent thread pool while retaining each row's projection reduction order.",
       "name": "gemma4_per_layer_prepare_bf16_forward",
       "_source_file": "gemma4_per_layer_prepare_bf16_forward.json"
     },
@@ -38529,7 +38529,7 @@
           }
         ]
       },
-      "notes": "Prepare Gemma4 per-layer input stream once from the original token embedding stream. Prefill dynamically partitions independent token rows through the persistent thread pool while retaining each row's projection reduction order.",
+      "notes": "Prepare Gemma4 per-layer input stream once from the original token embedding stream. The BF16 projection rounds each FP32 hidden input to BF16 (round-to-nearest-even) before multiplication. Supported embed_dim is at most 16384. Prefill dynamically partitions independent token rows through the persistent thread pool while retaining each row's projection reduction order.",
       "name": "gemma4_per_layer_prepare_forward",
       "_source_file": "gemma4_per_layer_prepare_forward.json"
     },

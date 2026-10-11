@@ -165,5 +165,5 @@
       {"name": "eps", "source": "dim:rms_eps"}
     ]
   },
-  "notes": "Gemma4 per-layer embedding branch with dynamic independent-token scheduling for prefill. Each token retains its projection and RMSNorm reduction order."
+  "notes": "Gemma4 per-layer embedding branch with dynamic independent-token scheduling for prefill. GELU uses FP16-rounded input and output at the selected oracle contract, while each token retains its projection and RMSNorm reduction order."
 }

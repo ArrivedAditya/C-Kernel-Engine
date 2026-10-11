@@ -147,5 +147,5 @@
       {"name": "eps", "source": "dim:rms_eps"}
     ]
   },
-  "notes": "Prepare Gemma4 per-layer input stream once from the original token embedding stream. Prefill dynamically partitions independent token rows through the persistent thread pool while retaining each row's projection reduction order."
+  "notes": "Prepare Gemma4 per-layer input stream once from the original token embedding stream. The BF16 projection rounds each FP32 hidden input to BF16 (round-to-nearest-even) before multiplication. Supported embed_dim is at most 16384. Prefill dynamically partitions independent token rows through the persistent thread pool while retaining each row's projection reduction order."
 }

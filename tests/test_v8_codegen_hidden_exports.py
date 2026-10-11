@@ -1237,6 +1237,24 @@ int main(int argc, char **argv) {
                     emitted,
                 )
 
+    def test_gemma4_prepared_input_exports_complete_runtime_extent(self) -> None:
+        op = {
+            "op": "gemma4_per_layer_prepare",
+            "function": "gemma4_per_layer_prepare_forward",
+            "layer": -1,
+            "args": [
+                _arg("output", "PREPARED"),
+                _arg("per_layer_dim", "256"),
+            ],
+        }
+        emitted = prefill_codegen.emit_prefill_op(op, 1, {"embed_dim": 2560})
+        self.assertIn(
+            '"gemma4_per_layer_prepare", (const float*)PREPARED, '
+            "(num_tokens) * (NUM_LAYERS * (256))",
+            emitted,
+        )
+        self.assertIn('"gemma4_per_layer_prepare_last"', emitted)
+
     def test_gemma4_layer_output_exports_complete_runtime_extent(self) -> None:
         op = {
             "op": "gemma4_per_layer_embed",
