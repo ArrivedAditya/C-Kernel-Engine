@@ -11552,11 +11552,12 @@
           "tests/test_v8_attention_full_token_major_oracle.py",
           "tests/test_v8_attention_full_token_major_generated.py",
           "tests/test_v8_kokoro_generated_attention_context.py",
-          "tests/test_v8_kokoro_generated_encoder.py"
+          "tests/test_v8_kokoro_generated_encoder.py",
+          "tests/test_v8_kokoro_generated_prosody_complete.py"
         ],
-        "oracle": "Independent PyTorch matmul/softmax/matmul on small and pinned first Kokoro ALBERT attention-context shapes; model-neutral generated-C graph"
+        "oracle": "Independent PyTorch matmul/softmax/matmul on small and pinned first Kokoro ALBERT eager attention-context shapes; model-neutral generated-C graph; direct full-model SDPA checkpoint comparison is a separate diagnostic"
       },
-      "notes": "Inference-only full attention for token-major FP32 inputs. No causal mask, key padding, dropout, output projection, or residual/LayerNorm. Kokoro's fixed 36-token fixture has no padding; other mask semantics require a separate contract.",
+      "notes": "Inference-only full attention for token-major FP32 inputs. The pinned standalone Kokoro encoder fixture forces PyTorch eager attention; the pinned full KModel defaults to SDPA and has a separate numerical reference. At 36 tokens their final encoder features differ by 1.49e-5 maximum on the pinned PyTorch 2.8 CPU capture. This provider does not claim SDPA reduction-order parity; an alternative must have its own provider and numerical contract. No causal mask, key padding, dropout, output projection, or residual/LayerNorm. Kokoro's fixed 36-token fixture has no padding; other mask semantics require a separate contract.",
       "name": "attention_full_token_major_f32_checked",
       "_source_file": "attention_full_token_major_f32_checked.json"
     },

@@ -33,6 +33,14 @@ PROSODY_BRANCH_HOOKS = tuple(
     f"predictor.{branch}.{index}"
     for branch in ("F0", "N") for index in range(3)
 )
+PROSODY_F0_FINE_HOOKS = tuple(
+    f"predictor.F0.{index}.{module}"
+    for index, modules in enumerate((
+        ("norm1", "conv1", "norm2", "conv2"),
+        ("norm1", "pool", "conv1", "norm2", "conv2", "upsample", "conv1x1"),
+        ("norm1", "conv1", "norm2", "conv2"),
+    )) for module in modules
+)
 DECODER_HOOKS = (
     "decoder.F0_conv", "decoder.N_conv", "decoder.asr_res",
     "decoder.encode.norm1", "decoder.encode.conv1",
@@ -136,6 +144,10 @@ def main() -> int:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--text", help="Additional oracle utterance; same pinned assets and reference versions")
     parser.add_argument("--preprocess-only", action="store_true")
+    parser.add_argument("--capture-f0-fine", action="store_true",
+                        help="Capture direct full-model F0 inner-module checkpoints")
+    parser.add_argument("--bert-attention", choices=("eager", "sdpa"),
+                        help="Diagnostic full-model ALBERT attention dispatch override")
     args = parser.parse_args()
 
     fixture = PIN["fixture"]
@@ -225,18 +237,22 @@ def main() -> int:
 
     model = KModel(repo_id=PIN["model"]["repository"],
                    config=str(config_path), model=str(weight_path)).eval()
+    if args.bert_attention is not None:
+        model.bert.config._attn_implementation = args.bert_attention
+    record["bert_attention_implementation"] = model.bert.config._attn_implementation
+    record["bert_attention_override"] = args.bert_attention is not None
     module_names = (
         "bert", "bert_encoder", "predictor.text_encoder", "predictor.lstm",
         "predictor.duration_proj", "predictor.shared", "predictor.F0_proj",
         "predictor.N_proj", "text_encoder", "decoder", "decoder.generator",
         "decoder.generator.conv_post",
-    ) + FINE_PREDICTOR_HOOKS + PROSODY_BRANCH_HOOKS + DECODER_HOOKS + GENERATOR_HOOKS + GENERATOR_RESIDUAL_PREFIX_HOOKS + GENERATOR_RESIDUAL_BLOCK_TAIL_HOOKS + GENERATOR_MAIN_RESBLOCK0_HOOKS + GENERATOR_MAIN_STAGE0_TAIL_HOOKS
+    ) + FINE_PREDICTOR_HOOKS + PROSODY_BRANCH_HOOKS + (PROSODY_F0_FINE_HOOKS if args.capture_f0_fine else ()) + DECODER_HOOKS + GENERATOR_HOOKS + GENERATOR_RESIDUAL_PREFIX_HOOKS + GENERATOR_RESIDUAL_BLOCK_TAIL_HOOKS + GENERATOR_MAIN_RESBLOCK0_HOOKS + GENERATOR_MAIN_STAGE0_TAIL_HOOKS
     modules = dict(model.named_modules())
     hooks = []
     for name in module_names:
         module = modules.get(name)
         if module is None:
-            if name in FINE_PREDICTOR_HOOKS + PROSODY_BRANCH_HOOKS + DECODER_HOOKS + GENERATOR_HOOKS + GENERATOR_RESIDUAL_PREFIX_HOOKS + GENERATOR_RESIDUAL_BLOCK_TAIL_HOOKS + GENERATOR_MAIN_RESBLOCK0_HOOKS + GENERATOR_MAIN_STAGE0_TAIL_HOOKS:
+            if name in FINE_PREDICTOR_HOOKS + PROSODY_BRANCH_HOOKS + (PROSODY_F0_FINE_HOOKS if args.capture_f0_fine else ()) + DECODER_HOOKS + GENERATOR_HOOKS + GENERATOR_RESIDUAL_PREFIX_HOOKS + GENERATOR_RESIDUAL_BLOCK_TAIL_HOOKS + GENERATOR_MAIN_RESBLOCK0_HOOKS + GENERATOR_MAIN_STAGE0_TAIL_HOOKS:
                 raise RuntimeError(f"pinned predictor checkpoint module missing: {name}")
             record.setdefault("unavailable_hooks", []).append(name)
             continue
@@ -252,6 +268,12 @@ def main() -> int:
                 stem += "_output"
             capture_tensor(output, stem, out_dir, record["tensors"])
         hooks.append(module.register_forward_hook(on_output))
+    if args.capture_f0_fine:
+        def capture_shared_input(_module, inputs):
+            capture_tensor(inputs[0], "predictor_shared_input", out_dir,
+                           record["tensors"])
+        hooks.append(modules["predictor.shared"].register_forward_pre_hook(
+            capture_shared_input))
     first_source_conv = modules["decoder.generator.noise_res.0.convs1.0"]
     def capture_first_source_snake(_module, inputs):
         capture_tensor(inputs[0], "decoder_generator_noise_res_0_snake0",
@@ -423,6 +445,11 @@ def main() -> int:
                 raise RuntimeError(f"pinned main residual pair was not captured: {key}")
     record["fine_predictor_hooks"] = list(FINE_PREDICTOR_HOOKS)
     record["prosody_branch_hooks"] = list(PROSODY_BRANCH_HOOKS)
+    if args.capture_f0_fine:
+        for name in PROSODY_F0_FINE_HOOKS:
+            if name.replace(".", "_") not in record["tensors"]:
+                raise RuntimeError(f"pinned fine F0 checkpoint not reached: {name}")
+        record["prosody_f0_fine_hooks"] = list(PROSODY_F0_FINE_HOOKS)
     record["decoder_hooks"] = list(DECODER_HOOKS)
     record["generator_hooks"] = list(GENERATOR_HOOKS)
     record["generator_residual_prefix_hooks"] = list(GENERATOR_RESIDUAL_PREFIX_HOOKS)
