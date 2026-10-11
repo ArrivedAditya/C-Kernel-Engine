@@ -4,13 +4,15 @@ import concurrent.futures
 import ctypes
 import subprocess
 import time
+from pathlib import Path
 
 import pytest
 
 from server import session_v8
 from tests.test_v8_batch_session_scheduler import MODEL_SOURCE
 from version.v8.scripts.certify_batch_mixed_one_row_v8 import (
-    CAP_BATCH_TWO_ROWS, _finite_logit_bytes, _require_shared_projections,
+    CAP_BATCH_TWO_ROWS, _compare_prefill_snapshots, _finite_logit_bytes,
+    _require_shared_projections, certify,
 )
 
 
@@ -29,6 +31,38 @@ def test_mixed_certificate_rejects_identical_nonfinite_logits_and_missing_shared
         with pytest.raises(AssertionError):
             _require_shared_projections(capabilities, groups)
     assert _require_shared_projections(CAP_BATCH_TWO_ROWS, 72) == 72
+
+
+def test_ordinary_prefill_comparison_keeps_logit_kv_and_position_failures_distinct():
+    ordinary = (bytes((ctypes.c_float * 3)(1, 4, 2)), 3, "a" * 64)
+    assert _compare_prefill_snapshots(ordinary, ordinary)["status"] == "pass"
+
+    changed_logits = (bytes((ctypes.c_float * 3)(5, 4, 2)), 3, ordinary[2])
+    verdict = _compare_prefill_snapshots(ordinary, changed_logits)
+    assert verdict["status"] == "fail"
+    assert verdict["max_abs_logit_diff"] == 4
+    assert not verdict["logits_exact"] and not verdict["top1_equal"]
+    assert verdict["kv_exact"] and verdict["position_ordinary"] == verdict["position_staged"]
+
+    changed_kv = _compare_prefill_snapshots(ordinary, (ordinary[0], 3, "b" * 64))
+    assert changed_kv["status"] == "fail"
+    assert changed_kv["logits_exact"] and not changed_kv["kv_exact"]
+
+    changed_position = _compare_prefill_snapshots(ordinary, (ordinary[0], 2, ordinary[2]))
+    assert changed_position["status"] == "fail"
+    assert changed_position["logits_exact"] and changed_position["kv_exact"]
+
+    with pytest.raises(AssertionError, match="extents differ"):
+        _compare_prefill_snapshots(ordinary, (ordinary[0][:-4], 3, ordinary[2]))
+    with pytest.raises(AssertionError, match="nonfinite"):
+        _compare_prefill_snapshots(ordinary, (bytes((ctypes.c_float * 3)(1, float("inf"), 2)),
+                                              3, ordinary[2]))
+
+
+def test_ordinary_prefill_comparison_rejects_forced_decode_replay(monkeypatch):
+    monkeypatch.setenv("CK_V8_FORCE_DECODE_PREFILL", "1")
+    with pytest.raises(ValueError, match="cannot force decode replay"):
+        certify(Path("unused"), compare_ordinary=True)
 
 
 def test_staged_prefill_binding_tracks_progress_and_cancel(tmp_path):
