@@ -101,6 +101,7 @@
             "audio_istft_mag_phase",
             "audio_spectral_head_mag_phase",
             "audio_stft_mag_phase_checked",
+            "audio_noise_counter_gaussian",
             "audio_harmonic_source_checked",
             "tanh",
             "snake",
@@ -156,7 +157,8 @@
                 "q8_k",
                 "uint8",
                 "int16",
-                "int32"
+                "int32",
+                "uint64"
               ]
             },
             "weight": {
@@ -207,7 +209,8 @@
                 "bf16_rne",
                 "int8",
                 "int16",
-                "int32"
+                "int32",
+                "uint64"
               ]
             },
             "weight": {

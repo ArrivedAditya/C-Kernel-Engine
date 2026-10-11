@@ -277,9 +277,15 @@ class KokoroGeneratedWaveformTest(unittest.TestCase):
                      root / 'build-identity.json')
         source = ROOT / 'version/v8/tts/native_kokoro_wav_host.c'
         shutil.copy2(source, root / 'host.c')
+        shutil.copy2(ROOT / 'src/kernels/audio_noise_counter.c',
+                     root / 'audio_noise_counter.c')
+        shutil.copy2(ROOT / 'src/kernels/checked_float_buffer.h',
+                     root / 'checked_float_buffer.h')
+        shutil.copy2(ROOT / 'include/ckernel_tts.h', root / 'ckernel_tts.h')
         binary = root / 'native-kokoro-wav'
         subprocess.run(['cc', '-std=c11', '-O2', '-Wall', '-Wextra',
-            '-Werror', '-pedantic', str(root / 'host.c'), '-L', str(root),
+            '-Werror', '-pedantic', '-I', str(root), str(root / 'host.c'),
+            str(root / 'audio_noise_counter.c'), '-L', str(root),
             '-l:generated.so', '-Wl,-rpath,$ORIGIN', '-lm', '-o', str(binary)],
             check=True)
         arena = self.arena()
@@ -311,6 +317,35 @@ class KokoroGeneratedWaveformTest(unittest.TestCase):
             self.assertEqual(stream.getnframes(), 61800)
             pcm = stream.readframes(61800)
         self.assertTrue(any(pcm))
+        gaussian_item = next(item for item in
+            self.layout['memory']['activations']['buffers']
+            if item['name'] == 'source_gaussian')
+        native_arena = self.arena()
+        self.view(self.layout, native_arena, 'source_gaussian')[:] = 0.
+        native_package = root / 'prepared-native-noise.cktts'
+        native_segments = 0
+        with native_package.open('wb') as stream:
+            stream.write(b'CKTTS002')
+            stream.write(struct.pack('<QQQQQI', len(native_arena),
+                output_item['abs_offset'], output_item['size'] // 4,
+                gaussian_item['abs_offset'], gaussian_item['size'] // 4, 0))
+            for offset in range(0, len(native_arena), page):
+                chunk = bytes(native_arena[offset:offset + page])
+                if any(chunk):
+                    stream.write(struct.pack('<QQ', offset, len(chunk)))
+                    stream.write(chunk)
+                    native_segments += 1
+            stream.seek(48)
+            stream.write(struct.pack('<I', native_segments))
+        native_path = root / 'kokoro-native-seed-7.wav'
+        subprocess.run([str(binary), str(native_package), str(native_path),
+            '7'], cwd=root, check=True, capture_output=True, text=True)
+        with wave.open(str(native_path), 'rb') as stream:
+            self.assertEqual(stream.getnframes(), 61800)
+            self.assertEqual(stream.getframerate(), 24000)
+            self.assertTrue(any(stream.readframes(61800)))
+        native_wav = native_path.read_bytes()
+        self.assertNotEqual(native_wav, wav_path.read_bytes())
         (root / 'reproduction.json').write_text(json.dumps({
             'scope': 'experimental fixed-phoneme diagnostic WAV',
             'model_pin': self.spectral_meta['model_pin'],
@@ -325,6 +360,15 @@ class KokoroGeneratedWaveformTest(unittest.TestCase):
                 'kokoro-generated-diagnostic.wav',
             'numerical_status': 'FAIL, connected diagnostic',
             'captured_gaussian': True,
+            'native_noise': {
+                'package_sha256': hashlib.sha256(
+                    native_package.read_bytes()).hexdigest(),
+                'seed_7_wav_sha256': hashlib.sha256(native_wav).hexdigest(),
+                'seed_replay': 'covered by counter-kernel oracle suite',
+                'command': './native-kokoro-wav prepared-native-noise.cktts '
+                    'kokoro-native-seed-7.wav 7',
+                'numerical_status': 'NOT_TESTED against pinned PyTorch noise',
+            },
         }, indent=2) + '\n')
         invalid_package = root / 'invalid.cktts'
         with package.open('rb') as stream:
@@ -333,6 +377,12 @@ class KokoroGeneratedWaveformTest(unittest.TestCase):
             str(root / 'invalid.wav')], cwd=root)
         self.assertNotEqual(failed.returncode, 0)
         self.assertFalse((root / 'invalid.wav').exists())
+        for invalid in ('-1', '18446744073709551616', 'bad'):
+            path = root / 'invalid-native.wav'
+            failed = subprocess.run([str(binary), str(native_package),
+                str(path), invalid], cwd=root)
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertFalse(path.exists())
 
 if os.environ.get('CKE_TTS_RUN_STANDALONE'):
     KokoroGeneratedWaveformTest.test_standalone_native_wav_outside_checkout = (

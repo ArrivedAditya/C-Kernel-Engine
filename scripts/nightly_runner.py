@@ -965,6 +965,14 @@ TEST_SUITES = {
         "Checked Weighted-FMA Harmonic Source Pinned PyTorch Oracle", "kernels",
         ROOT / "tests" / "test_v8_audio_harmonic_source_weighted_fma_oracle.py",
     ),
+    "tts_audio_noise_counter": TestSuite(
+        "Checked Request-Local Gaussian Excitation Oracle", "kernels",
+        ROOT / "tests" / "test_v8_audio_noise_counter_oracle.py",
+    ),
+    "tts_native_kokoro_wav_host": TestSuite(
+        "Native Kokoro WAV Host Seeded Excitation Contract", "inference",
+        ROOT / "tests" / "test_v8_native_kokoro_wav_host.py",
+    ),
     "tts_audio_harmonic_source_generated": TestSuite(
         "Checked Harmonic Source Normal-Compiler Generated Graph", "inference",
         ROOT / "tests" / "test_v8_audio_harmonic_source_generated.py",

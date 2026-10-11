@@ -633,6 +633,17 @@
       "position_transform": null,
       "description": "Centered reflect-padded forward STFT with caller-supplied periodic-Hann window and trigonometric tables; output rows are magnitude then phase. The exact-real Nyquist bin uses positive-zero imaginary phase. Direct DFT and FFT can still choose opposite +/-pi signs at reflection-symmetric frame zero."
     },
+    "audio_noise_counter_box_muller_fp64": {
+      "operator_family": "audio_noise_counter_gaussian",
+      "status": "validated",
+      "storage": {"input": "none", "weight": "none", "output": "fp32"},
+      "compute": {"input": "uint64", "weight": "none", "accumulator": "fp64", "contraction": "disabled", "evaluation_order": "counter_splitmix64_then_fp64_box_muller_then_fp32_store"},
+      "rounding": {"mode": "rne", "points": ["output_store"]},
+      "reduction": {"kind": "none", "order": "none", "partial_accumulator": "none", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "independent_outputs", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Stateless seeded Gaussian excitation for native requests. SplitMix64 hashes seed, stream, and per-sample counter; FP64 Box-Muller is cast to FP32. This is independent of PyTorch RNG and has no cross-libm bitwise promise."
+    },
     "audio_harmonic_source_wide_cumsum_linear_phase_fp32": {
       "operator_family": "audio_harmonic_source_checked",
       "status": "validated",

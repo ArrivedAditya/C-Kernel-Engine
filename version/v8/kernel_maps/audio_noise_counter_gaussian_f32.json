@@ -1,0 +1,27 @@
+{
+  "id": "audio_noise_counter_gaussian_f32",
+  "op": "audio_noise_counter_gaussian",
+  "operation_interface": "audio.noise.counter_gaussian.fp32.v1",
+  "variant": "splitmix64_box_muller_scalar",
+  "selection": {"status": "candidate", "priority": 100, "equivalence_group": "audio_noise_counter_box_muller_fp64", "phases": ["prefill"]},
+  "quant": {"weight": "none", "activation": "none", "output": "fp32"},
+  "inputs": [],
+  "weights": [],
+  "outputs": [{"name": "output", "dtype": "fp32", "shape": ["N"], "layout": "contiguous", "placement": "local", "access": "write", "storage_class": "activation", "consumption": "required"}],
+  "scratch": [],
+  "dims": ["output_capacity", "count"],
+  "impl": {"function": "audio_noise_counter_gaussian_f32", "c_declaration": "int audio_noise_counter_gaussian_f32(float *output, size_t output_capacity, size_t count, uint64_t seed, uint64_t stream);", "sources": ["src/kernels/audio_noise_counter.c"]},
+  "modes": {"inference": true, "training": false, "backward": false},
+  "numerical_capabilities": [{"contract_id": "audio_noise_counter_box_muller_fp64", "status": "validated", "phases": ["prefill"], "function": "audio_noise_counter_gaussian_f32", "explicit_selector": true, "implementation": {"isa_dispatch": "scalar", "threading": {"runtime": "serial", "work_partition": ["serial"], "dispatch": ["inline"], "reduction_order_effect": "none"}}, "arithmetic": {"partial_accumulator": "none", "merge_order": "none", "deterministic": true, "thread_count_changes_arithmetic_order": false, "split_strategy": "independent_outputs"}}],
+  "call_abi": {"version": 1, "params": [
+    {"name": "output", "source": "output:output", "cast": "float*", "ports": ["output:output"]},
+    {"name": "output_capacity", "source": "runtime:noise_output_capacity", "value_type": "size_t"},
+    {"name": "count", "source": "runtime:noise_count", "value_type": "size_t"},
+    {"name": "seed", "source": "param:seed"},
+    {"name": "stream", "source": "param:stream"}
+  ]},
+  "call_constant_contract": {"shape_symbols": {"N": "noise_count"}, "buffer_spans": [{"pointer": "output", "elements": "noise_output_capacity", "rows": 1, "width": "noise_count", "element_bytes": 4}]},
+  "constraints": {"notes": "0<count<=2^24 and output_capacity>=count. Rejection leaves output untouched. Stateless counter, explicit seed and stream, no heap or scratch. Current native host invokes this map-described provider before the generated model; generated call-site seed binding remains NOT_TESTED."},
+  "tests": {"unit": ["tests/test_v8_audio_noise_counter_oracle.py", "tests/test_v8_native_kokoro_wav_host.py", "tests/test_v8_kokoro_generated_waveform.py"], "oracle": "Independent Python SplitMix64/Box-Muller mathematical oracle and native-host deterministic replay"},
+  "notes": "Inference-only request-local Gaussian excitation. This stream differs from PyTorch; captured-Gaussian parity and independent native synthesis are separate evidence lanes. FP64 libm may differ slightly across CPUs."
+}

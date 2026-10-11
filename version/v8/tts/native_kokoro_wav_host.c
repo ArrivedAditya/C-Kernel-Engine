@@ -1,5 +1,8 @@
 /* Fixed-utterance native Kokoro diagnostic host. The generated model owns
- * every neural operation; this host loads caller-owned storage and writes WAV. */
+ * every neural operation; this host loads caller-owned storage, optionally
+ * fills request-local excitation, and writes WAV. */
+#include "ckernel_tts.h"
+#include <errno.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -61,24 +64,49 @@ static int write_wav(const char *path, const float *samples, size_t count) {
 }
 
 int main(int argc, char **argv) {
-    if (argc != 3) {
-        fprintf(stderr, "usage: %s prepared-arena.cktts output.wav\n", argv[0]);
+    if (argc != 3 && argc != 4) {
+        fprintf(stderr, "usage: %s prepared-arena.cktts output.wav [seed]\n", argv[0]);
         return 2;
+    }
+    uint64_t seed = 0;
+    if (argc == 4) {
+        char *end = NULL;
+        errno = 0;
+        const unsigned long long parsed = strtoull(argv[3], &end, 0);
+        if (errno || !end || end == argv[3] || *end || argv[3][0] == '-')
+            return 2;
+        seed = (uint64_t)parsed;
     }
     FILE *input = fopen(argv[1], "rb");
     if (!input) return 3;
     char magic[8];
     uint64_t bytes64, waveform_offset, waveform_capacity;
+    uint64_t gaussian_offset = 0, gaussian_capacity = 0;
     uint32_t segments;
-    if (fread(magic, 1, 8, input) != 8 ||
-        memcmp(magic, "CKTTS001", 8) != 0 ||
+    if (fread(magic, 1, 8, input) != 8) {
+        fclose(input); return 4;
+    }
+    const int native_noise = memcmp(magic, "CKTTS002", 8) == 0;
+    if ((!native_noise && memcmp(magic, "CKTTS001", 8) != 0) ||
+        native_noise != (argc == 4) ||
         !read_u64(input, &bytes64) || !read_u64(input, &waveform_offset) ||
-        !read_u64(input, &waveform_capacity) || !read_u32(input, &segments) ||
+        !read_u64(input, &waveform_capacity) ||
+        (native_noise && (!read_u64(input, &gaussian_offset) ||
+                          !read_u64(input, &gaussian_capacity))) ||
+        !read_u32(input, &segments) ||
         bytes64 > SIZE_MAX - 63u || bytes64 == 0 ||
         bytes64 > UINT64_C(4) * 1024u * 1024u * 1024u ||
         waveform_offset > bytes64 ||
         (waveform_offset & (sizeof(float) - 1u)) || !waveform_capacity ||
-        waveform_capacity > (bytes64 - waveform_offset) / sizeof(float)) {
+        waveform_capacity > (bytes64 - waveform_offset) / sizeof(float) ||
+        (native_noise && (gaussian_offset > bytes64 ||
+            (gaussian_offset & (sizeof(float) - 1u)) ||
+            gaussian_capacity != 76800u * 9u ||
+            gaussian_capacity > (bytes64 - gaussian_offset) / sizeof(float) ||
+            (gaussian_offset < waveform_offset +
+                waveform_capacity * sizeof(float) &&
+             waveform_offset < gaussian_offset +
+                gaussian_capacity * sizeof(float))))) {
         fclose(input); return 4;
     }
     const size_t arena_bytes = (size_t)bytes64;
@@ -96,6 +124,12 @@ int main(int argc, char **argv) {
     if (fgetc(input) != EOF) okay = 0;
     fclose(input);
     if (!okay) { free(arena); return 6; }
+    if (native_noise && audio_noise_counter_gaussian_f32(
+            (float *)(arena + (size_t)gaussian_offset),
+            (size_t)gaussian_capacity, (size_t)gaussian_capacity,
+            seed, 0) != CK_AUDIO_EXTENT_OK) {
+        free(arena); return 6;
+    }
     int32_t lengths[7] = {-1, -1, -1, -1, -1, -1, -1};
     const int status = ck_kokoro_waveform_bounded(arena, arena_bytes,
         &lengths[0], &lengths[1], &lengths[2], &lengths[3],
