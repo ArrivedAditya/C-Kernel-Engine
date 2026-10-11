@@ -31,6 +31,11 @@ class FakeSession:
         return bytes(ids)
 
 
+class FullPromptSession(FakeSession):
+    def encode_ids(self, prompt):
+        return list(prompt.encode())
+
+
 class FakeLoop:
     def __init__(self):
         self.guard = threading.Lock()
@@ -147,6 +152,106 @@ class ContinuationLoop(ToolLoop):
             self.next_ticket += 1
             self.active[ticket] = [slot, "done", 0]
             return ticket
+
+
+class StagedHTTPTestLoop(FakeLoop):
+    def __init__(self):
+        super().__init__()
+        self.first_decode_entered = threading.Event()
+        self.second_begun = threading.Event()
+        self.timeline = []
+        self.staged = {}
+
+    def begin_staged(self, slot, ids, *, max_tokens, **_):
+        with self.guard:
+            ticket = self.next_ticket
+            self.next_ticket += 1
+            self.staged[ticket] = [slot, tuple(ids), 0, max_tokens]
+            if slot == 1:
+                self.second_begun.set()
+            return ticket
+
+    def staged_tickets(self):
+        with self.guard:
+            return tuple(self.staged)
+
+    def advance_prefill(self, ticket, max_tokens):
+        with self.guard:
+            state = self.staged[ticket]
+            state[2] = min(len(state[1]), state[2] + max_tokens)
+            self.timeline.append(("prefill", state[0], state[2]))
+            if ticket in self.cancelled:
+                del self.staged[ticket]
+                self.cancelled.discard(ticket)
+                return (CompletionEvent(ticket, state[0], "cancelled", 0),)
+            if state[2] == len(state[1]):
+                self.active[ticket] = [state[0], state[1][0], state[3]]
+                del self.staged[ticket]
+        return ()
+
+    def request_cancel(self, ticket):
+        with self.guard:
+            if ticket in self.active or ticket in self.staged:
+                self.cancelled.add(ticket)
+
+    def active_tickets(self):
+        with self.guard:
+            return tuple(self.active) + tuple(self.staged)
+
+    def advance(self):
+        with self.guard:
+            active = bool(self.active)
+            second_progress = next((s[2] for s in self.staged.values() if s[0] == 1), None)
+        if not active:
+            return BatchTick((), (), 0)
+        if not self.first_decode_entered.is_set():
+            self.first_decode_entered.set()
+        assert self.gate.wait(5)
+        tick = super().advance()
+        with self.guard:
+            for token in tick.tokens:
+                self.timeline.append(("decode", token.slot, second_progress))
+        return tick
+
+
+def test_staged_http_prefill_yields_to_existing_decode():
+    loop = StagedHTTPTestLoop()
+    session = FullPromptSession()
+    owner = Batch2HTTPOwner(session, max_extra_bytes=1, max_prompt_tokens=16,
+                            loop=loop, decode_replay_chunk_tokens=2)
+    app = create_app(session, model="m", context_length=128,
+                     chat_template="{{ messages[0].content }}", batch_http=owner,
+                     loaded_identity={"schema": "cke.loaded_serving_identity.v1"})
+    client = TestClient(app)
+    effective = client.get("/v1/cke/loaded-identity").json()["effective_serving"]
+    assert effective["prefill_strategy"] == "decode_replay_chunked"
+    assert effective["prefill_chunk_token_budget"] == 2
+
+    def send(prompt, limit):
+        return client.post("/v1/responses", json={"model": "m", "input": prompt,
+                                                  "max_output_tokens": limit,
+                                                  "temperature": 0})
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            a = pool.submit(send, "A", 6)
+            assert loop.first_decode_entered.wait(5)
+            b = pool.submit(send, "BBBBBBBB", 1)
+            deadline = time.monotonic() + 5
+            while owner.pending.qsize() == 0 and time.monotonic() < deadline:
+                time.sleep(.001)
+            assert owner.pending.qsize() == 1
+            loop.gate.set()
+            assert loop.second_begun.wait(5)
+            assert a.result(timeout=5).json()["output_text"] == "AAAAAA"
+            assert b.result(timeout=5).json()["output_text"] == "B"
+        assert any(kind == "decode" and slot == 0
+                   for kind, slot, progress in loop.timeline
+                   if progress is not None and progress < 8)
+        assert owner.decode_replay_chunk_tokens == 2
+    finally:
+        loop.gate.set()
+        owner.close()
 
 
 def test_two_http_clients_have_independent_text_and_output_limits():

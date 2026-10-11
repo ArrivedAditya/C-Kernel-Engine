@@ -303,6 +303,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Maximum rendered prompt tokens in experimental batch HTTP mode",
     )
     parser.add_argument(
+        "--batch-http-decode-replay-chunk-tokens", type=int, default=None,
+        help="Experimental staged prefill: replay at most this many prompt tokens via generated decode per scheduling turn; requires --batch-http-extra-bytes and artifact-specific parity certification",
+    )
+    parser.add_argument(
         "--batch-http-delivery-consumers", type=int, default=4,
         help="Maximum admitted batch HTTP responses awaiting delivery",
     )
@@ -570,22 +574,29 @@ def main(argv: list[str] | None = None) -> int:
     log("Typed media disabled: this native serving path is text-only", C_GRAY)
 
     batch_http = None
+    if args.batch_http_decode_replay_chunk_tokens is not None and args.batch_http_extra_bytes is None:
+        raise ValueError("staged batch HTTP prefill requires --batch-http-extra-bytes")
     if args.batch_http_extra_bytes is not None:
         from server.batch_http import Batch2HTTPOwner
         if args.batch_http_extra_bytes <= 0 or args.batch_http_prompt_cap <= 0:
             raise ValueError("batch HTTP memory budget and prompt cap must be positive")
         if args.request_output_cap is None:
             raise ValueError("batch HTTP requires an explicit --request-output-cap")
-        batch_http = Batch2HTTPOwner(
-            session,
-            max_extra_bytes=args.batch_http_extra_bytes,
-            max_prompt_tokens=args.batch_http_prompt_cap,
-            stop_ids=session.generated_stop_ids(),
-            max_delivery_consumers=args.batch_http_delivery_consumers,
-            max_output_tokens=args.batch_http_output_token_cap,
-            max_output_bytes=args.batch_http_output_byte_cap,
-            delivery_timeout=args.batch_http_delivery_timeout,
-        )
+        try:
+            batch_http = Batch2HTTPOwner(
+                session,
+                max_extra_bytes=args.batch_http_extra_bytes,
+                max_prompt_tokens=args.batch_http_prompt_cap,
+                stop_ids=session.generated_stop_ids(),
+                max_delivery_consumers=args.batch_http_delivery_consumers,
+                max_output_tokens=args.batch_http_output_token_cap,
+                max_output_bytes=args.batch_http_output_byte_cap,
+                delivery_timeout=args.batch_http_delivery_timeout,
+                decode_replay_chunk_tokens=args.batch_http_decode_replay_chunk_tokens,
+            )
+        except Exception:
+            session.close()
+            raise
 
     try:
         app = create_app(

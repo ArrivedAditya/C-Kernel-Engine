@@ -32,7 +32,7 @@ def test_staged_prefill_binding_tracks_progress_and_cancel(tmp_path):
             batch.append_prefill(0, ticket, [16])
         assert batch.append_prefill(0, ticket, [3]) == 3
         assert batch.position(0) == 3
-        assert batch._logits[0][0] == 6
+        assert batch.staged_logits(0)[0] == 6
         batch.reset_slot(0)
 
         interrupted = batch.begin_prefill(0, 2)
@@ -44,7 +44,7 @@ def test_staged_prefill_binding_tracks_progress_and_cancel(tmp_path):
         fresh = batch.begin_prefill(0, 1)
         batch.request_cancel(interrupted)
         assert batch.append_prefill(0, fresh, [7]) == 1
-        assert batch._logits[0][0] == 7
+        assert batch.staged_logits(0)[0] == 7
     finally:
         session.close()
 

@@ -2,8 +2,8 @@
 
 One thread owns all native prefill/decode/reset work. Request threads only
 receive their own token events and invoke the existing response formatter.
-Prefill is still synchronous; the prompt cap bounds, but does not interrupt,
-a long generated prefill operation.
+An explicit experimental mode replays prompt tokens through generated decode
+in bounded chunks, yielding to ready decode requests between chunks.
 """
 
 from __future__ import annotations
@@ -195,11 +195,15 @@ class Batch2HTTPOwner:
                  max_delivery_consumers: int = 4,
                  max_output_tokens: int = 4096,
                  max_output_bytes: int = 1 << 20,
-                 delivery_timeout: float = 30.0):
+                 delivery_timeout: float = 30.0,
+                 decode_replay_chunk_tokens: int | None = None):
         if max_prompt_tokens <= 0 or session.context_length is None:
             raise ValueError("batch HTTP needs positive prompt and context limits")
         if min(max_delivery_consumers, max_output_tokens, max_output_bytes) <= 0 or delivery_timeout <= 0:
             raise ValueError("batch HTTP delivery limits must be positive")
+        if decode_replay_chunk_tokens is not None and (type(decode_replay_chunk_tokens) is not int or
+                                                       decode_replay_chunk_tokens <= 0):
+            raise ValueError("decode replay chunk budget must be positive")
         self.session = session
         self.context_length = session.context_length
         self.max_prompt_tokens = max_prompt_tokens
@@ -207,9 +211,18 @@ class Batch2HTTPOwner:
         self.max_output_tokens = max_output_tokens
         self.max_output_bytes = max_output_bytes
         self.delivery_timeout = delivery_timeout
+        self.decode_replay_chunk_tokens = decode_replay_chunk_tokens
         self.stop_ids = tuple(stop_ids)
+        if decode_replay_chunk_tokens is not None and loop is None:
+            # Resolve the optional ABI before enabling native batch state.
+            from .session_v8 import _configure_staged_prefill_abi
+            _configure_staged_prefill_abi(session.lib)
         self.loop = loop if loop is not None else Batch2RequestLoop(
             session.enable_batch2(max_extra_bytes))
+        if decode_replay_chunk_tokens is not None:
+            for method in ("begin_staged", "staged_tickets", "advance_prefill"):
+                if not callable(getattr(self.loop, method, None)):
+                    raise ValueError(f"staged prefill loop lacks {method}")
         self.pending: queue.Queue = queue.Queue()
         self.guard = threading.Lock()
         self.slots: dict[int, _Client] = {}
@@ -218,6 +231,7 @@ class Batch2HTTPOwner:
         self.poisoned = False
         self.shutdown = threading.Event()
         self.shared_steps = 0
+        self._last_prefill_ticket = 0
         self.worker = threading.Thread(target=self._run, name="cke-batch2-http", daemon=True)
         self.worker.start()
 
@@ -338,7 +352,9 @@ class Batch2HTTPOwner:
                             self.clients.pop(id(client), None)
                     self._send_terminal(client, "cancelled")
                 else:
-                    ticket = self.loop.submit(
+                    submit = (self.loop.begin_staged if self.decode_replay_chunk_tokens is not None
+                              else self.loop.submit)
+                    ticket = submit(
                         client.slot, ids, max_tokens=max_tokens,
                         stop_ids=self.stop_ids, temperature=temperature,
                         top_p=top_p, seed=secrets.randbits(63))
@@ -364,6 +380,16 @@ class Batch2HTTPOwner:
                 self._finish(event.ticket, event.reason)
             if tick.advanced_mask == 3:
                 self.shared_steps += 1
+            if self.decode_replay_chunk_tokens is not None:
+                staged = tuple(sorted(self.loop.staged_tickets()))
+                if staged:
+                    # One bounded prompt chunk per turn. Ready requests have
+                    # already decoded, so a new prompt cannot monopolize them.
+                    ticket = next((t for t in staged if t > self._last_prefill_ticket), staged[0])
+                    self._last_prefill_ticket = ticket
+                    for event in self.loop.advance_prefill(
+                            ticket, self.decode_replay_chunk_tokens):
+                        self._finish(event.ticket, event.reason)
 
     def close(self, timeout: float = 10.0):
         """Join the native owner before its session can be closed."""
