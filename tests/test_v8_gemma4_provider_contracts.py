@@ -15,7 +15,7 @@ from build_ir_v8 import build_ir1_direct
 from audit_kernel_map_interfaces_v8 import _validate_provider_constraints
 
 
-PREPARE_CONTRACT = "gemma4_prepare_llama_cpu_bf16_input_rne_v1"
+PREPARE_CONTRACT = "gemma4_prepare_llama_cpu_bf16_input_rne_v2"
 EMBED_CONTRACT = "gemma4_embed_llama_cpu_fp16_table_gelu_v1"
 
 
@@ -98,7 +98,7 @@ class Gemma4ProviderContractTests(unittest.TestCase):
         mutations = (
             ("provider_numerical_contract_schema", None),
             ("numerical_contract", None),
-            ("numerical_contract", "gemma4_prepare_llama_cpu_bf16_input_rne_v1"),
+            ("numerical_contract", "gemma4_prepare_llama_cpu_bf16_input_rne_v2"),
             ("numerical_contract", {"circuit_binding_required": True}),
             ("numerical_contract", {"id": PREPARE_CONTRACT,
                                     "circuit_binding_required": "true"}),

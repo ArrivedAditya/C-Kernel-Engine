@@ -717,6 +717,10 @@ TEST_SUITES = {
     "mamba2_reference": TestSuite("Mamba2 Reference Kernels", "kernels", UNITTEST_DIR / "test_mamba2_reference.py"),
     "rwkv7_reference": TestSuite("RWKV-7 FP32 Decode Reference", "kernels", UNITTEST_DIR / "test_rwkv_decode.py"),
     "gemma4_assistant": TestSuite("Gemma4 Assistant/MTP Kernels", "kernels", UNITTEST_DIR / "test_gemma4_assistant_kernels.py"),
+    "gemma4_bf16_reduction": TestSuite(
+        "Gemma4 BF16 Projection Reduction Oracle", "parity",
+        ROOT / "tests" / "test_v8_gemma4_bf16_reduction_oracle.py",
+    ),
     "vision": TestSuite("Vision", "kernels", UNITTEST_DIR / "test_vision.py"),
     "audio_frontend": TestSuite(
         "Audio Log-Mel Frontend", "kernels", UNITTEST_DIR / "test_audio.py"

@@ -4,14 +4,14 @@
   "operation_interface": "per_layer_input.prepare.bf16_token.bf16_projection.fp32.v1",
   "provider_numerical_contract_schema": 1,
   "numerical_contract": {
-    "id": "gemma4_prepare_llama_cpu_bf16_input_rne_v1",
+    "id": "gemma4_prepare_llama_cpu_bf16_input_rne_v2",
     "projection_input": "fp32_rounded_to_bf16_rne_before_dot",
     "projection_weight": "bf16",
     "projection_reduction": "ggml_cpu_bf16_avx2_four_accumulators_with_scalar_fallback",
     "token_embedding": "bf16",
     "circuit_binding_required": true,
     "oracle_revision": "19e28a27702117d8f2eb16b825b9a308111f67d9",
-    "oracle_build": "ggml-cpu BF16 dot input conversion"
+    "oracle_build": "19e28a277 ggml-cpu Release: GGML_NATIVE=OFF, GGML_AVX=ON, GGML_AVX2=ON, GGML_FMA=ON, GGML_AVX512=OFF, GGML_AVX512_BF16=OFF, GGML_AVX512_VNNI=OFF, GGML_AVX_VNNI=OFF; scalar fallback is a separate contract lane"
   },
   "constraints": {
     "dimensions": {"embed_dim": {"min": 1, "max": 16384}},
@@ -163,7 +163,7 @@
     ]
   },
   "tests": {
-    "unit": ["tests/test_v8_prefill_independent_row_parallel.py", "tests/test_v8_gemma4_provider_contracts.py"]
+    "unit": ["tests/test_v8_prefill_independent_row_parallel.py", "tests/test_v8_gemma4_provider_contracts.py", "tests/test_v8_gemma4_bf16_reduction_oracle.py"]
   },
   "notes": "Prepare Gemma4 per-layer input stream from BF16 safetensors token embeddings and BF16 projection weights. The projection rounds each FP32 hidden input to BF16 (round-to-nearest-even) before multiplication and uses the pinned ggml-cpu AVX2 reduction where available. Supported embed_dim is at most 16384. The rounded-input stack budget is conservatively 65536 bytes per worker; this is not a bound on total worker stack. Prefill dynamically partitions independent token rows through the persistent thread pool."
 }

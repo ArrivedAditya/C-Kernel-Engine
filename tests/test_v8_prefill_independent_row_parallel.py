@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 import math
 import os
+import shlex
 import subprocess
 import tempfile
 import unittest
@@ -16,7 +17,20 @@ FLOAT_PTR = ctypes.POINTER(ctypes.c_float)
 INT32_PTR = ctypes.POINTER(ctypes.c_int32)
 
 
+def _compiler_defines_avx2(cflags: str, cc: str | None = None) -> bool:
+    macros = subprocess.run(
+        [*(shlex.split(cc) if cc else [os.environ.get("CC", "gcc")]),
+         *shlex.split(cflags), "-dM", "-E", "-x", "c", "-"],
+        input="\n", text=True, capture_output=True, check=True, cwd=ROOT,
+    ).stdout
+    return "#define __AVX2__ 1" in macros
+
+
 class PrefillIndependentRowParallelTests(unittest.TestCase):
+    def test_gemma4_compiled_avx2_detection_accepts_march_only(self) -> None:
+        self.assertTrue(_compiler_defines_avx2("-march=haswell"))
+        self.assertFalse(_compiler_defines_avx2("-mavx2 -mno-avx2"))
+
     @classmethod
     def setUpClass(cls) -> None:
         cls._old_num_threads = os.environ.get("CK_NUM_THREADS")
@@ -718,7 +732,10 @@ class PrefillIndependentRowParallelTests(unittest.TestCase):
             np.testing.assert_allclose(out[0, 0], expected, rtol=0, atol=2.0e-7)
 
     def test_gemma4_prepare_matches_bf16_avx2_reduction(self) -> None:
-        if "-mavx2" not in (ROOT / "build/.ck_build_flags").read_text():
+        build_flags = (ROOT / "build/.ck_build_flags").read_text().splitlines()
+        cflags = next(line[7:] for line in build_flags if line.startswith("CFLAGS="))
+        cc = next(line[3:] for line in build_flags if line.startswith("CC="))
+        if not _compiler_defines_avx2(cflags, cc):
             self.skipTest("AVX2 BF16 projection contract requires AVX2")
         width = 2560
         rng = np.random.default_rng(137)
