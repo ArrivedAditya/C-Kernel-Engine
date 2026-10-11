@@ -1,0 +1,18 @@
+{
+  "oracle_source_revision": "19e28a27702117d8f2eb16b825b9a308111f67d9",
+  "oracle_symbol": "ggml_vec_dot_bf16",
+  "oracle_library_sha256": "165a0b003a7d60c9ae33718eb20af26b9da7b1fc2e8b17e4b144fe3447ea7235",
+  "oracle_build": "Release; GGML_NATIVE=OFF; GGML_AVX=ON; GGML_AVX2=ON; GGML_FMA=ON; GGML_AVX512=OFF; GGML_AVX512_BF16=OFF; GGML_AVX512_VNNI=OFF; GGML_AVX_VNNI=OFF",
+  "input": "u32 wraparound: a=1664525*i+1013904223; b=22695477*i+1103515245; x=((118+(a>>24)%12)<<7)|(a&127)|(((a>>15)&1)<<15); y=((118+(b>>23)%12)<<7)|(b&127)|(((b>>14)&1)<<15); little-endian BF16",
+  "long_input_sha256": "419e99f8da473b2fccc2d741b4fa69db9631cd6489c6be9c0031aab49895c0c7",
+  "prepare_reference": "Pinned ggml BF16 dot result composed with FP32 model_scale, population RMSNorm over 256 channels, epsilon=1e-6, gamma[0]=1.125 (other gamma=1), and token[0]=1 Q5 or 0.5 BF16; values are not a direct full-model capture",
+  "cases": [
+    {"width": 1, "result_bits": "0x3cce7300", "prepare_q5": 22.058944702148438, "prepare_bf16": 16.402090072631836},
+    {"width": 31, "result_bits": "0xbd88651a", "prepare_q5": 3.692643165588379, "prepare_bf16": -1.9642109870910645},
+    {"width": 32, "result_bits": "0xbe883146", "prepare_q5": -0.7357841730117798, "prepare_bf16": -6.392638206481934},
+    {"width": 33, "result_bits": "0xbe885463", "prepare_q5": -0.7175847887992859, "prepare_bf16": -6.374438762664795},
+    {"width": 63, "result_bits": "0xc00cdab9", "prepare_q5": -1.393076777458191, "prepare_bf16": -7.049931049346924},
+    {"width": 65, "result_bits": "0xc00d347e", "prepare_q5": -1.3925143480300903, "prepare_bf16": -7.049368381500244},
+    {"width": 2560, "result_bits": "0xc33412b2", "prepare_q5": -1.4140840768814087, "prepare_bf16": -7.0709381103515625}
+  ]
+}

@@ -15,7 +15,7 @@ from build_ir_v8 import build_ir1_direct
 from audit_kernel_map_interfaces_v8 import _validate_provider_constraints
 
 
-PREPARE_CONTRACT = "gemma4_prepare_llama_cpu_bf16_input_rne_v1"
+PREPARE_CONTRACT = "gemma4_prepare_llama_cpu_bf16_input_rne_v2"
 EMBED_CONTRACT = "gemma4_embed_llama_cpu_fp16_table_gelu_v1"
 
 
@@ -53,6 +53,8 @@ class Gemma4ProviderContractTests(unittest.TestCase):
                                      PREPARE_CONTRACT)
                     self.assertEqual(ops[0]["resolved_provider_numerical_contract"]["projection_input"],
                                      "fp32_rounded_to_bf16_rne_before_dot")
+                    self.assertEqual(ops[0]["resolved_provider_numerical_contract"]["projection_reduction"],
+                                     "ggml_cpu_bf16_avx2_four_accumulators_with_scalar_fallback")
                     manifest["config"]["embed_dim"] = 16385
                     with self.assertRaisesRegex(RuntimeError, "HARD PROVIDER DIMENSION FAULT.*embed_dim=16385"):
                         self._lower(manifest, mode)
@@ -96,7 +98,7 @@ class Gemma4ProviderContractTests(unittest.TestCase):
         mutations = (
             ("provider_numerical_contract_schema", None),
             ("numerical_contract", None),
-            ("numerical_contract", "gemma4_prepare_llama_cpu_bf16_input_rne_v1"),
+            ("numerical_contract", "gemma4_prepare_llama_cpu_bf16_input_rne_v2"),
             ("numerical_contract", {"circuit_binding_required": True}),
             ("numerical_contract", {"id": PREPARE_CONTRACT,
                                     "circuit_binding_required": "true"}),

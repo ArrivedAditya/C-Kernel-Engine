@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 import math
 import os
+import shlex
 import subprocess
 import tempfile
 import unittest
@@ -16,7 +17,20 @@ FLOAT_PTR = ctypes.POINTER(ctypes.c_float)
 INT32_PTR = ctypes.POINTER(ctypes.c_int32)
 
 
+def _compiler_defines_avx2(cflags: str, cc: str | None = None) -> bool:
+    macros = subprocess.run(
+        [*(shlex.split(cc) if cc else [os.environ.get("CC", "gcc")]),
+         *shlex.split(cflags), "-dM", "-E", "-x", "c", "-"],
+        input="\n", text=True, capture_output=True, check=True, cwd=ROOT,
+    ).stdout
+    return "#define __AVX2__ 1" in macros
+
+
 class PrefillIndependentRowParallelTests(unittest.TestCase):
+    def test_gemma4_compiled_avx2_detection_accepts_march_only(self) -> None:
+        self.assertTrue(_compiler_defines_avx2("-march=haswell"))
+        self.assertFalse(_compiler_defines_avx2("-mavx2 -mno-avx2"))
+
     @classmethod
     def setUpClass(cls) -> None:
         cls._old_num_threads = os.environ.get("CK_NUM_THREADS")
@@ -716,6 +730,65 @@ class PrefillIndependentRowParallelTests(unittest.TestCase):
                 1, 1, 2, 256, 1, ctypes.c_float(1.0e-6),
             )
             np.testing.assert_allclose(out[0, 0], expected, rtol=0, atol=2.0e-7)
+
+    def test_gemma4_prepare_matches_bf16_avx2_reduction(self) -> None:
+        build_flags = (ROOT / "build/.ck_build_flags").read_text().splitlines()
+        cflags = next(line[7:] for line in build_flags if line.startswith("CFLAGS="))
+        cc = next(line[3:] for line in build_flags if line.startswith("CC="))
+        if not _compiler_defines_avx2(cflags, cc):
+            self.skipTest("AVX2 BF16 projection contract requires AVX2")
+        width = 2560
+        rng = np.random.default_rng(137)
+        hidden = rng.standard_normal((1, width), dtype=np.float32)
+        weight_values = rng.standard_normal((2, width), dtype=np.float32)
+
+        def to_bf16(values: np.ndarray) -> np.ndarray:
+            bits = values.view(np.uint32)
+            return ((bits + np.uint32(0x7FFF) + ((bits >> 16) & 1)) >> 16).astype(np.uint16)
+
+        weight = np.zeros((1, 256, width), dtype=np.uint16)
+        weight[0, :2] = to_bf16(weight_values)
+        rounded = (to_bf16(hidden).astype(np.uint32) << 16).view(np.float32)[0]
+        float_weights = (weight[0, :2].astype(np.uint32) << 16).view(np.float32)
+        reference_dot = np.zeros(2, dtype=np.float32)
+        scalar_dot = np.zeros(2, dtype=np.float32)
+        for output in range(2):
+            accumulators = np.zeros((4, 8), dtype=np.float32)
+            for start in range(0, width, 32):
+                for group in range(4):
+                    left = float_weights[output, start + group * 8:start + (group + 1) * 8]
+                    right = rounded[start + group * 8:start + (group + 1) * 8]
+                    accumulators[group] += left * right
+            lanes = (accumulators[0] + accumulators[2]) + (accumulators[1] + accumulators[3])
+            halves = lanes[:4] + lanes[4:]
+            reference_dot[output] = np.float32((halves[0] + halves[2]) + (halves[1] + halves[3]))
+            for channel in range(width):
+                scalar_dot[output] = np.float32(
+                    scalar_dot[output] + float_weights[output, channel] * rounded[channel]
+                )
+
+        def normalize(dot: np.ndarray) -> np.ndarray:
+            projection = dot * np.float32(1.0 / math.sqrt(width))
+            scale = np.float32(1.0 / math.sqrt(float(np.sum(
+                projection.astype(np.float64) ** 2, dtype=np.float64) / 256.0
+            ) + 1.0e-6))
+            return projection * scale * np.float32(1.0 / math.sqrt(2.0))
+
+        expected = normalize(reference_dot)
+        self.assertGreater(float(np.max(np.abs(expected - normalize(scalar_dot)))), 4.0e-6)
+        out = np.empty((1, 1, 256), dtype=np.float32)
+        token_ids = np.zeros(1, dtype=np.int32)
+        tokens = np.zeros((1, 1, 256), dtype=np.uint16)
+        gamma = np.ones(256, dtype=np.float32)
+        self.gemma4_prepare_bf16(
+            out.ctypes.data_as(FLOAT_PTR), hidden.ctypes.data_as(FLOAT_PTR),
+            token_ids.ctypes.data_as(INT32_PTR), tokens.ctypes.data_as(ctypes.c_void_p),
+            weight.ctypes.data_as(ctypes.POINTER(ctypes.c_uint16)),
+            gamma.ctypes.data_as(FLOAT_PTR), 1, 1, width, 256, 1,
+            ctypes.c_float(1.0e-6),
+        )
+        np.testing.assert_allclose(out[0, 0, :2], expected, rtol=0, atol=3.0e-6)
+        np.testing.assert_array_equal(out[0, 0, 2:], 0.0)
 
     def test_gemma4_prepare_bf16_text_only_token_stream(self) -> None:
         hidden = np.zeros((2, 2), dtype=np.float32)
