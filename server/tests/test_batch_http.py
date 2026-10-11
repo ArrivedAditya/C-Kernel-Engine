@@ -110,6 +110,48 @@ class ToolLoop(FakeLoop):
         return BatchTick(tuple(tokens), tuple(completed), mask)
 
 
+class EosLoop(FakeLoop):
+    def advance(self):
+        tick = super().advance()
+        if not tick.tokens:
+            return tick
+        with self.guard:
+            self.active.clear()
+        completed = tuple(CompletionEvent(event.ticket, event.slot, "eos", 1)
+                          for event in tick.tokens)
+        return BatchTick(tick.tokens, completed, tick.advanced_mask)
+
+
+def test_native_normal_eos_completes_both_http_delivery_modes():
+    loop = EosLoop()
+    session = FakeSession()
+    owner = Batch2HTTPOwner(session, max_extra_bytes=1, max_prompt_tokens=8,
+                            loop=loop)
+    app = create_app(session, model="m", context_length=128,
+                     chat_template="{{ messages[0].content }}", batch_http=owner)
+    client = TestClient(app)
+    loop.gate.set()
+    try:
+        for stream in (False, True):
+            response = client.post("/v1/responses", json={"model": "m", "input": "A",
+                                                       "max_output_tokens": 4,
+                                                       "temperature": 0, "stream": stream})
+            assert response.status_code == 200
+            if stream:
+                events = [json.loads(line.removeprefix("data: "))
+                          for line in response.text.splitlines() if line.startswith("data: ")]
+                terminal = [event for event in events if event.get("type") == "response.completed"]
+                assert len(terminal) == 1
+                body = terminal[0]["response"]
+            else:
+                body = response.json()
+            assert body["status"] == "completed"
+            assert body["output_text"] == "A"
+            assert body.get("incomplete_details") is None
+    finally:
+        owner.close()
+
+
 class FailOnceLoop(FakeLoop):
     def __init__(self):
         super().__init__()
@@ -250,6 +292,9 @@ def test_mixed_http_routes_two_outputs_and_records_shared_prompt_work():
     client = TestClient(app)
     effective = client.get("/v1/cke/loaded-identity").json()["effective_serving"]
     assert effective["mixed_execution"] == "one_decode_plus_one_prefill_row"
+    observation = client.get("/v1/cke/batch-observation").json()
+    assert observation["schema"] == "cke.batch2_observation.v1"
+    assert observation["shared_steps"] == observation["mixed_steps"] == 0
 
     def send(prompt, limit):
         return client.post("/v1/responses", json={"model": "m", "input": prompt,
@@ -269,6 +314,10 @@ def test_mixed_http_routes_two_outputs_and_records_shared_prompt_work():
             assert a.result(timeout=5).json()["output_text"] == "AAAAAA"
             assert b.result(timeout=5).json()["output_text"] == "B"
         assert owner.mixed_steps > 0
+        observed = client.get("/v1/cke/batch-observation").json()
+        assert observed["mixed_steps"] == owner.mixed_steps
+        assert observed["shared_steps"] >= observed["mixed_steps"]
+        assert observed["active_slots"] == 0
         assert any(kind == "mixed" and slot == 1 and progress < 4
                    for kind, slot, progress in loop.timeline)
     finally:

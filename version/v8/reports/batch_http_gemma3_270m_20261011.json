@@ -1,0 +1,243 @@
+{
+  "schema": "cke.batch2_http_acceptance.v1",
+  "status": "pass",
+  "script_sha256": "8db6f6fd5561f55aeeb975364d3e785d222edac819a73d7a16755305f2df5ee8",
+  "identity": {
+    "schema": "cke.loaded_serving_identity.v1",
+    "model": "gemma3-270m-batch-http",
+    "serving_identity": "b322de37d292e2becae05ea7a62b0cfe5284fb14dfd79d80ae45634a86fd6f5e",
+    "profile_id": "publisher-chat-v1",
+    "variant": "publisher",
+    "output_protocol": "none",
+    "context_capacity": 128,
+    "assets_sha256": {
+      ".ck_codegen_bundle.json": "c15d07229b578481a2273554ffbe7b3898c9a2e94ee42f46458a0a5f5fe4c15f",
+      ".ck_ir_bundle.json": "afcc2c2ceba9b5208afb78e3f1b57c4fbf911487cc39e4969c5b6e4647c38f79",
+      ".ck_runtime_bundle.json": "a573c39090a189c336c0dc53c727daa6093f4164e46915116ac72656b60e67bf",
+      "chat": "af95fbef33b76a50e5f463ff9766f85ce84f5849d915c4bd6c1619d852ac3231",
+      "circuit": "ecb29b8d20ea7c542b3e5e7ba6cb086fd7088152dd39bc83daf0ae69b06253ae",
+      "config.json": "3f1a4eb5edb53d349227434a09a3e516652a67a550e51915a0cc856d029d268b",
+      "layout_decode.json": "841c8d6a86443094865094994715dae99f257792ee16eb4f03e2f455b1200732",
+      "libckernel_engine.so": "5189d20a52a3da4b8279b2518a50d6dfe7699e3f4929f4bf605c34d71623749a",
+      "libckernel_tokenizer.so": "8c7ff175a64d23f10e17b2f7c349325582d9c8af65845ab2cd002b1385b2b2d2",
+      "libmodel.so": "14e3f81d872d77081416b658d84c61791cce7e8184d50c6ffc7e82a91f62dcca",
+      "profile": "200fc72933f240c3cd58f936e5d793c87020828561fd0a8669bb8bbc520eb092",
+      "tokenizer.json": "4667f2089529e8e7657cfb6d1c19910ae71ff5f28aa7ab2ff2763330affad795",
+      "tools": "af95fbef33b76a50e5f463ff9766f85ce84f5849d915c4bd6c1619d852ac3231",
+      "weights.bump": "dae6375dc5f6e04db7a373fc747df6eda4f9938f019bc0c0d1fdda4ec2443c40",
+      "weights_manifest.json": "261770b41efca00ce3665afb95727b16cfc6e9b7d06794be9316d153b00118b5",
+      "weights_manifest.map": "3eb8ec6f69dbedae11c50e877c953ce7034a6a9cc0486be0fecbfd54322b27fd"
+    },
+    "session_library_sha256": "4daa4e1f859c733cf0e4e9fa5a3ff2ccfdfda892db06ae588f81763535945888",
+    "server_instance_id": "f535bf0516c0418d9c43347495f33fdf",
+    "effective_serving": {
+      "schema": "cke.effective_serving.v1",
+      "configured_mode": "templated",
+      "output_protocol": "none",
+      "active_context_limit": 128,
+      "default_max_output_tokens": 24,
+      "stop_on_text": [],
+      "stop_at_eos": false,
+      "request_output_cap": 32,
+      "execution_mode": "experimental_batch2_http",
+      "prefill_strategy": "decode_replay_chunked",
+      "prefill_chunk_token_budget": 4,
+      "mixed_execution": "one_decode_plus_one_prefill_row",
+      "batch_prompt_token_cap": 64,
+      "batch_delivery_consumer_cap": 4,
+      "batch_output_token_cap": 4096,
+      "batch_output_byte_cap": 1048576,
+      "batch_delivery_timeout_seconds": 30.0
+    }
+  },
+  "requests": {
+    "nonce": "review734-final",
+    "model": "gemma3-270m-batch-http",
+    "temperature": 0,
+    "store": true,
+    "max_output_tokens": 32,
+    "prompts": {
+      "A": "Write a long list of words about cedar trees. Marker review734-finalA.",
+      "B": "Explain how to draw a blue circle in five steps. Marker review734-finalB."
+    }
+  },
+  "baselines": {
+    "A": {
+      "status": "incomplete",
+      "created_at": 1791753355,
+      "completed_at": 1791753355,
+      "text_sha256": "63974e289f740edafa8e50b37bd6d83a592a0bc17e6588002aabbb305c896014",
+      "text_bytes": 98,
+      "output_tokens": 32,
+      "stop_reason": "token_limit",
+      "incomplete_details": {
+        "reason": "max_output_tokens"
+      }
+    },
+    "B": {
+      "status": "incomplete",
+      "created_at": 1791753357,
+      "completed_at": 1791753357,
+      "text_sha256": "89ef4331457c2d85582becf5fe1218d2edd6eff60c32d8ed434427affa449dca",
+      "text_bytes": 102,
+      "output_tokens": 32,
+      "stop_reason": "token_limit",
+      "incomplete_details": {
+        "reason": "max_output_tokens"
+      }
+    }
+  },
+  "observation_before_pair": {
+    "schema": "cke.batch2_observation.v1",
+    "active_slots": 0,
+    "pending_requests": 0,
+    "shared_steps": 216,
+    "mixed_steps": 216,
+    "poisoned": false,
+    "server_instance_id": "f535bf0516c0418d9c43347495f33fdf"
+  },
+  "observation_after_pair": {
+    "schema": "cke.batch2_observation.v1",
+    "active_slots": 0,
+    "pending_requests": 0,
+    "shared_steps": 243,
+    "mixed_steps": 243,
+    "poisoned": false,
+    "server_instance_id": "f535bf0516c0418d9c43347495f33fdf"
+  },
+  "cases": [
+    {
+      "case": "two_streams",
+      "response_ids": [
+        "resp_434c6a3aa3844413a66c77b0",
+        "resp_df100552694e489bbb8c8b3e"
+      ],
+      "A": {
+        "status": "incomplete",
+        "created_at": 1791753357,
+        "completed_at": 1791753360,
+        "text_sha256": "63974e289f740edafa8e50b37bd6d83a592a0bc17e6588002aabbb305c896014",
+        "text_bytes": 98,
+        "output_tokens": 32,
+        "stop_reason": "token_limit",
+        "incomplete_details": {
+          "reason": "max_output_tokens"
+        }
+      },
+      "B": {
+        "status": "incomplete",
+        "created_at": 1791753359,
+        "completed_at": 1791753362,
+        "text_sha256": "89ef4331457c2d85582becf5fe1218d2edd6eff60c32d8ed434427affa449dca",
+        "text_bytes": 102,
+        "output_tokens": 32,
+        "stop_reason": "token_limit",
+        "incomplete_details": {
+          "reason": "max_output_tokens"
+        }
+      },
+      "request_observations": [
+        {
+          "schema": "cke.batch2_response_observation.v1",
+          "response_id": "resp_434c6a3aa3844413a66c77b0",
+          "shared_steps": 27,
+          "mixed_steps": 27,
+          "shared_with": {
+            "resp_df100552694e489bbb8c8b3e": 27
+          },
+          "mixed_with": {
+            "resp_df100552694e489bbb8c8b3e": 27
+          },
+          "native_done": true,
+          "server_instance_id": "f535bf0516c0418d9c43347495f33fdf"
+        },
+        {
+          "schema": "cke.batch2_response_observation.v1",
+          "response_id": "resp_df100552694e489bbb8c8b3e",
+          "shared_steps": 27,
+          "mixed_steps": 27,
+          "shared_with": {
+            "resp_434c6a3aa3844413a66c77b0": 27
+          },
+          "mixed_with": {
+            "resp_434c6a3aa3844413a66c77b0": 27
+          },
+          "native_done": true,
+          "server_instance_id": "f535bf0516c0418d9c43347495f33fdf"
+        }
+      ]
+    },
+    {
+      "case": "cancel_peer_and_recover",
+      "cancelled_id": "resp_cbdd39abd30e4bf8a690d696",
+      "peer_id": "resp_cc46b4b8b2da4a4ca6be77b3",
+      "cancel_requested_at": 1791753363.2985067,
+      "peer_deltas_after_cancel": 32,
+      "cancelled": {
+        "status": "cancelled",
+        "created_at": 1791753362,
+        "completed_at": 1791753363,
+        "text_sha256": "0bdb66d46f4591b7d66b9ff0c0f8b962c391b01f0acedbd7f3378bc70a1fa8f8",
+        "text_bytes": 7,
+        "output_tokens": 2,
+        "stop_reason": "cancelled",
+        "incomplete_details": null
+      },
+      "peer": {
+        "status": "incomplete",
+        "created_at": 1791753363,
+        "completed_at": 1791753365,
+        "text_sha256": "89ef4331457c2d85582becf5fe1218d2edd6eff60c32d8ed434427affa449dca",
+        "text_bytes": 102,
+        "output_tokens": 32,
+        "stop_reason": "token_limit",
+        "incomplete_details": {
+          "reason": "max_output_tokens"
+        }
+      }
+    },
+    {
+      "case": "followup",
+      "status": "incomplete",
+      "created_at": 1791753367,
+      "completed_at": 1791753367,
+      "text_sha256": "89ef4331457c2d85582becf5fe1218d2edd6eff60c32d8ed434427affa449dca",
+      "text_bytes": 102,
+      "output_tokens": 32,
+      "stop_reason": "token_limit",
+      "incomplete_details": {
+        "reason": "max_output_tokens"
+      }
+    }
+  ],
+  "normal_eos": {
+    "status": "not_observed",
+    "note": "The tested Gemma artifact exhausted the output limit; this run does not certify model-generated EOS."
+  },
+  "scope": "resolved KV-only chat HTTP/native mixed-row acceptance",
+  "observation_before": {
+    "schema": "cke.batch2_observation.v1",
+    "active_slots": 0,
+    "pending_requests": 0,
+    "shared_steps": 216,
+    "mixed_steps": 216,
+    "poisoned": false,
+    "server_instance_id": "f535bf0516c0418d9c43347495f33fdf"
+  },
+  "observation_after": {
+    "schema": "cke.batch2_observation.v1",
+    "active_slots": 0,
+    "pending_requests": 0,
+    "shared_steps": 243,
+    "mixed_steps": 243,
+    "poisoned": false,
+    "server_instance_id": "f535bf0516c0418d9c43347495f33fdf"
+  },
+  "unsupported": [
+    "tool_harness",
+    "ordinary_prefill_parity",
+    "batch_N",
+    "speedup",
+    "model_generated_normal_eos"
+  ]
+}

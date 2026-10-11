@@ -2904,6 +2904,8 @@ def create_app(
             raise
         if body.stream:
             stream_response_id = f"resp_{uuid.uuid4().hex[:24]}"
+            if batch_http is not None:
+                batch_http.bind_response(lease.client, stream_response_id)
             return _OwnedStreamingResponse(
                 stream_events(
                     body,
@@ -3205,6 +3207,18 @@ def create_app(
             raise HTTPException(status_code=404, detail="loaded bundle identity unavailable")
         return {**attestation, "server_instance_id": server_instance_id,
                 "effective_serving": effective_serving}
+
+    if batch_http is not None:
+        @router.get("/cke/batch-observation")
+        def get_batch_observation():
+            return {**batch_http.observation(), "server_instance_id": server_instance_id}
+
+        @router.get("/cke/batch-observation/{response_id}")
+        def get_batch_response_observation(response_id: str):
+            observation = batch_http.response_observation(response_id)
+            if observation is None:
+                raise HTTPException(status_code=404, detail="Batch response not found")
+            return {**observation, "server_instance_id": server_instance_id}
 
     if extra_route_registrar is not None:
         extra_route_registrar(router, create_response)

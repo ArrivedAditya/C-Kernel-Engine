@@ -9,6 +9,7 @@ in bounded chunks, yielding to ready decode requests between chunks.
 from __future__ import annotations
 
 import codecs
+from collections import OrderedDict
 import queue
 import secrets
 import threading
@@ -34,6 +35,11 @@ class _Client:
     started: bool = False
     worker_started: bool = False
     terminal_sent: bool = False
+    response_id: str | None = None
+    shared_steps: int = 0
+    mixed_steps: int = 0
+    shared_with: dict[str, int] = field(default_factory=dict)
+    mixed_with: dict[str, int] = field(default_factory=dict)
 
 
 class _Proxy:
@@ -235,6 +241,7 @@ class Batch2HTTPOwner:
         self.slots: dict[int, _Client] = {}
         self.clients: dict[int, _Client] = {}
         self.tickets: dict[int, _Client] = {}
+        self.responses: OrderedDict[str, _Client] = OrderedDict()
         self.poisoned = False
         self.shutdown = threading.Event()
         self.shared_steps = 0
@@ -258,6 +265,20 @@ class Batch2HTTPOwner:
                     self.clients[id(client)] = client
                     return _Lease(self, client)
         raise SessionBusyError(-6, "batch HTTP slots are full")
+
+    def bind_response(self, client: _Client, response_id: str) -> None:
+        """Bind execution evidence to the HTTP request before its stream starts."""
+        with self.guard:
+            if client.response_id is not None or response_id in self.responses:
+                raise ValueError("batch response is already bound")
+            client.response_id = response_id
+            self.responses[response_id] = client
+            # Keep completed observations bounded; never evict a live owner.
+            for old_id, old in tuple(self.responses.items()):
+                if len(self.responses) <= 128:
+                    break
+                if old.native_done.is_set():
+                    del self.responses[old_id]
 
     def cancel(self, client: _Client):
         client.cancelled.set()
@@ -374,6 +395,22 @@ class Batch2HTTPOwner:
             if not self.loop.active_tickets():
                 continue
             tick = self.loop.advance(mix_staged=True) if self.mixed_one_row else self.loop.advance()
+            with self.guard:
+                participants = tuple(client for client in self.tickets.values()
+                                     if tick.advanced_mask is not None
+                                     and tick.advanced_mask & (1 << client.slot))
+                if tick.advanced_mask == 3 and len(participants) == 2:
+                    for client, peer in ((participants[0], participants[1]),
+                                         (participants[1], participants[0])):
+                        client.shared_steps += 1
+                        if peer.response_id is not None:
+                            peers = client.shared_with
+                            peers[peer.response_id] = peers.get(peer.response_id, 0) + 1
+                        if tick.mixed_prefill_ticket is not None:
+                            client.mixed_steps += 1
+                            if peer.response_id is not None:
+                                peers = client.mixed_with
+                                peers[peer.response_id] = peers.get(peer.response_id, 0) + 1
             for event in tick.tokens:
                 with self.guard:
                     recipient = self.tickets.get(event.ticket)
@@ -386,10 +423,11 @@ class Batch2HTTPOwner:
                             self._send_terminal(recipient, "delivery_overflow")
             for event in tick.completed:
                 self._finish(event.ticket, event.reason)
-            if tick.advanced_mask == 3:
-                self.shared_steps += 1
-            if self.mixed_one_row and tick.mixed_prefill_ticket is not None:
-                self.mixed_steps += 1
+            with self.guard:
+                if tick.advanced_mask == 3:
+                    self.shared_steps += 1
+                if self.mixed_one_row and tick.mixed_prefill_ticket is not None:
+                    self.mixed_steps += 1
             if self.decode_replay_chunk_tokens is not None:
                 staged = tuple(sorted(self.loop.staged_tickets()))
                 if staged and tick.mixed_prefill_ticket is None:
@@ -400,6 +438,34 @@ class Batch2HTTPOwner:
                     for event in self.loop.advance_prefill(
                             ticket, self.decode_replay_chunk_tokens):
                         self._finish(event.ticket, event.reason)
+
+    def observation(self) -> dict:
+        """Return bounded execution evidence without exposing prompts or tickets."""
+        with self.guard:
+            return {
+                "schema": "cke.batch2_observation.v1",
+                "active_slots": len(self.slots),
+                "pending_requests": self.pending.qsize(),
+                "shared_steps": self.shared_steps,
+                "mixed_steps": self.mixed_steps,
+                "poisoned": self.poisoned,
+            }
+
+    def response_observation(self, response_id: str) -> dict | None:
+        """Return steps executed with the identified peer, including after completion."""
+        with self.guard:
+            client = self.responses.get(response_id)
+            if client is None:
+                return None
+            return {
+                "schema": "cke.batch2_response_observation.v1",
+                "response_id": response_id,
+                "shared_steps": client.shared_steps,
+                "mixed_steps": client.mixed_steps,
+                "shared_with": dict(client.shared_with),
+                "mixed_with": dict(client.mixed_with),
+                "native_done": client.native_done.is_set(),
+            }
 
     def close(self, timeout: float = 10.0):
         """Join the native owner before its session can be closed."""
