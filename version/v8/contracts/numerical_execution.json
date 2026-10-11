@@ -611,6 +611,17 @@
       "position_transform": null,
       "description": "Reconstructs a real signal from frame-major one-sided magnitude and phase with ascending-bin direct IDFT, periodic Hann overlap-add, window-square normalization, and centered trim."
     },
+    "audio_spectral_head_exp_sin_frame_major_fp32": {
+      "operator_family": "audio_spectral_head_mag_phase",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "none", "output": "fp32"},
+      "compute": {"input": "fp32", "weight": "none", "accumulator": "fp32", "contraction": "disabled", "evaluation_order": "validate_all_inputs_and_exp_outputs_then_frame_bin_exp_sin_store"},
+      "rounding": {"mode": "rne", "points": ["vector_exponential", "sine", "output_store"]},
+      "reduction": {"kind": "none", "order": "none", "partial_accumulator": "none", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "independent_outputs", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Splits channel-major log magnitude and raw phase into separate frame-bin-contiguous tensors, applying expf to magnitude channels and sinf to phase channels. Full validation preserves both outputs on failure."
+    },
     "audio_stft_mag_phase_direct_f64_accum_fp32": {
       "operator_family": "audio_stft_mag_phase_checked",
       "status": "validated",

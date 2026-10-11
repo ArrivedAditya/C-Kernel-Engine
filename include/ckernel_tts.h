@@ -114,6 +114,16 @@ int audio_istft_mag_phase_f32(
     float *scratch,
     size_t scratch_elements);
 
+/* Apply exp to the first bin_count channels and sin to the next bin_count
+ * channels of a channel-major spectral head, transposing valid frames into
+ * separate frame-major [frame, bin] outputs. All capacities are element
+ * counts. Inputs and outputs must be disjoint. Rejection preserves outputs. */
+int audio_spectral_head_mag_phase_f32(
+    const float *input, size_t input_elements, size_t input_stride,
+    float *magnitude, size_t magnitude_elements,
+    float *phase, size_t phase_elements,
+    size_t bins, size_t frames);
+
 /* Centered reflect-padded forward STFT. The caller supplies a periodic Hann
  * window and unnormalized forward-DFT cosine/sine tables. Output is channel
  * major [magnitude bins, phase bins] with an explicit frame stride. Scratch

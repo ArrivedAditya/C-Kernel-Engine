@@ -1,0 +1,45 @@
+{
+  "scope": "final convolution, spectral transform and waveform direct-model hooks",
+  "model_pin": "e8a90b41091c3c5b70375c47cc959799920fa4d6",
+  "code_pin": "dfb907a02bba8152ca444717ca5d78747ccb4bec",
+  "asset_sha256": {
+    "config.json": "5abb01e2403b072bf03d04fde160443e209d7a0dad49a423be15196b9b43c17f",
+    "kokoro-v1_0.pth": "496dba118d1a58f5f3db2efc88dbdc216e0483fc89fe6e47ee1f2c53f18ad1e4",
+    "voices/af_heart.pt": "0ab5709b8ffab19bfd849cd11d98f75b60af7733253ad0d67b12382a102cb4ff"
+  },
+  "environment": {
+    "kokoro": "0.9.4",
+    "misaki": "0.9.4",
+    "torch": "2.8.0+cpu",
+    "transformers": "5.17.0",
+    "spacy": "3.8.16",
+    "num2words": "0.5.14",
+    "phonemizer-fork": "3.3.2",
+    "espeakng-loader": "0.2.4"
+  },
+  "oracle": "pinned PyTorch 2.8 full-model hooks and TorchSTFT.inverse",
+  "capture_manifest_sha256": "a8e142cbcc3e2c209cd47a8d70671bf1a5e1952359baaf32df1ead3b226bd9df",
+  "previous_fixture_sha256": "48ff559d09ca5d5bf690eea7e5631c1be1264e7eb72fcbfcb8c2e89c5ba9d431",
+  "source_tensor_sha256": {
+    "decoder_generator_conv_post": "d0efb4998b0d2ebad8a341bbc65b40263ed48f4eb1f2497cf75524783b756d7f",
+    "istft_magnitude": "c947d85f87bf67333c8eca68b2de64025d46d5da14b23442e69a31325d03c35e",
+    "istft_phase": "2b99667b190e268b35214ac710c1c47ea4e68a4dea207149564f18eac6121f9d",
+    "decoder_generator": "5d2e0b22f37bd1fa77bbfc09d6c6231c4ef3c4de8c0b701df3bb354bf8f0ba82"
+  },
+  "effective_weight_sha256": {
+    "waveform_decoder.generator.conv_post.weight": "4d6e86c2d49efafb223f1f5b7d3db8bf4ef606cc382cab6da67355b611071768",
+    "waveform_decoder.generator.conv_post.bias": "525457b46ef96e58d45e3dc2000c06db3e10ca07d9ae97c4d1fbe0c34e069942"
+  },
+  "array_sha256": {
+    "conv_post": "60a9f1b13e35816b67c9bd8fa49ead97da78c6a648ef92e1e972810f98156109",
+    "magnitude": "a7bf925f39776c857cf6dd2a340eaecc56872f4048e30b99b38f0cc4805d0e14",
+    "phase": "37f82e657195d43eed8d6d0feadc7d1e04748b40e15fd6f598c04f96eff7374d",
+    "waveform": "4bd51dd8fa9ce3585dc36a7e0db74cf5a8daf3b9875ec35ee71bb58d42a6af06",
+    "weight": "4d6e86c2d49efafb223f1f5b7d3db8bf4ef606cc382cab6da67355b611071768",
+    "bias": "525457b46ef96e58d45e3dc2000c06db3e10ca07d9ae97c4d1fbe0c34e069942"
+  },
+  "fixture_sha256": "25b7bc8536b0034b37fa2c19726911e42715e49c44a81552747ebdbbb2417d78",
+  "valid_frames": 12361,
+  "sample_count": 61800,
+  "input_text": "Read this assistant response aloud."
+}
