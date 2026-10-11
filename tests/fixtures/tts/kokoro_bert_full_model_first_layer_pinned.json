@@ -1,0 +1,46 @@
+{
+  "scope": "first shared ALBERT invocation in pinned full KModel forward",
+  "model_pin": "e8a90b41091c3c5b70375c47cc959799920fa4d6",
+  "code_pin": "dfb907a02bba8152ca444717ca5d78747ccb4bec",
+  "voice": "af_heart",
+  "oracle": "direct pinned full KModel first-layer hooks",
+  "bert_attention_implementation": "sdpa",
+  "environment": {
+    "kokoro": "0.9.4",
+    "misaki": "0.9.4",
+    "torch": "2.8.0+cpu",
+    "transformers": "5.17.0",
+    "spacy": "3.8.16",
+    "num2words": "0.5.14",
+    "phonemizer-fork": "3.3.2",
+    "espeakng-loader": "0.2.4"
+  },
+  "asset_sha256": {
+    "config.json": "5abb01e2403b072bf03d04fde160443e209d7a0dad49a423be15196b9b43c17f",
+    "kokoro-v1_0.pth": "496dba118d1a58f5f3db2efc88dbdc216e0483fc89fe6e47ee1f2c53f18ad1e4",
+    "voices/af_heart.pt": "0ab5709b8ffab19bfd849cd11d98f75b60af7733253ad0d67b12382a102cb4ff"
+  },
+  "capture_waveform_sha256": "6c651c788bb7cc71969d2f2b9b710d6a08cd0c32e4ee3f3161388e9f78f9c48a",
+  "source_tensor_sha256": {
+    "bert_fine_embeddings": "e6937ab6d6e6e0596a7a5fc96ad534ac7e6a4a1a5a3e94dcf95cff28e45ae940",
+    "bert_fine_projection": "e9c65057dad9c944be6d50dbb375eb39038c715376ba134f03bb2dd02ce192b4",
+    "bert_fine_query": "b6916bc3cd2bd1e537b915814401ca51d6b6f140beb41a52df35d2dff789b3b7",
+    "bert_fine_key": "a622078b05fe57d74a81be64b471b07430b9124d8197f1deb8db7ddd4f56cb50",
+    "bert_fine_value": "37fb37147b14433ef9ef08dae04c95e773069ee7509ce8a55f546ff502fa925d",
+    "bert_fine_attention_context": "34ce1785b50f8e16a79988516d14f2e90cfc652578d11abf9e4d9cd25621cc20",
+    "bert_fine_dense": "29ca64162a00abb9431f2c8a968e70a3c3644e10af382229b7ffadd90787ce9d",
+    "bert_fine_layernorm": "f40639841bd200347ff473c0d9ddf5b1e2ce18bf58b1fbecde47ac51fbc15303"
+  },
+  "array_sha256": {
+    "bert_fine_embeddings": "6bc894e72ab132707fabbbde42c4942989242c65b302140dcbb19ca0d215678c",
+    "bert_fine_projection": "ec4b51eb8433fac949c66f0c6590e8faa96c15494caa93e8c911adccaf748e94",
+    "bert_fine_query": "aa251c2de85ccb8024508e45ff6e79639dc7187209a1f43632add47e49203830",
+    "bert_fine_key": "67a581d695fa7d7362b8894ed88ff3f963af4e8d1cf3b360c3688a7c84244613",
+    "bert_fine_value": "87ca6e92188910bf1c24cbee85342317a8bbd47a458a8160879c9621114218ec",
+    "bert_fine_attention_context": "967340dcd2d30147a276bbf263564fc6c0ed4d90aeed51a339906c27a726b9e8",
+    "bert_fine_dense": "b317bdc51628b13069fbd5b4e1f465f3d45e64813c4617a81bd4edecbaba1da1",
+    "bert_fine_layernorm": "7052a7ea41231e2a054cfecc77c9dd51aa3391627e0c3d965bf48a148edbb4da"
+  },
+  "fixture_sha256": "116e68179406c96f69bb90ff72a391d561e2338927f01aa1f9dece5e9d3dedb5",
+  "input_tokens": 36
+}

@@ -41,6 +41,14 @@ PROSODY_F0_FINE_HOOKS = tuple(
         ("norm1", "conv1", "norm2", "conv2"),
     )) for module in modules
 )
+BERT_FINE_HOOKS = (
+    "bert.embeddings", "bert.encoder.embedding_hidden_mapping_in",
+    "bert.encoder.albert_layer_groups.0.albert_layers.0.attention.query",
+    "bert.encoder.albert_layer_groups.0.albert_layers.0.attention.key",
+    "bert.encoder.albert_layer_groups.0.albert_layers.0.attention.value",
+    "bert.encoder.albert_layer_groups.0.albert_layers.0.attention.dense",
+    "bert.encoder.albert_layer_groups.0.albert_layers.0.attention.LayerNorm",
+)
 DECODER_HOOKS = (
     "decoder.F0_conv", "decoder.N_conv", "decoder.asr_res",
     "decoder.encode.norm1", "decoder.encode.conv1",
@@ -146,6 +154,8 @@ def main() -> int:
     parser.add_argument("--preprocess-only", action="store_true")
     parser.add_argument("--capture-f0-fine", action="store_true",
                         help="Capture direct full-model F0 inner-module checkpoints")
+    parser.add_argument("--capture-bert-fine", action="store_true",
+                        help="Capture first ALBERT invocation from the full model")
     parser.add_argument("--bert-attention", choices=("eager", "sdpa"),
                         help="Diagnostic full-model ALBERT attention dispatch override")
     args = parser.parse_args()
@@ -249,6 +259,27 @@ def main() -> int:
     ) + FINE_PREDICTOR_HOOKS + PROSODY_BRANCH_HOOKS + (PROSODY_F0_FINE_HOOKS if args.capture_f0_fine else ()) + DECODER_HOOKS + GENERATOR_HOOKS + GENERATOR_RESIDUAL_PREFIX_HOOKS + GENERATOR_RESIDUAL_BLOCK_TAIL_HOOKS + GENERATOR_MAIN_RESBLOCK0_HOOKS + GENERATOR_MAIN_STAGE0_TAIL_HOOKS
     modules = dict(model.named_modules())
     hooks = []
+    if args.capture_bert_fine:
+        bert_counts = {}
+        for name in BERT_FINE_HOOKS:
+            module = modules.get(name)
+            if module is None:
+                raise RuntimeError(f"pinned first-layer module missing: {name}")
+            stem = "bert_fine_" + name.rsplit(".", 1)[-1].lower()
+            if name.endswith("embedding_hidden_mapping_in"):
+                stem = "bert_fine_projection"
+            if name.endswith("attention.dense"):
+                def capture_context(_module, inputs):
+                    if bert_counts.get("attention_context", 0) == 0:
+                        capture_tensor(inputs[0], "bert_fine_attention_context",
+                                       out_dir, record["tensors"])
+                    bert_counts["attention_context"] = bert_counts.get("attention_context", 0) + 1
+                hooks.append(module.register_forward_pre_hook(capture_context))
+            def capture_first(_module, _inputs, output, label=name, key=stem):
+                if bert_counts.get(label, 0) == 0:
+                    capture_tensor(output, key, out_dir, record["tensors"])
+                bert_counts[label] = bert_counts.get(label, 0) + 1
+            hooks.append(module.register_forward_hook(capture_first))
     for name in module_names:
         module = modules.get(name)
         if module is None:
@@ -450,6 +481,15 @@ def main() -> int:
             if name.replace(".", "_") not in record["tensors"]:
                 raise RuntimeError(f"pinned fine F0 checkpoint not reached: {name}")
         record["prosody_f0_fine_hooks"] = list(PROSODY_F0_FINE_HOOKS)
+    if args.capture_bert_fine:
+        for name in BERT_FINE_HOOKS:
+            expected = 1 if name in BERT_FINE_HOOKS[:2] else 12
+            if bert_counts.get(name) != expected:
+                raise RuntimeError(f"pinned ALBERT invocation count differs: {name}")
+        if bert_counts.get("attention_context") != 12:
+            raise RuntimeError("pinned ALBERT attention context count differs")
+        record["bert_fine_hooks"] = list(BERT_FINE_HOOKS)
+        record["bert_fine_invocation"] = 0
     record["decoder_hooks"] = list(DECODER_HOOKS)
     record["generator_hooks"] = list(GENERATOR_HOOKS)
     record["generator_residual_prefix_hooks"] = list(GENERATOR_RESIDUAL_PREFIX_HOOKS)
