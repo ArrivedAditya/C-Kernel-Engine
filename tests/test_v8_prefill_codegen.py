@@ -437,6 +437,77 @@ int main(void) {
         with self.assertRaisesRegex(RuntimeError, "map-owned segmented-row provider"):
             codegen_prefill_v8.emit_prefill_from_embedded_function([op, swiglu], config)
 
+    def test_segmented_gate_up_uses_schedule_without_prefix_policy(self) -> None:
+        op = self._q4_segmented_projection_op("mlp_gate_up")
+        config = self._segment_preserving_config()
+        bridge = config["multimodal_bridge_contract"]
+        del bridge["prefix_policy"]
+        bridge["prefill_batching"] = "segmented_append"
+        bridge["prefill_schedule"].update({
+            "segments": ["text_before", "visual", "text_after"],
+            "cache_transition": "append_preserve",
+            "position_transition": "runtime_offset",
+        })
+        emitted = codegen_prefill_v8.emit_prefill_from_embedded_function(
+            [op], config, dump=True
+        )
+        self.assertIn(
+            "gemm_nt_q4_k_q8_k_segmented_pairwise_split_min_parallel_dispatch(",
+            emitted,
+        )
+        self.assertIn('"ffn_gate_up"', emitted)
+        self.assertNotIn('"down_proj"', emitted)
+
+        bridge["prefill_schedule"]["projection_row_group_boundaries"]["operations"] = []
+        unsegmented = codegen_prefill_v8.emit_prefill_from_embedded_function(
+            [op], config
+        )
+        self.assertNotIn("segmented_pairwise_split_min_parallel_dispatch(", unsegmented)
+
+    def test_segmented_down_uses_schedule_without_prefix_policy(self) -> None:
+        op = self._q4_segmented_projection_op("mlp_down")
+        op["function"] = "gemm_nt_q6_k_q8_k"
+        op["resolved_execution"]["numerical_contract"] = (
+            "q6_k_weight_q8_k_input_llama_fp32_output"
+        )
+        implementation = op["resolved_execution"]["implementation"]
+        implementation["weight_storage"] = {
+            "format": "q6_k", "block_elements": 256, "block_bytes": 210,
+        }
+        implementation["segmented_row_provider"] = {
+            "function": "gemm_nt_q6_k_q8_k_segmented_parallel_dispatch",
+            "singleton_tail_function": (
+                "gemm_nt_q6_k_q8_k_segmented_singleton_tail_parallel_dispatch"
+            ),
+            "segment_lengths_dtype": "i32",
+            "boundary_semantics": "restart_row_group_at_each_segment",
+            "fallback": "gemm_nt_q6_k_q8_k_parallel_dispatch",
+        }
+        config = self._segment_preserving_config()
+        bridge = config["multimodal_bridge_contract"]
+        del bridge["prefix_policy"]
+        bridge["prefill_batching"] = "segmented_append"
+        bridge["prefill_schedule"].update({
+            "segments": ["text_before", "visual", "text_after"],
+            "cache_transition": "append_preserve",
+            "position_transition": "runtime_offset",
+        })
+        boundaries = bridge["prefill_schedule"]["projection_row_group_boundaries"]
+        boundaries["operations"] = ["mlp_down"]
+        boundaries["text_after_row_group"] = "single_token"
+        emitted = codegen_prefill_v8.emit_prefill_from_embedded_function(
+            [op], config, dump=True
+        )
+        self.assertIn(
+            "gemm_nt_q6_k_q8_k_segmented_singleton_tail_parallel_dispatch(",
+            emitted,
+        )
+        self.assertIn('"down_proj"', emitted)
+
+        del implementation["segmented_row_provider"]["singleton_tail_function"]
+        with self.assertRaisesRegex(RuntimeError, "map-owned singleton-tail provider"):
+            codegen_prefill_v8.emit_prefill_from_embedded_function([op], config)
+
     def test_segmented_projection_rejects_wrong_call_arity(self) -> None:
         op = self._q4_segmented_projection_op()
         op["args"].pop()

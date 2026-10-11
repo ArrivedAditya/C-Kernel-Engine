@@ -2504,7 +2504,7 @@ def _emit_prefill_gemm_fp32_override(op: Dict, seq_idx: int, config: Dict, *, de
     fp32_func = linear_emission["fp32_activation_function"]
     segmented_row_function = (
         _segmented_row_provider(op, config)
-        if _has_multimodal_bridge_contract(config)
+        if _has_mixed_prefill_segment_contract(config)
         else ""
     )
     layer_value = op.get("layer", -1)
@@ -2616,7 +2616,8 @@ def _emit_prefill_gemm_fp32_override(op: Dict, seq_idx: int, config: Dict, *, de
     if dump:
         raw_expr = c_expr.replace("(float*)", "").replace("(void*)", "").strip()
         lines.append("    #ifdef CK_PARITY_DUMP")
-        lines.append(f'    ck_dump_tensor((float*){raw_expr}, {layer}, "down_proj", ({m_expr}) * ({n_expr}));')
+        dump_name = "ffn_gate_up" if op.get("op") == "mlp_gate_up" else "down_proj"
+        lines.append(f'    ck_dump_tensor((float*){raw_expr}, {layer}, "{dump_name}", ({m_expr}) * ({n_expr}));')
         lines.append("    #endif")
     return "\n".join(lines)
 
@@ -2983,7 +2984,7 @@ static void ck_prefill_from_embedded_range(CKModel *model, int num_tokens, int p
                     debug_input_name="ck_debug_mlp_down_fp32_input",
                     profile=profile,
                 )
-        elif has_multimodal_bridge and op_type == "mlp_down" and is_q4_q6_q8_linear(linear_emission):
+        elif (has_multimodal_bridge or has_mixed_prefill_segments) and op_type == "mlp_down" and is_q4_q6_q8_linear(linear_emission):
             op_code = _emit_prefill_gemm_fp32_override(
                 op,
                 seq_idx,
