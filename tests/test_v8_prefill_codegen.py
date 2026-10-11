@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -290,6 +293,169 @@ class TestV8PrefillCodegen(unittest.TestCase):
             op, 0, config, segment_plan_available=True
         )
         self.assertNotIn("segmented_singleton_tail_parallel_dispatch(", unsegmented)
+
+    def test_compiled_projection_contract_selects_declared_provider(self) -> None:
+        cc = shutil.which("cc")
+        self.assertIsNotNone(cc, "compiled projection contract requires a C compiler")
+
+        config = self._segment_preserving_config()
+        boundaries = config["multimodal_bridge_contract"]["prefill_schedule"][
+            "projection_row_group_boundaries"
+        ]
+        boundaries["operations"] = ["out_proj"]
+        boundaries["text_after_row_group"] = "single_token"
+        op = self._q4_segmented_projection_op("out_proj")
+        op["resolved_execution"]["implementation"]["segmented_row_provider"][
+            "singleton_tail_function"
+        ] = "gemm_nt_q4_k_q8_k_segmented_singleton_tail_parallel_dispatch"
+        for arg in op["args"]:
+            if arg["name"] == "M":
+                arg["expr"] = "rows"
+                arg["source"] = "runtime:rows"
+            elif arg["name"] == "N":
+                arg["expr"] = "4"
+            elif arg["name"] == "K":
+                arg["expr"] = "8"
+
+        declared = codegen_prefill_v8.emit_prefill_op(
+            op, 0, config, segment_plan_available=True
+        )
+        boundaries["operations"] = []
+        undeclared = codegen_prefill_v8.emit_prefill_op(
+            op, 0, config, segment_plan_available=True
+        )
+        boundaries["operations"] = ["out_proj"]
+        del op["resolved_execution"]["implementation"]["segmented_row_provider"][
+            "singleton_tail_function"
+        ]
+        with self.assertRaisesRegex(RuntimeError, "map-owned singleton-tail provider"):
+            codegen_prefill_v8.emit_prefill_op(
+                op, 0, config, segment_plan_available=True
+            )
+
+        source = r'''
+#include <stddef.h>
+static int selected, saw_lengths[3], saw_count;
+static int g_multimodal_prefill_segment_lengths[3] = {2, 2, 1};
+static int debug_outproj_fp32;
+static void *ck_debug_outproj_fp32_input;
+static void *model;
+#define EMBED_DIM 4
+static int ck_multimodal_prefill_has_segment_plan(int n) { return n == 5; }
+static void ck_debug_export_hidden(void *m, int layer, const char *name,
+                                   const float *data, int count) {
+    (void)m; (void)layer; (void)name; (void)data; (void)count;
+}
+static void gemm_nt_q4_k(const void *a, const void *b, const float *bias,
+                         float *c, int m, int n, int k) {
+    (void)a; (void)b; (void)bias; (void)c; (void)m; (void)n; (void)k;
+    selected = 3;
+}
+static void gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch(
+    const void *a, const void *b, const float *bias, float *c,
+    int m, int n, int k) {
+    (void)a; (void)b; (void)bias; (void)c; (void)m; (void)n; (void)k;
+    selected = 1;
+}
+static void gemm_nt_q4_k_q8_k_segmented_singleton_tail_parallel_dispatch(
+    const void *a, const void *b, const float *bias, float *c,
+    int m, int n, int k, const int *lengths, int count) {
+    (void)a; (void)b; (void)bias; (void)c; (void)m; (void)n; (void)k;
+    selected = 2;
+    saw_count = count;
+    for (int i = 0; i < 3; ++i) saw_lengths[i] = lengths[i];
+}
+static void run_declared(int num_tokens) {
+    float A[40] = {0}, B[40] = {0}, C[20] = {0};
+    int rows = num_tokens;
+    (void)A; (void)B; (void)C;
+__DECLARED__
+}
+static void run_undeclared(int num_tokens) {
+    float A[40] = {0}, B[40] = {0}, C[20] = {0};
+    int rows = num_tokens;
+    (void)A; (void)B; (void)C;
+__UNDECLARED__
+}
+int main(void) {
+    run_declared(5);
+    if (selected != 2 || saw_count != 3 || saw_lengths[0] != 2 ||
+        saw_lengths[1] != 2 || saw_lengths[2] != 1) return 1;
+    selected = 0;
+    run_declared(4);
+    if (selected != 1) return 2;
+    selected = 0;
+    run_undeclared(5);
+    if (selected != 1) return 3;
+    return 0;
+}
+'''.replace("__DECLARED__", declared).replace("__UNDECLARED__", undeclared)
+        with tempfile.TemporaryDirectory(prefix="cke_projection_contract_") as tmp:
+            path = Path(tmp)
+            (path / "fixture.c").write_text(source, encoding="utf-8")
+            compiled = subprocess.run(
+                [cc, "-std=c11", "-Wall", "-Werror", str(path / "fixture.c"),
+                 "-o", str(path / "fixture")],
+                capture_output=True, text=True,
+            )
+            self.assertEqual(compiled.returncode, 0, compiled.stderr)
+            subprocess.run([str(path / "fixture")], check=True)
+
+    def test_segmented_gate_up_contract_disables_uncontracted_fusion(self) -> None:
+        op = self._q4_segmented_projection_op("mlp_gate_up")
+        swiglu = {
+            "op": "swiglu",
+            "function": "silu_mul",
+            "layer": 0,
+            "args": [{"name": "output", "expr": "Y"}],
+        }
+        config = self._segment_preserving_config()
+        bridge = config["multimodal_bridge_contract"]
+        bridge["prefill_batching"] = "segmented_append"
+        bridge["prefill_schedule"].update({
+            "segments": ["text_before", "visual", "text_after"],
+            "cache_transition": "append_preserve",
+            "position_transition": "runtime_offset",
+        })
+        direct = codegen_prefill_v8.emit_prefill_op(
+            op, 0, config, segment_plan_available=True
+        )
+        self.assertIn(
+            "gemm_nt_q4_k_q8_k_segmented_pairwise_split_min_parallel_dispatch(",
+            direct,
+        )
+        emitted = codegen_prefill_v8.emit_prefill_from_embedded_function(
+            [op, swiglu], config
+        )
+        self.assertIn(
+            "gemm_nt_q4_k_q8_k_segmented_pairwise_split_min_parallel_dispatch(",
+            emitted,
+        )
+        self.assertNotIn("gemm_nt_q4_k_q8_k_gateup_swiglu_x16_parallel_dispatch(", emitted)
+
+        del op["resolved_execution"]["implementation"]["segmented_row_provider"]
+        with self.assertRaisesRegex(RuntimeError, "map-owned segmented-row provider"):
+            codegen_prefill_v8.emit_prefill_from_embedded_function([op, swiglu], config)
+
+    def test_segmented_projection_rejects_wrong_call_arity(self) -> None:
+        op = self._q4_segmented_projection_op()
+        op["args"].pop()
+        with self.assertRaisesRegex(RuntimeError, "requires seven GEMM arguments"):
+            codegen_prefill_v8.emit_prefill_op(
+                op, 0, self._segment_preserving_config(),
+                segment_plan_available=True,
+            )
+
+    def test_segmented_projection_rejects_incompatible_boundary_semantics(self) -> None:
+        op = self._q4_segmented_projection_op()
+        op["resolved_execution"]["implementation"]["segmented_row_provider"][
+            "boundary_semantics"
+        ] = "continue_row_group_across_segments"
+        with self.assertRaisesRegex(RuntimeError, "incompatible boundary semantics"):
+            codegen_prefill_v8.emit_prefill_op(
+                op, 0, self._segment_preserving_config(),
+                segment_plan_available=True,
+            )
 
     def test_attention_uses_map_owned_segmented_query_provider(self) -> None:
         base_arg_names = [

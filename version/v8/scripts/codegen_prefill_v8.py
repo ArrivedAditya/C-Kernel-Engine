@@ -781,7 +781,11 @@ def emit_prefill_op(
                 lines.append("    #endif")
             return "\n".join(lines)
 
-    if op_type == "mlp_gate_up" and is_q4_q6_q8_linear(linear_emission):
+    if (
+        op_type == "mlp_gate_up"
+        and is_q4_q6_q8_linear(linear_emission)
+        and not segmented_row_function
+    ):
         a_expr = arg_expr_by_name.get("a")
         b_expr = arg_expr_by_name.get("b")
         bias_expr = arg_expr_by_name.get("bias", "NULL")
@@ -1013,7 +1017,12 @@ def emit_prefill_op(
             lines.append(f"            {arg}{comma}")
         lines.append("        );")
         lines.append("    }")
-    elif segmented_row_function and len(args) == 7:
+    elif segmented_row_function:
+        if len(args) != 7:
+            raise RuntimeError(
+                f"operation {op_type!r} requires seven GEMM arguments for segmented rows, "
+                f"got {len(args)}"
+            )
         lines.append("    if (ck_multimodal_prefill_has_segment_plan(num_tokens)) {")
         lines.append(f"        {segmented_row_function}(")
         for arg in args:
@@ -2916,6 +2925,10 @@ static void ck_prefill_from_embedded_range(CKModel *model, int num_tokens, int p
                 linear_emission["weight_format"] == "q4_k"
                 and isinstance(next_op, dict)
                 and str(next_op.get("op", "")) in {"silu_mul", "swiglu"}
+                and not (
+                    has_mixed_prefill_segments
+                    and _segmented_row_provider(op, config)
+                )
             ):
                 fused_var = f"ck_q4_gateup_swiglu_x16_fused_{seq_idx}"
                 op_code = _emit_prefill_q4_gateup_swiglu_x16(
