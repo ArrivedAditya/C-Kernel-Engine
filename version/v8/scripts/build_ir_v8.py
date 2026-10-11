@@ -706,8 +706,13 @@ def _validate_selected_provider_contract(
     op = str(arranged.get("op", ""))
     kernel_id = str(arranged.get("kernel", ""))
     required = required_numerics.get(op)
+    declared = provider.get("numerical_contract")
+    if isinstance(declared, dict) and declared.get("circuit_binding_required") is True and required is None:
+        raise RuntimeError(
+            f"HARD PROVIDER NUMERICAL FAULT: {op} selected {kernel_id} "
+            "but the circuit omits its required provider numerical contract."
+        )
     if required is not None:
-        declared = provider.get("numerical_contract")
         actual = declared.get("id") if isinstance(declared, dict) else None
         if not isinstance(required, str) or not required or actual != required:
             raise RuntimeError(
@@ -10626,7 +10631,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
 
     # GraphIR records the selected provider's execution capability for every
     # versioned kernel map. Later stages may carry it but must not reinterpret it.
-    required_provider_numerics = template_contract.get("provider_numerical_requirements") or {}
+    required_provider_numerics = template_contract.get("provider_numerical_requirements", {})
     if not isinstance(required_provider_numerics, dict):
         raise RuntimeError("HARD PROVIDER NUMERICAL FAULT: circuit requirements must be an object")
     for arranged in arranged_kernels:

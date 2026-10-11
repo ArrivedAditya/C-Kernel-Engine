@@ -2,9 +2,11 @@
   "id": "gemma4_per_layer_embed_forward",
   "op": "gemma4_per_layer_embed",
   "operation_interface": "per_layer_input.apply.fp32.v1",
+  "provider_numerical_contract_schema": 1,
   "numerical_contract": {
     "id": "gemma4_embed_llama_cpu_fp16_table_gelu_v1",
     "activation": "gelu_fp16_table_input_output_rne_with_signed_10_clamps",
+    "circuit_binding_required": true,
     "oracle_revision": "19e28a27702117d8f2eb16b825b9a308111f67d9",
     "oracle_build": "ggml-cpu GGML_GELU_FP16 enabled"
   },

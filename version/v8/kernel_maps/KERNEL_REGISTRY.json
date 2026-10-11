@@ -37868,9 +37868,11 @@
       "id": "gemma4_per_layer_embed_forward",
       "op": "gemma4_per_layer_embed",
       "operation_interface": "per_layer_input.apply.fp32.v1",
+      "provider_numerical_contract_schema": 1,
       "numerical_contract": {
         "id": "gemma4_embed_llama_cpu_fp16_table_gelu_v1",
         "activation": "gelu_fp16_table_input_output_rne_with_signed_10_clamps",
+        "circuit_binding_required": true,
         "oracle_revision": "19e28a27702117d8f2eb16b825b9a308111f67d9",
         "oracle_build": "ggml-cpu GGML_GELU_FP16 enabled"
       },
@@ -38108,11 +38110,13 @@
       "id": "gemma4_per_layer_prepare_bf16_forward",
       "op": "gemma4_per_layer_prepare",
       "operation_interface": "per_layer_input.prepare.bf16_token.bf16_projection.fp32.v1",
+      "provider_numerical_contract_schema": 1,
       "numerical_contract": {
         "id": "gemma4_prepare_llama_cpu_bf16_input_rne_v1",
         "projection_input": "fp32_rounded_to_bf16_rne_before_dot",
         "projection_weight": "bf16",
         "token_embedding": "bf16",
+        "circuit_binding_required": true,
         "oracle_revision": "19e28a27702117d8f2eb16b825b9a308111f67d9",
         "oracle_build": "ggml-cpu BF16 dot input conversion"
       },
@@ -38123,7 +38127,7 @@
             "max": 16384
           }
         },
-        "stack_bytes_per_worker_max": 65536
+        "rounded_input_stack_bytes_per_worker_max": 65536
       },
       "selection": {
         "status": "production",
@@ -38335,7 +38339,7 @@
           }
         ]
       },
-      "notes": "Prepare Gemma4 per-layer input stream from BF16 safetensors token embeddings and BF16 projection weights. The projection rounds each FP32 hidden input to BF16 (round-to-nearest-even) before multiplication. Supported embed_dim is at most 16384. Prefill dynamically partitions independent token rows through the persistent thread pool while retaining each row's projection reduction order.",
+      "notes": "Prepare Gemma4 per-layer input stream from BF16 safetensors token embeddings and BF16 projection weights. The projection rounds each FP32 hidden input to BF16 (round-to-nearest-even) before multiplication. Supported embed_dim is at most 16384. The rounded-input buffer alone uses up to 65536 stack bytes per worker; this is not a bound on total worker stack. Prefill dynamically partitions independent token rows through the persistent thread pool while retaining each row's projection reduction order.",
       "name": "gemma4_per_layer_prepare_bf16_forward",
       "_source_file": "gemma4_per_layer_prepare_bf16_forward.json"
     },
@@ -38343,11 +38347,13 @@
       "id": "gemma4_per_layer_prepare_forward",
       "op": "gemma4_per_layer_prepare",
       "operation_interface": "per_layer_input.prepare.q5_k_token.bf16_projection.fp32.v1",
+      "provider_numerical_contract_schema": 1,
       "numerical_contract": {
         "id": "gemma4_prepare_llama_cpu_bf16_input_rne_v1",
         "projection_input": "fp32_rounded_to_bf16_rne_before_dot",
         "projection_weight": "bf16",
         "token_embedding": "q5_k",
+        "circuit_binding_required": true,
         "oracle_revision": "19e28a27702117d8f2eb16b825b9a308111f67d9",
         "oracle_build": "ggml-cpu BF16 dot input conversion"
       },
@@ -38358,7 +38364,7 @@
             "max": 16384
           }
         },
-        "stack_bytes_per_worker_max": 65536
+        "rounded_input_stack_bytes_per_worker_max": 65536
       },
       "selection": {
         "status": "production",
@@ -38569,7 +38575,7 @@
           }
         ]
       },
-      "notes": "Prepare Gemma4 per-layer input stream once from the original token embedding stream. The BF16 projection rounds each FP32 hidden input to BF16 (round-to-nearest-even) before multiplication. Supported embed_dim is at most 16384. Prefill dynamically partitions independent token rows through the persistent thread pool while retaining each row's projection reduction order.",
+      "notes": "Prepare Gemma4 per-layer input stream once from the original token embedding stream. The BF16 projection rounds each FP32 hidden input to BF16 (round-to-nearest-even) before multiplication. Supported embed_dim is at most 16384. The rounded-input buffer alone uses up to 65536 stack bytes per worker; this is not a bound on total worker stack. Prefill dynamically partitions independent token rows through the persistent thread pool while retaining each row's projection reduction order.",
       "name": "gemma4_per_layer_prepare_forward",
       "_source_file": "gemma4_per_layer_prepare_forward.json"
     },
