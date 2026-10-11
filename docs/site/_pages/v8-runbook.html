@@ -1692,12 +1692,19 @@ version/v8/scripts/ck_serve_v8.py "$RUN_DIR" --run "$RUN_DIR" \
         available through <code>server/batch_http_acceptance.py</code>. It
         checks expected serving and loaded session hashes before generation,
         compares two simultaneous greedy streams with their isolated outputs,
-        requires the server's mixed-step counter to advance, then cancels one
-        request and serves another on the same instance. The
-        <code>/v1/cke/batch-observation</code> endpoint exposes only bounded
-        counters and slot health for this experimental mode. The retained local
-        run observed 27 mixed steps with matching outputs, cancellation and
-        recovery. This certifies the tested HTTP/native boundary only; Gemma3's
+        requires mixed-step evidence attributed to both response IDs, then
+        cancels one request while its peer continues and serves a follow-up on
+        the same instance. The bounded
+        <code>/v1/cke/batch-observation/{response_id}</code> endpoint identifies
+        the exact peer sharing each generated step; global counters alone are
+        diagnostic. The probe requires an idle owner, records synthetic prompts,
+        settings, output hashes and terminal reasons, and cancels outstanding
+        requests on failure. The retained local run observed 27 attributed mixed
+        steps with matching outputs, peer continuation and recovery. The tested
+        artifact exhausted its output limit, so model-generated normal EOS is
+        explicitly not certified; deterministic stream tests cover normal EOS
+        and duplicate-terminal rejection. This certifies the tested HTTP/native
+        boundary only; Gemma3's
         profile declares chat without tools, so it is not a completed agent
         harness task or an ordinary-prefill parity result. Keep a full
         <code>tokenizer.json</code> beside this GGUF-derived artifact when its

@@ -110,6 +110,48 @@ class ToolLoop(FakeLoop):
         return BatchTick(tuple(tokens), tuple(completed), mask)
 
 
+class EosLoop(FakeLoop):
+    def advance(self):
+        tick = super().advance()
+        if not tick.tokens:
+            return tick
+        with self.guard:
+            self.active.clear()
+        completed = tuple(CompletionEvent(event.ticket, event.slot, "eos", 1)
+                          for event in tick.tokens)
+        return BatchTick(tick.tokens, completed, tick.advanced_mask)
+
+
+def test_native_normal_eos_completes_both_http_delivery_modes():
+    loop = EosLoop()
+    session = FakeSession()
+    owner = Batch2HTTPOwner(session, max_extra_bytes=1, max_prompt_tokens=8,
+                            loop=loop)
+    app = create_app(session, model="m", context_length=128,
+                     chat_template="{{ messages[0].content }}", batch_http=owner)
+    client = TestClient(app)
+    loop.gate.set()
+    try:
+        for stream in (False, True):
+            response = client.post("/v1/responses", json={"model": "m", "input": "A",
+                                                       "max_output_tokens": 4,
+                                                       "temperature": 0, "stream": stream})
+            assert response.status_code == 200
+            if stream:
+                events = [json.loads(line.removeprefix("data: "))
+                          for line in response.text.splitlines() if line.startswith("data: ")]
+                terminal = [event for event in events if event.get("type") == "response.completed"]
+                assert len(terminal) == 1
+                body = terminal[0]["response"]
+            else:
+                body = response.json()
+            assert body["status"] == "completed"
+            assert body["output_text"] == "A"
+            assert body.get("incomplete_details") is None
+    finally:
+        owner.close()
+
+
 class FailOnceLoop(FakeLoop):
     def __init__(self):
         super().__init__()
