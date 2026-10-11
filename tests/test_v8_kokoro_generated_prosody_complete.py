@@ -1,5 +1,6 @@
 """Complete generated Kokoro F0/noise curves versus pinned model hooks."""
 import ctypes
+import copy
 import hashlib
 import json
 from pathlib import Path
@@ -210,8 +211,8 @@ class KokoroGeneratedProsodyCompleteTest(unittest.TestCase):
                 'backend_version': self.direct_meta['environment']['torch'],
                 'status': 'pass' if float(error[point]) <= limit else 'fail',
                 'gate': 'diagnostic', 'blocking': False,
-                'reason': 'coarse full-model checkpoint; first divergent '
-                          'operation still requires identical-input replay',
+                'reason': 'connected checkpoint; separate identical-input '
+                          'stage replay isolates local arithmetic drift',
                 'max_diff': float(error[point]),
                 'worst_index': list(map(int, point)),
                 'actual': float(actual[point]),
@@ -239,6 +240,125 @@ class KokoroGeneratedProsodyCompleteTest(unittest.TestCase):
                                       'N_final': 1e-4},
             'configuration': '36 phonemes; A=103 of 128; 2A=206 of 256; af_heart',
             'reproduction_command': 'python3 -m unittest ' + self.id()}))
+
+    def test_identical_reference_inputs_localize_f0_stage_drift(self):
+        shared, shared_meta = verified_fixture('prosody_shared')
+        self.assertEqual(shared_meta['model_pin'], self.direct_meta['model_pin'])
+        graph = copy.deepcopy(author.build_circuit())
+        graph['name'] = 'kokoro_f0_stage_reference_input_replay'
+        graph['native_entry']['function'] = 'ck_kokoro_f0_stage_reference_input_replay'
+        references = {
+            'shared': (shared['output'].T, 512, 128, 103),
+            'block0': (self.direct['predictor_F0_0'], 512, 128, 103),
+            'block1': (self.direct['predictor_F0_1'], 256, 256, 206),
+            'block2': (self.direct['predictor_F0_2'], 256, 256, 206),
+        }
+        for name, (_values, channels, capacity, _length) in references.items():
+            buffer = f'reference_f0_{name}'
+            graph['activation_buffers'][buffer] = {
+                'shape': [channels, capacity]}
+            graph['activation_bindings'][buffer] = buffer
+
+        def replace(section, operation, port, reference):
+            block = graph['block_types'][section]
+            entries = block['footer'] if section == 'prosody_norm' else \
+                block['body']['ops']
+            item = next(value for value in entries if value['id'] == operation)
+            item['graph_slots']['inputs'][port] = \
+                f'external:reference_f0_{reference}'
+
+        for section, operation, port, reference in (
+                ('prosody_norm', 'f0_norm0_output', 'input', 'shared'),
+                ('prosody_first_block', 'f0_block0_output', 'left', 'shared'),
+                ('prosody_second_block', 'f0_block1_norm0_output', 'input', 'block0'),
+                ('prosody_second_block', 'f0_block1_shortcut_upsample',
+                 'input', 'block0'),
+                ('prosody_final', 'f0_block2_norm0_output', 'input', 'block1'),
+                ('prosody_final', 'f0_block2_output', 'left', 'block1'),
+                ('prosody_final', 'f0_output', 'input', 'block2')):
+            replace(section, operation, port, reference)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / 'f0-stage-reference-input-replay.json'
+            path.write_text(json.dumps(graph))
+            source = copy.deepcopy(self.source)
+            source['template'] = graph
+            source['config']['model'] = graph['name']
+            source['config']['arch'] = graph['name']
+            layout, calls, _library, _loaded, function = \
+                compile_native_graph(root, source, path)
+            self.assertEqual(calls['errors'], [])
+            function.argtypes = [ctypes.POINTER(ctypes.c_uint8),
+                                 ctypes.c_size_t,
+                                 ctypes.POINTER(ctypes.c_int32),
+                                 ctypes.POINTER(ctypes.c_int32)]
+            buffers = {item['name']: item for item in
+                       layout['memory']['activations']['buffers']}
+            stages = (
+                ('block0', 'f0_block0_output', 'predictor_F0_0', 512, 128, 103),
+                ('block1', 'f0_block1_output', 'predictor_F0_1', 256, 256, 206),
+                ('block2', 'f0_block2_output', 'predictor_F0_2', 256, 256, 206),
+                ('projection', 'f0_output', 'predictor_F0_proj', 1, 256, 206),
+            )
+
+            def execute(zero_references=False):
+                arena = populated_duration_arena(layout, self.entries,
+                    self.bump, self.encoder, self.duration)
+                for name, (values, channels, capacity, length) in references.items():
+                    item = buffers[f'reference_f0_{name}']
+                    supplied = np.ndarray((channels, capacity), np.float32,
+                                          buffer=arena, offset=item['abs_offset'])
+                    supplied[:] = -91.
+                    supplied[:, :length] = 0. if zero_references else values
+                frames = ctypes.c_int32(-999)
+                doubled = ctypes.c_int32(-999)
+                self.assertEqual(function(arena, len(arena),
+                    ctypes.byref(frames), ctypes.byref(doubled)), 0)
+                self.assertEqual((frames.value, doubled.value), (103, 206))
+                outputs = {}
+                for stage, buffer, _oracle, channels, capacity, length in stages:
+                    item = buffers[buffer]
+                    actual = np.ndarray((channels, capacity), np.float32,
+                                        buffer=arena, offset=item['abs_offset'])
+                    self.assertTrue(np.isfinite(actual[:, :length]).all())
+                    outputs[stage] = actual[:, :length].copy()
+                return outputs
+
+            baseline = execute()
+            for stage, _buffer, oracle, _channels, _capacity, _length in stages:
+                actual = baseline[stage]
+                reference = self.direct[oracle]
+                error = np.abs(actual - reference)
+                point = np.unravel_index(np.argmax(error), error.shape)
+                worst = float(error[point])
+                print('CKE_NUMERICAL_CASE ' + json.dumps({
+                    'case_id': f'kokoro.F0.{stage}.identical-input-replay-v1',
+                    'name': f'Kokoro F0 {stage} identical-input replay',
+                    'provider': 'generated_prosody_complete',
+                    'dtype': 'fp32', 'direction': 'inference',
+                    'oracle': 'pinned-full-kmodel-pytorch28',
+                    'status': 'pass' if worst <= 5e-5 else 'fail',
+                    'gate': 'diagnostic', 'blocking': False,
+                    'max_diff': worst,
+                    'worst_index': list(map(int, point)),
+                    'actual': float(actual[point]),
+                    'reference': float(reference[point]),
+                    'tolerance': 5e-5,
+                    'configuration': '36 phonemes; af_heart; captured upstream input at each F0 stage',
+                    'reproduction_command': 'python3 -m unittest '
+                        'tests.test_v8_kokoro_generated_prosody_complete.'
+                        'KokoroGeneratedProsodyCompleteTest.'
+                        'test_identical_reference_inputs_localize_f0_stage_drift'}))
+
+            changed = execute(zero_references=True)
+            for input_stage, output_stage in (
+                    ('shared', 'block0'), ('block0', 'block1'),
+                    ('block1', 'block2'), ('block2', 'projection')):
+                self.assertGreater(float(np.max(np.abs(
+                    changed[output_stage] - baseline[output_stage]))), 1e-4,
+                    f'{input_stage} is disconnected from {output_stage}')
+
 
     def test_repeated_lengths_and_rejection_preserve_outputs(self):
         arena = self.arena()
