@@ -9,6 +9,26 @@ import pytest
 
 from server import session_v8
 from tests.test_v8_batch_session_scheduler import MODEL_SOURCE
+from version.v8.scripts.certify_batch_mixed_one_row_v8 import (
+    CAP_BATCH_TWO_ROWS, _finite_logit_bytes, _require_shared_projections,
+)
+
+
+def test_mixed_certificate_rejects_identical_nonfinite_logits_and_missing_shared_work():
+    for invalid in (float("nan"), float("inf"), -float("inf")):
+        reference = (ctypes.c_float * 3)(1, invalid, 2)
+        mixed = (ctypes.c_float * 3)(1, invalid, 2)
+        assert bytes(reference) == bytes(mixed)
+        with pytest.raises(AssertionError, match="nonfinite logit at index 1"):
+            _finite_logit_bytes(reference, "reference")
+        with pytest.raises(AssertionError, match="nonfinite logit at index 1"):
+            _finite_logit_bytes(mixed, "mixed")
+    assert _finite_logit_bytes((ctypes.c_float * 2)(1, 2), "finite")
+    for capabilities, groups in ((0, 72), (CAP_BATCH_TWO_ROWS, None),
+                                 (CAP_BATCH_TWO_ROWS, 0)):
+        with pytest.raises(AssertionError):
+            _require_shared_projections(capabilities, groups)
+    assert _require_shared_projections(CAP_BATCH_TWO_ROWS, 72) == 72
 
 
 def test_staged_prefill_binding_tracks_progress_and_cancel(tmp_path):

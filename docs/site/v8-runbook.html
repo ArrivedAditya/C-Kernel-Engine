@@ -2577,9 +2577,11 @@ version/v8/scripts/ck_serve_v8.py "$RUN_DIR" --run "$RUN_DIR" \
         two-row decode call. This is a two-slot, one-prompt-row bridge, not
         variable-size chunk execution or a general batch-N contract. Both
         options remain opt-in; the mixed flag requires staged prefill.
-        The local Gemma3-270M Q5_K_M generated-runtime check compares full
-        logits, complete KV bytes and positions against serialized decode
-        replay for either prefill slot. It does not establish parity with the
+        The local Gemma3-270M Q5_K_M generated-runtime check compares finite
+        full logits at every step, complete KV bytes and positions against
+        serialized decode replay for either prefill slot. It covers consecutive
+        mixed steps, continuation after prompt completion and a 32-token
+        session-capacity boundary. It does not establish parity with the
         ordinary prefill entry or certify a resolved serving deployment.
     </p>
     <p>
