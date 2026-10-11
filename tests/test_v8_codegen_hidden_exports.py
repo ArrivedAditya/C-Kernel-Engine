@@ -1237,6 +1237,89 @@ int main(int argc, char **argv) {
                     emitted,
                 )
 
+    def test_gemma4_prepared_input_exports_complete_runtime_extent(self) -> None:
+        op = {
+            "op": "gemma4_per_layer_prepare",
+            "function": "gemma4_per_layer_prepare_forward",
+            "layer": -1,
+            "args": [
+                _arg("output", "PREPARED"),
+                _arg("per_layer_dim", "256"),
+            ],
+        }
+        emitted = prefill_codegen.emit_prefill_op(op, 1, {"embed_dim": 2560})
+        self.assertIn(
+            '"gemma4_per_layer_prepare", (const float*)PREPARED, '
+            "(num_tokens) * (NUM_LAYERS * (256))",
+            emitted,
+        )
+        self.assertIn('"gemma4_per_layer_prepare_last"', emitted)
+
+    def test_gemma4_prepared_input_export_executes_full_stream(self) -> None:
+        compiler = shutil.which("cc")
+        if compiler is None:
+            self.skipTest("C compiler unavailable")
+        op = {
+            "op": "gemma4_per_layer_prepare",
+            "function": "gemma4_per_layer_prepare_forward",
+            "layer": -1,
+            "args": [_arg("output", "PREPARED"), _arg("per_layer_dim", "256")],
+        }
+        emitted = prefill_codegen.emit_prefill_op(op, 1, {"embed_dim": 2560})
+        source = r"""
+#include <stddef.h>
+#include <string.h>
+#define NUM_LAYERS 2
+#define PREPARED (&prepared[1])
+typedef struct { int calls; } Model;
+static float prepared[3 * NUM_LAYERS * 256 + 2];
+static void gemma4_per_layer_prepare_forward(float *out, int width) {
+    if (width != 256) __builtin_trap();
+    for (int token = 0; token < 3; ++token)
+        for (int layer = 0; layer < NUM_LAYERS; ++layer)
+            for (int channel = 0; channel < 256; ++channel)
+                out[(token * NUM_LAYERS + layer) * 256 + channel] =
+                    (float)(token * 10000 + layer * 1000 + channel);
+}
+static void ck_debug_export_hidden(Model *model, int layer, const char *label,
+                                    const float *data, int count) {
+    int last = model->calls++;
+    if (layer != -1 || count != (last ? NUM_LAYERS * 256 : 3 * NUM_LAYERS * 256))
+        __builtin_trap();
+    if (strcmp(label, last ? "gemma4_per_layer_prepare_last" :
+                            "gemma4_per_layer_prepare") != 0) __builtin_trap();
+    for (int i = 0; i < count; ++i) {
+        int index = last ? i + 2 * NUM_LAYERS * 256 : i;
+        int token = index / (NUM_LAYERS * 256);
+        int layer_index = (index / 256) % NUM_LAYERS;
+        int channel = index % 256;
+        if (data[i] != (float)(token * 10000 + layer_index * 1000 + channel))
+            __builtin_trap();
+    }
+}
+int main(void) {
+    Model storage = {0};
+    Model *model = &storage;
+    int num_tokens = 3;
+    prepared[0] = -1234.0f;
+    prepared[3 * NUM_LAYERS * 256 + 1] = -5678.0f;
+""" + emitted + r"""
+    if (storage.calls != 2 || prepared[0] != -1234.0f ||
+        prepared[3 * NUM_LAYERS * 256 + 1] != -5678.0f) return 1;
+    return 0;
+}
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            c_path = Path(directory) / "prepared.c"
+            executable = Path(directory) / "prepared"
+            c_path.write_text(source, encoding="ascii")
+            subprocess.run(
+                [compiler, "-std=c11", "-Wall", "-Wextra", "-Werror",
+                 str(c_path), "-o", str(executable)],
+                check=True, capture_output=True, text=True,
+            )
+            subprocess.run([str(executable)], check=True)
+
     def test_gemma4_layer_output_exports_complete_runtime_extent(self) -> None:
         op = {
             "op": "gemma4_per_layer_embed",

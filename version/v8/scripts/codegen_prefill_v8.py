@@ -1264,7 +1264,10 @@ def emit_prefill_op(
             _hidden_mul("num_tokens", _hidden_arg("N", "n") or "EMBED_DIM"),
         )
     elif op_type == "gemma4_per_layer_prepare":
-        _emit_hidden_last(_hidden_arg("output", "out", "per_layer_input", "y"), "gemma4_per_layer_prepare", "NUM_LAYERS * 256")
+        prepared = _hidden_arg("output", "out", "per_layer_input", "y")
+        prepared_row = f"NUM_LAYERS * ({_hidden_arg('per_layer_dim') or '256'})"
+        _emit_hidden_full(prepared, op_type, _hidden_mul("num_tokens", prepared_row))
+        _emit_hidden_last(prepared, op_type, prepared_row)
     elif op_type in ("q_proj", "q_gate_proj"):
         q_width = _hidden_arg("n") or "NUM_HEADS * HEAD_DIM"
         _emit_hidden_full(

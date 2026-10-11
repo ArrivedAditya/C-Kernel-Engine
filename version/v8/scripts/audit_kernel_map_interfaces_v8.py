@@ -105,6 +105,43 @@ def _validate_selection(doc: Dict[str, Any], path: Path) -> bool:
     return True
 
 
+def _validate_provider_constraints(doc: Dict[str, Any], path: Path) -> None:
+    schema = doc.get("provider_numerical_contract_schema")
+    if "provider_numerical_contract_schema" not in doc:
+        return
+    if type(schema) is not int or schema != 1:
+        raise RuntimeError(f"unsupported provider numerical contract schema in {path}")
+    contract = doc.get("numerical_contract")
+    if not isinstance(contract, dict):
+        raise RuntimeError(f"provider numerical contract must be an object in {path}")
+    if contract.get("circuit_binding_required") is not True:
+        raise RuntimeError(f"invalid circuit_binding_required in {path}")
+    if not isinstance(contract.get("id"), str) or not contract["id"].strip():
+        raise RuntimeError(f"missing numerical contract ID in {path}")
+    constraints = doc.get("constraints")
+    if "constraints" not in doc:
+        return
+    if not isinstance(constraints, dict):
+        raise RuntimeError(f"provider constraints must be an object in {path}")
+    dimensions = constraints.get("dimensions")
+    if dimensions is not None:
+        if not isinstance(dimensions, dict) or not dimensions:
+            raise RuntimeError(f"invalid dimension constraints in {path}")
+        for name, limits in dimensions.items():
+            if (not isinstance(name, str) or not name or not isinstance(limits, dict)
+                    or type(limits.get("min")) is not int
+                    or type(limits.get("max")) is not int
+                    or limits["min"] < 0 or limits["max"] < limits["min"]):
+                raise RuntimeError(f"invalid {name!r} dimension constraint in {path}")
+    rounded_bytes = constraints.get("rounded_input_stack_bytes_per_worker_max")
+    if rounded_bytes is not None and (type(rounded_bytes) is not int or rounded_bytes <= 0):
+        raise RuntimeError(f"invalid rounded-input stack budget in {path}")
+    if rounded_bytes is not None:
+        embed_bounds = dimensions.get("embed_dim") if isinstance(dimensions, dict) else None
+        if not isinstance(embed_bounds, dict) or rounded_bytes != 4 * embed_bounds["max"]:
+            raise RuntimeError(f"rounded-input stack budget does not match embed_dim in {path}")
+
+
 _WRITABLE_ACCESS = {"write", "read_write"}
 
 
@@ -172,6 +209,7 @@ def build_report() -> Dict[str, Any]:
         if path.name in NON_MAP_FILES:
             continue
         doc = _load(path)
+        _validate_provider_constraints(doc, path)
         if doc.get("operation_interface"):
             _validate_port_aliases(doc, path)
         maps.append((path, doc))
