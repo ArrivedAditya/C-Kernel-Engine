@@ -699,6 +699,45 @@ def _graph_ir_execution_metadata(capability: Dict[str, Any]) -> Dict[str, Any]:
     return metadata
 
 
+def _validate_selected_provider_contract(
+    arranged: Dict[str, Any], provider: Dict[str, Any],
+    config: Dict[str, Any], required_numerics: Dict[str, Any],
+) -> None:
+    op = str(arranged.get("op", ""))
+    kernel_id = str(arranged.get("kernel", ""))
+    required = required_numerics.get(op)
+    if required is not None:
+        declared = provider.get("numerical_contract")
+        actual = declared.get("id") if isinstance(declared, dict) else None
+        if not isinstance(required, str) or not required or actual != required:
+            raise RuntimeError(
+                f"HARD PROVIDER NUMERICAL FAULT: {op} selected {kernel_id} "
+                f"with contract {actual!r}, requires {required!r}."
+            )
+        arranged["resolved_provider_numerical_contract"] = copy.deepcopy(declared)
+
+    constraints = provider.get("constraints", {})
+    if not isinstance(constraints, dict):
+        raise RuntimeError(f"HARD PROVIDER DIMENSION FAULT: {kernel_id} has invalid constraints")
+    bounds = constraints.get("dimensions")
+    if bounds is None:
+        return
+    if not isinstance(bounds, dict):
+        raise RuntimeError(f"HARD PROVIDER DIMENSION FAULT: {kernel_id} has invalid dimension bounds")
+    for dimension, limits in bounds.items():
+        value = config.get(dimension)
+        minimum = limits.get("min") if isinstance(limits, dict) else None
+        maximum = limits.get("max") if isinstance(limits, dict) else None
+        if (not isinstance(dimension, str) or not dimension
+                or type(minimum) is not int or type(maximum) is not int
+                or minimum < 0 or maximum < minimum
+                or type(value) is not int or not minimum <= value <= maximum):
+            raise RuntimeError(
+                f"HARD PROVIDER DIMENSION FAULT: {op} selected {kernel_id}, "
+                f"{dimension}={value!r} outside [{minimum}, {maximum}]."
+            )
+
+
 def _validate_resolved_kernels_are_emitted(
     plans: List[Dict[str, Any]],
     arranged_kernels: List[Dict[str, Any]],
@@ -10587,8 +10626,15 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
 
     # GraphIR records the selected provider's execution capability for every
     # versioned kernel map. Later stages may carry it but must not reinterpret it.
+    required_provider_numerics = template_contract.get("provider_numerical_requirements") or {}
+    if not isinstance(required_provider_numerics, dict):
+        raise RuntimeError("HARD PROVIDER NUMERICAL FAULT: circuit requirements must be an object")
     for arranged in arranged_kernels:
         kernel_id = str(arranged.get("kernel", ""))
+        _validate_selected_provider_contract(
+            arranged, registry_by_id.get(kernel_id, {}), config,
+            required_provider_numerics,
+        )
         capability = kernel_execution_capabilities.get(kernel_id)
         if capability is not None:
             arranged["resolved_execution"] = _graph_ir_execution_metadata(capability)

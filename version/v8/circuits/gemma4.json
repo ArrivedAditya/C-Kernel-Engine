@@ -34,6 +34,10 @@
     }
   },
   "contract": {
+    "provider_numerical_requirements": {
+      "gemma4_per_layer_prepare": "gemma4_prepare_llama_cpu_bf16_input_rne_v1",
+      "gemma4_per_layer_embed": "gemma4_embed_llama_cpu_fp16_table_gelu_v1"
+    },
     "tokenizer_contract": {
       "tokenizer_type": "sentencepiece",
       "bos_policy": "model_defined",

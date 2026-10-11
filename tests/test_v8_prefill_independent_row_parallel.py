@@ -671,7 +671,8 @@ class PrefillIndependentRowParallelTests(unittest.TestCase):
             np.testing.assert_array_equal(parallel.view(np.uint32), serial.view(np.uint32))
 
     def test_gemma4_prepare_rounds_bf16_projection_input(self) -> None:
-        hidden = np.asarray([[1.003, -0.707]], dtype=np.float32)
+        # Both inputs are exactly halfway between adjacent BF16 values.
+        hidden = np.asarray([[1.00390625, -1.01171875]], dtype=np.float32)
         token_ids = np.zeros(1, dtype=np.int32)
         weights = np.tile(
             np.asarray([[0x3F80, 0xBF80], [0x3F00, 0x3E80]], dtype=np.uint16),
@@ -686,6 +687,7 @@ class PrefillIndependentRowParallelTests(unittest.TestCase):
             bits + np.uint32(0x7FFF) + ((bits >> 16) & 1)
         ) & np.uint32(0xFFFF0000)
         rounded = rounded_bits.view(np.float32)[0]
+        np.testing.assert_array_equal(rounded, np.asarray([1.0, -1.015625], dtype=np.float32))
         float_weights = (weights.astype(np.uint32) << 16).view(np.float32).reshape(256, 2)
         projection = (float_weights @ rounded) / np.float32(math.sqrt(2.0))
         scale = np.float32(
@@ -714,6 +716,29 @@ class PrefillIndependentRowParallelTests(unittest.TestCase):
                 1, 1, 2, 256, 1, ctypes.c_float(1.0e-6),
             )
             np.testing.assert_allclose(out[0, 0], expected, rtol=0, atol=2.0e-7)
+
+    def test_gemma4_prepare_bf16_text_only_token_stream(self) -> None:
+        hidden = np.zeros((2, 2), dtype=np.float32)
+        token_ids = np.asarray([1, 0], dtype=np.int32)
+        embeddings = np.zeros((2, 1, 256), dtype=np.uint16)
+        embeddings[1, 0, 0] = 0x3F80  # 1.0 BF16
+        embeddings[0, 0, 1] = 0xBF00  # -0.5 BF16
+        weights = np.zeros((1, 256, 2), dtype=np.uint16)
+        norm = np.ones(256, dtype=np.float32)
+        out = np.full((2, 1, 256), np.nan, dtype=np.float32)
+        self.gemma4_prepare_bf16(
+            out.ctypes.data_as(FLOAT_PTR),
+            hidden.ctypes.data_as(FLOAT_PTR),
+            token_ids.ctypes.data_as(INT32_PTR),
+            embeddings.ctypes.data_as(ctypes.c_void_p),
+            weights.ctypes.data_as(ctypes.POINTER(ctypes.c_uint16)),
+            norm.ctypes.data_as(FLOAT_PTR),
+            2, 1, 2, 256, 2, ctypes.c_float(1.0e-6),
+        )
+        expected = np.zeros_like(out)
+        expected[0, 0, 0] = np.float32(16.0 * 0.7071067811865475)
+        expected[1, 0, 1] = np.float32(-8.0 * 0.7071067811865475)
+        np.testing.assert_allclose(out, expected, rtol=0, atol=1.0e-6)
 
     def test_gemma4_embed_token_rows_are_bit_exact(self) -> None:
         tokens, layers, layer = 13, 4, 2
@@ -797,6 +822,45 @@ class PrefillIndependentRowParallelTests(unittest.TestCase):
             1, 0, 1, 4, 256, ctypes.c_float(1.0e-6),
         )
         np.testing.assert_allclose(actual[0], half_oracle, atol=1.0e-6, rtol=0)
+
+    def test_gemma4_embed_matches_pinned_cpu_gelu_table_boundaries(self) -> None:
+        # llama.cpp 19e28a27702117d8f2eb16b825b9a308111f67d9,
+        # ggml-cpu built with GGML_GELU_FP16. Values read from its GELU table.
+        values = np.asarray(
+            [-10.01, -10.0, -2.0, -0.7, -0.125, 0.0, 0.13,
+             0.7, 0.700244140625, 1.00048828125, 1.5, 9.99, 10.0, 10.01],
+            dtype=np.float32,
+        )
+        table = np.asarray(
+            [0.0, 0.0, -0.04541015625, -0.16943359375,
+             -0.0562744140625, 0.0, 0.07171630859375,
+             0.53076171875, 0.53076171875, 0.84130859375,
+             1.3994140625, 9.9921875, 10.0, 10.01],
+            dtype=np.float32,
+        )
+        dim = len(values)
+        hidden = values.reshape(1, dim).copy()
+        per_layer_input = np.zeros((1, 1, 256), dtype=np.float32)
+        per_layer_input[0, 0, :dim] = 1.0
+        inp_gate = np.zeros((256, dim), dtype=np.float32)
+        projection = np.zeros((dim, 256), dtype=np.float32)
+        for i in range(dim):
+            inp_gate[i, i] = projection[i, i] = 1.0
+        post_norm = np.ones(dim, dtype=np.float32)
+        out_scale = np.ones(1, dtype=np.float32)
+        scale = np.float32(1.0 / math.sqrt(float(np.mean(table.astype(np.float64) ** 2)) + 1.0e-6))
+        expected = hidden[0] + table * scale
+        actual = hidden.copy()
+        self.gemma4_embed(
+            actual.ctypes.data_as(FLOAT_PTR),
+            per_layer_input.ctypes.data_as(FLOAT_PTR),
+            inp_gate.ctypes.data_as(FLOAT_PTR),
+            projection.ctypes.data_as(FLOAT_PTR),
+            post_norm.ctypes.data_as(FLOAT_PTR),
+            out_scale.ctypes.data_as(FLOAT_PTR),
+            1, 0, 1, dim, 256, ctypes.c_float(1.0e-6),
+        )
+        np.testing.assert_allclose(actual[0], expected, rtol=0, atol=3.0e-6)
 
 
 if __name__ == "__main__":

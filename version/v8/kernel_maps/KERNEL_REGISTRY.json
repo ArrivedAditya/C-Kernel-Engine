@@ -37868,6 +37868,12 @@
       "id": "gemma4_per_layer_embed_forward",
       "op": "gemma4_per_layer_embed",
       "operation_interface": "per_layer_input.apply.fp32.v1",
+      "numerical_contract": {
+        "id": "gemma4_embed_llama_cpu_fp16_table_gelu_v1",
+        "activation": "gelu_fp16_table_input_output_rne_with_signed_10_clamps",
+        "oracle_revision": "19e28a27702117d8f2eb16b825b9a308111f67d9",
+        "oracle_build": "ggml-cpu GGML_GELU_FP16 enabled"
+      },
       "selection": {
         "status": "production",
         "priority": 100,
@@ -38102,6 +38108,23 @@
       "id": "gemma4_per_layer_prepare_bf16_forward",
       "op": "gemma4_per_layer_prepare",
       "operation_interface": "per_layer_input.prepare.bf16_token.bf16_projection.fp32.v1",
+      "numerical_contract": {
+        "id": "gemma4_prepare_llama_cpu_bf16_input_rne_v1",
+        "projection_input": "fp32_rounded_to_bf16_rne_before_dot",
+        "projection_weight": "bf16",
+        "token_embedding": "bf16",
+        "oracle_revision": "19e28a27702117d8f2eb16b825b9a308111f67d9",
+        "oracle_build": "ggml-cpu BF16 dot input conversion"
+      },
+      "constraints": {
+        "dimensions": {
+          "embed_dim": {
+            "min": 1,
+            "max": 16384
+          }
+        },
+        "stack_bytes_per_worker_max": 65536
+      },
       "selection": {
         "status": "production",
         "priority": 100,
@@ -38320,6 +38343,23 @@
       "id": "gemma4_per_layer_prepare_forward",
       "op": "gemma4_per_layer_prepare",
       "operation_interface": "per_layer_input.prepare.q5_k_token.bf16_projection.fp32.v1",
+      "numerical_contract": {
+        "id": "gemma4_prepare_llama_cpu_bf16_input_rne_v1",
+        "projection_input": "fp32_rounded_to_bf16_rne_before_dot",
+        "projection_weight": "bf16",
+        "token_embedding": "q5_k",
+        "oracle_revision": "19e28a27702117d8f2eb16b825b9a308111f67d9",
+        "oracle_build": "ggml-cpu BF16 dot input conversion"
+      },
+      "constraints": {
+        "dimensions": {
+          "embed_dim": {
+            "min": 1,
+            "max": 16384
+          }
+        },
+        "stack_bytes_per_worker_max": 65536
+      },
       "selection": {
         "status": "production",
         "priority": 100,
