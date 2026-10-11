@@ -25,6 +25,7 @@ static int create_calls, fail_create_call, batch_calls, single_calls;
 static int embed_calls, reset_calls, activate_calls;
 static atomic_uint_fast64_t cancel_race_state;
 static atomic_int hold_batch, batch_entered;
+static atomic_int hold_decode, decode_entered;
 static const uint64_t caps = CK_MODEL_CAP_INIT |
     CK_MODEL_CAP_AUTOREGRESSIVE_DECODE | CK_MODEL_CAP_TEXT_ENCODE |
     CK_MODEL_CAP_TOKEN_DECODE | CK_MODEL_CAP_SEQUENCE_STATE_SWITCH |
@@ -87,6 +88,8 @@ int ck_model_forward(float *logits) {
 }
 int ck_model_decode(int32_t token, float *logits) {
     if (!active || !logits || token == 15) return -1;
+    atomic_store(&decode_entered, 1);
+    while (atomic_load(&hold_decode)) { }
     single_calls++; active->value += token; active->position++;
     for (int i=0; i<16; ++i) logits[i]=(float)(active->value+i);
     return 0;
@@ -118,6 +121,11 @@ void ck_fake_hold_batch(int value) {
     atomic_store(&hold_batch, value);
 }
 int ck_fake_batch_entered(void) { return atomic_load(&batch_entered); }
+void ck_fake_hold_decode(int value) {
+    atomic_store(&decode_entered, 0);
+    atomic_store(&hold_decode, value);
+}
+int ck_fake_decode_entered(void) { return atomic_load(&decode_entered); }
 void ck_fake_fail_create_on_call(int call) { fail_create_call=call; }
 int ck_fake_mutation_calls(void) { return activate_calls + reset_calls + embed_calls; }
 void ck_fake_cancel_state_set(uint64_t ticket, int cancelled) {
@@ -213,6 +221,13 @@ class BatchSessionSchedulerTests(unittest.TestCase):
                 ctypes.c_void_p, ctypes.c_uint32, ctypes.POINTER(ctypes.c_int32),
                 ctypes.c_int32, ctypes.POINTER(ctypes.c_float),
                 ctypes.POINTER(ctypes.c_uint64)]
+            session.ck_session_v8_batch2_prefill_begin.argtypes = [
+                ctypes.c_void_p, ctypes.c_uint32, ctypes.c_int32,
+                ctypes.POINTER(ctypes.c_uint64)]
+            session.ck_session_v8_batch2_prefill_append.argtypes = [
+                ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint64,
+                ctypes.POINTER(ctypes.c_int32), ctypes.c_int32,
+                ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_int32)]
             session.ck_session_v8_batch2_step.argtypes = [
                 ctypes.c_void_p, ctypes.POINTER(ctypes.c_int32),
                 ctypes.POINTER(ctypes.POINTER(ctypes.c_float)),
@@ -287,11 +302,96 @@ class BatchSessionSchedulerTests(unittest.TestCase):
                         ctypes.byref(advanced))
                     return rc, advanced.value
 
+                def begin(slot, total):
+                    ticket = ctypes.c_uint64()
+                    rc = session.ck_session_v8_batch2_prefill_begin(
+                        handle, slot, total, ctypes.byref(ticket))
+                    self.assertEqual(rc, 0)
+                    return ticket.value
+
+                def append(slot, ticket, tokens):
+                    values = (ctypes.c_int32 * len(tokens))(*tokens)
+                    consumed = ctypes.c_int32(-1)
+                    rc = session.ck_session_v8_batch2_prefill_append(
+                        handle, slot, ticket, values, len(tokens),
+                        outputs[slot],
+                        ctypes.byref(consumed))
+                    return rc, consumed.value
+
+                # A staged prompt is invisible to decode until its final
+                # chunk. B can decode between A's prompt chunks.
+                staged_a = begin(0, 3)
+                ticket_b = prefill(1, [3])
+                self.assertEqual(append(0, staged_a, [1]), (0, 1))
+                self.assertEqual(outputs[0][0], 1)
+                self.assertEqual(step(0, 2), (0, 2))
+                self.assertEqual(outputs[1][0], 5)
+                before = model.ck_fake_mutation_calls()
+                self.assertEqual(append(0, staged_a, [16]), (-1, -1))
+                self.assertEqual(model.ck_fake_mutation_calls(), before)
+                self.assertEqual(append(0, staged_a, [2, 3, 4]), (-1, -1))
+                self.assertEqual(append(0, staged_a, [2, 3]), (0, 3))
+                self.assertEqual(outputs[0][0], 6)
+                self.assertEqual(step(1, 1), (0, 3))
+                self.assertEqual([outputs[0][0], outputs[1][0]], [7, 6])
+                self.assertEqual(session.ck_session_v8_batch2_reset_slot(handle, 0), 0)
+                self.assertEqual(session.ck_session_v8_batch2_reset_slot(handle, 1), 0)
+
+                # Cancellation is ticketed before prefill; a partial prompt
+                # cannot become ready or poison the other sequence.
+                cancelled = begin(0, 2)
+                prefill(1, [2])
+                self.assertEqual(append(0, cancelled, [4]), (0, 1))
+                session.ck_session_v8_batch2_request_cancel(handle, cancelled)
+                self.assertEqual(append(0, cancelled, [5]), (-9, -1))
+                self.assertEqual(step(1, 1), (0, 2))
+                self.assertEqual(outputs[1][0], 3)
+                self.assertEqual(session.ck_session_v8_batch2_reset_slot(handle, 0), 0)
+                self.assertEqual(session.ck_session_v8_batch2_reset_slot(handle, 1), 0)
+                fresh = begin(0, 1)
+                self.assertNotEqual(fresh, cancelled)
+                session.ck_session_v8_batch2_request_cancel(handle, cancelled)
+                self.assertEqual(append(0, fresh, [7]), (0, 1))
+                self.assertEqual(outputs[0][0], 7)
+                self.assertEqual(session.ck_session_v8_batch2_reset_slot(handle, 0), 0)
+
+                # A cancel during a native token completes that in-flight
+                # token, then stops before the next token in this chunk.
+                interrupted = begin(0, 3)
+                model.ck_fake_hold_decode(1)
+                in_flight_prefill = []
+                worker = threading.Thread(target=lambda: in_flight_prefill.append(
+                    append(0, interrupted, [4, 5, 6])))
+                worker.start()
+                try:
+                    deadline = time.monotonic() + 2
+                    while not model.ck_fake_decode_entered() and time.monotonic() < deadline:
+                        time.sleep(0.001)
+                    self.assertTrue(model.ck_fake_decode_entered())
+                    session.ck_session_v8_batch2_request_cancel(handle, interrupted)
+                    self.assertEqual(session.ck_session_v8_batch2_reset_slot(handle, 0), -6)
+                finally:
+                    model.ck_fake_hold_decode(0)
+                    worker.join(timeout=2)
+                self.assertFalse(worker.is_alive())
+                self.assertEqual(in_flight_prefill, [(-9, 1)])
+                self.assertEqual(step(1, 1), (0, 0))
+                self.assertEqual(session.ck_session_v8_batch2_reset_slot(handle, 0), 0)
+
+                failed_prefill = begin(0, 2)
+                self.assertEqual(append(0, failed_prefill, [1, 15]), (-7, 1))
+                self.assertEqual(step(1, 1), (-6, 0))
+                self.assertEqual(session.ck_session_v8_batch2_reset_slot(handle, 0), 0)
+                self.assertEqual(step(1, 1), (-6, 0))
+                self.assertEqual(session.ck_session_v8_batch2_reset_slot(handle, 1), 0)
+
+                batch_before = model.ck_fake_batch_calls()
+                single_before = model.ck_fake_single_calls()
                 ticket_a = prefill(0, [1, 2])
                 ticket_b = prefill(1, [3])
                 self.assertEqual(step(4, 5), (0, 3))
                 self.assertEqual([outputs[0][0], outputs[1][0]], [7, 8])
-                self.assertEqual(model.ck_fake_batch_calls(), 1)
+                self.assertEqual(model.ck_fake_batch_calls(), batch_before + 1)
                 position = ctypes.c_int32()
                 self.assertEqual(session.ck_session_v8_batch2_position(
                     handle, 0, ctypes.byref(position)), 0)
@@ -320,7 +420,7 @@ class BatchSessionSchedulerTests(unittest.TestCase):
                 self.assertEqual(in_flight, [(0, 3)])
                 self.assertEqual(step(6, 1), (0, 2))
                 self.assertEqual(outputs[1][0], 10)
-                self.assertEqual(model.ck_fake_single_calls(), 1)
+                self.assertEqual(model.ck_fake_single_calls(), single_before + 1)
 
                 self.assertEqual(session.ck_session_v8_batch2_reset_slot(handle, 0), 0)
                 new_ticket = prefill(0, [7])
