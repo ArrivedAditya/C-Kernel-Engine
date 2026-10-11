@@ -1168,8 +1168,9 @@ cks-v8-serve … --batch-http-extra-bytes BYTES \
     <div class="card card-green">
         <h3 style="margin-top: 0;">What you get</h3>
         <ul>
-            <li>Two requests decoded per generated-C step when both slots are active — counted by
-            the owner as <em>shared steps</em> and asserted by tests.</li>
+            <li>Two token rows can enter one generated-C step: either two decode rows or,
+            with the mixed option, one decode and one prompt row. The owner records
+            all such calls as <em>shared steps</em> and tracks mixed calls separately.</li>
             <li>Compatible projections reuse weight tiles across both rows; a throughput
             benefit must be measured for the loaded artifact.</li>
             <li>Per-request isolation: separate KV arenas, RNG, stop rules, output caps,
