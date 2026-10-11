@@ -3,6 +3,9 @@
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(__AVX2__)
+#include <immintrin.h>
+#endif
 
 #include "ck_threadpool.h"
 #include "ckernel_quant.h"
@@ -24,6 +27,41 @@ static inline float ck_bf16_to_f32(uint16_t v)
     float out;
     memcpy(&out, &bits, sizeof(out));
     return out;
+}
+
+static float ck_gemma4_bf16_dot(const uint16_t *x, const uint16_t *y, int n)
+{
+    int i = 0;
+    double sum = 0.0;
+#if defined(__AVX2__)
+    // Match ggml-cpu's BF16 AVX2 reduction for this selected numerical contract.
+    __m256 c1 = _mm256_setzero_ps();
+    __m256 c2 = _mm256_setzero_ps();
+    __m256 c3 = _mm256_setzero_ps();
+    __m256 c4 = _mm256_setzero_ps();
+#define CK_GEMMA4_LOAD_BF16(p) _mm256_castsi256_ps(_mm256_slli_epi32( \
+    _mm256_cvtepu16_epi32(_mm_loadu_si128((const __m128i *)(p))), 16))
+    for (; i + 32 <= n; i += 32) {
+        c1 = _mm256_add_ps(_mm256_mul_ps(CK_GEMMA4_LOAD_BF16(x + i),
+                                         CK_GEMMA4_LOAD_BF16(y + i)), c1);
+        c2 = _mm256_add_ps(_mm256_mul_ps(CK_GEMMA4_LOAD_BF16(x + i + 8),
+                                         CK_GEMMA4_LOAD_BF16(y + i + 8)), c2);
+        c3 = _mm256_add_ps(_mm256_mul_ps(CK_GEMMA4_LOAD_BF16(x + i + 16),
+                                         CK_GEMMA4_LOAD_BF16(y + i + 16)), c3);
+        c4 = _mm256_add_ps(_mm256_mul_ps(CK_GEMMA4_LOAD_BF16(x + i + 24),
+                                         CK_GEMMA4_LOAD_BF16(y + i + 24)), c4);
+    }
+#undef CK_GEMMA4_LOAD_BF16
+    c1 = _mm256_add_ps(_mm256_add_ps(c1, c3), _mm256_add_ps(c2, c4));
+    __m128 g = _mm_add_ps(_mm256_extractf128_ps(c1, 1), _mm256_castps256_ps128(c1));
+    g = _mm_add_ps(g, _mm_movehl_ps(g, g));
+    g = _mm_add_ss(g, _mm_movehdup_ps(g));
+    sum = (double)_mm_cvtss_f32(g);
+#endif
+    for (; i < n; ++i) {
+        sum += (double)(ck_bf16_to_f32(x[i]) * ck_bf16_to_f32(y[i]));
+    }
+    return (float)sum;
 }
 
 static inline float ck_gemma4_gelu(float x)
@@ -128,9 +166,9 @@ static void ck_gemma4_prepare_q5_range(int begin, int end, void *opaque)
         const int token = args->token_ids[t];
         if (token < 0 || token >= args->vocab_size) continue;
         const float *h = args->hidden + (size_t)t * (size_t)args->embed_dim;
-        float rounded_hidden[args->embed_dim];
+        uint16_t rounded_hidden[args->embed_dim];
         for (int j = 0; j < args->embed_dim; ++j) {
-            rounded_hidden[j] = bf16_to_float(float_to_bf16(h[j]));
+            rounded_hidden[j] = float_to_bf16(h[j]);
         }
         for (int layer = 0; layer < args->num_layers; ++layer) {
             float *dst = args->per_layer_input +
@@ -149,10 +187,7 @@ static void ck_gemma4_prepare_q5_range(int begin, int end, void *opaque)
             for (int i = 0; i < args->per_layer_dim; ++i) {
                 const uint16_t *row = model_proj_base +
                     (size_t)i * (size_t)args->embed_dim;
-                float acc = 0.0f;
-                for (int j = 0; j < args->embed_dim; ++j) {
-                    acc += ck_bf16_to_f32(row[j]) * rounded_hidden[j];
-                }
+                const float acc = ck_gemma4_bf16_dot(row, rounded_hidden, args->embed_dim);
                 proj_vec[i] = acc * model_scale;
             }
             ck_gemma4_rmsnorm_tmp(
@@ -182,9 +217,9 @@ static void ck_gemma4_prepare_bf16_range(int begin, int end, void *opaque)
         const int token = args->token_ids[t];
         if (token < 0 || token >= args->vocab_size) continue;
         const float *h = args->hidden + (size_t)t * (size_t)args->embed_dim;
-        float rounded_hidden[args->embed_dim];
+        uint16_t rounded_hidden[args->embed_dim];
         for (int j = 0; j < args->embed_dim; ++j) {
-            rounded_hidden[j] = bf16_to_float(float_to_bf16(h[j]));
+            rounded_hidden[j] = float_to_bf16(h[j]);
         }
         for (int layer = 0; layer < args->num_layers; ++layer) {
             float *dst = args->per_layer_input +
@@ -203,10 +238,7 @@ static void ck_gemma4_prepare_bf16_range(int begin, int end, void *opaque)
             for (int i = 0; i < args->per_layer_dim; ++i) {
                 const uint16_t *row = model_proj_base +
                     (size_t)i * (size_t)args->embed_dim;
-                float acc = 0.0f;
-                for (int j = 0; j < args->embed_dim; ++j) {
-                    acc += ck_bf16_to_f32(row[j]) * rounded_hidden[j];
-                }
+                const float acc = ck_gemma4_bf16_dot(row, rounded_hidden, args->embed_dim);
                 proj_vec[i] = acc * model_scale;
             }
             ck_gemma4_rmsnorm_tmp(

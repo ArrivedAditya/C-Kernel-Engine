@@ -53,6 +53,8 @@ class Gemma4ProviderContractTests(unittest.TestCase):
                                      PREPARE_CONTRACT)
                     self.assertEqual(ops[0]["resolved_provider_numerical_contract"]["projection_input"],
                                      "fp32_rounded_to_bf16_rne_before_dot")
+                    self.assertEqual(ops[0]["resolved_provider_numerical_contract"]["projection_reduction"],
+                                     "ggml_cpu_bf16_avx2_four_accumulators_with_scalar_fallback")
                     manifest["config"]["embed_dim"] = 16385
                     with self.assertRaisesRegex(RuntimeError, "HARD PROVIDER DIMENSION FAULT.*embed_dim=16385"):
                         self._lower(manifest, mode)

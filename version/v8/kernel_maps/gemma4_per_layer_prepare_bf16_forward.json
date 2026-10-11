@@ -7,6 +7,7 @@
     "id": "gemma4_prepare_llama_cpu_bf16_input_rne_v1",
     "projection_input": "fp32_rounded_to_bf16_rne_before_dot",
     "projection_weight": "bf16",
+    "projection_reduction": "ggml_cpu_bf16_avx2_four_accumulators_with_scalar_fallback",
     "token_embedding": "bf16",
     "circuit_binding_required": true,
     "oracle_revision": "19e28a27702117d8f2eb16b825b9a308111f67d9",
@@ -161,5 +162,8 @@
       {"name": "eps", "source": "dim:rms_eps"}
     ]
   },
-  "notes": "Prepare Gemma4 per-layer input stream from BF16 safetensors token embeddings and BF16 projection weights. The projection rounds each FP32 hidden input to BF16 (round-to-nearest-even) before multiplication. Supported embed_dim is at most 16384. The rounded-input buffer alone uses up to 65536 stack bytes per worker; this is not a bound on total worker stack. Prefill dynamically partitions independent token rows through the persistent thread pool while retaining each row's projection reduction order."
+  "tests": {
+    "unit": ["tests/test_v8_prefill_independent_row_parallel.py", "tests/test_v8_gemma4_provider_contracts.py"]
+  },
+  "notes": "Prepare Gemma4 per-layer input stream from BF16 safetensors token embeddings and BF16 projection weights. The projection rounds each FP32 hidden input to BF16 (round-to-nearest-even) before multiplication and uses the pinned ggml-cpu AVX2 reduction where available. Supported embed_dim is at most 16384. The rounded-input stack budget is conservatively 65536 bytes per worker; this is not a bound on total worker stack. Prefill dynamically partitions independent token rows through the persistent thread pool."
 }
