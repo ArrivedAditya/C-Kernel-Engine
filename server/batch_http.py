@@ -386,10 +386,11 @@ class Batch2HTTPOwner:
                             self._send_terminal(recipient, "delivery_overflow")
             for event in tick.completed:
                 self._finish(event.ticket, event.reason)
-            if tick.advanced_mask == 3:
-                self.shared_steps += 1
-            if self.mixed_one_row and tick.mixed_prefill_ticket is not None:
-                self.mixed_steps += 1
+            with self.guard:
+                if tick.advanced_mask == 3:
+                    self.shared_steps += 1
+                if self.mixed_one_row and tick.mixed_prefill_ticket is not None:
+                    self.mixed_steps += 1
             if self.decode_replay_chunk_tokens is not None:
                 staged = tuple(sorted(self.loop.staged_tickets()))
                 if staged and tick.mixed_prefill_ticket is None:
@@ -400,6 +401,18 @@ class Batch2HTTPOwner:
                     for event in self.loop.advance_prefill(
                             ticket, self.decode_replay_chunk_tokens):
                         self._finish(event.ticket, event.reason)
+
+    def observation(self) -> dict:
+        """Return bounded execution evidence without exposing prompts or tickets."""
+        with self.guard:
+            return {
+                "schema": "cke.batch2_observation.v1",
+                "active_slots": len(self.slots),
+                "pending_requests": self.pending.qsize(),
+                "shared_steps": self.shared_steps,
+                "mixed_steps": self.mixed_steps,
+                "poisoned": self.poisoned,
+            }
 
     def close(self, timeout: float = 10.0):
         """Join the native owner before its session can be closed."""

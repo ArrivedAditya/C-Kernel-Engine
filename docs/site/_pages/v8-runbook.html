@@ -1688,6 +1688,23 @@ version/v8/scripts/ck_serve_v8.py "$RUN_DIR" --run "$RUN_DIR" \
         ordinary prefill entry or certify a resolved serving deployment.
     </p>
     <p>
+        A separate resolved Gemma3-270M Q5_K_M chat-only HTTP acceptance is
+        available through <code>server/batch_http_acceptance.py</code>. It
+        checks expected serving and loaded session hashes before generation,
+        compares two simultaneous greedy streams with their isolated outputs,
+        requires the server's mixed-step counter to advance, then cancels one
+        request and serves another on the same instance. The
+        <code>/v1/cke/batch-observation</code> endpoint exposes only bounded
+        counters and slot health for this experimental mode. The retained local
+        run observed 27 mixed steps with matching outputs, cancellation and
+        recovery. This certifies the tested HTTP/native boundary only; Gemma3's
+        profile declares chat without tools, so it is not a completed agent
+        harness task or an ordinary-prefill parity result. Keep a full
+        <code>tokenizer.json</code> beside this GGUF-derived artifact when its
+        publisher template requires <code>bos_token</code>; the resolved bundle
+        hashes that asset and otherwise fails closed at rendering.
+    </p>
+    <p>
         Native slot budgeting does not bound HTTP delivery by itself. The
         opt-in path also limits undelivered response consumers (default 4),
         output token events (default 4096),

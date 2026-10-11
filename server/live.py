@@ -3206,6 +3206,11 @@ def create_app(
         return {**attestation, "server_instance_id": server_instance_id,
                 "effective_serving": effective_serving}
 
+    if batch_http is not None:
+        @router.get("/cke/batch-observation")
+        def get_batch_observation():
+            return {**batch_http.observation(), "server_instance_id": server_instance_id}
+
     if extra_route_registrar is not None:
         extra_route_registrar(router, create_response)
 

@@ -250,6 +250,9 @@ def test_mixed_http_routes_two_outputs_and_records_shared_prompt_work():
     client = TestClient(app)
     effective = client.get("/v1/cke/loaded-identity").json()["effective_serving"]
     assert effective["mixed_execution"] == "one_decode_plus_one_prefill_row"
+    observation = client.get("/v1/cke/batch-observation").json()
+    assert observation["schema"] == "cke.batch2_observation.v1"
+    assert observation["shared_steps"] == observation["mixed_steps"] == 0
 
     def send(prompt, limit):
         return client.post("/v1/responses", json={"model": "m", "input": prompt,
@@ -269,6 +272,10 @@ def test_mixed_http_routes_two_outputs_and_records_shared_prompt_work():
             assert a.result(timeout=5).json()["output_text"] == "AAAAAA"
             assert b.result(timeout=5).json()["output_text"] == "B"
         assert owner.mixed_steps > 0
+        observed = client.get("/v1/cke/batch-observation").json()
+        assert observed["mixed_steps"] == owner.mixed_steps
+        assert observed["shared_steps"] >= observed["mixed_steps"]
+        assert observed["active_slots"] == 0
         assert any(kind == "mixed" and slot == 1 and progress < 4
                    for kind, slot, progress in loop.timeline)
     finally:
