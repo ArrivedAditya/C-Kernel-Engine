@@ -118,6 +118,222 @@ class KokoroGeneratedProsodyCompleteTest(unittest.TestCase):
                 self.view(arena, f'{branch}_{name}')[:] = -91.
         return arena
 
+    def fine_f0_fixture(self):
+        arrays, meta = verified_fixture('prosody_f0_fine')
+        for key in ('model_pin', 'code_pin', 'voice', 'asset_sha256'):
+            self.assertEqual(meta[key], self.direct_meta[key], key)
+        manifest = json.loads((ROOT / 'version/v8/tts/reference/fixture_manifest.json').read_text())
+        self.assertEqual(meta['capture_waveform_sha256'],
+                         manifest['tensors']['waveform_f32']['sha256'])
+        return arrays, meta
+
+    def test_direct_full_model_f0_inner_checkpoints_localize_drift(self):
+        direct, meta = self.fine_f0_fixture()
+        arena = self.arena()
+        frames = ctypes.c_int32(-999)
+        doubled = ctypes.c_int32(-999)
+        self.assertEqual(self.fn(arena, len(arena), ctypes.byref(frames),
+                                 ctypes.byref(doubled)), 0)
+        self.assertEqual((frames.value, doubled.value), (103, 206))
+        checkpoints = (
+            ('phoneme_features', 'bert_encoder', 'token'),
+            ('predictor_features', 'predictor_text_encoder', 'token'),
+            ('prosody_input_token', 'predictor_shared_input', 'token'),
+            ('prosody_shared_features', 'predictor_shared_0', 'token'),
+            ('f0_norm0_output', 'predictor_F0_0_norm1', 'channel'),
+            ('f0_conv0', 'predictor_F0_0_conv1', 'channel'),
+            ('f0_norm1_output', 'predictor_F0_0_norm2', 'channel'),
+            ('f0_conv1', 'predictor_F0_0_conv2', 'channel'),
+            ('f0_block1_norm0_output', 'predictor_F0_1_norm1', 'channel'),
+            ('f0_block1_pool', 'predictor_F0_1_pool', 'channel'),
+            ('f0_block1_conv0', 'predictor_F0_1_conv1', 'channel'),
+            ('f0_block1_norm1_output', 'predictor_F0_1_norm2', 'channel'),
+            ('f0_block1_conv1', 'predictor_F0_1_conv2', 'channel'),
+            ('f0_block1_shortcut_upsample', 'predictor_F0_1_upsample', 'channel'),
+            ('f0_block1_shortcut_conv', 'predictor_F0_1_conv1x1', 'channel'),
+            ('f0_block2_norm0_output', 'predictor_F0_2_norm1', 'channel'),
+            ('f0_block2_conv0', 'predictor_F0_2_conv1', 'channel'),
+            ('f0_block2_norm1_output', 'predictor_F0_2_norm2', 'channel'),
+            ('f0_block2_conv1', 'predictor_F0_2_conv2', 'channel'),
+        )
+        results = {}
+        for name, reference_name, layout in checkpoints:
+            reference = direct[reference_name]
+            item = self.buffers[name]
+            if layout == 'token':
+                rows, width = reference.shape
+                physical_rows, stride = self.source['template'][
+                    'activation_buffers'][name]['shape']
+                self.assertEqual(item['size'], physical_rows * stride * 4)
+                self.assertGreaterEqual(physical_rows, rows)
+                self.assertGreaterEqual(stride, width)
+                actual = np.ndarray((physical_rows, stride), np.float32,
+                                    buffer=arena, offset=item['abs_offset'])[:rows, :width]
+            else:
+                channels, length = reference.shape
+                shape = self.source['template']['activation_buffers'][name]['shape']
+                self.assertEqual(shape[0], channels)
+                stride = shape[1]
+                self.assertEqual(item['size'], channels * stride * 4)
+                self.assertGreaterEqual(stride, length)
+                actual = np.ndarray((channels, stride), np.float32,
+                                    buffer=arena, offset=item['abs_offset'])[:, :length]
+            self.assertTrue(np.isfinite(actual).all(), name)
+            error = np.abs(actual - reference)
+            index = np.unravel_index(np.argmax(error), error.shape)
+            maximum = float(error[index])
+            self.assertLessEqual(maximum, 5e-5, (name, index, maximum))
+            results[name] = {
+                'max_abs': maximum,
+                'rmse': float(np.sqrt(np.mean(error.astype(np.float64) ** 2))),
+                'worst_index': [int(value) for value in index],
+                'actual': float(actual[index]),
+                'reference': float(reference[index]),
+            }
+        eager_meta = json.loads((ROOT / 'tests/fixtures/tts/'
+            'kokoro_encoder_pinned.json').read_text())
+        self.assertEqual(eager_meta['attention_implementation'], 'eager')
+        eager_encoder = self.encoder['phoneme_features']
+        dispatch_error = np.abs(eager_encoder - direct['bert_encoder'])
+        dispatch_index = np.unravel_index(np.argmax(dispatch_error),
+                                          dispatch_error.shape)
+        print('CKE_NUMERICAL_CASE ' + json.dumps({
+            'case_id': 'kokoro.encoder.eager-vs-full-sdpa-reference-v1',
+            'name': 'pinned PyTorch eager encoder fixture versus full-model SDPA hook',
+            'provider': 'oracle_backend_comparison',
+            'dtype': 'fp32', 'direction': 'inference',
+            'oracle': 'pytorch-2.8-eager-versus-pytorch-2.8-sdpa',
+            'backend_version': meta['environment']['torch'],
+            'status': 'fail' if float(dispatch_error[dispatch_index]) > 1e-5
+                      else 'pass',
+            'gate': 'oracle_reproducibility', 'blocking': False,
+            'reason': 'different declared attention dispatch; no CKE kernel '
+                      'verdict follows from this reference comparison',
+            'max_diff': float(dispatch_error[dispatch_index]),
+            'worst_index': [int(value) for value in dispatch_index],
+            'tolerance': 1e-5,
+            'configuration': '36 all-valid tokens; af_heart; pinned PyTorch 2.8',
+            'reproduction_command': 'python3 -m unittest '
+                'tests.test_v8_kokoro_generated_prosody_complete.'
+                'KokoroGeneratedProsodyCompleteTest.'
+                'test_direct_full_model_f0_inner_checkpoints_localize_drift',
+        }))
+        print('CKE_NUMERICAL_CASE ' + json.dumps({
+            'case_id': 'kokoro.F0.direct-full-model-inner-checkpoints-v1',
+            'name': 'connected F0 inner checkpoints against direct pinned KModel hooks',
+            'provider': 'generated_prosody_complete',
+            'dtype': 'fp32', 'direction': 'inference',
+            'oracle': 'pinned-full-kmodel-pytorch28',
+            'backend_version': meta['environment']['torch'],
+            'status': 'fail' if results['f0_norm0_output']['max_abs'] > 1e-5
+                      else 'pass',
+            'gate': 'diagnostic', 'blocking': False,
+            'reason': 'connected upstream drift; local same-input arithmetic is '
+                      'reported by the separate pinned PyTorch replay',
+            'max_diff': results['f0_norm0_output']['max_abs'],
+            'tolerance': 1e-5,
+            'checkpoints': results,
+            'configuration': '36 phonemes; A=103; 2A=206; af_heart',
+            'reproduction_command': 'python3 -m unittest '
+                'tests.test_v8_kokoro_generated_prosody_complete.'
+                'KokoroGeneratedProsodyCompleteTest.'
+                'test_direct_full_model_f0_inner_checkpoints_localize_drift',
+        }))
+
+    def test_pinned_pytorch_same_input_replay_separates_upstream_and_local_error(self):
+        try:
+            import torch
+            import torch.nn.functional as functional
+        except ImportError:
+            self.skipTest('pinned PyTorch 2.8.0+cpu is unavailable')
+        if torch.__version__ != '2.8.0+cpu':
+            self.skipTest(f'pinned PyTorch 2.8.0+cpu required; found {torch.__version__}')
+        direct, _ = self.fine_f0_fixture()
+        shared, _ = verified_fixture('prosody_shared')
+        norm, _ = verified_fixture('prosody_norm')
+        arena = self.arena()
+        frames = ctypes.c_int32(-999)
+        doubled = ctypes.c_int32(-999)
+        self.assertEqual(self.fn(arena, len(arena), ctypes.byref(frames),
+                                 ctypes.byref(doubled)), 0)
+        self.assertEqual((frames.value, doubled.value), (103, 206))
+        native_input = self.view(arena, 'prosody_input_token').reshape(
+            128, 640)[:103].copy()
+        native_shared = self.view(arena, 'prosody_shared_features').reshape(
+            128, 512)[:103].copy()
+        native_norm = self.view(arena, 'f0_norm0_output').reshape(
+            512, 128)[:, :103].copy()
+        style = self.view(arena, 'predictor_style')[:128].copy()
+        np.testing.assert_array_equal(style, self.duration['predictor_style'])
+        model = torch.nn.LSTM(640, 256, batch_first=True,
+                              bidirectional=True).eval()
+        previous_threads = torch.get_num_threads()
+        try:
+            torch.set_num_threads(1)
+            with torch.no_grad():
+                for kind in ('weight_ih', 'weight_hh', 'bias_ih', 'bias_hh'):
+                    for direction, suffix in enumerate(('', '_reverse')):
+                        getattr(model, f'{kind}_l0{suffix}').copy_(
+                            torch.from_numpy(shared[kind][direction]))
+
+                def replay_scan(value):
+                    model.flatten_parameters()
+                    return model(torch.from_numpy(value.copy())[None])[0][0].numpy()
+
+                def replay_norm(value):
+                    affine = functional.linear(
+                        torch.from_numpy(style.copy())[None],
+                        torch.from_numpy(norm['F0_fc_weight']),
+                        torch.from_numpy(norm['F0_fc_bias']))[0]
+                    normalized = functional.instance_norm(
+                        torch.from_numpy(value.T.copy())[None],
+                        weight=torch.from_numpy(norm['F0_norm_weight']),
+                        bias=torch.from_numpy(norm['F0_norm_bias']),
+                        use_input_stats=True, eps=1e-5)[0]
+                    return ((1 + affine[:512, None]) * normalized +
+                            affine[512:, None]).numpy()
+
+                direct_shared = direct['predictor_shared_0']
+                replayed_reference = replay_scan(direct['predictor_shared_input'])
+                replayed_generated = replay_scan(native_input)
+                replayed_norm = replay_norm(native_shared)
+        finally:
+            torch.set_num_threads(previous_threads)
+        errors = {
+            'reference_scan_replay': float(np.max(np.abs(
+                replayed_reference - direct_shared))),
+            'connected_scan_input': float(np.max(np.abs(
+                native_input - direct['predictor_shared_input']))),
+            'local_scan': float(np.max(np.abs(
+                native_shared - replayed_generated))),
+            'connected_shared_output': float(np.max(np.abs(
+                native_shared - direct_shared))),
+            'local_first_adain': float(np.max(np.abs(
+                native_norm - replayed_norm))),
+            'connected_first_adain': float(np.max(np.abs(
+                native_norm - direct['predictor_F0_0_norm1']))),
+        }
+        self.assertLessEqual(errors['reference_scan_replay'], 1e-5)
+        self.assertLessEqual(errors['local_scan'], 3e-6)
+        self.assertLessEqual(errors['local_first_adain'], 2e-6)
+        print('CKE_NUMERICAL_CASE ' + json.dumps({
+            'case_id': 'kokoro.F0.pinned-same-input-replay-v1',
+            'name': 'pinned PyTorch same-input shared scan and first AdaIN replay',
+            'provider': 'generated_prosody_complete',
+            'dtype': 'fp32', 'direction': 'inference',
+            'oracle': 'live-pytorch-2.8.0+cpu-and-direct-full-model-hooks',
+            'backend_version': torch.__version__,
+            'status': 'pass', 'gate': 'diagnostic', 'blocking': False,
+            'max_diff': max(errors['local_scan'], errors['local_first_adain']),
+            'tolerance': 3e-6,
+            'error_decomposition': errors,
+            'configuration': '36 phonemes; A=103; af_heart; one torch thread',
+            'reproduction_command': 'python3 -m unittest '
+                'tests.test_v8_kokoro_generated_prosody_complete.'
+                'KokoroGeneratedProsodyCompleteTest.'
+                'test_pinned_pytorch_same_input_replay_separates_upstream_and_local_error',
+        }))
+
     def test_second_blocks_match_direct_full_model_hooks(self):
         self.assertEqual(self.calls['errors'], [])
         arena = self.arena()
