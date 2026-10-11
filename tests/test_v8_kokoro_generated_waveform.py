@@ -11,6 +11,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import wave
 
@@ -19,6 +20,7 @@ import numpy as np
 from tests.v8_checked_graph_test_support import compile_native_graph
 from tests.v8_kokoro_duration_fixture_support import (
     populated_duration_arena, prepare_duration_fixture)
+from tests.test_v8_kokoro_generated_prosody_complete import verified_fixture
 from tests.test_v8_kokoro_generator_stage0_join import (
     join_weights_and_references)
 from tests.test_v8_kokoro_generator_stage0_pool import stage0_pool_weights
@@ -267,6 +269,90 @@ class KokoroGeneratedWaveformTest(unittest.TestCase):
             'configuration': '36 phonemes, af_heart, captured Gaussian, 61800 samples',
             'reproduction_command': 'python3 -m unittest '
                 'tests.test_v8_kokoro_generated_waveform'}))
+
+    @unittest.skipUnless(os.environ.get('CKE_TTS_RUN_SEEDED_REPLAY'),
+                         'asset-backed seeded full-graph replay not requested')
+    def test_seeded_native_noise_reuses_one_generated_entry(self):
+        """Exercise A→B→A in one process without captured Gaussian input."""
+        library = Path(self.temp.name) / 'audio_noise_counter.so'
+        subprocess.run(['cc', '-std=c11', '-O2', '-Wall', '-Wextra',
+            '-Werror', '-pedantic', '-shared', '-fPIC',
+            '-I', str(ROOT / 'include'),
+            str(ROOT / 'src/kernels/audio_noise_counter.c'),
+            '-lm', '-o', str(library)], check=True, capture_output=True)
+        noise = ctypes.CDLL(str(library)).audio_noise_counter_gaussian_f32
+        noise.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.c_size_t,
+                          ctypes.c_size_t, ctypes.c_uint64, ctypes.c_uint64]
+        noise.restype = ctypes.c_int
+
+        other, other_meta = verified_fixture('decoder_utterance_your')
+        for field in ('model_pin', 'code_pin', 'asset_sha256'):
+            self.assertEqual(other_meta[field], self.spectral_meta[field])
+        self.assertEqual(other_meta['valid_frames'], 98)
+        arena = self.arena()
+        gaussian = self.view(self.layout, arena, 'source_gaussian')
+        waveform = self.view(self.layout, arena, 'generator_waveform')
+        ids = self.view(self.layout, arena, 'word_ids', np.int32)
+        predictor_style = self.view(self.layout, arena, 'predictor_style')
+        decoder_style = self.view(self.layout, arena, 'decoder_style')
+        baseline = (ids.copy(), predictor_style.copy(), decoder_style.copy())
+        alternate = (other['word_ids'].ravel(),
+                     other['predictor_style'].ravel(),
+                     other['decoder_style'].ravel())
+        outputs = []
+        execution_seconds = []
+        sample_counts = []
+        for inputs, seed, expected_count in ((baseline, 7, 61800),
+                                             (alternate, 8, 58800),
+                                             (baseline, 7, 61800)):
+            ids[:] = inputs[0]
+            predictor_style[:] = inputs[1]
+            decoder_style[:] = inputs[2]
+            gaussian.fill(-91.)
+            self.assertEqual(noise(gaussian.ctypes.data_as(
+                ctypes.POINTER(ctypes.c_float)), gaussian.size,
+                gaussian.size, seed, 0), 0)
+            waveform.fill(-91.)
+            lengths = [ctypes.c_int32(-1) for _ in range(7)]
+            started = time.perf_counter()
+            self.assertEqual(self.fn(arena, len(arena), *(
+                ctypes.byref(value) for value in lengths)), 0)
+            execution_seconds.append(time.perf_counter() - started)
+            count = lengths[3].value
+            self.assertEqual(count, expected_count)
+            self.assertTrue(np.isfinite(waveform[:count]).all())
+            self.assertTrue(np.all(waveform[count:] == -91.))
+            outputs.append(waveform[:count].copy())
+            sample_counts.append(count)
+        np.testing.assert_array_equal(outputs[0], outputs[2])
+        self.assertGreater(float(np.max(np.abs(
+            outputs[0][:sample_counts[1]] - outputs[1]))), 1e-6)
+        peaks = [float(np.max(np.abs(output))) for output in outputs]
+        rms_values = [float(np.sqrt(np.mean(
+            output.astype(np.float64) ** 2))) for output in outputs]
+        for peak, rms in zip(peaks, rms_values):
+            self.assertLess(peak, 1.)
+            self.assertGreater(rms, 1e-5)
+        print('CKE_NUMERICAL_CASE ' + json.dumps({
+            'case_id': 'kokoro.waveform.native-noise-replay-v1',
+            'name': 'Kokoro generated waveform seeded A-B-A replay',
+            'provider': 'audio_noise_counter_gaussian_f32+generated_kokoro_waveform',
+            'dtype': 'fp32', 'direction': 'inference',
+            'oracle': 'deterministic-same-seed-and-different-seed-control',
+            'status': 'pass', 'gate': 'session', 'blocking': True,
+            'max_diff': 0, 'tolerance': 0,
+            'execution_seconds': execution_seconds,
+            'sample_counts': sample_counts,
+            'audio_seconds': [count / 24000 for count in sample_counts],
+            'peak_abs': peaks, 'rms': rms_values,
+            'configuration': 'one process; one arena and generated entry; '
+                'two distinct 36-phoneme af_heart utterances; '
+                '103,98,103 frames; seeds 7,8,7; native Gaussian',
+            'numerical_parity': 'NOT_TESTED against pinned PyTorch noise',
+            'reproduction_command': 'CKE_TTS_RUN_SEEDED_REPLAY=1 '
+                'python3 -m unittest tests.test_v8_kokoro_generated_waveform.'
+                'KokoroGeneratedWaveformTest.'
+                'test_seeded_native_noise_reuses_one_generated_entry'}))
 
     def _run_standalone_native_wav_outside_checkout(self):
         retained = os.environ.get('CKE_TTS_RETAIN_DIR')
