@@ -5,7 +5,7 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "version/v8/kernel_maps",
     "counts": {
-      "total": 416,
+      "total": 417,
       "by_op": {
         "add_backward": 1,
         "add_stream": 2,
@@ -53,6 +53,7 @@
         "audio_scaled_residual_add": 1,
         "audio_scaled_sum_strided_checked": 1,
         "audio_snake_strided_checked": 1,
+        "audio_spectral_head_mag_phase": 1,
         "audio_stft": 4,
         "audio_stft_mag_phase_checked": 1,
         "audio_stft_tables": 1,
@@ -18707,9 +18708,9 @@
           "name": "overlap_window",
           "dtype": "fp32",
           "shape": [
-            "2*((F-1)*H+N_fft)+N_fft"
+            "Q"
           ],
-          "size_bytes": "4 * (2 * ((frames - 1) * hop + n_fft) + n_fft)",
+          "size_bytes": "4 * Q",
           "size_resolution": "required",
           "lifetime": "kernel_call",
           "alignment": 64,
@@ -18724,7 +18725,8 @@
         "frames",
         "n_fft",
         "hop",
-        "output_capacity"
+        "output_capacity",
+        "Q"
       ],
       "constraints": {
         "notes": "Supported geometry: frames >= 2, even n_fft >= 2, 1 <= hop <= n_fft/2, checked size arithmetic, finite nonnegative magnitude and finite phase. The raw scalar provider validates the domain before writes."
@@ -18793,11 +18795,13 @@
           },
           {
             "name": "spectral_elements",
-            "source": "runtime:spectral_elements"
+            "source": "runtime:spectral_elements",
+            "value_type": "size_t"
           },
           {
             "name": "frames",
-            "source": "runtime:frames"
+            "source": "runtime:frames",
+            "value_type": "size_t"
           },
           {
             "name": "n_fft",
@@ -18817,7 +18821,8 @@
           },
           {
             "name": "output_capacity",
-            "source": "runtime:output_capacity"
+            "source": "runtime:output_capacity",
+            "value_type": "size_t"
           },
           {
             "name": "scratch",
@@ -18826,15 +18831,53 @@
           },
           {
             "name": "scratch_elements",
-            "source": "runtime:scratch_elements"
+            "source": "runtime:scratch_elements",
+            "value_type": "size_t"
+          }
+        ]
+      },
+      "call_constant_contract": {
+        "shape_symbols": {
+          "F": "frames"
+        },
+        "buffer_spans": [
+          {
+            "pointer": "magnitude",
+            "elements": "spectral_elements",
+            "rows": 1,
+            "width": "spectral_elements",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "phase",
+            "elements": "spectral_elements",
+            "rows": 1,
+            "width": "spectral_elements",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "output",
+            "elements": "output_capacity",
+            "rows": 1,
+            "width": "output_capacity",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "scratch",
+            "elements": "scratch_elements",
+            "rows": 1,
+            "width": "scratch_elements",
+            "element_bytes": 4
           }
         ]
       },
       "tests": {
         "unit": [
-          "tests/test_v8_audio_istft_oracle.py"
+          "tests/test_v8_audio_istft_oracle.py",
+          "tests/test_v8_kokoro_istft_full_model.py",
+          "tests/test_v8_kokoro_generated_waveform.py"
         ],
-        "oracle": "torch.istft centered periodic-Hann FP32; Kokoro pinned magnitude/phase primitive capture"
+        "oracle": "torch.istft centered periodic-Hann FP32; pinned full-model magnitude/phase and generated-C waveform composition"
       },
       "notes": "Caller owns disjoint output and scratch. Rejects nonfinite/negative magnitude and nonfinite phase before output writes. Scratch query is audio_istft_mag_phase_plan_f32. PCM conversion and playback are separate.",
       "name": "audio_istft_mag_phase_f32",
@@ -21667,6 +21710,222 @@
       "notes": "Inference-only scalar reference provider for x + sin(alpha*x)^2/alpha. Uses FP32 intermediate operations and system sinf; it does not promise bitwise agreement across libc or PyTorch backends. The valid frame count is distinct from physical row stride and capacity.",
       "name": "audio_snake_strided_f32_checked",
       "_source_file": "audio_snake_strided_f32_checked.json"
+    },
+    {
+      "id": "audio_spectral_head_mag_phase_f32",
+      "op": "audio_spectral_head_mag_phase",
+      "operation_interface": "audio.spectral_head.exp_sin.frame_major.fp32.v1",
+      "variant": "checked_scalar_channel_to_frame_major",
+      "selection": {
+        "status": "candidate",
+        "priority": 100,
+        "equivalence_group": "audio_spectral_head_exp_sin_fp32",
+        "phases": [
+          "prefill"
+        ]
+      },
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "input",
+          "dtype": "fp32",
+          "shape": [
+            "2*B",
+            "F"
+          ],
+          "layout": "channel_major_input_stride",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "magnitude",
+          "dtype": "fp32",
+          "shape": [
+            "F",
+            "B"
+          ],
+          "layout": "frame_bin_contiguous",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        },
+        {
+          "name": "phase",
+          "dtype": "fp32",
+          "shape": [
+            "F",
+            "B"
+          ],
+          "layout": "frame_bin_contiguous",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "input_elements",
+        "input_stride",
+        "magnitude_elements",
+        "phase_elements",
+        "bins",
+        "frames"
+      ],
+      "constraints": {
+        "notes": "bins and frames must be positive; input_stride >= valid frames. The first bins channel rows use expf; the next bins use sinf. Outputs are distinct frame-major tensors. Full preflight checks capacity, overlap, finite inputs and exp overflow before either output is written. No scratch or allocation."
+      },
+      "impl": {
+        "function": "audio_spectral_head_mag_phase_f32",
+        "c_declaration": "int audio_spectral_head_mag_phase_f32(const float *input, size_t input_elements, size_t input_stride, float *magnitude, size_t magnitude_elements, float *phase, size_t phase_elements, size_t bins, size_t frames);",
+        "sources": [
+          "src/kernels/audio_spectral_head.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "audio_spectral_head_exp_sin_frame_major_fp32",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "audio_spectral_head_mag_phase_f32",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "none",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "input",
+            "source": "activation:input",
+            "cast": "const float*",
+            "ports": [
+              "input:input"
+            ]
+          },
+          {
+            "name": "input_elements",
+            "source": "runtime:spectral_input_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "input_stride",
+            "source": "runtime:spectral_input_stride",
+            "value_type": "size_t"
+          },
+          {
+            "name": "magnitude",
+            "source": "output:magnitude",
+            "cast": "float*",
+            "ports": [
+              "output:magnitude"
+            ]
+          },
+          {
+            "name": "magnitude_elements",
+            "source": "runtime:spectral_magnitude_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "phase",
+            "source": "output:phase",
+            "cast": "float*",
+            "ports": [
+              "output:phase"
+            ]
+          },
+          {
+            "name": "phase_elements",
+            "source": "runtime:spectral_phase_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "bins",
+            "source": "dim:bins"
+          },
+          {
+            "name": "frames",
+            "source": "runtime:spectral_frames",
+            "value_type": "size_t"
+          }
+        ]
+      },
+      "call_constant_contract": {
+        "shape_symbols": {
+          "F": "spectral_frames"
+        },
+        "buffer_spans": [
+          {
+            "pointer": "input",
+            "elements": "spectral_input_elements",
+            "rows": 1,
+            "width": "spectral_frames",
+            "stride": "spectral_input_stride",
+            "physical_row_stride": true,
+            "element_bytes": 4
+          },
+          {
+            "pointer": "magnitude",
+            "elements": "spectral_magnitude_elements",
+            "rows": 1,
+            "width": "spectral_magnitude_elements",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "phase",
+            "elements": "spectral_phase_elements",
+            "rows": 1,
+            "width": "spectral_phase_elements",
+            "element_bytes": 4
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "tests/test_v8_audio_spectral_head_oracle.py",
+          "tests/test_v8_kokoro_generated_waveform.py"
+        ],
+        "oracle": "Committed PyTorch 2.8 FP32 exp/sin fixture, pinned full-model spectral captures and generated-C composition"
+      },
+      "notes": "Inference only. PCM conversion and playback are separate from this model arithmetic.",
+      "name": "audio_spectral_head_mag_phase_f32",
+      "_source_file": "audio_spectral_head_mag_phase_f32.json"
     },
     {
       "id": "audio_stft_mag_phase_checked_f32",

@@ -21,8 +21,8 @@
   "scratch": [{
     "name": "overlap_window",
     "dtype": "fp32",
-    "shape": ["2*((F-1)*H+N_fft)+N_fft"],
-    "size_bytes": "4 * (2 * ((frames - 1) * hop + n_fft) + n_fft)",
+    "shape": ["Q"],
+    "size_bytes": "4 * Q",
     "size_resolution": "required",
     "lifetime": "kernel_call",
     "alignment": 64,
@@ -31,7 +31,7 @@
     "storage_class": "scratch",
     "consumption": "required"
   }],
-  "dims": ["spectral_elements", "frames", "n_fft", "hop", "output_capacity"],
+  "dims": ["spectral_elements", "frames", "n_fft", "hop", "output_capacity", "Q"],
   "constraints": {"notes": "Supported geometry: frames >= 2, even n_fft >= 2, 1 <= hop <= n_fft/2, checked size arithmetic, finite nonnegative magnitude and finite phase. The raw scalar provider validates the domain before writes."},
   "impl": {
     "function": "audio_istft_mag_phase_f32",
@@ -51,15 +51,24 @@
   "call_abi": {"version": 1, "params": [
     {"name": "magnitude", "source": "activation:magnitude", "cast": "const float*", "ports": ["input:magnitude"]},
     {"name": "phase", "source": "activation:phase", "cast": "const float*", "ports": ["input:phase"]},
-    {"name": "spectral_elements", "source": "runtime:spectral_elements"},
-    {"name": "frames", "source": "runtime:frames"},
+    {"name": "spectral_elements", "source": "runtime:spectral_elements", "value_type": "size_t"},
+    {"name": "frames", "source": "runtime:frames", "value_type": "size_t"},
     {"name": "n_fft", "source": "dim:n_fft"},
     {"name": "hop", "source": "dim:hop"},
     {"name": "output", "source": "output:output", "cast": "float*", "ports": ["output:output"]},
-    {"name": "output_capacity", "source": "runtime:output_capacity"},
+    {"name": "output_capacity", "source": "runtime:output_capacity", "value_type": "size_t"},
     {"name": "scratch", "source": "scratch:overlap_window", "cast": "float*"},
-    {"name": "scratch_elements", "source": "runtime:scratch_elements"}
+    {"name": "scratch_elements", "source": "runtime:scratch_elements", "value_type": "size_t"}
   ]},
-  "tests": {"unit": ["tests/test_v8_audio_istft_oracle.py"], "oracle": "torch.istft centered periodic-Hann FP32; Kokoro pinned magnitude/phase primitive capture"},
+  "call_constant_contract": {
+    "shape_symbols": {"F": "frames"},
+    "buffer_spans": [
+      {"pointer": "magnitude", "elements": "spectral_elements", "rows": 1, "width": "spectral_elements", "element_bytes": 4},
+      {"pointer": "phase", "elements": "spectral_elements", "rows": 1, "width": "spectral_elements", "element_bytes": 4},
+      {"pointer": "output", "elements": "output_capacity", "rows": 1, "width": "output_capacity", "element_bytes": 4},
+      {"pointer": "scratch", "elements": "scratch_elements", "rows": 1, "width": "scratch_elements", "element_bytes": 4}
+    ]
+  },
+  "tests": {"unit": ["tests/test_v8_audio_istft_oracle.py", "tests/test_v8_kokoro_istft_full_model.py", "tests/test_v8_kokoro_generated_waveform.py"], "oracle": "torch.istft centered periodic-Hann FP32; pinned full-model magnitude/phase and generated-C waveform composition"},
   "notes": "Caller owns disjoint output and scratch. Rejects nonfinite/negative magnitude and nonfinite phase before output writes. Scratch query is audio_istft_mag_phase_plan_f32. PCM conversion and playback are separate."
 }

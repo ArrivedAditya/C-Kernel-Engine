@@ -1053,6 +1053,19 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_kokoro_generator_stage1_pool.py",
         timeout_sec=420,
     ),
+    "tts_audio_spectral_head_oracle": TestSuite(
+        "TTS Spectral Head Pinned PyTorch Oracle", "kernels",
+        ROOT / "tests" / "test_v8_audio_spectral_head_oracle.py",
+    ),
+    "tts_kokoro_istft_full_model": TestSuite(
+        "Kokoro Direct Full-Model Inverse STFT", "kernels",
+        ROOT / "tests" / "test_v8_kokoro_istft_full_model.py",
+    ),
+    "tts_kokoro_generated_waveform": TestSuite(
+        "Kokoro Complete Generated Diagnostic Waveform", "inference",
+        ROOT / "tests" / "test_v8_kokoro_generated_waveform.py",
+        timeout_sec=300,
+    ),
     "tts_checked_text_ops_generated": TestSuite(
         "Model-Neutral Checked Conv1D, Transpose, and Activation Graph", "inference",
         ROOT / "tests" / "test_v8_checked_text_ops_generated.py",
