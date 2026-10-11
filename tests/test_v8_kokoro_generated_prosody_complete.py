@@ -206,7 +206,8 @@ class KokoroGeneratedProsodyCompleteTest(unittest.TestCase):
             'backend_version': meta['environment']['torch'],
             'status': 'fail' if float(dispatch_error[dispatch_index]) > 1e-5
                       else 'pass',
-            'gate': 'oracle_reproducibility', 'blocking': False,
+            'gate': 'diagnostic', 'comparison_kind': 'oracle_reproducibility',
+            'blocking': False,
             'reason': 'different declared attention dispatch; no CKE kernel '
                       'verdict follows from this reference comparison',
             'max_diff': float(dispatch_error[dispatch_index]),

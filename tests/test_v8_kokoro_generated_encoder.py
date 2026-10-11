@@ -141,6 +141,152 @@ class KokoroGeneratedEncoderTest(unittest.TestCase):
         (self.root / 'encoder-errors.json').write_text(json.dumps(errors, indent=2))
         self.verify_xray(report, thresholds)
 
+    def test_first_layer_against_direct_full_model_sdpa_hooks(self):
+        path = ROOT / 'tests/fixtures/tts/kokoro_bert_full_model_first_layer_pinned.npz'
+        meta = json.loads(path.with_suffix('.json').read_text())
+        self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(),
+                         meta['fixture_sha256'])
+        self.assertEqual(meta['bert_attention_implementation'], 'sdpa')
+        self.assertEqual(meta['input_tokens'], 36)
+        self.assertEqual(meta['model_pin'], self.encoder_meta['model_pin']['revision'])
+        self.assertEqual(meta['asset_sha256'], self.encoder_meta['asset_hashes'])
+        pinned = json.loads((ROOT / 'version/v8/tts/reference/fixture_manifest.json').read_text())
+        self.assertEqual(meta['code_pin'], pinned['pin']['reference_code']['kokoro'])
+        self.assertEqual(meta['capture_waveform_sha256'],
+                         pinned['tensors']['waveform_f32']['sha256'])
+        names = {
+            'bert_fine_embeddings': 'embedding_output',
+            'bert_fine_projection': 'projection_output',
+            'bert_fine_query': 'l00_query_output',
+            'bert_fine_key': 'l00_key_output',
+            'bert_fine_value': 'l00_value_output',
+            'bert_fine_attention_context': 'l00_attention_context_output',
+            'bert_fine_dense': 'l00_attention_projection_output',
+            'bert_fine_layernorm': 'l00_attention_norm_output',
+        }
+        with np.load(path) as archive:
+            direct = {name: archive[name].copy() for name in names}
+        arena = self.arena()
+        self.assertEqual(self.fn(arena, len(arena)), 0)
+        for name, activation in names.items():
+            expected = direct[name]
+            self.assertEqual(hashlib.sha256(expected.tobytes()).hexdigest(),
+                             meta['array_sha256'][name])
+            self.assertTrue(np.isfinite(expected).all(), name)
+            actual = self.vector(arena, activation, np.float32,
+                                 expected.size).reshape(expected.shape)
+            self.assertTrue(np.isfinite(actual).all(), name)
+            error = np.abs(actual - expected)
+            index = np.unravel_index(np.argmax(error), error.shape)
+            maximum = float(error[index])
+            # A broad safety bound guards the fixture/graph connection. The
+            # stricter 1e-6 compatibility verdict remains an explicit FAIL
+            # until its reduction order and error propagation are understood.
+            self.assertLessEqual(maximum, 5e-5, (name, index, maximum))
+            eager = self.encoder[activation]
+            dispatch_error = np.abs(eager - expected)
+            print('CKE_NUMERICAL_CASE ' + json.dumps({
+                'case_id': f'kokoro.bert.full-model-sdpa.{name}.v1',
+                'name': f'Kokoro direct full-model first ALBERT {name}',
+                'provider': 'generated_kokoro_phoneme_encoder',
+                'dtype': 'fp32', 'direction': 'inference',
+                'oracle': 'pinned-PyTorch-2.8-full-KModel-SDPA-hook',
+                'backend_version': meta['environment']['torch'],
+                'status': 'fail' if maximum > 1e-6 else 'pass',
+                'gate': 'diagnostic', 'blocking': False,
+                'reason': 'connected numerical compatibility remains under investigation',
+                'max_diff': maximum, 'tolerance': 1e-6,
+                'rmse': float(np.sqrt(np.mean(error.astype(np.float64) ** 2))),
+                'worst_index': [int(value) for value in index],
+                'actual': float(actual[index]),
+                'reference': float(expected[index]),
+                'eager_fixture_vs_full_sdpa_max_abs': float(dispatch_error.max()),
+                'configuration': '36 all-valid phonemes; af_heart; first ALBERT invocation',
+                'reproduction_command': 'python3 -m unittest '
+                    'tests.test_v8_kokoro_generated_encoder.'
+                    'KokoroGeneratedEncoderTest.'
+                    'test_first_layer_against_direct_full_model_sdpa_hooks',
+            }))
+
+    def test_pinned_pytorch_qkv_same_input_replay(self):
+        try:
+            import torch
+        except ImportError:
+            self.skipTest('PyTorch unavailable; Q/K/V same-input replay NOT_TESTED')
+        if torch.__version__ != '2.8.0+cpu':
+            self.skipTest(f'pinned PyTorch 2.8.0+cpu required, got {torch.__version__}')
+        torch.set_num_threads(1)
+        path = ROOT / 'tests/fixtures/tts/kokoro_bert_full_model_first_layer_pinned.npz'
+        meta = json.loads(path.with_suffix('.json').read_text())
+        self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(),
+                         meta['fixture_sha256'])
+        with np.load(path) as archive:
+            reference_input = archive['bert_fine_projection'].copy()
+            reference = {name: archive[f'bert_fine_{name}'].copy()
+                         for name in ('query', 'key', 'value')}
+        arena = self.arena()
+        self.assertEqual(self.fn(arena, len(arena)), 0)
+        native_input = self.vector(arena, 'projection_output', np.float32,
+                                   reference_input.size).reshape(reference_input.shape).copy()
+        for name in ('query', 'key', 'value'):
+            weight = torch.from_numpy(self.qkv[f'{name}_weight'])
+            bias = torch.from_numpy(self.qkv[f'{name}_bias'])
+            with torch.no_grad():
+                replay_reference = torch.nn.functional.linear(
+                    torch.from_numpy(reference_input), weight, bias).numpy()
+                replay_native_input = torch.nn.functional.linear(
+                    torch.from_numpy(native_input), weight, bias).numpy()
+            # Another CPU may dispatch the same pinned PyTorch version
+            # differently. Report capture reproducibility separately and
+            # still retain the same-input CKE comparison on this host.
+            reproduction_error = np.abs(replay_reference - reference[name])
+            print('CKE_NUMERICAL_CASE ' + json.dumps({
+                'case_id': f'kokoro.bert.{name}.pytorch28-capture-reproduction-v1',
+                'name': f'Kokoro first ALBERT {name} oracle reproduction',
+                'provider': 'oracle_backend_comparison',
+                'dtype': 'fp32', 'direction': 'inference',
+                'oracle': 'pinned-PyTorch-2.8-F.linear-versus-full-KModel-hook',
+                'backend_version': torch.__version__,
+                'status': 'fail' if float(reproduction_error.max()) > 1e-6 else 'pass',
+                'gate': 'diagnostic', 'comparison_kind': 'oracle_reproducibility',
+                'blocking': False,
+                'reason': 'CPU/backend dispatch may differ from the capture host',
+                'max_diff': float(reproduction_error.max()), 'tolerance': 1e-6,
+                'configuration': '36 all-valid phonemes; af_heart; first ALBERT invocation',
+                'reproduction_command': 'python3 -m unittest '
+                    'tests.test_v8_kokoro_generated_encoder.'
+                    'KokoroGeneratedEncoderTest.test_pinned_pytorch_qkv_same_input_replay',
+            }))
+            native = self.vector(arena, f'l00_{name}_output', np.float32,
+                                 reference[name].size).reshape(reference[name].shape)
+            local_error = np.abs(native - replay_native_input)
+            upstream_error = np.abs(replay_native_input - replay_reference)
+            connected_error = np.abs(native - reference[name])
+            index = np.unravel_index(np.argmax(local_error), local_error.shape)
+            self.assertTrue(np.isfinite(native).all(), name)
+            self.assertLessEqual(float(local_error[index]), 5e-5)
+            print('CKE_NUMERICAL_CASE ' + json.dumps({
+                'case_id': f'kokoro.bert.{name}.same-input-pytorch28-v1',
+                'name': f'Kokoro first ALBERT {name} same-input replay',
+                'provider': 'linear_rows_checked_f32',
+                'dtype': 'fp32', 'direction': 'inference',
+                'oracle': 'pinned-PyTorch-2.8-F.linear-on-identical-CKE-input',
+                'backend_version': torch.__version__,
+                'status': 'fail' if float(local_error[index]) > 1e-6 else 'pass',
+                'gate': 'diagnostic', 'blocking': False,
+                'reason': 'local affine reduction and upstream input effects are separate',
+                'max_diff': float(local_error[index]), 'tolerance': 1e-6,
+                'worst_index': [int(value) for value in index],
+                'local_rmse': float(np.sqrt(np.mean(local_error.astype(np.float64) ** 2))),
+                'upstream_max_abs': float(upstream_error.max()),
+                'connected_max_abs': float(connected_error.max()),
+                'threads': 1, 'mkldnn_enabled': torch.backends.mkldnn.enabled,
+                'configuration': '36 all-valid phonemes; af_heart; first ALBERT invocation',
+                'reproduction_command': 'python3 -m unittest '
+                    'tests.test_v8_kokoro_generated_encoder.'
+                    'KokoroGeneratedEncoderTest.test_pinned_pytorch_qkv_same_input_replay',
+            }))
+
     @staticmethod
     def composition_limit(name, reference, propagation=None):
         # A new connected-encoder contract, NOT a changed primitive bound.
