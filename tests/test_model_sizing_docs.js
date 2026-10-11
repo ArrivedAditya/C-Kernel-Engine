@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { estimate, parseHfUrl, parseModelConfig, circuitTopology, splitHybridLayers, HARDWARE_PRESETS, GIB } = require('../docs/site/assets/model-sizing.js');
+const { estimate, estimateFleet, parseHfUrl, parseModelConfig, circuitTopology, splitHybridLayers, HARDWARE_PRESETS, GIB } = require('../docs/site/assets/model-sizing.js');
 
 const base = {
   weightBytes: 24 * GIB,
@@ -70,6 +70,28 @@ test('replicas do not pool memory and only multiply the optimistic fleet ceiling
   assert.equal(one.usedBytes, three.usedBytes);
   assert.equal(three.replicaUpperAggregateTokensPerSecond, 3 * one.upperAggregateTokensPerSecond);
   assert.equal(estimate({ ...base, replicas: 0 }).replicaUpperAggregateTokensPerSecond, 0);
+});
+
+test('fleet-wide concurrency splits unevenly without inventing users', () => {
+  const fleet = estimateFleet({ ...base, replicas: 3 }, 10);
+  assert.deepEqual(fleet.devices.map((device) => device.requests), [4, 3, 3]);
+  assert.equal(fleet.devices.reduce((sum, device) => sum + device.requests, 0), 10);
+  assert.equal(fleet.upperAggregateTokensPerSecond,
+    fleet.devices.reduce((sum, device) => sum + device.result.upperAggregateTokensPerSecond, 0));
+});
+
+test('idle replicas add no throughput', () => {
+  const fleet = estimateFleet({ ...base, replicas: 6 }, 2);
+  assert.equal(fleet.activeReplicas, 2);
+  assert.equal(fleet.upperAggregateTokensPerSecond,
+    2 * estimate({ ...base, requests: 1 }).upperAggregateTokensPerSecond);
+});
+
+test('over-capacity fleet reports no decode rate', () => {
+  const fleet = estimateFleet({ ...base, replicas: 2, capacityBytes: 30 * GIB }, 100);
+  assert.equal(fleet.fits, false);
+  assert.equal(fleet.upperPerUserTokensPerSecond, null);
+  assert.throws(() => estimateFleet({ ...base, replicas: 0 }, 10), /positive/);
 });
 
 test('over-capacity and invalid inputs are explicit', () => {
