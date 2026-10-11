@@ -1651,6 +1651,12 @@ def create_app(
         effective_serving["request_prompt_byte_cap"] = request_prompt_byte_cap
     if batch_http is not None:
         effective_serving["execution_mode"] = "experimental_batch2_http"
+        effective_serving["prefill_strategy"] = (
+            "decode_replay_chunked" if batch_http.decode_replay_chunk_tokens is not None
+            else "whole_prompt"
+        )
+        if batch_http.decode_replay_chunk_tokens is not None:
+            effective_serving["prefill_chunk_token_budget"] = batch_http.decode_replay_chunk_tokens
         effective_serving["batch_prompt_token_cap"] = batch_http.max_prompt_tokens
         effective_serving["batch_delivery_consumer_cap"] = batch_http.max_delivery_consumers
         effective_serving["batch_output_token_cap"] = batch_http.max_output_tokens

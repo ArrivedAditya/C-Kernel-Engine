@@ -336,6 +336,12 @@ class Batch2SessionV8:
                    token_values, len(tokens), self._logits[slot], ctypes.byref(consumed))
         return consumed.value
 
+    def staged_logits(self, slot: int) -> Any:
+        """Return logits after the final staged append, until the next slot write."""
+        if type(slot) is not int or slot not in (0, 1):
+            raise ValueError("slot must be 0 or 1")
+        return self._logits[slot]
+
     def step(self, tokens: tuple[int, int]) -> tuple[int, tuple[Any, Any]]:
         if len(tokens) != 2:
             raise ValueError("batch2 step requires exactly two token IDs")

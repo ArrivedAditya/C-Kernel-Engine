@@ -1,9 +1,9 @@
 """Two-request token scheduler over the opt-in native batch2 session.
 
 Inputs are already rendered and tokenized. The caller owns HTTP admission,
-output transport, and worker lifetime. Prefill is synchronous and cannot yet
-be interrupted through the native batch2 ABI; cancellation is effective at
-decode-step boundaries. No route enables this scheduler by default.
+output transport, and worker lifetime. Optional staged prefill replays prompt
+tokens through generated decode in caller-bounded chunks. No route enables
+that path by default.
 """
 
 from __future__ import annotations
@@ -54,6 +54,20 @@ class _Request:
     cancel_requested: threading.Event = field(default_factory=threading.Event)
 
 
+@dataclass
+class _PrefillRequest:
+    slot: int
+    ticket: int
+    prompt_ids: tuple[int, ...]
+    max_tokens: int
+    stop_ids: frozenset[int]
+    temperature: float
+    top_p: float
+    rng: random.Random
+    offset: int = 0
+    cancel_requested: threading.Event = field(default_factory=threading.Event)
+
+
 class Batch2RequestLoop:
     """One serialized worker with two independent request policies."""
 
@@ -62,7 +76,8 @@ class Batch2RequestLoop:
         self._operations = threading.Lock()
         self._state = threading.Lock()
         self._slots: dict[int, _Request] = {}
-        self._tickets: dict[int, _Request] = {}
+        self._prefills: dict[int, _PrefillRequest] = {}
+        self._tickets: dict[int, _Request | _PrefillRequest] = {}
         self._poisoned = False
         sampler = getattr(batch.parent.lib, "ck_sample_top_p_v8", None)
         if sampler is None:
@@ -72,15 +87,20 @@ class Batch2RequestLoop:
         sampler.restype = ctypes.c_int
         self._sample = sampler
 
-    def submit(self, slot: int, prompt_ids: Sequence[int], *, max_tokens: int,
-               stop_ids: Sequence[int] = (), temperature: float = 0.0,
-               top_p: float = 1.0, seed: int = 0) -> int:
+    def _validate(self, slot: int, prompt_ids: Sequence[int], max_tokens: int,
+                  stop_ids: Sequence[int], temperature: float,
+                  top_p: float, seed: int) -> None:
         if type(slot) is not int or slot not in (0, 1):
             raise ValueError("slot must be 0 or 1")
         if type(max_tokens) is not int or max_tokens <= 0:
             raise ValueError("max_tokens must be positive")
         if type(seed) is not int:
             raise ValueError("seed must be an integer")
+        if not prompt_ids:
+            raise ValueError("prompt must contain at least one token")
+        if any(type(token) is not int or token < 0 or token >= self.batch.vocab_size
+               for token in prompt_ids):
+            raise ValueError("prompt IDs must belong to the loaded vocabulary")
         if not math.isfinite(temperature) or temperature < 0 or not math.isfinite(top_p) or not 0 < top_p <= 1:
             raise ValueError("invalid sampling parameters")
         if any(type(token) is not int or token < 0 or token >= self.batch.vocab_size
@@ -91,12 +111,20 @@ class Batch2RequestLoop:
         # another decode position in the native cache.
         if context is not None and len(prompt_ids) + max_tokens - 1 > context:
             raise ValueError("prompt plus output budget exceeds loaded context")
+
+    def _check_available(self, slot: int) -> None:
+        with self._state:
+            if self._poisoned:
+                raise SessionError(-7, "batch request loop needs recovery")
+            if slot in self._slots or slot in self._prefills:
+                raise SessionError(-6, "batch slot already owns a request")
+
+    def submit(self, slot: int, prompt_ids: Sequence[int], *, max_tokens: int,
+               stop_ids: Sequence[int] = (), temperature: float = 0.0,
+               top_p: float = 1.0, seed: int = 0) -> int:
+        self._validate(slot, prompt_ids, max_tokens, stop_ids, temperature, top_p, seed)
         with self._operations:
-            with self._state:
-                if self._poisoned:
-                    raise SessionError(-7, "batch request loop needs recovery")
-                if slot in self._slots:
-                    raise SessionError(-6, "batch slot already owns a request")
+            self._check_available(slot)
             try:
                 ticket, logits = self.batch.prefill(slot, prompt_ids)
             except SessionError:
@@ -110,6 +138,70 @@ class Batch2RequestLoop:
                 self._tickets[ticket] = request
             return ticket
 
+    def begin_staged(self, slot: int, prompt_ids: Sequence[int], *, max_tokens: int,
+                     stop_ids: Sequence[int] = (), temperature: float = 0.0,
+                     top_p: float = 1.0, seed: int = 0) -> int:
+        """Reserve a native ticket before any prompt token is computed."""
+        self._validate(slot, prompt_ids, max_tokens, stop_ids, temperature, top_p, seed)
+        with self._operations:
+            self._check_available(slot)
+            try:
+                ticket = self.batch.begin_prefill(slot, len(prompt_ids))
+            except SessionError:
+                self._fail_all_after_native_error()
+                raise
+            request = _PrefillRequest(slot, ticket, tuple(prompt_ids), max_tokens,
+                                      frozenset(stop_ids), float(temperature),
+                                      float(top_p), random.Random(seed))
+            with self._state:
+                self._prefills[slot] = request
+                self._tickets[ticket] = request
+            return ticket
+
+    def staged_tickets(self) -> tuple[int, ...]:
+        with self._state:
+            return tuple(r.ticket for _, r in sorted(self._prefills.items()))
+
+    def advance_prefill(self, ticket: int, max_tokens: int) -> tuple[CompletionEvent, ...]:
+        """Consume at most max_tokens; completed prompt becomes decode-ready."""
+        if type(max_tokens) is not int or max_tokens <= 0:
+            raise ValueError("prefill chunk budget must be positive")
+        with self._operations:
+            with self._state:
+                if self._poisoned:
+                    raise SessionError(-7, "batch request loop needs recovery")
+                request = self._tickets.get(ticket)
+                if not isinstance(request, _PrefillRequest):
+                    return ()
+            if request.cancel_requested.is_set():
+                return (self._retire(request, "cancelled"),)
+            chunk = request.prompt_ids[request.offset:request.offset + max_tokens]
+            try:
+                total_consumed = self.batch.append_prefill(request.slot, ticket, chunk)
+                if total_consumed != request.offset + len(chunk):
+                    raise SessionError(-7, "native staged prefill reported unexpected progress")
+                request.offset = total_consumed
+                if request.cancel_requested.is_set():
+                    return (self._retire(request, "cancelled"),)
+                if request.offset == len(request.prompt_ids):
+                    ready = _Request(request.slot, ticket,
+                                     self.batch.staged_logits(request.slot),
+                                     request.max_tokens, request.stop_ids,
+                                     request.temperature, request.top_p, request.rng,
+                                     cancel_requested=request.cancel_requested)
+                    with self._state:
+                        self._prefills.pop(request.slot)
+                        self._slots[request.slot] = ready
+                        self._tickets[ticket] = ready
+                return ()
+            except SessionError as exc:
+                if exc.status == -9:
+                    try:
+                        return (self._retire(request, "cancelled"),)
+                    except SessionError:
+                        pass
+                return self._fail_all_after_native_error()
+
     def request_cancel(self, ticket: int) -> bool:
         """May run concurrently with native decode; stale tickets are inert."""
         with self._state:
@@ -120,17 +212,18 @@ class Batch2RequestLoop:
         self.batch.request_cancel(ticket)
         return True
 
-    def _retire(self, request: _Request, reason: str) -> CompletionEvent:
+    def _retire(self, request: _Request | _PrefillRequest, reason: str) -> CompletionEvent:
         self.batch.reset_slot(request.slot)
         with self._state:
             self._slots.pop(request.slot, None)
+            self._prefills.pop(request.slot, None)
             self._tickets.pop(request.ticket, None)
         return CompletionEvent(request.ticket, request.slot, reason,
-                               request.generated)
+                               request.generated if isinstance(request, _Request) else 0)
 
     def _fail_all_after_native_error(self) -> tuple[CompletionEvent, ...]:
         with self._state:
-            active = tuple(self._slots.values())
+            active = tuple(self._tickets.values())
             self._poisoned = True
         recovered = True
         for slot in (0, 1):
@@ -140,10 +233,12 @@ class Batch2RequestLoop:
                 recovered = False
         with self._state:
             self._slots.clear()
+            self._prefills.clear()
             self._tickets.clear()
             self._poisoned = not recovered
         return tuple(CompletionEvent(r.ticket, r.slot, "runtime_error",
-                                     r.generated) for r in active)
+                                     r.generated if isinstance(r, _Request) else 0)
+                     for r in active)
 
     def advance(self) -> BatchTick:
         """Sample one token per active request, then decode continuing rows."""
@@ -206,13 +301,14 @@ class Batch2RequestLoop:
 
     def active_tickets(self) -> tuple[int, ...]:
         with self._state:
-            return tuple(r.ticket for _, r in sorted(self._slots.items()))
+            return tuple(r.ticket for _, r in sorted(
+                ((r.slot, r) for r in self._tickets.values())))
 
     def recover(self) -> None:
         """Retry both native resets after a failed cleanup; never reuse early."""
         with self._operations:
             with self._state:
-                if self._slots:
+                if self._tickets:
                     raise SessionError(-6, "cannot recover while requests are active")
             failed = False
             for slot in (0, 1):

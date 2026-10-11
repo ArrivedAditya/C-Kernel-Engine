@@ -3,6 +3,7 @@
 import concurrent.futures
 import ctypes
 import subprocess
+import threading
 import time
 
 import pytest
@@ -100,6 +101,32 @@ def test_bad_request_policy_is_rejected_before_prefill(fake_bundle):
         session.close()
 
 
+def test_real_native_staged_prefill_interleaves_and_cancel_reuses(fake_bundle):
+    session = SessionV8.open(fake_bundle, context_length=16, num_threads=1)
+    try:
+        loop = Batch2RequestLoop(session.enable_batch2(320))
+        first = loop.submit(0, [1], max_tokens=4)
+        second = loop.begin_staged(1, [2, 3, 4], max_tokens=2)
+        assert loop.advance_prefill(second, 1) == ()
+        assert loop.batch.position(0) == 1
+        with pytest.raises(SessionError, match="capability"):
+            loop.batch.position(1)
+        assert any(token.ticket == first for token in loop.advance().tokens)
+        assert loop.advance_prefill(second, 1) == ()
+        assert loop.advance_prefill(second, 1) == ()
+        assert loop.batch.position(1) == 3
+        assert any(token.ticket == second for token in loop.advance().tokens)
+        assert loop.request_cancel(second)
+        assert any((e.ticket, e.reason) == (second, "cancelled")
+                   for e in loop.advance().completed)
+        assert not loop.request_cancel(second)
+        replacement = loop.begin_staged(1, [7], max_tokens=1)
+        loop.advance_prefill(replacement, 1)
+        assert any(token.ticket == replacement for token in loop.advance().tokens)
+    finally:
+        session.close()
+
+
 class _ControlledBatch:
     """Constant logits make per-request RNG and failure recovery observable."""
 
@@ -141,6 +168,37 @@ class _ControlledBatch:
         pass
 
 
+class _StagedBatch(_ControlledBatch):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.prefills = {}
+        self.chunks = []
+
+    def begin_prefill(self, slot, total_tokens):
+        ticket = self.next_ticket
+        self.next_ticket += 1
+        self.prefills[slot] = [ticket, total_tokens, 0]
+        return ticket
+
+    def append_prefill(self, slot, ticket, tokens):
+        state = self.prefills[slot]
+        assert state[0] == ticket
+        state[2] += len(tokens)
+        assert state[2] <= state[1]
+        self.chunks.append((ticket, tuple(tokens)))
+        if state[2] == state[1]:
+            self.slots[slot] = (ticket, (ctypes.c_float * 4)(0, 0, 0, 0))
+            del self.prefills[slot]
+        return state[2]
+
+    def staged_logits(self, slot):
+        return self.slots[slot][1]
+
+    def reset_slot(self, slot):
+        super().reset_slot(slot)
+        self.prefills.pop(slot, None)
+
+
 def test_sampling_rng_is_request_local_when_another_request_joins():
     together = Batch2RequestLoop(_ControlledBatch())
     first = together.submit(0, [1], max_tokens=4, temperature=1, seed=123)
@@ -158,6 +216,78 @@ def test_sampling_rng_is_request_local_when_another_request_joins():
                                if e.ticket == alone)
     assert concurrent_tokens == isolated_tokens
     assert len(concurrent_tokens) == 4
+
+
+def test_staged_prefill_is_bounded_cancelled_and_reusable():
+    batch = _StagedBatch()
+    loop = Batch2RequestLoop(batch)
+    with pytest.raises(ValueError, match="prompt IDs"):
+        loop.begin_staged(0, [1, 4], max_tokens=1)
+    assert batch.prefills == {}
+    first = loop.begin_staged(0, [1, 2, 3, 1, 2], max_tokens=3)
+    assert loop.active_tickets() == (first,)
+    assert loop.advance_prefill(first, 2) == ()
+    assert batch.chunks == [(first, (1, 2))]
+    assert loop.advance().tokens == ()
+    second = loop.begin_staged(1, [2, 3, 1], max_tokens=2)
+    assert loop.request_cancel(second)
+    completed = loop.advance_prefill(second, 2)
+    assert [(c.ticket, c.reason) for c in completed] == [(second, "cancelled")]
+    assert batch.chunks == [(first, (1, 2))]
+    assert not loop.request_cancel(second)
+    assert loop.advance_prefill(first, 2) == ()
+    assert loop.advance_prefill(first, 2) == ()
+    assert loop.staged_tickets() == ()
+    tick = loop.advance()
+    assert tick.tokens[0].ticket == first
+    reused = loop.begin_staged(1, [3], max_tokens=1)
+    assert reused != second
+    loop.advance_prefill(reused, 1)
+    tick = loop.advance()
+    assert {t.ticket for t in tick.tokens} == {first, reused}
+    assert not loop.request_cancel(second)
+
+
+def test_staged_prefill_native_failure_settles_ready_and_pending():
+    batch = _StagedBatch()
+    loop = Batch2RequestLoop(batch)
+    ready = loop.begin_staged(0, [1], max_tokens=3)
+    loop.advance_prefill(ready, 1)
+    pending = loop.begin_staged(1, [2, 3], max_tokens=3)
+    batch.append_prefill = lambda *_: (_ for _ in ()).throw(SessionError(-7, "injected"))
+    settled = loop.advance_prefill(pending, 1)
+    assert {(e.ticket, e.reason) for e in settled} == {
+        (ready, "runtime_error"), (pending, "runtime_error")}
+    assert loop.active_tickets() == ()
+
+
+def test_staged_cancel_during_append_waits_for_worker_then_reuses_slot():
+    class BlockingBatch(_StagedBatch):
+        def __init__(self):
+            super().__init__()
+            self.entered = threading.Event()
+            self.release = threading.Event()
+
+        def append_prefill(self, slot, ticket, tokens):
+            self.entered.set()
+            assert self.release.wait(5)
+            return super().append_prefill(slot, ticket, tokens)
+
+    batch = BlockingBatch()
+    loop = Batch2RequestLoop(batch)
+    ticket = loop.begin_staged(0, [1, 2], max_tokens=1)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        in_flight = pool.submit(loop.advance_prefill, ticket, 1)
+        assert batch.entered.wait(5)
+        assert loop.request_cancel(ticket)
+        assert loop.active_tickets() == (ticket,)
+        batch.release.set()
+        result = in_flight.result(timeout=5)
+    assert [(e.ticket, e.reason) for e in result] == [(ticket, "cancelled")]
+    assert loop.active_tickets() == ()
+    fresh = loop.begin_staged(0, [3], max_tokens=1)
+    loop.advance_prefill(fresh, 1)
+    assert loop.advance().completed[0].ticket == fresh
 
 
 def test_random_draw_stays_below_one_after_float32_conversion():
