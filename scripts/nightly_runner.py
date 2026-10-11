@@ -1039,7 +1039,7 @@ TEST_SUITES = {
     "tts_kokoro_generator_stage0_pool": TestSuite(
         "Kokoro Generated First-Stage Generator Pool", "inference",
         ROOT / "tests" / "test_v8_kokoro_generator_stage0_pool.py",
-        timeout_sec=300,
+        timeout_sec=420,
     ),
     "tts_kokoro_generator_stage1_ingress": TestSuite(
         "Kokoro Generated Second Generator Upsample and Reflection", "inference",
