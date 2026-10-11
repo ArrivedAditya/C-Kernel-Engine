@@ -127,6 +127,68 @@ def test_real_native_staged_prefill_interleaves_and_cancel_reuses(fake_bundle):
         session.close()
 
 
+def test_real_native_mixed_step_advances_decode_and_staged_prompt(fake_bundle):
+    session = SessionV8.open(fake_bundle, context_length=16, num_threads=1)
+    try:
+        loop = Batch2RequestLoop(session.enable_batch2(320))
+        model = ctypes.CDLL(str(fake_bundle / "libmodel.so"))
+        first = loop.submit(0, [1], max_tokens=4)
+        second = loop.begin_staged(1, [2, 3], max_tokens=1)
+        before = model.ck_fake_batch_calls()
+        tick = loop.advance(mix_staged=True)
+        assert tick.mixed_prefill_ticket == second
+        assert tick.mixed_prefill_consumed == 1
+        assert tick.advanced_mask == 3
+        assert any(t.ticket == first for t in tick.tokens)
+        assert model.ck_fake_batch_calls() == before + 1
+        assert loop.staged_tickets() == (second,)
+        tick = loop.advance(mix_staged=True)
+        assert tick.mixed_prefill_ticket == second
+        assert tick.mixed_prefill_consumed == 2
+        assert loop.staged_tickets() == ()
+        assert loop.batch.position(1) == 2
+        tick = loop.advance(mix_staged=True)
+        assert (second, "token_limit") in [(c.ticket, c.reason) for c in tick.completed]
+        assert loop.batch.position(0) >= 3
+    finally:
+        session.close()
+
+
+def test_mixed_step_cancel_during_generated_call_retires_only_staged_owner(fake_bundle):
+    session = SessionV8.open(fake_bundle, context_length=16, num_threads=1)
+    try:
+        loop = Batch2RequestLoop(session.enable_batch2(320))
+        model = ctypes.CDLL(str(fake_bundle / "libmodel.so"))
+        model.ck_fake_hold_batch.argtypes = [ctypes.c_int]
+        decode_ticket = loop.submit(0, [1], max_tokens=4)
+        staged_ticket = loop.begin_staged(1, [2, 3], max_tokens=2)
+        model.ck_fake_hold_batch(1)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            in_flight = pool.submit(loop.advance, mix_staged=True)
+            try:
+                deadline = time.monotonic() + 5
+                while not model.ck_fake_batch_entered() and time.monotonic() < deadline:
+                    time.sleep(.001)
+                assert model.ck_fake_batch_entered()
+                assert loop.request_cancel(staged_ticket)
+                assert loop.active_tickets() == (decode_ticket, staged_ticket)
+            finally:
+                model.ck_fake_hold_batch(0)
+            tick = in_flight.result(timeout=5)
+        assert tick.advanced_mask == 3
+        assert (staged_ticket, "cancelled") in [(c.ticket, c.reason) for c in tick.completed]
+        assert loop.active_tickets() == (decode_ticket,)
+        assert loop.batch.position(0) == 2
+        assert not loop.request_cancel(staged_ticket)
+        reused = loop.begin_staged(1, [5], max_tokens=1)
+        assert reused != staged_ticket
+        assert loop.advance(mix_staged=True).mixed_prefill_ticket == reused
+        assert loop.batch.position(1) == 1
+        assert decode_ticket in loop.active_tickets()
+    finally:
+        session.close()
+
+
 class _ControlledBatch:
     """Constant logits make per-request RNG and failure recovery observable."""
 

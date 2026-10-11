@@ -214,6 +214,68 @@ class StagedHTTPTestLoop(FakeLoop):
         return tick
 
 
+class MixedHTTPTestLoop(StagedHTTPTestLoop):
+    def advance(self, *, mix_staged=False):
+        if not mix_staged:
+            return super().advance()
+        with self.guard:
+            active = bool(self.active)
+            staged = next(iter(self.staged), None)
+        if not active or staged is None:
+            return super().advance()
+        tick = super().advance()
+        with self.guard:
+            state = self.staged.get(staged)
+            if state is None:
+                return tick
+            state[2] += 1
+            progress = state[2]
+            self.timeline.append(("mixed", state[0], progress))
+            if progress == len(state[1]):
+                self.active[staged] = [state[0], state[1][0], state[3]]
+                del self.staged[staged]
+        return BatchTick(tick.tokens, tick.completed,
+                         tick.advanced_mask | (1 << state[0]), staged, progress)
+
+
+def test_mixed_http_routes_two_outputs_and_records_shared_prompt_work():
+    loop = MixedHTTPTestLoop()
+    session = FullPromptSession()
+    owner = Batch2HTTPOwner(session, max_extra_bytes=1, max_prompt_tokens=16,
+                            loop=loop, decode_replay_chunk_tokens=2,
+                            mixed_one_row=True)
+    app = create_app(session, model="m", context_length=128,
+                     chat_template="{{ messages[0].content }}", batch_http=owner,
+                     loaded_identity={"schema": "cke.loaded_serving_identity.v1"})
+    client = TestClient(app)
+    effective = client.get("/v1/cke/loaded-identity").json()["effective_serving"]
+    assert effective["mixed_execution"] == "one_decode_plus_one_prefill_row"
+
+    def send(prompt, limit):
+        return client.post("/v1/responses", json={"model": "m", "input": prompt,
+                                                  "max_output_tokens": limit,
+                                                  "temperature": 0})
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            a = pool.submit(send, "A", 6)
+            assert loop.first_decode_entered.wait(5)
+            b = pool.submit(send, "BBBB", 1)
+            deadline = time.monotonic() + 5
+            while owner.pending.qsize() == 0 and time.monotonic() < deadline:
+                time.sleep(.001)
+            assert owner.pending.qsize() == 1
+            loop.gate.set()
+            assert a.result(timeout=5).json()["output_text"] == "AAAAAA"
+            assert b.result(timeout=5).json()["output_text"] == "B"
+        assert owner.mixed_steps > 0
+        assert any(kind == "mixed" and slot == 1 and progress < 4
+                   for kind, slot, progress in loop.timeline)
+    finally:
+        loop.gate.set()
+        owner.close()
+
+
 def test_staged_http_prefill_yields_to_existing_decode():
     loop = StagedHTTPTestLoop()
     session = FullPromptSession()

@@ -196,7 +196,8 @@ class Batch2HTTPOwner:
                  max_output_tokens: int = 4096,
                  max_output_bytes: int = 1 << 20,
                  delivery_timeout: float = 30.0,
-                 decode_replay_chunk_tokens: int | None = None):
+                 decode_replay_chunk_tokens: int | None = None,
+                 mixed_one_row: bool = False):
         if max_prompt_tokens <= 0 or session.context_length is None:
             raise ValueError("batch HTTP needs positive prompt and context limits")
         if min(max_delivery_consumers, max_output_tokens, max_output_bytes) <= 0 or delivery_timeout <= 0:
@@ -204,6 +205,8 @@ class Batch2HTTPOwner:
         if decode_replay_chunk_tokens is not None and (type(decode_replay_chunk_tokens) is not int or
                                                        decode_replay_chunk_tokens <= 0):
             raise ValueError("decode replay chunk budget must be positive")
+        if type(mixed_one_row) is not bool or (mixed_one_row and decode_replay_chunk_tokens is None):
+            raise ValueError("mixed one-row execution requires staged prefill")
         self.session = session
         self.context_length = session.context_length
         self.max_prompt_tokens = max_prompt_tokens
@@ -212,11 +215,15 @@ class Batch2HTTPOwner:
         self.max_output_bytes = max_output_bytes
         self.delivery_timeout = delivery_timeout
         self.decode_replay_chunk_tokens = decode_replay_chunk_tokens
+        self.mixed_one_row = mixed_one_row
         self.stop_ids = tuple(stop_ids)
         if decode_replay_chunk_tokens is not None and loop is None:
             # Resolve the optional ABI before enabling native batch state.
             from .session_v8 import _configure_staged_prefill_abi
             _configure_staged_prefill_abi(session.lib)
+            if mixed_one_row:
+                from .session_v8 import _configure_mixed_step_abi
+                _configure_mixed_step_abi(session.lib)
         self.loop = loop if loop is not None else Batch2RequestLoop(
             session.enable_batch2(max_extra_bytes))
         if decode_replay_chunk_tokens is not None:
@@ -231,6 +238,7 @@ class Batch2HTTPOwner:
         self.poisoned = False
         self.shutdown = threading.Event()
         self.shared_steps = 0
+        self.mixed_steps = 0
         self._last_prefill_ticket = 0
         self.worker = threading.Thread(target=self._run, name="cke-batch2-http", daemon=True)
         self.worker.start()
@@ -365,7 +373,7 @@ class Batch2HTTPOwner:
                         self.loop.request_cancel(ticket)
             if not self.loop.active_tickets():
                 continue
-            tick = self.loop.advance()
+            tick = self.loop.advance(mix_staged=True) if self.mixed_one_row else self.loop.advance()
             for event in tick.tokens:
                 with self.guard:
                     recipient = self.tickets.get(event.ticket)
@@ -380,9 +388,11 @@ class Batch2HTTPOwner:
                 self._finish(event.ticket, event.reason)
             if tick.advanced_mask == 3:
                 self.shared_steps += 1
+            if self.mixed_one_row and tick.mixed_prefill_ticket is not None:
+                self.mixed_steps += 1
             if self.decode_replay_chunk_tokens is not None:
                 staged = tuple(sorted(self.loop.staged_tickets()))
-                if staged:
+                if staged and tick.mixed_prefill_ticket is None:
                     # One bounded prompt chunk per turn. Ready requests have
                     # already decoded, so a new prompt cannot monopolize them.
                     ticket = next((t for t in staged if t > self._last_prefill_ticket), staged[0])

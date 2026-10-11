@@ -166,6 +166,15 @@ _STAGED_PREFILL_ABI = {
          ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_int32)], ctypes.c_int),
 }
 
+_MIXED_STEP_ABI = {
+    "ck_session_v8_batch2_mixed_step": (
+        [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int32),
+         ctypes.POINTER(ctypes.c_uint64), ctypes.c_uint32,
+         ctypes.POINTER(ctypes.POINTER(ctypes.c_float)),
+         ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_int32)],
+        ctypes.c_int),
+}
+
 
 def _configure_batch_abi(lib: Any) -> None:
     try:
@@ -185,6 +194,16 @@ def _configure_staged_prefill_abi(lib: Any) -> None:
             fn.restype = restype
     except AttributeError as exc:
         raise SessionError(-5, "loaded session library lacks staged prefill") from exc
+
+
+def _configure_mixed_step_abi(lib: Any) -> None:
+    try:
+        for name, (argtypes, restype) in _MIXED_STEP_ABI.items():
+            fn = getattr(lib, name)
+            fn.argtypes = argtypes
+            fn.restype = restype
+    except AttributeError as exc:
+        raise SessionError(-5, "loaded session library lacks mixed batch2 step") from exc
 
 
 _TOKEN_CALLBACK = ctypes.CFUNCTYPE(
@@ -351,6 +370,24 @@ class Batch2SessionV8:
         self._call("ck_session_v8_batch2_step", inputs, self._outputs,
                    ctypes.byref(advanced))
         return advanced.value, self._logits
+
+    def mixed_step(self, tokens: tuple[int, int], tickets: tuple[int, int],
+                   prefill_slot: int) -> tuple[int, int, tuple[Any, Any]]:
+        """Advance one ready decode row and one staged prompt row together."""
+        if len(tokens) != 2 or len(tickets) != 2 or \
+                type(prefill_slot) is not int or prefill_slot not in (0, 1) or \
+                any(type(ticket) is not int or ticket <= 0 for ticket in tickets):
+            raise ValueError("mixed step requires two tokens, live tickets and a prefill slot")
+        self._validate_tokens(tokens, 2)
+        inputs = (ctypes.c_int32 * 2)(*tokens)
+        ticket_values = (ctypes.c_uint64 * 2)(*tickets)
+        advanced = ctypes.c_uint32()
+        consumed = ctypes.c_int32()
+        _configure_mixed_step_abi(self.parent.lib)
+        self._call("ck_session_v8_batch2_mixed_step", inputs, ticket_values,
+                   prefill_slot, self._outputs, ctypes.byref(advanced),
+                   ctypes.byref(consumed))
+        return advanced.value, consumed.value, self._logits
 
     def reset_slot(self, slot: int) -> None:
         if type(slot) is not int or slot not in (0, 1):

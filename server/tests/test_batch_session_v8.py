@@ -49,6 +49,59 @@ def test_staged_prefill_binding_tracks_progress_and_cancel(tmp_path):
         session.close()
 
 
+def test_mixed_step_shares_generated_call_and_preserves_both_positions(tmp_path):
+    source = tmp_path / "fake_model.c"
+    source.write_text(MODEL_SOURCE)
+    subprocess.run([
+        "cc", "-shared", "-fPIC", "-I", str(session_v8.PROJECT_ROOT / "include"),
+        "-I", str(session_v8.PROJECT_ROOT / "version/v8/src"),
+        str(source), "-o", str(tmp_path / "libmodel.so"),
+    ], check=True)
+    (tmp_path / "weights.bump").write_bytes(b"")
+    (tmp_path / "weights_manifest.map").write_text("")
+    session = session_v8.SessionV8.open(tmp_path, context_length=16, num_threads=1)
+    try:
+        batch = session.enable_batch2(320)
+        model = ctypes.CDLL(str(tmp_path / "libmodel.so"))
+        ready, _ = batch.prefill(0, [1, 2])
+        staged = batch.begin_prefill(1, 2)
+        before = model.ck_fake_batch_calls()
+        with pytest.raises(session_v8.SessionError, match="invalid_argument"):
+            batch.mixed_step((4, 5), (ready, staged + 1), 1)
+        assert model.ck_fake_batch_calls() == before
+        with pytest.raises(ValueError, match="token IDs"):
+            batch.mixed_step((16, 5), (ready, staged), 1)
+        mask, consumed, logits = batch.mixed_step((4, 5), (ready, staged), 1)
+        assert (mask, consumed) == (3, 1)
+        assert (logits[0][0], logits[1][0]) == (7, 5)
+        assert model.ck_fake_batch_calls() == before + 1
+        assert batch.position(0) == 3
+        with pytest.raises(session_v8.SessionError, match="capability"):
+            batch.position(1)
+        mask, consumed, logits = batch.mixed_step((1, 6), (ready, staged), 1)
+        assert (mask, consumed) == (3, 2)
+        assert (logits[0][0], logits[1][0]) == (8, 11)
+        assert (batch.position(0), batch.position(1)) == (4, 2)
+        mask, logits = batch.step((1, 1))
+        assert mask == 3 and (logits[0][0], logits[1][0]) == (9, 12)
+        batch.reset_slot(0)
+        batch.reset_slot(1)
+
+        ready, _ = batch.prefill(0, [2])
+        staged = batch.begin_prefill(1, 2)
+        batch.request_cancel(staged)
+        before = model.ck_fake_batch_calls()
+        with pytest.raises(session_v8.SessionError, match="cancelled"):
+            batch.mixed_step((1, 3), (ready, staged), 1)
+        assert model.ck_fake_batch_calls() == before
+        assert batch.position(0) == 1
+        batch.reset_slot(1)
+        mask, _ = batch.step((1, 0))
+        assert mask == 1 and batch.position(0) == 2
+    finally:
+        session.close()
+
+
 def test_batch_host_boundary_budget_tickets_and_recovery(tmp_path, monkeypatch):
     source = tmp_path / "fake_model.c"
     source.write_text(MODEL_SOURCE)
@@ -136,3 +189,5 @@ def test_missing_optional_batch_abi_fails_capability_check():
 
     with pytest.raises(session_v8.SessionError, match="lacks the batch2 ABI"):
         session_v8._configure_batch_abi(LegacyLib())
+    with pytest.raises(session_v8.SessionError, match="lacks mixed batch2 step"):
+        session_v8._configure_mixed_step_abi(LegacyLib())
