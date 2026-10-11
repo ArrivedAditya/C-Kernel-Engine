@@ -4341,6 +4341,7 @@ test-v8-template-circuit-audit:
 	@echo "Running v8 template circuit artifact audit tests..."
 	@$(PYTHON) -m py_compile version/v8/scripts/audit_template_circuit_v8.py
 	@$(PYTHON) -m unittest tests.test_v8_template_circuit_audit -v
+	@$(PYTHON) -m unittest tests.test_v8_prefill_codegen -v
 
 .PHONY: test-numerical-contracts
 test-numerical-contracts: $(LIB)
