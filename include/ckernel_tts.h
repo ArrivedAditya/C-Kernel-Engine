@@ -44,6 +44,14 @@ enum CKAudioExtentStatus {
     CK_AUDIO_EXTENT_OVERFLOW = -3
 };
 
+/* Deterministic request-local Gaussian excitation. The caller owns output;
+ * invalid geometry leaves it untouched. Samples are counter-indexed with
+ * explicit seed/stream domain separation. FP64 Box-Muller/libm arithmetic is
+ * independent of PyTorch's RNG and is not bit-identical across all libm
+ * implementations. */
+int audio_noise_counter_gaussian_f32(float *output, size_t output_capacity,
+    size_t count, uint64_t seed, uint64_t stream);
+
 /* Called after model duration postprocessing (round, clamp min=1), before
  * alignment expansion or waveform writes. A conservative output bound includes
  * the inverse-STFT FFT halo; actual output length must be checked again. */
