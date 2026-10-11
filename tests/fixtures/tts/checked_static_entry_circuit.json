@@ -32,7 +32,7 @@
         {
           "id": "reconstruct", "op": "audio_istft_mag_phase",
           "kernel": "audio_istft_mag_phase_f32", "returns_status": true,
-          "params": {"n_fft": 20, "hop": 5},
+          "params": {"n_fft": 20, "hop": 5, "Q": 120},
           "graph_slots": {
             "inputs": {"magnitude": "external:audio_magnitude", "phase": "external:audio_phase"},
             "outputs": {"output": "audio_waveform"}

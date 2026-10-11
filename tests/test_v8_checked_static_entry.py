@@ -134,6 +134,26 @@ class CheckedStaticEntryTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "checked_native_entry must be boolean"):
                 build_ir_v8.build_ir1_direct(source, Path("invalid-entry.json"), mode="prefill")
 
+    def test_required_istft_scratch_extent_must_be_declared(self):
+        template = json.loads((ROOT / "tests/fixtures/tts/checked_static_entry_circuit.json").read_text())
+        del template["block_types"]["bounded_graph"]["body"]["ops"][0]["params"]["Q"]
+        source = {
+            "config": {
+                "model": template["name"], "arch": template["name"],
+                "num_layers": 1, "embed_dim": 4, "num_heads": 1,
+                "num_kv_heads": 1, "head_dim": 4, "intermediate_size": 8,
+                "context_length": 7, "max_seq_len": 7, "vocab_size": 8,
+            },
+            "entries": [], "quant_summary": {}, "template": template,
+        }
+        registry = build_ir_v8.load_kernel_registry()
+        with contextlib.redirect_stdout(io.StringIO()):
+            ir1 = build_ir_v8.build_ir1_direct(source, Path("missing-scratch-extent.json"), mode="prefill")
+            lower1 = build_ir_v8.generate_ir_lower_1(ir1, registry, source, "prefill")
+            with self.assertRaisesRegex(RuntimeError, "planner cannot resolve required workspace"):
+                build_ir_v8.generate_memory_layout(
+                    lower1, source, registry, mode="prefill", context_len=7)
+
 
 if __name__ == "__main__":
     unittest.main()
