@@ -289,6 +289,12 @@ def main() -> int:
                        out_dir, record["tensors"])
     hooks.append(modules["decoder.generator.resblocks.3"]
                  .register_forward_pre_hook(capture_generator_stage1_join))
+    def capture_generator_stage1_final_activation(_module, inputs):
+        capture_tensor(inputs[0], "decoder_generator_stage1_final_activation",
+                       out_dir, record["tensors"])
+    hooks.append(modules["decoder.generator.conv_post"]
+                 .register_forward_pre_hook(
+                     capture_generator_stage1_final_activation))
     def capture_generator_stage1_activation(_module, inputs):
         capture_tensor(inputs[0], "decoder_generator_stage1_activation",
                        out_dir, record["tensors"])
