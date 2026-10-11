@@ -127,6 +127,155 @@ def test_real_native_staged_prefill_interleaves_and_cancel_reuses(fake_bundle):
         session.close()
 
 
+def test_real_native_mixed_step_advances_decode_and_staged_prompt(fake_bundle):
+    session = SessionV8.open(fake_bundle, context_length=16, num_threads=1)
+    try:
+        loop = Batch2RequestLoop(session.enable_batch2(320))
+        model = ctypes.CDLL(str(fake_bundle / "libmodel.so"))
+        first = loop.submit(0, [1], max_tokens=4)
+        second = loop.begin_staged(1, [2, 3], max_tokens=1)
+        before = model.ck_fake_batch_calls()
+        tick = loop.advance(mix_staged=True)
+        assert tick.mixed_prefill_ticket == second
+        assert tick.mixed_prefill_consumed == 1
+        assert tick.advanced_mask == 3
+        assert any(t.ticket == first for t in tick.tokens)
+        assert model.ck_fake_batch_calls() == before + 1
+        assert loop.staged_tickets() == (second,)
+        tick = loop.advance(mix_staged=True)
+        assert tick.mixed_prefill_ticket == second
+        assert tick.mixed_prefill_consumed == 2
+        assert loop.staged_tickets() == ()
+        assert loop.batch.position(1) == 2
+        tick = loop.advance(mix_staged=True)
+        assert (second, "token_limit") in [(c.ticket, c.reason) for c in tick.completed]
+        assert loop.batch.position(0) >= 3
+    finally:
+        session.close()
+
+
+def test_mixed_step_cancel_during_generated_call_retires_only_staged_owner(fake_bundle):
+    session = SessionV8.open(fake_bundle, context_length=16, num_threads=1)
+    try:
+        loop = Batch2RequestLoop(session.enable_batch2(320))
+        model = ctypes.CDLL(str(fake_bundle / "libmodel.so"))
+        model.ck_fake_hold_batch.argtypes = [ctypes.c_int]
+        decode_ticket = loop.submit(0, [1], max_tokens=4)
+        staged_ticket = loop.begin_staged(1, [2, 3], max_tokens=2)
+        model.ck_fake_hold_batch(1)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            in_flight = pool.submit(loop.advance, mix_staged=True)
+            try:
+                deadline = time.monotonic() + 5
+                while not model.ck_fake_batch_entered() and time.monotonic() < deadline:
+                    time.sleep(.001)
+                assert model.ck_fake_batch_entered()
+                assert loop.request_cancel(staged_ticket)
+                assert loop.active_tickets() == (decode_ticket, staged_ticket)
+            finally:
+                model.ck_fake_hold_batch(0)
+            tick = in_flight.result(timeout=5)
+        assert tick.advanced_mask == 3
+        assert (staged_ticket, "cancelled") in [(c.ticket, c.reason) for c in tick.completed]
+        assert loop.active_tickets() == (decode_ticket,)
+        assert loop.batch.position(0) == 2
+        assert not loop.request_cancel(staged_ticket)
+        reused = loop.begin_staged(1, [5], max_tokens=1)
+        assert reused != staged_ticket
+        assert loop.advance(mix_staged=True).mixed_prefill_ticket == reused
+        assert loop.batch.position(1) == 1
+        assert decode_ticket in loop.active_tickets()
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("cancel_owner", ["decode", "prefill"])
+def test_mixed_step_cancel_immediately_before_native_call_preserves_other_owner(
+        fake_bundle, monkeypatch, cancel_owner):
+    session = SessionV8.open(fake_bundle, context_length=16, num_threads=1)
+    try:
+        loop = Batch2RequestLoop(session.enable_batch2(320))
+        decode_ticket = loop.submit(0, [1], max_tokens=4)
+        prefill_ticket = loop.begin_staged(1, [2, 3], max_tokens=2)
+        original = loop.batch.mixed_step
+        victim = decode_ticket if cancel_owner == "decode" else prefill_ticket
+
+        def cancel_before_native(*args):
+            assert loop.request_cancel(victim)
+            return original(*args)
+
+        monkeypatch.setattr(loop.batch, "mixed_step", cancel_before_native)
+        tick = loop.advance(mix_staged=True)
+        assert [(event.ticket, event.reason) for event in tick.completed] == [
+            (victim, "cancelled")]
+        assert tick.mixed_prefill_ticket is None
+        if cancel_owner == "prefill":
+            assert tick.advanced_mask == 1
+            assert loop.batch.position(0) == 2
+            assert loop.active_tickets() == (decode_ticket,)
+            replacement = loop.begin_staged(1, [4], max_tokens=1)
+            assert loop.advance_prefill(replacement, 1) == ()
+            assert loop.batch.position(1) == 1
+        else:
+            assert tick.advanced_mask == 0
+            assert loop.active_tickets() == (prefill_ticket,)
+            assert loop.advance_prefill(prefill_ticket, 1) == ()
+            assert loop.advance_prefill(prefill_ticket, 1) == ()
+            assert loop.batch.position(1) == 2
+    finally:
+        session.close()
+
+
+def test_mixed_partial_native_failure_settles_both_and_resets_poison(tmp_path, monkeypatch):
+    source = MODEL_SOURCE.replace("active->value+i", "active->value-i")
+    source = source.replace("states[i]->value+j", "states[i]->value-j")
+    source = source.replace(
+        "    batch_calls++;",
+        "    if (rows[1].token == 14) {\n"
+        "        states[0]->value += rows[0].token; states[0]->position++;\n"
+        "        return -1;\n"
+        "    }\n"
+        "    batch_calls++;",
+    )
+    model_source = tmp_path / "fake_model.c"
+    model_source.write_text(source)
+    subprocess.run(["cc", "-shared", "-fPIC", "-I", "include", "-I",
+                    "version/v8/src", str(model_source), "-o",
+                    str(tmp_path / "libmodel.so")], check=True)
+    (tmp_path / "weights.bump").write_bytes(b"")
+    (tmp_path / "weights_manifest.map").write_text("")
+    session = SessionV8.open(tmp_path, context_length=16, num_threads=1)
+    try:
+        loop = Batch2RequestLoop(session.enable_batch2(320))
+        decode_ticket = loop.submit(0, [1], max_tokens=3)
+        prefill_ticket = loop.begin_staged(1, [14, 2], max_tokens=2)
+        original_reset = loop.batch.reset_slot
+        observed_poison = []
+
+        def check_poison_before_reset(slot):
+            if not observed_poison:
+                with pytest.raises(SessionError, match="busy"):
+                    loop.batch.step((0, 0))
+                observed_poison.append(True)
+            return original_reset(slot)
+
+        monkeypatch.setattr(loop.batch, "reset_slot", check_poison_before_reset)
+        tick = loop.advance(mix_staged=True)
+        assert observed_poison
+        assert tick.advanced_mask is None
+        assert sorted((event.ticket, event.reason) for event in tick.completed) == [
+            (decode_ticket, "runtime_error"), (prefill_ticket, "runtime_error")]
+        assert loop.active_tickets() == ()
+        assert not loop.request_cancel(decode_ticket)
+        assert not loop.request_cancel(prefill_ticket)
+        recovered = loop.submit(0, [3], max_tokens=1)
+        assert loop.batch.position(0) == 1
+        assert [(event.ticket, event.reason) for event in loop.advance().completed] == [
+            (recovered, "token_limit")]
+    finally:
+        session.close()
+
+
 class _ControlledBatch:
     """Constant logits make per-request RNG and failure recovery observable."""
 

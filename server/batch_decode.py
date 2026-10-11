@@ -38,6 +38,8 @@ class BatchTick:
     tokens: tuple[TokenEvent, ...]
     completed: tuple[CompletionEvent, ...]
     advanced_mask: int | None
+    mixed_prefill_ticket: int | None = None
+    mixed_prefill_consumed: int | None = None
 
 
 @dataclass
@@ -240,8 +242,8 @@ class Batch2RequestLoop:
                                      r.generated if isinstance(r, _Request) else 0)
                      for r in active)
 
-    def advance(self) -> BatchTick:
-        """Sample one token per active request, then decode continuing rows."""
+    def advance(self, *, mix_staged: bool = False) -> BatchTick:
+        """Sample ready rows; optionally pair one decode with one prompt row."""
         with self._operations:
             with self._state:
                 if self._poisoned:
@@ -251,6 +253,8 @@ class Batch2RequestLoop:
             completed: list[CompletionEvent] = []
             decode_inputs = [0, 0]
             pending_mask = 0
+            mixed_ticket = None
+            mixed_consumed = None
             try:
                 for request in active:
                     if request.cancel_requested.is_set():
@@ -276,23 +280,77 @@ class Batch2RequestLoop:
                         pending_mask |= 1 << request.slot
                 advanced = 0
                 if pending_mask:
-                    advanced, _ = self.batch.step(tuple(decode_inputs))
-                    if advanced & ~pending_mask:
-                        raise SessionError(-7, "native step advanced an unscheduled slot")
-                    if advanced != pending_mask:
+                    staged = None
+                    if mix_staged and pending_mask in (1, 2):
                         with self._state:
-                            missing = [self._slots[i] for i in (0, 1)
-                                       if (pending_mask & (1 << i)) and not (advanced & (1 << i))]
-                        if any(not r.cancel_requested.is_set() for r in missing):
-                            raise SessionError(-7, "native step omitted an active slot")
-                        for request in missing:
-                            completed.append(self._retire(request, "cancelled"))
+                            staged = self._prefills.get(1 if pending_mask == 1 else 0)
+                    if staged is not None and staged.cancel_requested.is_set():
+                        completed.append(self._retire(staged, "cancelled"))
+                        staged = None
+                    if staged is not None:
+                        decode_slot = 1 if staged.slot == 0 else 0
+                        ready = self._slots[decode_slot]
+                        decode_inputs[staged.slot] = staged.prompt_ids[staged.offset]
+                        tickets = [0, 0]
+                        tickets[decode_slot] = ready.ticket
+                        tickets[staged.slot] = staged.ticket
+                        try:
+                            advanced, consumed, _ = self.batch.mixed_step(
+                                tuple(decode_inputs), tuple(tickets), staged.slot)
+                        except SessionError as exc:
+                            if exc.status != -9 or not (ready.cancel_requested.is_set() or
+                                                         staged.cancel_requested.is_set()):
+                                raise
+                            # Native rejection is before execution. Retire
+                            # cancelled owners, then advance an uncancelled
+                            # decode row through the ordinary one-row path.
+                            if staged.cancel_requested.is_set():
+                                completed.append(self._retire(staged, "cancelled"))
+                            if ready.cancel_requested.is_set():
+                                completed.append(self._retire(ready, "cancelled"))
+                                pending_mask = 0
+                                advanced = 0
+                            else:
+                                advanced, _ = self.batch.step(tuple(decode_inputs))
+                        else:
+                            if advanced != 3 or consumed != staged.offset + 1:
+                                raise SessionError(-7, "native mixed step reported invalid progress")
+                            staged.offset = consumed
+                            mixed_ticket = staged.ticket
+                            mixed_consumed = consumed
+                            if staged.cancel_requested.is_set():
+                                completed.append(self._retire(staged, "cancelled"))
+                            elif staged.offset == len(staged.prompt_ids):
+                                ready_prefill = _Request(
+                                    staged.slot, staged.ticket,
+                                    self.batch.staged_logits(staged.slot),
+                                    staged.max_tokens, staged.stop_ids,
+                                    staged.temperature, staged.top_p, staged.rng,
+                                    cancel_requested=staged.cancel_requested)
+                                with self._state:
+                                    self._prefills.pop(staged.slot)
+                                    self._slots[staged.slot] = ready_prefill
+                                    self._tickets[staged.ticket] = ready_prefill
+                    else:
+                        advanced, _ = self.batch.step(tuple(decode_inputs))
+                    if mixed_ticket is None:
+                        if advanced & ~pending_mask:
+                            raise SessionError(-7, "native step advanced an unscheduled slot")
+                        if advanced != pending_mask:
+                            with self._state:
+                                missing = [self._slots[i] for i in (0, 1)
+                                           if (pending_mask & (1 << i)) and not (advanced & (1 << i))]
+                            if any(not r.cancel_requested.is_set() for r in missing):
+                                raise SessionError(-7, "native step omitted an active slot")
+                            for request in missing:
+                                completed.append(self._retire(request, "cancelled"))
                 with self._state:
                     newly_cancelled = tuple(r for r in self._slots.values()
                                             if r.cancel_requested.is_set())
                 for request in newly_cancelled:
                     completed.append(self._retire(request, "cancelled"))
-                return BatchTick(tuple(emitted), tuple(completed), advanced)
+                return BatchTick(tuple(emitted), tuple(completed), advanced,
+                                 mixed_ticket, mixed_consumed)
             except SessionError:
                 completed.extend(self._fail_all_after_native_error())
                 # A failing native step may have advanced neither, one, or

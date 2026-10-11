@@ -1657,6 +1657,8 @@ def create_app(
         )
         if batch_http.decode_replay_chunk_tokens is not None:
             effective_serving["prefill_chunk_token_budget"] = batch_http.decode_replay_chunk_tokens
+        if batch_http.mixed_one_row:
+            effective_serving["mixed_execution"] = "one_decode_plus_one_prefill_row"
         effective_serving["batch_prompt_token_cap"] = batch_http.max_prompt_tokens
         effective_serving["batch_delivery_consumer_cap"] = batch_http.max_delivery_consumers
         effective_serving["batch_output_token_cap"] = batch_http.max_output_tokens

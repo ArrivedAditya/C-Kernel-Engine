@@ -6286,6 +6286,96 @@ done:
     return status;
 }
 
+int ck_session_v8_batch2_mixed_step(CKSessionV8 *session,
+                                    const int32_t tokens[2],
+                                    const uint64_t tickets[2],
+                                    uint32_t prefill_slot,
+                                    float *const logits[2],
+                                    uint32_t *advanced_mask,
+                                    int32_t *consumed_out) {
+    if (!session || !tokens || !tickets || prefill_slot >= 2 || !logits ||
+        !advanced_mask || !consumed_out)
+        return CK_SESSION_V8_ERROR_INVALID_ARGUMENT;
+    *advanced_mask = 0;
+    *consumed_out = 0;
+    int status = batch2_lock(session);
+    if (status != CK_SESSION_V8_OK) return status;
+    if (!session->batch_enabled || session->batch_poisoned) {
+        status = CK_SESSION_V8_ERROR_BUSY;
+        goto done;
+    }
+    const unsigned decode_slot = prefill_slot ^ 1u;
+    const int32_t vocab_size = session->api.get_vocab_size();
+    if (vocab_size <= 0) {
+        status = CK_SESSION_V8_ERROR_RUNTIME;
+        goto poison;
+    }
+    for (unsigned i = 0; i < 2; ++i) {
+        const uint_fast64_t state = atomic_load_explicit(
+            &session->batch_slot[i].ticket_state, memory_order_acquire);
+        if (!tickets[i] || (state >> 1) != tickets[i] || !logits[i] ||
+            tokens[i] < 0 || tokens[i] >= vocab_size) {
+            status = CK_SESSION_V8_ERROR_INVALID_ARGUMENT;
+            goto done;
+        }
+        if (state & 1u) {
+            status = CK_SESSION_V8_ERROR_CANCELLED;
+            goto done;
+        }
+    }
+    if (!session->batch_slot[decode_slot].ready ||
+        session->batch_slot[prefill_slot].ready ||
+        session->batch_slot[prefill_slot].prefill_total <= 0 ||
+        session->batch_slot[prefill_slot].prefill_done >=
+            session->batch_slot[prefill_slot].prefill_total) {
+        status = CK_SESSION_V8_ERROR_INVALID_ARGUMENT;
+        goto done;
+    }
+    CKModelBatchDecodeRowV8 rows[2];
+    for (unsigned i = 0; i < 2; ++i) {
+        if (session->api.sequence_activate(session->batch_slot[i].handle) != 0) {
+            status = CK_SESSION_V8_ERROR_RUNTIME;
+            goto poison;
+        }
+        const int32_t position = session->api.get_active_tokens();
+        if (position < 0 || position >= session->context_length ||
+            (i == prefill_slot &&
+             position != session->batch_slot[i].prefill_done)) {
+            status = CK_SESSION_V8_ERROR_RUNTIME;
+            goto poison;
+        }
+        rows[i] = (CKModelBatchDecodeRowV8){
+            .sequence_handle = session->batch_slot[i].handle,
+            .token = tokens[i], .position = position,
+            .row_offset = i, .token_count = 1, .logits = logits[i]};
+    }
+    if (session->api.decode_batch2(rows, 2, session->batch_workspace,
+                                   session->batch_workspace_bytes) != 0) {
+        status = CK_SESSION_V8_ERROR_RUNTIME;
+        goto poison;
+    }
+    for (unsigned i = 0; i < 2; ++i) {
+        if (session->api.sequence_activate(session->batch_slot[i].handle) != 0 ||
+            session->api.get_active_tokens() != rows[i].position + 1) {
+            status = CK_SESSION_V8_ERROR_RUNTIME;
+            goto poison;
+        }
+    }
+    ++session->batch_slot[prefill_slot].prefill_done;
+    *consumed_out = session->batch_slot[prefill_slot].prefill_done;
+    if (*consumed_out == session->batch_slot[prefill_slot].prefill_total)
+        session->batch_slot[prefill_slot].ready = 1;
+    *advanced_mask = 3;
+    status = CK_SESSION_V8_OK;
+    goto done;
+poison:
+    session->batch_poisoned = 1;
+    session->batch_poison_reset_mask = 0;
+done:
+    pthread_mutex_unlock(&session->generation_lock);
+    return status;
+}
+
 int ck_session_v8_batch2_reset_slot(CKSessionV8 *session, uint32_t slot) {
     if (!session || slot >= 2) return CK_SESSION_V8_ERROR_INVALID_ARGUMENT;
     int status = batch2_lock(session);

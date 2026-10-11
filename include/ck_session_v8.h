@@ -171,7 +171,7 @@ const char *ck_session_v8_last_error(const CKSessionV8 *session);
  * advancement is unknown and both slots are poisoned until individually reset.
  * All functions except request_cancel must
  * be serialized by the host; cancellation is thread-safe. This is a native
- * scheduling primitive, not an HTTP admission queue or mixed prefill/decode.
+ * scheduling primitive, not an HTTP admission queue.
  * The legacy whole-prompt prefill is synchronous and has no ticket until it
  * returns. The staged decode-replay prefill below has a ticket before work.
  */
@@ -206,6 +206,23 @@ int ck_session_v8_batch2_prefill_append(CKSessionV8 *session, uint32_t slot,
                                        int32_t *consumed_out);
 int ck_session_v8_batch2_step(CKSessionV8 *session, const int32_t tokens[2],
                              float *const logits[2], uint32_t *advanced_mask);
+/* Opt-in one-row mixed step: one ready decode slot and one staged prefill slot
+ * enter the same generated batch2 call. prefill_slot identifies which token
+ * comes from the staged prompt; tickets[slot] must match each live generation.
+ * Both rows use their own sequence handle and current position. On success,
+ * advanced_mask is 3 and consumed_out is the staged prompt's cumulative token
+ * count. A pre-execution cancellation returns CANCELLED with no advancement.
+ * A runtime error may leave advancement unknown and poisons both slots; reset
+ * both before reuse. Cancellation during generated execution is acknowledged
+ * only after that call returns, so successful work is reported before reset.
+ * This is one prefill token plus one decode token, not a multi-row chunk. */
+int ck_session_v8_batch2_mixed_step(CKSessionV8 *session,
+                                    const int32_t tokens[2],
+                                    const uint64_t tickets[2],
+                                    uint32_t prefill_slot,
+                                    float *const logits[2],
+                                    uint32_t *advanced_mask,
+                                    int32_t *consumed_out);
 int ck_session_v8_batch2_reset_slot(CKSessionV8 *session, uint32_t slot);
 int ck_session_v8_batch2_position(CKSessionV8 *session, uint32_t slot,
                                  int32_t *position_out);
