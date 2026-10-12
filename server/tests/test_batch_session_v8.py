@@ -2,8 +2,10 @@
 
 import concurrent.futures
 import ctypes
+import os
 import subprocess
 import time
+from array import array
 from pathlib import Path
 
 import pytest
@@ -12,6 +14,8 @@ from server import session_v8
 from tests.test_v8_batch_session_scheduler import MODEL_SOURCE
 from version.v8.scripts.certify_batch_mixed_one_row_v8 import (
     CAP_BATCH_TWO_ROWS, _compare_prefill_snapshots, _finite_logit_bytes,
+    _logit_distance, _validated_oracle_result, _verify_oracle_checkout,
+    _verify_oracle_mappings,
     _require_shared_projections, certify,
 )
 
@@ -63,6 +67,72 @@ def test_ordinary_prefill_comparison_rejects_forced_decode_replay(monkeypatch):
     monkeypatch.setenv("CK_V8_FORCE_DECODE_PREFILL", "1")
     with pytest.raises(ValueError, match="cannot force decode replay"):
         certify(Path("unused"), compare_ordinary=True)
+
+
+def test_llama_logit_diagnostic_keeps_full_vector_error_visible():
+    reference = bytes((ctypes.c_float * 3)(1, 4, 2))
+    result = _logit_distance(reference, bytes((ctypes.c_float * 3)(5, 4, 2)))
+    assert result["max_abs_logit_diff"] == 4
+    assert result["logit_rmse"] > 2
+    assert result["top1_subject"] == 1 and result["top1_oracle"] == 0
+    assert _logit_distance(reference, reference)["max_abs_logit_diff"] == 0
+    with pytest.raises(AssertionError, match="extents differ"):
+        _logit_distance(reference, reference[:-4])
+    with pytest.raises(AssertionError, match="nonfinite"):
+        _logit_distance(reference, bytes((ctypes.c_float * 3)(1, float("nan"), 2)))
+    with pytest.raises(ValueError, match="requires the ordinary"):
+        certify(Path("unused"), oracle_gguf=Path("unused"))
+
+
+def test_oracle_mapping_attestation_rejects_alternate_and_replaced_files(tmp_path):
+    names = ("libllama.so", "libggml.so", "libggml-base.so", "libggml-cpu.so")
+    mappings = {}
+    for name in names:
+        path = tmp_path / name
+        path.write_bytes(name.encode())
+        info = path.stat()
+        mappings[name] = {
+            "path": str(path),
+            "device": f"{os.major(info.st_dev):02x}:{os.minor(info.st_dev):02x}",
+            "inode": info.st_ino,
+        }
+    meta = {"loaded_libraries": mappings}
+    assert set(_verify_oracle_mappings(meta, tmp_path)) == set(names)
+    old_inode = mappings["libllama.so"]["inode"]
+    (tmp_path / "replacement").write_bytes(b"other")
+    (tmp_path / "replacement").replace(tmp_path / "libllama.so")
+    assert (tmp_path / "libllama.so").stat().st_ino != old_inode
+    with pytest.raises(AssertionError, match="stale loaded"):
+        _verify_oracle_mappings(meta, tmp_path)
+    mappings["libllama.so"]["inode"] = (tmp_path / "libllama.so").stat().st_ino
+    alternate = tmp_path / "alternate" / "libllama.so"
+    alternate.parent.mkdir()
+    alternate.write_bytes(b"other")
+    mappings["libllama.so"]["path"] = str(alternate)
+    with pytest.raises(AssertionError, match="alternate"):
+        _verify_oracle_mappings(meta, tmp_path)
+
+
+def test_oracle_response_rejects_malformed_and_nonfinite_rows(tmp_path):
+    for value in ({}, {"meta": {}}, {"meta": {"n_vocab": 1}, "logits": array("f", [1])}):
+        with pytest.raises(AssertionError):
+            _validated_oracle_result(value, [100], "batched", tmp_path)
+    meta = {"n_vocab": 1, "token_count": 1, "tokens": [100],
+            "decode_mode": "batched", "effective_settings": {"context": 256}}
+    with pytest.raises(AssertionError, match="nonfinite"):
+        _validated_oracle_result({"meta": meta, "logits": array("f", [float("nan")])},
+                                 [100], "batched", tmp_path)
+
+
+def test_oracle_checkout_rejects_wrong_pin_and_dirty_tracked_source(monkeypatch, tmp_path):
+    values = iter(["160000 commit aaaaaaaa\tllama.cpp\n", "bbbbbbbb\n"])
+    monkeypatch.setattr(subprocess, "check_output", lambda *args, **kwargs: next(values))
+    with pytest.raises(AssertionError, match="repository pin"):
+        _verify_oracle_checkout(tmp_path, tmp_path / "llama.cpp")
+    values = iter(["160000 commit aaaaaaaa\tllama.cpp\n", "aaaaaaaa\n",
+                   " M src/llama.cpp\n"])
+    with pytest.raises(AssertionError, match="tracked source changes"):
+        _verify_oracle_checkout(tmp_path, tmp_path / "llama.cpp")
 
 
 def test_staged_prefill_binding_tracks_progress_and_cancel(tmp_path):
