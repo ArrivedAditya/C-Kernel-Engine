@@ -307,8 +307,9 @@ class KokoroGeneratedWaveformTest(unittest.TestCase):
                 (baseline, 7, 61800))):
             if request_index == 1:
                 # Reject a malformed request in the same arena before B. The
-                # subsequent B and A calls prove that no failed-request state
-                # leaks into either a different or repeated utterance.
+                # B must still execute, and the repeated A must match exactly.
+                # This position-zero ID is rejected before model execution;
+                # it does not test recovery after a partial graph failure.
                 ids[:] = baseline[0]
                 ids[0] = -1
                 waveform.fill(-91.)
@@ -361,7 +362,8 @@ class KokoroGeneratedWaveformTest(unittest.TestCase):
             'configuration': 'one process; one arena and generated entry; '
                 'two distinct 36-phoneme af_heart utterances; '
                 '103,98,103 frames; seeds 7,8,7; native Gaussian; '
-                'invalid ID rejected between A and B, then B and A recover',
+                'position-zero invalid ID rejected before B; B executes '
+                'with valid bounds; repeated A recovers exactly',
             'numerical_parity': 'NOT_TESTED against pinned PyTorch noise',
             'reproduction_command': 'CKE_TTS_RUN_SEEDED_REPLAY=1 '
                 'python3 -m unittest tests.test_v8_kokoro_generated_waveform.'
