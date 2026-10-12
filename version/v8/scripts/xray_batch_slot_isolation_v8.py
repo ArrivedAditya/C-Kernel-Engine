@@ -32,6 +32,10 @@ FOLLOWUP_TOKENS = (104, 113)
 REUSE_PROMPT = (120, 121, 122)
 
 
+class InjectedParkedWriteDetected(AssertionError):
+    """The logical-KV isolation guard rejected an intentionally injected write."""
+
+
 def assert_parked_unchanged(before: dict, after: dict) -> None:
     if before["position"] != after["position"] or before["kv"] != after["kv"]:
         raise AssertionError("non-advancing slot changed")
@@ -64,10 +68,12 @@ def inject_parked_kv_write(batch, model, slot: int) -> None:
 
 
 def diagnose(bundle: Path, *, layers: tuple[int, ...] = (0, 16, 17),
-             threads: int = 1, inject_parked_write: bool = False) -> dict:
+             threads: int = 1, inject_parked_write: int | None = None) -> dict:
     if not layers or len(set(layers)) != len(layers) or threads < 1:
         raise ValueError("invalid layer or thread selection")
-    if inject_parked_write and 0 not in layers:
+    if inject_parked_write not in (None, 0, 1):
+        raise ValueError("injected advancing slot must be 0 or 1")
+    if inject_parked_write is not None and 0 not in layers:
         raise ValueError("parked-write injection requires layer 0 in the KV export")
     bundle = bundle.resolve(strict=True)
     config = json.loads((bundle / "config.json").read_text())
@@ -149,9 +155,19 @@ def diagnose(bundle: Path, *, layers: tuple[int, ...] = (0, 16, 17),
             mask, logits = batch.step(NEXT_TOKENS)
             if mask != 1 << advancing:
                 raise AssertionError("wrong slot advanced after cancellation")
-            if inject_parked_write and advancing == 0:
+            if inject_parked_write == advancing:
                 inject_parked_kv_write(batch, model, parked)
             after = [snapshot(0), snapshot(1)]
+            if inject_parked_write == advancing:
+                try:
+                    assert_parked_unchanged(before[parked], after[parked])
+                except AssertionError as exc:
+                    if before[parked]["position"] != after[parked]["position"]:
+                        raise AssertionError("injection changed parked position") from exc
+                    raise InjectedParkedWriteDetected(
+                        f"non-advancing slot {parked} logical KV changed"
+                    ) from exc
+                raise AssertionError("injected parked KV write escaped logical isolation guard")
             assert_parked_unchanged(before[parked], after[parked])
             assert_new_logical_rows(before[advancing], after[advancing])
             shared = snapshot(advancing, logits[advancing])
@@ -239,8 +255,9 @@ def main() -> int:
     parser.add_argument("bundle", type=Path)
     parser.add_argument("--layers", default="0,16,17")
     parser.add_argument("--threads", type=int, default=1)
-    parser.add_argument("--inject-parked-write", action="store_true",
-                        help="Negative control: corrupt parked KV and require isolation rejection")
+    parser.add_argument("--inject-parked-write", type=int, choices=(0, 1),
+                        metavar="ADVANCING_SLOT",
+                        help="Negative control: corrupt the other slot's KV during this slot's advance")
     parser.add_argument("--json-out", type=Path)
     args = parser.parse_args()
     result = diagnose(args.bundle, layers=tuple(int(x) for x in args.layers.split(",")),
