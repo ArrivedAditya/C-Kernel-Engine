@@ -78,11 +78,22 @@
         },
         "exact": false,
         "first_difference": {
+          "absolute_difference": 0.007998287677764893,
           "byte_in_element": 0,
           "channel": 0,
           "head": 0,
           "kind": "K",
-          "position": 9
+          "ordinary": {
+            "classification": "finite",
+            "raw_le_hex": "64a4513e",
+            "value": 0.20472866296768188
+          },
+          "position": 9,
+          "staged": {
+            "classification": "finite",
+            "raw_le_hex": "18d5593e",
+            "value": 0.21272695064544678
+          }
         },
         "head_width": 256,
         "kv_heads": 1,
@@ -178,11 +189,22 @@
         },
         "exact": false,
         "first_difference": {
+          "absolute_difference": 0.007998287677764893,
           "byte_in_element": 0,
           "channel": 0,
           "head": 0,
           "kind": "K",
-          "position": 9
+          "ordinary": {
+            "classification": "finite",
+            "raw_le_hex": "64a4513e",
+            "value": 0.20472866296768188
+          },
+          "position": 9,
+          "staged": {
+            "classification": "finite",
+            "raw_le_hex": "18d5593e",
+            "value": 0.21272695064544678
+          }
         },
         "head_width": 256,
         "kv_heads": 1,
@@ -266,13 +288,25 @@
       10
     ]
   },
+  "cpu": "x86_64",
+  "declared_bundle_assets_sha256": {
+    "config.json": "3f1a4eb5edb53d349227434a09a3e516652a67a550e51915a0cc856d029d268b",
+    "lowered_decode.json": "d7359ddc92b63e5aaa9c971880866223b9ddd6aa3b21781370d9ce9f70e2615a",
+    "lowered_prefill.json": "fc6b504e3584c6116dc52fc7797a8de0af00de18e2c198af8f6196bc1137ccf9"
+  },
+  "diagnostic_git_head": "2330695509621ff64e646c72616afb846f46ccea",
+  "diagnostic_source_sha256": "c0c6f0b0cccebd492e2b979f07b72bca3e0e5003e311fd1fa699193e3245ab0b",
+  "diagnostic_source_uncommitted_at_capture": true,
   "exact_layer_checks": 58,
   "failing_layer_checks": 2,
   "first_failure": "slot_0/prefix_10/layer_17",
   "full_logit_parity": "not_tested_by_this_probe",
   "generated_source_sha256": "8bd6bf5e3ec91bef9205ed83f992d13789cf0bb70f2fdf520b4b0351c13b79cb",
+  "loaded_engine_sha256": "5189d20a52a3da4b8279b2518a50d6dfe7699e3f4929f4bf605c34d71623749a",
   "loaded_model_sha256": "14e3f81d872d77081416b658d84c61791cce7e8184d50c6ffc7e82a91f62dcca",
   "loaded_session_sha256": "4daa4e1f859c733cf0e4e9fa5a3ff2ccfdfda892db06ae588f81763535945888",
+  "lowering_to_loaded_binary_relationship": "unverified",
+  "requested_threads": 1,
   "schema": "cke.v8.batch-prefill-kv-xray.v1",
   "scope": "completed-prefix logical KV writes; attention read span is declared, not observed",
   "status": "fail",

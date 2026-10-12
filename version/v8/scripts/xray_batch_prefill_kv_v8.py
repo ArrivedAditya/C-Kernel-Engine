@@ -12,7 +12,10 @@ import argparse
 import ctypes
 import hashlib
 import json
+import math
+import platform
 import struct
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -72,17 +75,53 @@ def compare_kv_exports(ordinary: dict, staged: dict, *, ordinary_owner: int,
     row_bytes = ordinary["row_bytes"]
     first_byte = next(index for index, pair in enumerate(zip(left, right, strict=True))
                       if pair[0] != pair[1])
-    row, offset = divmod(first_byte, row_bytes)
-    kind_index, row = divmod(row, ordinary["heads"] * ordinary["position"])
-    head, token_position = divmod(row, ordinary["position"])
+    linear_row, offset = divmod(first_byte, row_bytes)
+    kind_index, local_row = divmod(linear_row, ordinary["heads"] * ordinary["position"])
+    head, token_position = divmod(local_row, ordinary["position"])
+    element_offset = linear_row * row_bytes + (offset // element_bytes) * element_bytes
+    raw_ordinary = left[element_offset:element_offset + element_bytes]
+    raw_staged = right[element_offset:element_offset + element_bytes]
+
+    def decode(raw: bytes) -> dict:
+        dtype = ordinary["dtype"]
+        value = (struct.unpack("<f", raw)[0] if dtype == 0 else
+                 struct.unpack("<e", raw)[0] if dtype == 1 else
+                 struct.unpack("<f", b"\0\0" + raw)[0])
+        if math.isnan(value):
+            classification = "nan"
+        elif math.isinf(value):
+            classification = "positive_infinity" if value > 0 else "negative_infinity"
+        else:
+            classification = "finite"
+        return {"raw_le_hex": raw.hex(), "value": value if math.isfinite(value) else None,
+                "classification": classification}
+
+    left_value = decode(raw_ordinary)
+    right_value = decode(raw_staged)
     return {
         "exact": False,
         "first_difference": {
             "kind": ("K", "V")[kind_index], "head": head,
             "position": token_position, "channel": offset // element_bytes,
             "byte_in_element": offset % element_bytes,
+            "ordinary": left_value, "staged": right_value,
+            "absolute_difference": abs(left_value["value"] - right_value["value"])
+            if left_value["value"] is not None and right_value["value"] is not None else None,
         },
     }
+
+
+def retain_prefix_result(cases: dict, *, slot: int, length: int, max_prefix: int,
+                         by_layer: dict, previous: tuple[str, dict] | None) -> tuple[str, dict]:
+    """Retain each failure and its true immediately preceding control."""
+    key = f"slot_{slot}/prefix_{length}"
+    if any(not item["exact"] for item in by_layer.values()):
+        if previous is not None:
+            cases.setdefault(previous[0], previous[1])
+        cases[key] = by_layer
+    elif length >= max_prefix - 1:
+        cases[key] = by_layer
+    return key, by_layer
 
 
 def attention_span(*, position: int, sliding_window: int,
@@ -135,6 +174,7 @@ def diagnose(bundle: Path, *, max_prefix: int = 10, layers: tuple[int, ...] = (1
     try:
         batch = session.enable_batch2(1 << 30)
         model = ctypes.CDLL(str(bundle / "libmodel.so"))
+        engine = ctypes.CDLL(str(bundle / "libckernel_engine.so"))
         model.ck_model_debug_export_kv.argtypes = [ctypes.c_char_p, ctypes.c_int]
         model.ck_model_debug_export_kv.restype = ctypes.c_int
         model.ck_model_get_named_activation_ptr.argtypes = [ctypes.c_char_p]
@@ -144,6 +184,9 @@ def diagnose(bundle: Path, *, max_prefix: int = 10, layers: tuple[int, ...] = (1
             model, "ck_model_debug_export_kv", bundle / "libmodel.so")
         loaded_session = verified_loaded_symbol_backing(
             session.lib, "ck_session_v8_batch2_mixed_step", SESSION_LIB_PATH)
+        selected_attention = contracts[str(layers[0])]["prefill"]["function"]
+        loaded_engine = verified_loaded_symbol_backing(
+            engine, selected_attention, bundle / "libckernel_engine.so")
         source = (bundle / "model_v8.c").read_bytes()
         marker = b'\n\nCK_EXPORT const char *ck_model_generated_source_sha256(void) {\n    return "'
         prefix, found, tail = source.rpartition(marker)
@@ -190,6 +233,7 @@ def diagnose(bundle: Path, *, max_prefix: int = 10, layers: tuple[int, ...] = (1
         exact_layer_checks = 0
         failure_count = 0
         for slot in slots:
+            previous_case = None
             for length in range(1, max_prefix + 1):
                 tokens = tuple(range(100, 100 + length))
                 ordinary = snapshot(slot, tokens, False)
@@ -215,11 +259,9 @@ def diagnose(bundle: Path, *, max_prefix: int = 10, layers: tuple[int, ...] = (1
                     }
                     if not result["exact"] and first_failure is None:
                         first_failure = key
-                # Keep the first failing boundary and the immediately preceding
-                # control detailed; successful earlier prefixes are counted.
-                if (any(not item["exact"] for item in by_layer.values()) or
-                        length >= max_prefix - 1):
-                    cases[f"slot_{slot}/prefix_{length}"] = by_layer
+                previous_case = retain_prefix_result(
+                    cases, slot=slot, length=length, max_prefix=max_prefix,
+                    by_layer=by_layer, previous=previous_case)
         return {
             "schema": "cke.v8.batch-prefill-kv-xray.v1",
             "status": "fail" if first_failure else "pass",
@@ -233,7 +275,22 @@ def diagnose(bundle: Path, *, max_prefix: int = 10, layers: tuple[int, ...] = (1
             "bundle": str(bundle),
             "loaded_model_sha256": loaded_model["sha256"],
             "loaded_session_sha256": loaded_session["sha256"],
+            "loaded_engine_sha256": loaded_engine["sha256"],
             "generated_source_sha256": source_sha256.decode(),
+            "diagnostic_source_sha256": _sha256_path(Path(__file__)),
+            "diagnostic_git_head": subprocess.check_output(
+                ("git", "rev-parse", "HEAD"), cwd=Path(__file__).resolve().parents[3],
+                text=True).strip(),
+            "diagnostic_source_uncommitted_at_capture": subprocess.run(
+                ("git", "diff", "--quiet", "HEAD", "--",
+                 "version/v8/scripts/xray_batch_prefill_kv_v8.py"),
+                cwd=Path(__file__).resolve().parents[3], check=False).returncode != 0,
+            "requested_threads": threads,
+            "cpu": platform.processor() or platform.machine(),
+            "declared_bundle_assets_sha256": {
+                name: _sha256_path(bundle / name)
+                for name in ("config.json", "lowered_prefill.json", "lowered_decode.json")},
+            "lowering_to_loaded_binary_relationship": "unverified",
             "weights_sha256": _sha256_path(bundle / "weights.bump"),
             "tokens": list(range(100, 100 + max_prefix)),
             "attention_contracts": contracts,

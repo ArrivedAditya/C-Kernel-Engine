@@ -19,7 +19,7 @@ from version.v8.scripts.certify_batch_mixed_one_row_v8 import (
     _require_shared_projections, certify,
 )
 from version.v8.scripts.xray_batch_prefill_kv_v8 import (
-    attention_span, compare_kv_exports, parse_kv_export,
+    attention_span, compare_kv_exports, parse_kv_export, retain_prefix_result,
 )
 from version.v8.scripts.xray_batch_prefill_attention_v8 import (
     compare_dumps, read_dump,
@@ -46,10 +46,15 @@ def test_kv_xray_reports_first_logical_difference_and_rejects_wrong_owner():
     assert compare_kv_exports(ordinary, ordinary, ordinary_owner=0,
                               staged_owner=0)["exact"]
     result = compare_kv_exports(ordinary, staged, ordinary_owner=0, staged_owner=0)
-    assert result["first_difference"] == {
+    assert {key: result["first_difference"][key] for key in
+            ("kind", "head", "position", "channel", "byte_in_element")} == {
         "kind": "V", "head": 1, "position": 2,
         "channel": 3, "byte_in_element": 0,
     }
+    assert result["first_difference"]["ordinary"] == {
+        "raw_le_hex": "00000000", "value": 0.0, "classification": "finite"}
+    assert result["first_difference"]["staged"]["raw_le_hex"] == "01000000"
+    assert result["first_difference"]["absolute_difference"] > 0
     with pytest.raises(ValueError, match="owner"):
         compare_kv_exports(ordinary, staged, ordinary_owner=0, staged_owner=1)
 
@@ -68,6 +73,44 @@ def test_kv_xray_rejects_wrong_position_geometry_and_truncated_payload():
     with pytest.raises(ValueError, match="geometry"):
         compare_kv_exports(parse_kv_export(payload, layer=16, position=3),
                            other_dtype, ordinary_owner=0, staged_owner=0)
+
+
+def test_kv_xray_retains_early_failure_preceding_control():
+    cases = {}
+    previous = None
+    for length in range(1, 6):
+        previous = retain_prefix_result(
+            cases, slot=0, length=length, max_prefix=10,
+            by_layer={"16": {"exact": length != 4}}, previous=previous)
+    assert list(cases) == ["slot_0/prefix_3", "slot_0/prefix_4"]
+    cases = {}
+    retain_prefix_result(cases, slot=1, length=1, max_prefix=10,
+                         by_layer={"16": {"exact": False}}, previous=None)
+    assert list(cases) == ["slot_1/prefix_1"]
+
+
+@pytest.mark.parametrize("dtype,ordinary,staged,value", [
+    (0, b"\x00\x00\x80\x3f", b"\x00\x00\xc0\x7f", 1.0),
+    (1, b"\x00\x3c", b"\x00\x7e", 1.0),
+    (2, b"\x80\x3f", b"\xc0\x7f", 1.0),
+])
+def test_kv_xray_decodes_finite_and_nonfinite_first_values(
+    dtype, ordinary, staged, value,
+):
+    left = bytearray(_ckx_fixture(position=1, heads=1, width=1, dtype=dtype))
+    right = bytearray(left)
+    left[32:32 + len(ordinary)] = ordinary
+    right[32:32 + len(staged)] = staged
+    result = compare_kv_exports(
+        parse_kv_export(bytes(left), layer=16, position=1),
+        parse_kv_export(bytes(right), layer=16, position=1),
+        ordinary_owner=0, staged_owner=0)["first_difference"]
+    assert result["ordinary"] == {
+        "raw_le_hex": ordinary.hex(), "value": value, "classification": "finite"}
+    assert result["staged"]["raw_le_hex"] == staged.hex()
+    assert result["staged"]["classification"] == "nan"
+    assert result["staged"]["value"] is None
+    assert result["absolute_difference"] is None
 
 
 def test_kv_xray_validates_declared_causal_and_window_boundaries():

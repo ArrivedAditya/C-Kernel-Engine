@@ -20,7 +20,7 @@ from pathlib import Path
 
 from server.serving_bundle import verified_loaded_symbol_backing
 from server.session_v8 import SESSION_LIB_PATH, SessionV8
-from version.v8.scripts.xray_batch_prefill_kv_v8 import attention_span
+from version.v8.scripts.xray_batch_prefill_kv_v8 import _attention_contract, attention_span
 
 _HEADER = struct.Struct("<8sIi32sII4qIi32s")
 _NAME = re.compile(r"(kq_scores|kq_soft|kqv_out|vcols)_h(\d+)_q(\d+)")
@@ -163,12 +163,16 @@ def capture(bundle: Path, *, mode: str, directory: Path, layer_ordinal: int,
     try:
         batch = session.enable_batch2(1 << 30)
         model = ctypes.CDLL(str(bundle / "libmodel.so"))
+        engine = ctypes.CDLL(str(bundle / "libckernel_engine.so"))
         model.ck_model_debug_export_kv.argtypes = [ctypes.c_char_p, ctypes.c_int]
         model.ck_model_debug_export_kv.restype = ctypes.c_int
         loaded_model = verified_loaded_symbol_backing(
             model, "ck_model_debug_export_kv", bundle / "libmodel.so")
         loaded_session = verified_loaded_symbol_backing(
             session.lib, "ck_session_v8_batch2_mixed_step", SESSION_LIB_PATH)
+        selected_attention = _attention_contract(bundle, kv_layer)["prefill"]["function"]
+        loaded_engine = verified_loaded_symbol_backing(
+            engine, selected_attention, bundle / "libckernel_engine.so")
         if mode == "ordinary":
             _, logits = batch.prefill(slot, tokens)
         else:
@@ -191,6 +195,7 @@ def capture(bundle: Path, *, mode: str, directory: Path, layer_ordinal: int,
             "kv_sha256": hashlib.sha256(kv_path.read_bytes()).hexdigest(),
             "loaded_model_sha256": loaded_model["sha256"],
             "loaded_session_sha256": loaded_session["sha256"],
+            "loaded_engine_sha256": loaded_engine["sha256"],
             "attention_capture_sha256": hashlib.sha256(trace_path.read_bytes()).hexdigest()
             if enabled else None,
         }

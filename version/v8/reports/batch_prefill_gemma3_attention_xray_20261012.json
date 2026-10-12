@@ -96,6 +96,7 @@
     "ordinary": {
       "attention_capture_sha256": "01910eefdaff3ff03e843fab2433dd52ab410633e6795eb274fe426df04f3a03",
       "kv_sha256": "0f3f272bd6e9f4aa8ec5a744e02750e29c6035fe53662c01b341a7416e9628a1",
+      "loaded_engine_sha256": "5189d20a52a3da4b8279b2518a50d6dfe7699e3f4929f4bf605c34d71623749a",
       "loaded_model_sha256": "14e3f81d872d77081416b658d84c61791cce7e8184d50c6ffc7e82a91f62dcca",
       "loaded_session_sha256": "4daa4e1f859c733cf0e4e9fa5a3ff2ccfdfda892db06ae588f81763535945888",
       "logits_sha256": "60df2233f28bae1ceef88d28b6319ceb3e578895a476920ce84a20e2cbe6b3dc",
@@ -118,6 +119,7 @@
     "staged": {
       "attention_capture_sha256": "16c023bfc5443104ef3211f5b33bd125e7774dc02e836d79d4ad014f30b573ef",
       "kv_sha256": "0f3f272bd6e9f4aa8ec5a744e02750e29c6035fe53662c01b341a7416e9628a1",
+      "loaded_engine_sha256": "5189d20a52a3da4b8279b2518a50d6dfe7699e3f4929f4bf605c34d71623749a",
       "loaded_model_sha256": "14e3f81d872d77081416b658d84c61791cce7e8184d50c6ffc7e82a91f62dcca",
       "loaded_session_sha256": "4daa4e1f859c733cf0e4e9fa5a3ff2ccfdfda892db06ae588f81763535945888",
       "logits_sha256": "cdd8b0d3a69faa9e88caba1c0bcf568eb53ae3d6c53bc0f4beee4222dbc079c9",
@@ -138,10 +140,20 @@
       ]
     }
   },
+  "cpu": "x86_64",
+  "declared_bundle_assets_sha256": {
+    "config.json": "3f1a4eb5edb53d349227434a09a3e516652a67a550e51915a0cc856d029d268b",
+    "lowered_decode.json": "d7359ddc92b63e5aaa9c971880866223b9ddd6aa3b21781370d9ce9f70e2615a",
+    "lowered_prefill.json": "fc6b504e3584c6116dc52fc7797a8de0af00de18e2c198af8f6196bc1137ccf9"
+  },
+  "diagnostic_git_head": "49dd6393040a85b144185501fb42b653c59d2f33",
   "finding": "Both modes have finite KQ scores only at positions 0\u20139 for head 0\u20133. Head 2 alone has a differing KQV output (max 0.000333786). The ten logical V values are exact; FP16-rounded probability at position 7 differs. An independent FP16-operand sum predicts a -0.000334501 delta for the worst channel versus measured -0.000333786. This is evidence for phase-specific score/softmax arithmetic and FP16 probability quantization, not a proven general correction.",
   "generated_source_sha256": "8bd6bf5e3ec91bef9205ed83f992d13789cf0bb70f2fdf520b4b0351c13b79cb",
+  "loaded_engine_sha256": "5189d20a52a3da4b8279b2518a50d6dfe7699e3f4929f4bf605c34d71623749a",
   "loaded_model_sha256": "14e3f81d872d77081416b658d84c61791cce7e8184d50c6ffc7e82a91f62dcca",
   "loaded_session_sha256": "4daa4e1f859c733cf0e4e9fa5a3ff2ccfdfda892db06ae588f81763535945888",
+  "lowering_to_loaded_binary_relationship": "unverified",
+  "requested_threads": 1,
   "schema": "cke.v8.batch-prefill-attention-xray.v1",
   "scope": "actual captured attention scores, probabilities, V columns and output at logical token position 9; no numerical fix or full-model certification",
   "source_kv_report": "batch_prefill_gemma3_kv_xray_20261012.json",
@@ -150,6 +162,7 @@
     "ordinary": {
       "attention_capture_sha256": null,
       "kv_sha256": "0f3f272bd6e9f4aa8ec5a744e02750e29c6035fe53662c01b341a7416e9628a1",
+      "loaded_engine_sha256": "5189d20a52a3da4b8279b2518a50d6dfe7699e3f4929f4bf605c34d71623749a",
       "loaded_model_sha256": "14e3f81d872d77081416b658d84c61791cce7e8184d50c6ffc7e82a91f62dcca",
       "loaded_session_sha256": "4daa4e1f859c733cf0e4e9fa5a3ff2ccfdfda892db06ae588f81763535945888",
       "logits_sha256": "60df2233f28bae1ceef88d28b6319ceb3e578895a476920ce84a20e2cbe6b3dc",
@@ -172,6 +185,7 @@
     "staged": {
       "attention_capture_sha256": null,
       "kv_sha256": "0f3f272bd6e9f4aa8ec5a744e02750e29c6035fe53662c01b341a7416e9628a1",
+      "loaded_engine_sha256": "5189d20a52a3da4b8279b2518a50d6dfe7699e3f4929f4bf605c34d71623749a",
       "loaded_model_sha256": "14e3f81d872d77081416b658d84c61791cce7e8184d50c6ffc7e82a91f62dcca",
       "loaded_session_sha256": "4daa4e1f859c733cf0e4e9fa5a3ff2ccfdfda892db06ae588f81763535945888",
       "logits_sha256": "cdd8b0d3a69faa9e88caba1c0bcf568eb53ae3d6c53bc0f4beee4222dbc079c9",
