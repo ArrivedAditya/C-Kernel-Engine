@@ -12,7 +12,8 @@ enum {
     CK_AUDIO_CONV_CHECKED_INVALID = -1,
     CK_AUDIO_CONV_CHECKED_CAPACITY = -2,
     CK_AUDIO_CONV_CHECKED_OVERFLOW = -3,
-    CK_AUDIO_CONV_CHECKED_NONFINITE = -4
+    CK_AUDIO_CONV_CHECKED_NONFINITE = -4,
+    CK_AUDIO_CONV_CHECKED_UNSUPPORTED = -5
 };
 
 /* Caller-owned scratch stages contiguous output.
@@ -34,6 +35,30 @@ int audio_conv1d_checked_channel_major_f32(
  * kernel width is 1 + (kernel_size - 1) * dilation. Scratch and output
  * preservation follow the checked Conv1D contract above. */
 int audio_conv1d_dilated_checked_channel_major_f32(
+    const float *input, size_t input_elements, size_t input_stride,
+    const float *weight, size_t weight_elements,
+    const float *bias, size_t bias_elements,
+    float *output, size_t output_elements, size_t output_stride,
+    float *scratch, size_t scratch_elements,
+    size_t input_channels, size_t output_channels, size_t input_frames,
+    size_t kernel_size, size_t stride, size_t padding, size_t dilation,
+    size_t output_frames);
+
+/* The hardware-FMA variants use the same ordered FP32 fmaf arithmetic and
+ * checked buffer contract. They return UNSUPPORTED without touching output on
+ * CPUs without x86 FMA; callers can select the scalar providers instead. */
+int audio_conv1d_checked_hardware_fma_available(void);
+
+int audio_conv1d_checked_channel_major_f32_hwfma(
+    const float *input, size_t input_elements, size_t input_stride,
+    const float *weight, size_t weight_elements,
+    const float *bias, size_t bias_elements,
+    float *output, size_t output_elements, size_t output_stride,
+    float *scratch, size_t scratch_elements,
+    size_t input_channels, size_t output_channels, size_t input_frames,
+    size_t kernel_size, size_t stride, size_t padding, size_t output_frames);
+
+int audio_conv1d_dilated_checked_channel_major_f32_hwfma(
     const float *input, size_t input_elements, size_t input_stride,
     const float *weight, size_t weight_elements,
     const float *bias, size_t bias_elements,

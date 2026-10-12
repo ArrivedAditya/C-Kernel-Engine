@@ -13,7 +13,7 @@ from tests.v8_checked_graph_test_support import compile_native_graph
 
 
 class DilatedConvGeneratedTest(unittest.TestCase):
-    def compile(self, wrong_weight_capacity=False):
+    def compile(self, wrong_weight_capacity=False, hardware_fma=False):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
@@ -31,7 +31,8 @@ class DilatedConvGeneratedTest(unittest.TestCase):
             offset += len(data)
         conv = {
             'id': 'conv', 'op': 'audio_conv1d_dilated_checked',
-            'kernel': 'audio_conv1d_dilated_checked_channel_major_f32',
+            'kernel': 'audio_conv1d_dilated_checked_channel_major_f32_hwfma'
+                if hardware_fma else 'audio_conv1d_dilated_checked_channel_major_f32',
             'returns_status': True,
             'weight_refs': {'weight': 'stage.weight', 'bias': 'stage.bias'},
             'params': {'I': 2, 'O': 2, 'T': 5, 'K': 3, 'U': 5, 'Q': 10,
@@ -82,11 +83,13 @@ class DilatedConvGeneratedTest(unittest.TestCase):
             'entries': entries, 'quant_summary': {}, 'template': circuit}
         return compile_native_graph(root, source, path), weight, bias, alpha
 
-    def test_generated_composition_and_failure_propagation(self):
-        (layout, calls, _library, _loaded, function), weight, bias, alpha = self.compile()
+    def check_generated_composition(self, hardware_fma):
+        (layout, calls, _library, _loaded, function), weight, bias, alpha = self.compile(
+            hardware_fma=hardware_fma)
         self.assertEqual(calls['errors'], [])
         self.assertEqual([item['function'] for item in calls['operations']],
-            ['audio_conv1d_dilated_checked_channel_major_f32',
+            ['audio_conv1d_dilated_checked_channel_major_f32_hwfma'
+                if hardware_fma else 'audio_conv1d_dilated_checked_channel_major_f32',
              'audio_snake_strided_f32_checked'])
         size = layout['memory']['arena']['total_size']
         raw = (ctypes.c_uint8 * (size + 63))()
@@ -112,7 +115,12 @@ class DilatedConvGeneratedTest(unittest.TestCase):
             signal[:, :5] = values
             convolved[:] = -77.
             activated[:] = -91.
-            self.assertEqual(function(arena, len(arena)), 0)
+            status = function(arena, len(arena))
+            if hardware_fma and status == -5:
+                self.assertTrue(np.all(convolved == -77.))
+                self.assertTrue(np.all(activated == -91.))
+                self.skipTest('x86 hardware FMA unavailable')
+            self.assertEqual(status, 0)
             expected = np.empty((2, 5), np.float32)
             for oc in range(2):
                 for frame in range(5):
@@ -133,6 +141,12 @@ class DilatedConvGeneratedTest(unittest.TestCase):
         self.assertNotEqual(function(arena, len(arena)), 0)
         self.assertTrue(np.all(convolved == -77.))
         self.assertTrue(np.all(activated == -91.))
+
+    def test_generated_composition_and_failure_propagation(self):
+        self.check_generated_composition(False)
+
+    def test_generated_hardware_fma_selection_and_failure_propagation(self):
+        self.check_generated_composition(True)
 
     def test_wrong_weight_geometry_rejected_before_codegen(self):
         with self.assertRaisesRegex(RuntimeError, 'HARD CALL CONSTANT FAULT'):
