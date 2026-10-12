@@ -1,0 +1,135 @@
+{
+  "bundle": "/tmp/cke-gemma3-batch-http-bundle-20261011",
+  "cases": {
+    "0": {
+      "advancing_slot": 0,
+      "after": [
+        {
+          "kv": {
+            "0": "697f55951c809e8626e21250759444ecb0eec74a9f178b6178fa4481792dc0b7",
+            "16": "e3ccb16e91d45cc3a4463bb5ef6d4f5f309a9af6ebc1295c6ace6a09da50e85a",
+            "17": "c8b0b2003a9bea92ae455ce810c78ffb8cefb54929cc5c8d9cf475dcbe5ae518"
+          },
+          "position": 4
+        },
+        {
+          "kv": {
+            "0": "50c11d30798dab53b3299031103202247da173a2d537553f8757b2b574628c5f",
+            "16": "3f8bd152f23db53076389deeca1759b4aa6183a57ee911a29047466e3229cc2b",
+            "17": "3888b052f8d940843c29e1394c67434806c8490b221bd8258161eb479e5b8457"
+          },
+          "position": 2
+        }
+      ],
+      "before": [
+        {
+          "kv": {
+            "0": "32f83d1f05ddd406b91c12eacfbeeb89a20d6a35452c63962d5405c0be7b0ca2",
+            "16": "3ad85700bfd484cd2b2ddb8823b27f44cf076f07285a3f5ed363b90e938390ee",
+            "17": "bf6cddbc3943f5b6d7fdc40caa9338786d8583f80185a1781541eb298386dabe"
+          },
+          "position": 3
+        },
+        {
+          "kv": {
+            "0": "50c11d30798dab53b3299031103202247da173a2d537553f8757b2b574628c5f",
+            "16": "3f8bd152f23db53076389deeca1759b4aa6183a57ee911a29047466e3229cc2b",
+            "17": "3888b052f8d940843c29e1394c67434806c8490b221bd8258161eb479e5b8457"
+          },
+          "position": 2
+        }
+      ],
+      "isolated_full_logit_and_kv_exact": true,
+      "isolated_logits_sha256": "d6398affef9afd66cebc92cbddaf23fd7aee9f436cf8b0075c3cf5c34547d6fc",
+      "parked_slot": 1,
+      "parked_state_exact": true,
+      "reuse_kept_advancing_state": true,
+      "shared_advanced_mask": 1,
+      "shared_logits_sha256": "d6398affef9afd66cebc92cbddaf23fd7aee9f436cf8b0075c3cf5c34547d6fc"
+    },
+    "1": {
+      "advancing_slot": 1,
+      "after": [
+        {
+          "kv": {
+            "0": "32f83d1f05ddd406b91c12eacfbeeb89a20d6a35452c63962d5405c0be7b0ca2",
+            "16": "3ad85700bfd484cd2b2ddb8823b27f44cf076f07285a3f5ed363b90e938390ee",
+            "17": "bf6cddbc3943f5b6d7fdc40caa9338786d8583f80185a1781541eb298386dabe"
+          },
+          "position": 3
+        },
+        {
+          "kv": {
+            "0": "35542987297499d0766ac87266975d92642325a42456dd9e400db7bc402c63bb",
+            "16": "103b147cc8ac21f3feca7a439b86d7801f8059f27ab4858b51accc381c3a1f52",
+            "17": "309030dc409b4975c9dbb7419fd9a3019d21b472183f22f00d58876576904d14"
+          },
+          "position": 3
+        }
+      ],
+      "before": [
+        {
+          "kv": {
+            "0": "32f83d1f05ddd406b91c12eacfbeeb89a20d6a35452c63962d5405c0be7b0ca2",
+            "16": "3ad85700bfd484cd2b2ddb8823b27f44cf076f07285a3f5ed363b90e938390ee",
+            "17": "bf6cddbc3943f5b6d7fdc40caa9338786d8583f80185a1781541eb298386dabe"
+          },
+          "position": 3
+        },
+        {
+          "kv": {
+            "0": "50c11d30798dab53b3299031103202247da173a2d537553f8757b2b574628c5f",
+            "16": "3f8bd152f23db53076389deeca1759b4aa6183a57ee911a29047466e3229cc2b",
+            "17": "3888b052f8d940843c29e1394c67434806c8490b221bd8258161eb479e5b8457"
+          },
+          "position": 2
+        }
+      ],
+      "isolated_full_logit_and_kv_exact": true,
+      "isolated_logits_sha256": "b422afc2bf25270b0dba31cce5a62ce9719b1fcac4404d9154de088e9b68930b",
+      "parked_slot": 0,
+      "parked_state_exact": true,
+      "reuse_kept_advancing_state": true,
+      "shared_advanced_mask": 2,
+      "shared_logits_sha256": "b422afc2bf25270b0dba31cce5a62ce9719b1fcac4404d9154de088e9b68930b"
+    }
+  },
+  "cpu": "Intel(R) Core(TM) i7-14700T",
+  "diagnostic_git_head": "974f9278d51bdfce6a59102f0fc7d52f974451cf",
+  "diagnostic_source_sha256": "56a7cfd716bca404416fdcc6410fa7009e3ffabd31d1d1f1bee974f71f7661fc",
+  "diagnostic_source_uncommitted_at_capture": false,
+  "generated_source_sha256": "8bd6bf5e3ec91bef9205ed83f992d13789cf0bb70f2fdf520b4b0351c13b79cb",
+  "layers": [
+    0,
+    16,
+    17
+  ],
+  "loaded_engine_sha256": "5189d20a52a3da4b8279b2518a50d6dfe7699e3f4929f4bf605c34d71623749a",
+  "loaded_model_sha256": "14e3f81d872d77081416b658d84c61791cce7e8184d50c6ffc7e82a91f62dcca",
+  "loaded_session_sha256": "4daa4e1f859c733cf0e4e9fa5a3ff2ccfdfda892db06ae588f81763535945888",
+  "next_tokens": [
+    103,
+    112
+  ],
+  "prompts": [
+    [
+      100,
+      101,
+      102
+    ],
+    [
+      110,
+      111
+    ]
+  ],
+  "requested_threads": 1,
+  "reuse_prompt": [
+    120,
+    121,
+    122
+  ],
+  "schema": "cke.v8.batch-slot-isolation-xray.v1",
+  "scope": "two live KV-only slots; cancelled parked slot; slot reuse",
+  "status": "pass",
+  "weights_sha256": "dae6375dc5f6e04db7a373fc747df6eda4f9938f019bc0c0d1fdda4ec2443c40"
+}
