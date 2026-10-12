@@ -12,6 +12,7 @@ from server import session_v8
 from tests.test_v8_batch_session_scheduler import MODEL_SOURCE
 from version.v8.scripts.certify_batch_mixed_one_row_v8 import (
     CAP_BATCH_TWO_ROWS, _compare_prefill_snapshots, _finite_logit_bytes,
+    _logit_distance,
     _require_shared_projections, certify,
 )
 
@@ -63,6 +64,21 @@ def test_ordinary_prefill_comparison_rejects_forced_decode_replay(monkeypatch):
     monkeypatch.setenv("CK_V8_FORCE_DECODE_PREFILL", "1")
     with pytest.raises(ValueError, match="cannot force decode replay"):
         certify(Path("unused"), compare_ordinary=True)
+
+
+def test_llama_logit_diagnostic_keeps_full_vector_error_visible():
+    reference = bytes((ctypes.c_float * 3)(1, 4, 2))
+    result = _logit_distance(reference, bytes((ctypes.c_float * 3)(5, 4, 2)))
+    assert result["max_abs_logit_diff"] == 4
+    assert result["logit_rmse"] > 2
+    assert result["top1_subject"] == 1 and result["top1_oracle"] == 0
+    assert _logit_distance(reference, reference)["max_abs_logit_diff"] == 0
+    with pytest.raises(AssertionError, match="extents differ"):
+        _logit_distance(reference, reference[:-4])
+    with pytest.raises(AssertionError, match="nonfinite"):
+        _logit_distance(reference, bytes((ctypes.c_float * 3)(1, float("nan"), 2)))
+    with pytest.raises(ValueError, match="requires the ordinary"):
+        certify(Path("unused"), oracle_gguf=Path("unused"))
 
 
 def test_staged_prefill_binding_tracks_progress_and_cancel(tmp_path):

@@ -15,6 +15,7 @@ import json
 import math
 import os
 import platform
+import subprocess
 import sys
 from array import array
 from pathlib import Path
@@ -78,6 +79,35 @@ def _compare_prefill_snapshots(reference: tuple[bytes, int, str],
     }
 
 
+def _logit_distance(subject: bytes, oracle: bytes) -> dict:
+    """Compare complete finite float32 vectors without a prose-quality verdict."""
+    if len(subject) != len(oracle) or not subject or len(subject) % 4:
+        raise AssertionError("subject/oracle logit extents differ")
+    left = array("f")
+    right = array("f")
+    left.frombytes(subject)
+    right.frombytes(oracle)
+    if any(not math.isfinite(value) for value in left) or any(
+            not math.isfinite(value) for value in right):
+        raise AssertionError("subject/oracle logits contain nonfinite values")
+    max_abs = squared = left_norm = right_norm = dot = 0.0
+    for a, b in zip(left, right, strict=True):
+        delta = a - b
+        max_abs = max(max_abs, abs(delta))
+        squared += delta * delta
+        left_norm += a * a
+        right_norm += b * b
+        dot += a * b
+    denominator = math.sqrt(left_norm * right_norm)
+    return {
+        "max_abs_logit_diff": max_abs,
+        "logit_rmse": math.sqrt(squared / len(left)),
+        "cosine": dot / denominator if denominator else 0.0,
+        "top1_subject": max(range(len(left)), key=left.__getitem__),
+        "top1_oracle": max(range(len(right)), key=right.__getitem__),
+    }
+
+
 def _require_shared_projections(capabilities: int, groups: int | None) -> int:
     if not capabilities & CAP_BATCH_TWO_ROWS:
         raise AssertionError("loaded model lacks the two-row batch capability")
@@ -113,12 +143,53 @@ def _digest(path: Path) -> str:
 
 
 def certify(bundle: Path, *, threads: int = 4, context_length: int = 32,
-            compare_ordinary: bool = False) -> dict:
+            compare_ordinary: bool = False,
+            oracle_gguf: Path | None = None) -> dict:
     bundle = bundle.resolve()
     if threads <= 0 or context_length < 16:
         raise ValueError("certification requires positive threads and at least 16 context tokens")
     if compare_ordinary and os.environ.get("CK_V8_FORCE_DECODE_PREFILL", "0") not in ("", "0"):
         raise ValueError("ordinary prefill comparison cannot force decode replay")
+    if oracle_gguf is not None and not compare_ordinary:
+        raise ValueError("llama.cpp oracle requires the ordinary prefill comparison")
+    lengths = sorted({1, 2, 7, 8, 9, 10, 12, 16,
+                      context_length - 4, context_length - 1})
+    oracle_rows = {}
+    oracle_identity = None
+    if oracle_gguf is not None:
+        from version.v8.scripts.compare_first_token_logits_v8 import (
+            HELPER_SRC, LLAMA_CPP, run_llama_logits,
+        )
+        oracle_gguf = oracle_gguf.resolve(strict=True)
+        expected_pin = subprocess.check_output(
+            ["git", "-C", str(Path(__file__).resolve().parents[3]),
+             "ls-tree", "HEAD", "llama.cpp"], text=True).split()[2]
+        actual_pin = subprocess.check_output(
+            ["git", "-C", str(LLAMA_CPP), "rev-parse", "HEAD"],
+            text=True).strip()
+        if actual_pin != expected_pin:
+            raise AssertionError("llama.cpp checkout differs from the repository pin")
+        lib_dir = LLAMA_CPP / "build" / "bin"
+        libraries = ("libllama.so", "libggml.so", "libggml-base.so", "libggml-cpu.so")
+        oracle_identity = {
+            "gguf_sha256": _digest(oracle_gguf),
+            "llama_commit": actual_pin,
+            "helper_source_sha256": _digest(HELPER_SRC),
+            "library_file_sha256": {name: _digest(lib_dir / name) for name in libraries},
+            "source_pair_verified": False,
+            "status": "diagnostic_only",
+        }
+        for length in sorted({1, 9, 10, context_length - 4}):
+            tokens = list(range(100, 100 + length))
+            oracle_rows[length] = {}
+            for mode in ("batched", "sequential"):
+                result = run_llama_logits(oracle_gguf, tokens,
+                                          max(64, context_length), 16, threads,
+                                          decode_mode=mode)
+                if (int(result["meta"]["n_vocab"]) != len(result["logits"]) or
+                        int(result["meta"]["token_count"]) != length):
+                    raise AssertionError("llama.cpp returned the wrong token or vocabulary extent")
+                oracle_rows[length][mode] = result["logits"].tobytes()
     session = SessionV8.open(bundle, context_length=context_length, num_threads=threads)
     try:
         batch = session.enable_batch2(1 << 30)
@@ -256,20 +327,31 @@ def certify(bundle: Path, *, threads: int = 4, context_length: int = 32,
                 finally:
                     batch.reset_slot(slot)
 
-            lengths = sorted({1, 2, 7, 8, 9, 10, 12, 16,
-                              context_length - 4, context_length - 1})
             ordinary_cases = {}
             repeatability = {}
+            oracle_cases = {}
             for slot in (0, 1):
                 for length in lengths:
                     tokens = tuple(100 + index for index in range(length))
                     reference = prefill_snapshot(slot, tokens, staged=False)
+                    staged_single = None
                     for chunk_size in sorted({1, 4, length}):
                         staged = prefill_snapshot(slot, tokens, staged=True,
                                                   chunk_size=chunk_size)
+                        if chunk_size == 1:
+                            staged_single = staged
                         verdict = _compare_prefill_snapshots(reference, staged)
                         ordinary_cases[f"slot_{slot}/tokens_{length}/chunk_{chunk_size}"] = {
                             "token_ids": list(tokens), **verdict,
+                        }
+                    if length in oracle_rows:
+                        assert staged_single is not None
+                        oracle_cases[f"slot_{slot}/tokens_{length}"] = {
+                            f"{subject}_vs_llama_{mode}": _logit_distance(
+                                snapshot[0], oracle_rows[length][mode])
+                            for subject, snapshot in (("ordinary", reference),
+                                                      ("staged", staged_single))
+                            for mode in ("batched", "sequential")
                         }
                     if length in {9, 10, context_length - 4}:
                         repeatability[f"slot_{slot}/tokens_{length}"] = {
@@ -290,6 +372,8 @@ def certify(bundle: Path, *, threads: int = 4, context_length: int = 32,
                 "repeatability": repeatability,
                 "first_unstable": unstable[0] if unstable else None,
                 "cases": ordinary_cases,
+                "llama_oracle": {"identity": oracle_identity, "cases": oracle_cases}
+                if oracle_identity else None,
             }
         return {
             "status": "fail" if ordinary and ordinary["status"] == "fail" else "pass",
@@ -323,11 +407,14 @@ def main() -> int:
     parser.add_argument("--context-length", type=int, default=32)
     parser.add_argument("--compare-ordinary", action="store_true",
                         help="Fail if staged and ordinary prefill differ at any tested length")
+    parser.add_argument("--oracle-gguf", type=Path,
+                        help="Add diagnostic logits from the pinned llama.cpp GGUF replay")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     result = certify(args.bundle, threads=args.threads,
                      context_length=args.context_length,
-                     compare_ordinary=args.compare_ordinary)
+                     compare_ordinary=args.compare_ordinary,
+                     oracle_gguf=args.oracle_gguf)
     data = json.dumps(result, indent=2, sort_keys=True) + "\n"
     if args.output:
         args.output.write_text(data)

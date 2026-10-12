@@ -2593,6 +2593,26 @@ version/v8/scripts/ck_serve_v8.py "$RUN_DIR" --run "$RUN_DIR" \
         ordinary-prefill parity or a resolved serving deployment.
     </p>
     <p>
+        An optional independent GGUF diagnostic uses the repository-pinned
+        llama.cpp checkout with the same token IDs and records complete-logit
+        distance for ordinary and staged CKE prefill. Run the certification
+        script with <code>--compare-ordinary --oracle-gguf GGUF_PATH</code>;
+        the retained 32-token-capacity result is
+        <code>version/v8/reports/batch_prefill_gemma3_oracle_20261012.json</code>.
+        At 10 input tokens, staged CKE has 2.158 full-logit RMSE against
+        llama.cpp batched evaluation, versus 2.384 for ordinary CKE. At 28
+        tokens, the respective RMSE values are 3.717 and 4.108, and neither
+        CKE path agrees with llama.cpp on the highest-logit token. This is
+        diagnostic evidence, not publisher-reference parity: the GGUF/source
+        pairing is not independently attested, and both CKE paths retain
+        substantial error against llama.cpp. The first 10-token CKE path
+        difference appears in layer-16 attention after matching Q/K/V inputs;
+        batched prefill and single-token decode use different reduction orders.
+        A later normalization amplifies that small difference. No numerical
+        path is promoted from this comparison. Ordinary versus staged prefill
+        still fails the exact-parity check on this artifact.
+    </p>
+    <p>
         A separate resolved Gemma3-270M Q5_K_M chat-only HTTP acceptance is
         available through <code>server/batch_http_acceptance.py</code>. It
         checks expected serving and loaded session hashes before generation,
