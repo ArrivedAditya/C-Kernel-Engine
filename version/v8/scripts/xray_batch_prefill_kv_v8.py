@@ -30,6 +30,16 @@ _MAGIC = 0x564B5843
 _ELEMENT_BYTES = {0: 4, 1: 2, 2: 2}  # FP32, FP16, BF16.
 
 
+def _cpu_identity() -> str:
+    try:
+        for line in Path("/proc/cpuinfo").read_text().splitlines():
+            if line.startswith("model name"):
+                return line.partition(":")[2].strip()
+    except OSError:
+        pass
+    return platform.processor() or platform.machine()
+
+
 def _sha256_path(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as source:
@@ -286,7 +296,7 @@ def diagnose(bundle: Path, *, max_prefix: int = 10, layers: tuple[int, ...] = (1
                  "version/v8/scripts/xray_batch_prefill_kv_v8.py"),
                 cwd=Path(__file__).resolve().parents[3], check=False).returncode != 0,
             "requested_threads": threads,
-            "cpu": platform.processor() or platform.machine(),
+            "cpu": _cpu_identity(),
             "declared_bundle_assets_sha256": {
                 name: _sha256_path(bundle / name)
                 for name in ("config.json", "lowered_prefill.json", "lowered_decode.json")},
