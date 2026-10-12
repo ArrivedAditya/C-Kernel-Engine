@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Compare one generated mixed row pair with serialized decode replay.
 
-This local, artifact-specific check does not certify arbitrary prefill chunks,
-variable batch size, HTTP concurrency, or the model's ordinary prefill entry.
+An optional, separately reported comparison checks staged prefill against the
+ordinary generated prefill entry. It does not certify variable batch size or
+HTTP concurrency.
 """
 
 from __future__ import annotations
@@ -12,8 +13,10 @@ import ctypes
 import hashlib
 import json
 import math
+import os
 import platform
 import sys
+from array import array
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
@@ -29,6 +32,50 @@ def _finite_logit_bytes(values: ctypes.Array, label: str) -> bytes:
         if not math.isfinite(value):
             raise AssertionError(f"{label} has nonfinite logit at index {index}")
     return bytes(values)
+
+
+def _compare_prefill_snapshots(reference: tuple[bytes, int, str],
+                               staged: tuple[bytes, int, str]) -> dict:
+    """Keep arithmetic, position, and complete-KV verdicts independent."""
+    ref_logits, ref_position, ref_kv = reference
+    got_logits, got_position, got_kv = staged
+    if len(ref_logits) != len(got_logits) or len(ref_logits) % 4:
+        raise AssertionError("ordinary/staged logit extents differ")
+    exact_logits = ref_logits == got_logits
+    ref = array("f")
+    got = array("f")
+    ref.frombytes(ref_logits)
+    got.frombytes(got_logits)
+    if any(not math.isfinite(value) for value in ref) or any(
+            not math.isfinite(value) for value in got):
+        raise AssertionError("ordinary/staged logits contain nonfinite values")
+    ref_top = max(range(len(ref)), key=ref.__getitem__)
+    got_top = max(range(len(got)), key=got.__getitem__)
+    if exact_logits:
+        max_abs = rmse = 0.0
+    else:
+        squared = 0.0
+        max_abs = 0.0
+        for left, right in zip(ref, got, strict=True):
+            delta = abs(left - right)
+            max_abs = max(max_abs, delta)
+            squared += delta * delta
+        rmse = math.sqrt(squared / len(ref))
+    exact_kv = ref_kv == got_kv
+    return {
+        "status": "pass" if exact_logits and exact_kv and ref_position == got_position else "fail",
+        "logits_exact": exact_logits,
+        "max_abs_logit_diff": max_abs,
+        "logit_rmse": rmse,
+        "top1_ordinary": ref_top,
+        "top1_staged": got_top,
+        "top1_equal": ref_top == got_top,
+        "kv_exact": exact_kv,
+        "kv_sha256_ordinary": ref_kv,
+        "kv_sha256_staged": got_kv,
+        "position_ordinary": ref_position,
+        "position_staged": got_position,
+    }
 
 
 def _require_shared_projections(capabilities: int, groups: int | None) -> int:
@@ -65,10 +112,13 @@ def _digest(path: Path) -> str:
     return sha.hexdigest()
 
 
-def certify(bundle: Path, *, threads: int = 4, context_length: int = 32) -> dict:
+def certify(bundle: Path, *, threads: int = 4, context_length: int = 32,
+            compare_ordinary: bool = False) -> dict:
     bundle = bundle.resolve()
     if threads <= 0 or context_length < 16:
         raise ValueError("certification requires positive threads and at least 16 context tokens")
+    if compare_ordinary and os.environ.get("CK_V8_FORCE_DECODE_PREFILL", "0") not in ("", "0"):
+        raise ValueError("ordinary prefill comparison cannot force decode replay")
     session = SessionV8.open(bundle, context_length=context_length, num_threads=threads)
     try:
         batch = session.enable_batch2(1 << 30)
@@ -186,9 +236,66 @@ def certify(bundle: Path, *, threads: int = 4, context_length: int = 32) -> dict
                     "complete_kv_sha256_equal": True,
                     "positions": [actual[1][0], actual[2][0]],
                 }
+        ordinary = None
+        if compare_ordinary:
+            def prefill_snapshot(slot: int, tokens: tuple[int, ...], *, staged: bool,
+                                 chunk_size: int = 1) -> tuple[bytes, int, str]:
+                try:
+                    if staged:
+                        ticket = batch.begin_prefill(slot, len(tokens))
+                        for offset in range(0, len(tokens), chunk_size):
+                            consumed = batch.append_prefill(
+                                slot, ticket, tokens[offset:offset + chunk_size])
+                            if consumed != min(len(tokens), offset + chunk_size):
+                                raise AssertionError("staged prefill did not report exact progress")
+                        logits = batch.staged_logits(slot)
+                    else:
+                        _, logits = batch.prefill(slot, tokens)
+                    return (_finite_logit_bytes(logits, "staged" if staged else "ordinary"),
+                            *kv(slot))
+                finally:
+                    batch.reset_slot(slot)
+
+            lengths = sorted({1, 2, 7, 8, 9, 10, 12, 16,
+                              context_length - 4, context_length - 1})
+            ordinary_cases = {}
+            repeatability = {}
+            for slot in (0, 1):
+                for length in lengths:
+                    tokens = tuple(100 + index for index in range(length))
+                    reference = prefill_snapshot(slot, tokens, staged=False)
+                    for chunk_size in sorted({1, 4, length}):
+                        staged = prefill_snapshot(slot, tokens, staged=True,
+                                                  chunk_size=chunk_size)
+                        verdict = _compare_prefill_snapshots(reference, staged)
+                        ordinary_cases[f"slot_{slot}/tokens_{length}/chunk_{chunk_size}"] = {
+                            "token_ids": list(tokens), **verdict,
+                        }
+                    if length in {9, 10, context_length - 4}:
+                        repeatability[f"slot_{slot}/tokens_{length}"] = {
+                            "ordinary_exact": reference == prefill_snapshot(
+                                slot, tokens, staged=False),
+                            "staged_exact": prefill_snapshot(
+                                slot, tokens, staged=True, chunk_size=1) ==
+                                prefill_snapshot(slot, tokens, staged=True, chunk_size=1),
+                        }
+            failures = [key for key, value in ordinary_cases.items()
+                        if value["status"] == "fail"]
+            unstable = [key for key, value in repeatability.items()
+                        if not all(value.values())]
+            ordinary = {
+                "status": "fail" if failures or unstable else "pass",
+                "contract": "exact full-vocabulary finite logits, complete KV bytes, and position",
+                "first_failure": failures[0] if failures else None,
+                "repeatability": repeatability,
+                "first_unstable": unstable[0] if unstable else None,
+                "cases": ordinary_cases,
+            }
         return {
-            "status": "pass",
-            "scope": "one decode row plus one staged prompt row; two slots; generated decode-replay parity only",
+            "status": "fail" if ordinary and ordinary["status"] == "fail" else "pass",
+            "scope": ("one decode row plus one staged prompt row; two slots; generated decode-replay parity"
+                      + (" and separately reported ordinary-prefill comparison"
+                         if compare_ordinary else " only")),
             "bundle": str(bundle),
             "loaded_sha256": loaded,
             "session_library_sha256": session_identity["sha256"],
@@ -201,7 +308,9 @@ def certify(bundle: Path, *, threads: int = 4, context_length: int = 32) -> dict
             "threads": threads,
             "cpu": _cpu_identity(),
             "kv_bytes_per_sequence": kv_size.value,
+            "mixed_decode_replay_status": "pass",
             "cases_by_prefill_slot": cases,
+            "ordinary_prefill": ordinary,
         }
     finally:
         session.close()
@@ -212,16 +321,19 @@ def main() -> int:
     parser.add_argument("bundle", type=Path)
     parser.add_argument("--threads", type=int, default=4)
     parser.add_argument("--context-length", type=int, default=32)
+    parser.add_argument("--compare-ordinary", action="store_true",
+                        help="Fail if staged and ordinary prefill differ at any tested length")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     result = certify(args.bundle, threads=args.threads,
-                     context_length=args.context_length)
+                     context_length=args.context_length,
+                     compare_ordinary=args.compare_ordinary)
     data = json.dumps(result, indent=2, sort_keys=True) + "\n"
     if args.output:
         args.output.write_text(data)
     else:
         print(data, end="")
-    return 0
+    return 0 if result["status"] == "pass" else 1
 
 
 if __name__ == "__main__":
