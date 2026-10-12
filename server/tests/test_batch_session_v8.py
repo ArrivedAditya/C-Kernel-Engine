@@ -4,6 +4,7 @@ import concurrent.futures
 import ctypes
 import os
 import subprocess
+import sys
 import time
 from array import array
 from pathlib import Path
@@ -23,6 +24,9 @@ from version.v8.scripts.xray_batch_prefill_kv_v8 import (
 )
 from version.v8.scripts.xray_batch_prefill_attention_v8 import (
     compare_dumps, read_dump,
+)
+from version.v8.scripts.xray_batch_slot_isolation_v8 import (
+    assert_isolated_parity, assert_new_logical_rows, assert_parked_unchanged,
 )
 
 
@@ -161,6 +165,40 @@ def test_attention_xray_rejects_wrong_capture_identity_and_truncation(tmp_path):
     path.write_bytes(header + b"\0")
     with pytest.raises(ValueError, match="truncated attention vector"):
         read_dump(path, layer=16, query=9)
+
+
+def test_live_batch_slot_xray_rejects_parked_writes_and_wrong_isolated_output():
+    before = {"position": 3, "kv": {"0": "a", "16": "b"}}
+    assert_parked_unchanged(before, dict(before))
+    with pytest.raises(AssertionError, match="non-advancing slot changed"):
+        assert_parked_unchanged(before, {"position": 4, "kv": before["kv"]})
+    with pytest.raises(AssertionError, match="non-advancing slot changed"):
+        assert_parked_unchanged(before, {"position": 3, "kv": {"0": "a", "16": "changed"}})
+    shared = {**before, "logits_sha256": "c"}
+    assert_isolated_parity(shared, dict(shared))
+    with pytest.raises(AssertionError, match="differs from isolated"):
+        assert_isolated_parity(shared, {**shared, "logits_sha256": "different"})
+
+
+def test_live_batch_slot_xray_rejects_header_only_progress():
+    before = {"position": 2, "kv": {"16": {"ckx_sha256": "old",
+                                              "last_row_nonzero": True}}}
+    after = {"position": 3, "kv": {"16": {"ckx_sha256": "new",
+                                             "last_row_nonzero": False}}}
+    with pytest.raises(AssertionError, match="new logical KV row was not written"):
+        assert_new_logical_rows(before, after)
+    after["kv"]["16"]["last_row_nonzero"] = True
+    assert_new_logical_rows(before, after)
+
+
+def test_live_batch_slot_xray_direct_file_cli_without_pythonpath():
+    script = Path(__file__).resolve().parents[2] / "version/v8/scripts/xray_batch_slot_isolation_v8.py"
+    env = dict(os.environ)
+    env.pop("PYTHONPATH", None)
+    result = subprocess.run([sys.executable, str(script), "--help"], cwd=script.parents[3],
+                            env=env, text=True, capture_output=True, check=False)
+    assert result.returncode == 0, result.stderr
+    assert "--json-out" in result.stdout
 
 
 def test_mixed_certificate_rejects_identical_nonfinite_logits_and_missing_shared_work():
