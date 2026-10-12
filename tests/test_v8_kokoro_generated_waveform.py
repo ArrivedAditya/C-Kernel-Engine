@@ -153,7 +153,7 @@ class KokoroGeneratedWaveformTest(unittest.TestCase):
         candidate = copy.deepcopy(self.waveform_source)
         selected = 0
         candidate_variant = os.environ.get('CKE_TTS_CONV_PROVIDER', 'hwfma')
-        if candidate_variant not in ('hwfma', 'avx2_fma'):
+        if candidate_variant not in ('hwfma', 'avx2_fma', 'avx2_parallel'):
             self.fail(f'unsupported explicit Conv1D candidate: {candidate_variant}')
         names = {
             'audio_conv1d_checked_channel_major_f32':
@@ -164,52 +164,80 @@ class KokoroGeneratedWaveformTest(unittest.TestCase):
             for op in block['header'] + block['body']['ops'] + block['footer']:
                 if op.get('kernel') in names:
                     op['kernel'] = names[op['kernel']]
+                    if candidate_variant == 'avx2_parallel':
+                        op.setdefault('params', {})['conv_worker_pool'] = 'worker_pool'
+                        op['params']['conv_worker_count'] = int(
+                            os.environ.get('CKE_TTS_CONV_WORKERS', '4'))
                     selected += 1
+        if candidate_variant == 'avx2_parallel':
+            candidate['template']['native_entry']['params'].append(
+                {'c_type': 'void *', 'name': 'worker_pool'})
         self.assertGreater(selected, 0)
         candidate['template']['required_numerical_contracts'][
             'audio_conv1d_checked']['phases']['prefill']['contract_id'] = \
             ('audio_conv1d_checked_x86_hwfma_fp32' if candidate_variant == 'hwfma'
-             else 'audio_conv1d_checked_x86_avx2_fma_fp32')
+             else ('audio_conv1d_checked_x86_avx2_parallel_fp32'
+                   if candidate_variant == 'avx2_parallel'
+                   else 'audio_conv1d_checked_x86_avx2_fma_fp32'))
         candidate_root = Path(self.temp.name) / 'hwfma'
         candidate_root.mkdir()
-        layout, calls, _, _, function = compile_native_graph(
-            candidate_root, candidate, waveform_author.OUTPUT)
+        extra_exports = (('ck_threadpool_create', 'ck_threadpool_destroy')
+                         if candidate_variant == 'avx2_parallel' else ())
+        layout, calls, _, loaded, function = compile_native_graph(
+            candidate_root, candidate, waveform_author.OUTPUT,
+            extra_exports=extra_exports)
         self.assertEqual(calls['errors'], [])
         functions = [item['function'] for item in calls['operations']]
         self.assertEqual(sum(name in functions for name in names.values()), 2)
         self.assertEqual(sum(function_name in names.values()
                              for function_name in functions), selected)
-        function.argtypes = self.fn.argtypes
+        function.argtypes = self.fn.argtypes + ([ctypes.c_void_p]
+            if candidate_variant == 'avx2_parallel' else [])
+        worker_pool = None
+        if candidate_variant == 'avx2_parallel':
+            loaded.ck_threadpool_create.argtypes = [ctypes.c_int]
+            loaded.ck_threadpool_create.restype = ctypes.c_void_p
+            loaded.ck_threadpool_destroy.argtypes = [ctypes.c_void_p]
+            worker_pool = loaded.ck_threadpool_create(int(
+                os.environ.get('CKE_TTS_CONV_WORKERS', '4')))
+            self.assertTrue(worker_pool)
         baseline_arena = self.arena()
         candidate_arena = self.arena(layout)
         repeats = int(os.environ.get('CKE_TTS_HW_FMA_TIMING_REPEATS', '2'))
         self.assertGreaterEqual(repeats, 2)
         timings = {'scalar': [], 'candidate': []}
         baseline_lengths = candidate_lengths = None
-        for repetition in range(repeats):
-            variants = [('scalar', self.fn, baseline_arena),
-                        ('candidate', function, candidate_arena)]
-            if repetition % 2:
-                variants.reverse()
-            for variant, entry, arena in variants:
-                lengths = [ctypes.c_int32(-999) for _ in range(7)]
-                started = time.perf_counter()
-                status = entry(arena, len(arena), *(
-                    ctypes.byref(value) for value in lengths))
-                timings[variant].append(time.perf_counter() - started)
-                self.assertEqual(status, 0, variant)
-                if variant == 'scalar':
-                    baseline_lengths = lengths
-                else:
-                    candidate_lengths = lengths
-        self.assertEqual([value.value for value in baseline_lengths],
-                         [value.value for value in candidate_lengths])
-        for name in ('text_conv0', 'f0_conv0', 'source_conv0',
-                     'generator_stage1_source_conv', 'generator_conv_post',
-                     'generator_waveform'):
-            baseline = self.view(self.layout, baseline_arena, name)
-            optimized = self.view(layout, candidate_arena, name)
-            np.testing.assert_array_equal(baseline, optimized, err_msg=name)
+        try:
+            for repetition in range(repeats):
+                variants = [('scalar', self.fn, baseline_arena),
+                            ('candidate', function, candidate_arena)]
+                if repetition % 2:
+                    variants.reverse()
+                for variant, entry, arena in variants:
+                    lengths = [ctypes.c_int32(-999) for _ in range(7)]
+                    started = time.perf_counter()
+                    arguments = [arena, len(arena), *(
+                        ctypes.byref(value) for value in lengths)]
+                    if variant == 'candidate' and worker_pool is not None:
+                        arguments.append(worker_pool)
+                    status = entry(*arguments)
+                    timings[variant].append(time.perf_counter() - started)
+                    self.assertEqual(status, 0, variant)
+                    if variant == 'scalar':
+                        baseline_lengths = lengths
+                    else:
+                        candidate_lengths = lengths
+            self.assertEqual([value.value for value in baseline_lengths],
+                             [value.value for value in candidate_lengths])
+            for name in ('text_conv0', 'f0_conv0', 'source_conv0',
+                         'generator_stage1_source_conv', 'generator_conv_post',
+                         'generator_waveform'):
+                baseline = self.view(self.layout, baseline_arena, name)
+                optimized = self.view(layout, candidate_arena, name)
+                np.testing.assert_array_equal(baseline, optimized, err_msg=name)
+        finally:
+            if worker_pool is not None:
+                loaded.ck_threadpool_destroy(worker_pool)
         print('CKE_CONV_CANDIDATE_FULL_WAVEFORM ' + json.dumps({
             'selected_conv_operations': selected,
             'candidate_provider': candidate_variant,

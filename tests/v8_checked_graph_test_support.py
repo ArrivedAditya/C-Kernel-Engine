@@ -13,7 +13,7 @@ sys.path.insert(0, str(ROOT / 'version/v8/scripts'))
 import build_ir_v8
 
 
-def compile_native_graph(root, source, circuit):
+def compile_native_graph(root, source, circuit, extra_exports=()):
     registry = build_ir_v8.load_kernel_registry()
     with contextlib.redirect_stdout(io.StringIO()):
         ir1 = build_ir_v8.build_ir1_direct(source, circuit, mode='prefill')
@@ -30,7 +30,8 @@ def compile_native_graph(root, source, circuit):
                     '--output', str(generated)], check=True, capture_output=True, text=True)
     function = source['template']['native_entry']['function']
     exports = root / 'exports.map'
-    exports.write_text('{ global: ' + function + '; local: *; };\n')
+    exports.write_text('{ global: ' + '; '.join((function, *extra_exports)) +
+                       '; local: *; };\n')
     providers = {provider["id"]: provider for provider in registry["kernels"]}
     sources = set()
     for op in call_ir['operations']:

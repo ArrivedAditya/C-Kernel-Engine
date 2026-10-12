@@ -1006,6 +1006,14 @@ TEST_SUITES = {
         "Checked Conv1D Hardware FMA and Pinned PyTorch Oracles", "kernels",
         ROOT / "tests" / "test_v8_audio_conv_hwfma_oracle.py",
     ),
+    "tts_audio_conv_parallel": TestSuite(
+        "Checked Parallel Conv1D Pinned PyTorch and Serial AVX2 Oracles", "kernels",
+        ROOT / "tests" / "test_v8_audio_conv_parallel_oracle.py",
+    ),
+    "tts_audio_conv_parallel_generated": TestSuite(
+        "Checked Parallel Conv1D Normal-Compiler Graph", "inference",
+        ROOT / "tests" / "test_v8_audio_conv_parallel_generated.py",
+    ),
     "tts_audio_dilated_conv_generated": TestSuite(
         "Checked Dilated Conv1D and Snake Generated Graph", "inference",
         ROOT / "tests" / "test_v8_audio_dilated_conv_generated.py",
