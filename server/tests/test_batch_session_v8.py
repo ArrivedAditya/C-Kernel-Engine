@@ -21,6 +21,9 @@ from version.v8.scripts.certify_batch_mixed_one_row_v8 import (
 from version.v8.scripts.xray_batch_prefill_kv_v8 import (
     attention_span, compare_kv_exports, parse_kv_export,
 )
+from version.v8.scripts.xray_batch_prefill_attention_v8 import (
+    compare_dumps, read_dump,
+)
 
 
 def _ckx_fixture(*, position=3, layer=16, heads=2, width=4, dtype=0):
@@ -77,6 +80,44 @@ def test_kv_xray_validates_declared_causal_and_window_boundaries():
         with pytest.raises(ValueError, match="causal/window"):
             attention_span(position=9, sliding_window=8,
                            observed_first=first, observed_last=last)
+
+
+def test_attention_xray_validates_observed_span_and_logical_v():
+    scores = (0.0, 1.0, float("-inf"), float("-inf"))
+    ordinary = {
+        "kq_scores_h2_q1": scores,
+        "kq_soft_h2_q1": (0.4, 0.6, 0.0, 0.0),
+        "kqv_out_h2_q1": (1.6,),
+        "vcols_h2_q1": (1.0, 2.0, 0.0, 0.0),
+    }
+    staged = {name.replace("q1", "q0"): values for name, values in ordinary.items()}
+    result = compare_dumps(ordinary, staged, ordinary_query=1, staged_query=0,
+                           position=1, sliding_window=2)
+    assert result["2"]["read_span"] == {"first": 0, "last": 1, "observed": True}
+    assert result["2"]["logical_v_exact"]
+    staged["kq_scores_h2_q0"] = (float("-inf"), 1.0, float("-inf"), float("-inf"))
+    with pytest.raises(ValueError, match="causal/window"):
+        compare_dumps(ordinary, staged, ordinary_query=1, staged_query=0,
+                      position=1, sliding_window=2)
+    staged["kq_scores_h2_q0"] = scores
+    staged["vcols_h2_q0"] = (1.0, 3.0, 0.0, 0.0)
+    with pytest.raises(ValueError, match="logical attention V"):
+        compare_dumps(ordinary, staged, ordinary_query=1, staged_query=0,
+                      position=1, sliding_window=2)
+
+
+def test_attention_xray_rejects_wrong_capture_identity_and_truncation(tmp_path):
+    import struct
+    header = struct.pack("<8sIi32sII4qIi32s", b"CKDMP\0\0\0", 1, 16,
+                         b"kq_scores_h2_q9", 0, 1, 2, 0, 0, 0, 2, 9, b"")
+    path = tmp_path / "trace.bin"
+    path.write_bytes(header + struct.pack("<2f", 0.0, 1.0))
+    assert read_dump(path, layer=16, query=9)["kq_scores_h2_q9"] == (0.0, 1.0)
+    with pytest.raises(ValueError, match="invalid or ambiguous"):
+        read_dump(path, layer=17, query=9)
+    path.write_bytes(header + b"\0")
+    with pytest.raises(ValueError, match="truncated attention vector"):
+        read_dump(path, layer=16, query=9)
 
 
 def test_mixed_certificate_rejects_identical_nonfinite_logits_and_missing_shared_work():
