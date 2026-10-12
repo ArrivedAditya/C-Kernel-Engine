@@ -1,0 +1,213 @@
+{
+  "all_head_capture": {
+    "capture_sha256": {
+      "ordinary": "01910eefdaff3ff03e843fab2433dd52ab410633e6795eb274fe426df04f3a03",
+      "staged": "16c023bfc5443104ef3211f5b33bd125e7774dc02e836d79d4ad014f30b573ef"
+    },
+    "heads": {
+      "0": {
+        "fp16_probability_differences": [],
+        "independent_fp16_operand_sum_delta": 0.0,
+        "logical_v_exact": true,
+        "max_difference_channel": 0,
+        "measured_output_delta": 0.0,
+        "ordinary_padded_tokens": 256,
+        "output_differing_channels": 0,
+        "output_max_abs_diff": 0.0,
+        "read_span": {
+          "first": 0,
+          "last": 9,
+          "observed": true
+        },
+        "score_max_abs_diff": 8.344650268554688e-07,
+        "staged_padded_tokens": 128
+      },
+      "1": {
+        "fp16_probability_differences": [],
+        "independent_fp16_operand_sum_delta": 0.0,
+        "logical_v_exact": true,
+        "max_difference_channel": 0,
+        "measured_output_delta": 0.0,
+        "ordinary_padded_tokens": 256,
+        "output_differing_channels": 0,
+        "output_max_abs_diff": 0.0,
+        "read_span": {
+          "first": 0,
+          "last": 9,
+          "observed": true
+        },
+        "score_max_abs_diff": 4.76837158203125e-07,
+        "staged_padded_tokens": 128
+      },
+      "2": {
+        "fp16_probability_differences": [
+          7
+        ],
+        "independent_fp16_operand_sum_delta": -0.0003345012664794922,
+        "logical_v_exact": true,
+        "max_difference_channel": 183,
+        "measured_output_delta": -0.0003337860107421875,
+        "ordinary_padded_tokens": 256,
+        "output_differing_channels": 255,
+        "output_max_abs_diff": 0.0003337860107421875,
+        "read_span": {
+          "first": 0,
+          "last": 9,
+          "observed": true
+        },
+        "score_max_abs_diff": 9.5367431640625e-07,
+        "staged_padded_tokens": 128
+      },
+      "3": {
+        "fp16_probability_differences": [],
+        "independent_fp16_operand_sum_delta": 0.0,
+        "logical_v_exact": true,
+        "max_difference_channel": 0,
+        "measured_output_delta": 0.0,
+        "ordinary_padded_tokens": 256,
+        "output_differing_channels": 0,
+        "output_max_abs_diff": 0.0,
+        "read_span": {
+          "first": 0,
+          "last": 9,
+          "observed": true
+        },
+        "score_max_abs_diff": 1.9073486328125e-06,
+        "staged_padded_tokens": 128
+      }
+    },
+    "schema": "cke.v8.batch-prefill-attention-xray.v1",
+    "selection": {
+      "ordinary_layer_ordinal": 16,
+      "ordinary_query": 9,
+      "position": 9,
+      "sliding_window": 512,
+      "staged_layer_ordinal": 178,
+      "staged_query": 0
+    }
+  },
+  "attention_capture_git_head": "c13977d4a4e27342433bb44770179443609cb617",
+  "attention_capture_script_sha256": "7e704e64eb31bc3a429f71352ee241c3bbfa628cc5cb9d5a3534f444bfa3d493",
+  "capture_neutrality": {
+    "layer_16_kv_sha256_both_modes": "0f3f272bd6e9f4aa8ec5a744e02750e29c6035fe53662c01b341a7416e9628a1",
+    "note": "Both ordinary and staged logits and layer-16 KV hashes match runs without attention capture. Capture changes prefill scheduling to the serial implementation, but not the measured results; timing neutrality is not established.",
+    "ordinary_logit_sha256_with_and_without_capture": "60df2233f28bae1ceef88d28b6319ceb3e578895a476920ce84a20e2cbe6b3dc",
+    "staged_logit_sha256_with_and_without_capture": "cdd8b0d3a69faa9e88caba1c0bcf568eb53ae3d6c53bc0f4beee4222dbc079c9"
+  },
+  "capture_runs": {
+    "ordinary": {
+      "attention_capture_sha256": "01910eefdaff3ff03e843fab2433dd52ab410633e6795eb274fe426df04f3a03",
+      "kv_sha256": "0f3f272bd6e9f4aa8ec5a744e02750e29c6035fe53662c01b341a7416e9628a1",
+      "loaded_engine_sha256": "5189d20a52a3da4b8279b2518a50d6dfe7699e3f4929f4bf605c34d71623749a",
+      "loaded_model_sha256": "14e3f81d872d77081416b658d84c61791cce7e8184d50c6ffc7e82a91f62dcca",
+      "loaded_session_sha256": "4daa4e1f859c733cf0e4e9fa5a3ff2ccfdfda892db06ae588f81763535945888",
+      "logits_sha256": "60df2233f28bae1ceef88d28b6319ceb3e578895a476920ce84a20e2cbe6b3dc",
+      "mode": "ordinary",
+      "position": 10,
+      "slot": 0,
+      "tokens": [
+        100,
+        101,
+        102,
+        103,
+        104,
+        105,
+        106,
+        107,
+        108,
+        109
+      ]
+    },
+    "staged": {
+      "attention_capture_sha256": "16c023bfc5443104ef3211f5b33bd125e7774dc02e836d79d4ad014f30b573ef",
+      "kv_sha256": "0f3f272bd6e9f4aa8ec5a744e02750e29c6035fe53662c01b341a7416e9628a1",
+      "loaded_engine_sha256": "5189d20a52a3da4b8279b2518a50d6dfe7699e3f4929f4bf605c34d71623749a",
+      "loaded_model_sha256": "14e3f81d872d77081416b658d84c61791cce7e8184d50c6ffc7e82a91f62dcca",
+      "loaded_session_sha256": "4daa4e1f859c733cf0e4e9fa5a3ff2ccfdfda892db06ae588f81763535945888",
+      "logits_sha256": "cdd8b0d3a69faa9e88caba1c0bcf568eb53ae3d6c53bc0f4beee4222dbc079c9",
+      "mode": "staged",
+      "position": 10,
+      "slot": 0,
+      "tokens": [
+        100,
+        101,
+        102,
+        103,
+        104,
+        105,
+        106,
+        107,
+        108,
+        109
+      ]
+    }
+  },
+  "cpu": "Intel(R) Core(TM) i7-14700T",
+  "declared_bundle_assets_sha256": {
+    "config.json": "3f1a4eb5edb53d349227434a09a3e516652a67a550e51915a0cc856d029d268b",
+    "lowered_decode.json": "d7359ddc92b63e5aaa9c971880866223b9ddd6aa3b21781370d9ce9f70e2615a",
+    "lowered_prefill.json": "fc6b504e3584c6116dc52fc7797a8de0af00de18e2c198af8f6196bc1137ccf9"
+  },
+  "finding": "Both modes have finite KQ scores only at positions 0\u20139 for head 0\u20133. Head 2 alone has a differing KQV output (max 0.000333786). The ten logical V values are exact; FP16-rounded probability at position 7 differs. An independent FP16-operand sum predicts a -0.000334501 delta for the worst channel versus measured -0.000333786. This is evidence for phase-specific score/softmax arithmetic and FP16 probability quantization, not a proven general correction.",
+  "generated_source_sha256": "8bd6bf5e3ec91bef9205ed83f992d13789cf0bb70f2fdf520b4b0351c13b79cb",
+  "kv_diagnostic_git_head": "b2bb0fc7eded52a78960171d9a88a2e9b25bddc5",
+  "loaded_engine_sha256": "5189d20a52a3da4b8279b2518a50d6dfe7699e3f4929f4bf605c34d71623749a",
+  "loaded_model_sha256": "14e3f81d872d77081416b658d84c61791cce7e8184d50c6ffc7e82a91f62dcca",
+  "loaded_session_sha256": "4daa4e1f859c733cf0e4e9fa5a3ff2ccfdfda892db06ae588f81763535945888",
+  "lowering_to_loaded_binary_relationship": "unverified",
+  "requested_threads": 1,
+  "schema": "cke.v8.batch-prefill-attention-xray.v1",
+  "scope": "actual captured attention scores, probabilities, V columns and output at logical token position 9; no numerical fix or full-model certification",
+  "source_kv_report": "batch_prefill_gemma3_kv_xray_20261012.json",
+  "source_kv_report_sha256": "da3c06aac028464251b5ae2731ca1e0e10b66096c01a82835119c3483172520f",
+  "status": "diagnostic_mismatch",
+  "uncaptured_control_runs": {
+    "ordinary": {
+      "attention_capture_sha256": null,
+      "kv_sha256": "0f3f272bd6e9f4aa8ec5a744e02750e29c6035fe53662c01b341a7416e9628a1",
+      "loaded_engine_sha256": "5189d20a52a3da4b8279b2518a50d6dfe7699e3f4929f4bf605c34d71623749a",
+      "loaded_model_sha256": "14e3f81d872d77081416b658d84c61791cce7e8184d50c6ffc7e82a91f62dcca",
+      "loaded_session_sha256": "4daa4e1f859c733cf0e4e9fa5a3ff2ccfdfda892db06ae588f81763535945888",
+      "logits_sha256": "60df2233f28bae1ceef88d28b6319ceb3e578895a476920ce84a20e2cbe6b3dc",
+      "mode": "ordinary",
+      "position": 10,
+      "slot": 0,
+      "tokens": [
+        100,
+        101,
+        102,
+        103,
+        104,
+        105,
+        106,
+        107,
+        108,
+        109
+      ]
+    },
+    "staged": {
+      "attention_capture_sha256": null,
+      "kv_sha256": "0f3f272bd6e9f4aa8ec5a744e02750e29c6035fe53662c01b341a7416e9628a1",
+      "loaded_engine_sha256": "5189d20a52a3da4b8279b2518a50d6dfe7699e3f4929f4bf605c34d71623749a",
+      "loaded_model_sha256": "14e3f81d872d77081416b658d84c61791cce7e8184d50c6ffc7e82a91f62dcca",
+      "loaded_session_sha256": "4daa4e1f859c733cf0e4e9fa5a3ff2ccfdfda892db06ae588f81763535945888",
+      "logits_sha256": "cdd8b0d3a69faa9e88caba1c0bcf568eb53ae3d6c53bc0f4beee4222dbc079c9",
+      "mode": "staged",
+      "position": 10,
+      "slot": 0,
+      "tokens": [
+        100,
+        101,
+        102,
+        103,
+        104,
+        105,
+        106,
+        107,
+        108,
+        109
+      ]
+    }
+  },
+  "weights_sha256": "dae6375dc5f6e04db7a373fc747df6eda4f9938f019bc0c0d1fdda4ec2443c40"
+}

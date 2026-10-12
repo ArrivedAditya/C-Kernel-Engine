@@ -18,6 +18,149 @@ from version.v8.scripts.certify_batch_mixed_one_row_v8 import (
     _verify_oracle_mappings,
     _require_shared_projections, certify,
 )
+from version.v8.scripts.xray_batch_prefill_kv_v8 import (
+    attention_span, compare_kv_exports, parse_kv_export, retain_prefix_result,
+)
+from version.v8.scripts.xray_batch_prefill_attention_v8 import (
+    compare_dumps, read_dump,
+)
+
+
+def _ckx_fixture(*, position=3, layer=16, heads=2, width=4, dtype=0):
+    import struct
+    row_bytes = width * (4 if dtype == 0 else 2)
+    payload = bytearray(2 * heads * position * row_bytes)
+    header = struct.pack("<8I", 0x564B5843, 2, layer, position,
+                         heads, 32, width, dtype)
+    return header + payload
+
+
+def test_kv_xray_reports_first_logical_difference_and_rejects_wrong_owner():
+    ordinary_bytes = _ckx_fixture()
+    staged_bytes = bytearray(ordinary_bytes)
+    # V, head 1, logical position 2, channel 3; physical cache padding is absent.
+    row = (2 + 1) * 3 + 2
+    staged_bytes[32 + row * 16 + 3 * 4] = 1
+    ordinary = parse_kv_export(ordinary_bytes, layer=16, position=3)
+    staged = parse_kv_export(bytes(staged_bytes), layer=16, position=3)
+    assert compare_kv_exports(ordinary, ordinary, ordinary_owner=0,
+                              staged_owner=0)["exact"]
+    result = compare_kv_exports(ordinary, staged, ordinary_owner=0, staged_owner=0)
+    assert {key: result["first_difference"][key] for key in
+            ("kind", "head", "position", "channel", "byte_in_element")} == {
+        "kind": "V", "head": 1, "position": 2,
+        "channel": 3, "byte_in_element": 0,
+    }
+    assert result["first_difference"]["ordinary"] == {
+        "raw_le_hex": "00000000", "value": 0.0, "classification": "finite"}
+    assert result["first_difference"]["staged"]["raw_le_hex"] == "01000000"
+    assert result["first_difference"]["absolute_difference"] > 0
+    with pytest.raises(ValueError, match="owner"):
+        compare_kv_exports(ordinary, staged, ordinary_owner=0, staged_owner=1)
+
+
+def test_kv_xray_rejects_wrong_position_geometry_and_truncated_payload():
+    payload = _ckx_fixture(position=3)
+    with pytest.raises(ValueError, match="position"):
+        parse_kv_export(payload, layer=16, position=2)
+    with pytest.raises(ValueError, match="layer"):
+        parse_kv_export(payload, layer=15, position=3)
+    with pytest.raises(ValueError, match="extent"):
+        parse_kv_export(payload[:-1], layer=16, position=3)
+    with pytest.raises(ValueError, match="format"):
+        parse_kv_export(b"bad!" + payload[4:], layer=16, position=3)
+    other_dtype = parse_kv_export(_ckx_fixture(dtype=1), layer=16, position=3)
+    with pytest.raises(ValueError, match="geometry"):
+        compare_kv_exports(parse_kv_export(payload, layer=16, position=3),
+                           other_dtype, ordinary_owner=0, staged_owner=0)
+
+
+def test_kv_xray_retains_early_failure_preceding_control():
+    cases = {}
+    previous = None
+    for length in range(1, 6):
+        previous = retain_prefix_result(
+            cases, slot=0, length=length, max_prefix=10,
+            by_layer={"16": {"exact": length != 4}}, previous=previous)
+    assert list(cases) == ["slot_0/prefix_3", "slot_0/prefix_4"]
+    cases = {}
+    retain_prefix_result(cases, slot=1, length=1, max_prefix=10,
+                         by_layer={"16": {"exact": False}}, previous=None)
+    assert list(cases) == ["slot_1/prefix_1"]
+
+
+@pytest.mark.parametrize("dtype,ordinary,staged,value", [
+    (0, b"\x00\x00\x80\x3f", b"\x00\x00\xc0\x7f", 1.0),
+    (1, b"\x00\x3c", b"\x00\x7e", 1.0),
+    (2, b"\x80\x3f", b"\xc0\x7f", 1.0),
+])
+def test_kv_xray_decodes_finite_and_nonfinite_first_values(
+    dtype, ordinary, staged, value,
+):
+    left = bytearray(_ckx_fixture(position=1, heads=1, width=1, dtype=dtype))
+    right = bytearray(left)
+    left[32:32 + len(ordinary)] = ordinary
+    right[32:32 + len(staged)] = staged
+    result = compare_kv_exports(
+        parse_kv_export(bytes(left), layer=16, position=1),
+        parse_kv_export(bytes(right), layer=16, position=1),
+        ordinary_owner=0, staged_owner=0)["first_difference"]
+    assert result["ordinary"] == {
+        "raw_le_hex": ordinary.hex(), "value": value, "classification": "finite"}
+    assert result["staged"]["raw_le_hex"] == staged.hex()
+    assert result["staged"]["classification"] == "nan"
+    assert result["staged"]["value"] is None
+    assert result["absolute_difference"] is None
+
+
+def test_kv_xray_validates_declared_causal_and_window_boundaries():
+    assert attention_span(position=9, sliding_window=8,
+                          observed_first=2, observed_last=9) == {
+                              "first": 2, "last": 9, "observed": True}
+    assert attention_span(position=9, sliding_window=512) == {
+        "first": 0, "last": 9, "observed": False}
+    for first, last in ((1, 9), (2, 8), (0, 10)):
+        with pytest.raises(ValueError, match="causal/window"):
+            attention_span(position=9, sliding_window=8,
+                           observed_first=first, observed_last=last)
+
+
+def test_attention_xray_validates_observed_span_and_logical_v():
+    scores = (0.0, 1.0, float("-inf"), float("-inf"))
+    ordinary = {
+        "kq_scores_h2_q1": scores,
+        "kq_soft_h2_q1": (0.4, 0.6, 0.0, 0.0),
+        "kqv_out_h2_q1": (1.6,),
+        "vcols_h2_q1": (1.0, 2.0, 0.0, 0.0),
+    }
+    staged = {name.replace("q1", "q0"): values for name, values in ordinary.items()}
+    result = compare_dumps(ordinary, staged, ordinary_query=1, staged_query=0,
+                           position=1, sliding_window=2)
+    assert result["2"]["read_span"] == {"first": 0, "last": 1, "observed": True}
+    assert result["2"]["logical_v_exact"]
+    staged["kq_scores_h2_q0"] = (float("-inf"), 1.0, float("-inf"), float("-inf"))
+    with pytest.raises(ValueError, match="causal/window"):
+        compare_dumps(ordinary, staged, ordinary_query=1, staged_query=0,
+                      position=1, sliding_window=2)
+    staged["kq_scores_h2_q0"] = scores
+    staged["vcols_h2_q0"] = (1.0, 3.0, 0.0, 0.0)
+    with pytest.raises(ValueError, match="logical attention V"):
+        compare_dumps(ordinary, staged, ordinary_query=1, staged_query=0,
+                      position=1, sliding_window=2)
+
+
+def test_attention_xray_rejects_wrong_capture_identity_and_truncation(tmp_path):
+    import struct
+    header = struct.pack("<8sIi32sII4qIi32s", b"CKDMP\0\0\0", 1, 16,
+                         b"kq_scores_h2_q9", 0, 1, 2, 0, 0, 0, 2, 9, b"")
+    path = tmp_path / "trace.bin"
+    path.write_bytes(header + struct.pack("<2f", 0.0, 1.0))
+    assert read_dump(path, layer=16, query=9)["kq_scores_h2_q9"] == (0.0, 1.0)
+    with pytest.raises(ValueError, match="invalid or ambiguous"):
+        read_dump(path, layer=17, query=9)
+    path.write_bytes(header + b"\0")
+    with pytest.raises(ValueError, match="truncated attention vector"):
+        read_dump(path, layer=16, query=9)
 
 
 def test_mixed_certificate_rejects_identical_nonfinite_logits_and_missing_shared_work():
