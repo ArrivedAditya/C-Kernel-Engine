@@ -9,6 +9,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <map>
 #include <set>
 #include <sstream>
 #include <string>
@@ -495,6 +496,76 @@ static std::string json_escape(const std::string & s) {
         }
     }
     return out.str();
+}
+
+static bool loaded_library_mappings_json(std::string & output, std::string & error) {
+    // Capture the actual process mappings while the model and backend are live.
+    // The Python caller checks these device/inode identities against the pinned
+    // files and hashes their current backing bytes.
+    const std::set<std::string> required = {
+        "libllama.so", "libggml.so", "libggml-base.so", "libggml-cpu.so"
+    };
+    std::ifstream maps("/proc/self/maps");
+    if (!maps) {
+        error = "cannot inspect loaded oracle libraries";
+        return false;
+    }
+    struct Mapping { std::string path; std::string device; std::string inode; };
+    std::map<std::string, Mapping> found;
+    std::string line;
+    while (std::getline(maps, line)) {
+        std::istringstream row(line);
+        std::string range, permissions, offset, device, inode, path;
+        if (!(row >> range >> permissions >> offset >> device >> inode)) continue;
+        std::getline(row, path);
+        const auto first = path.find_first_not_of(' ');
+        if (first == std::string::npos) continue;
+        path.erase(0, first);
+        const bool deleted = path.size() >= 10 &&
+            path.compare(path.size() - 10, 10, " (deleted)") == 0;
+        const std::string basename = std::filesystem::path(
+            deleted ? path.substr(0, path.size() - 10) : path).filename().string();
+        std::string name;
+        for (const std::string & candidate : required) {
+            if (basename == candidate || basename.rfind(candidate + ".", 0) == 0) {
+                name = candidate;
+                break;
+            }
+        }
+        if (name.empty()) continue;
+        if (deleted) {
+            error = "loaded oracle library mapping was deleted: " + name;
+            return false;
+        }
+        const Mapping current{path, device, inode};
+        auto previous = found.find(name);
+        if (previous != found.end() &&
+            (previous->second.path != path || previous->second.device != device ||
+             previous->second.inode != inode)) {
+            error = "ambiguous loaded oracle library mapping: " + name;
+            return false;
+        }
+        found[name] = current;
+    }
+    if (found.size() != required.size()) {
+        error = "incomplete loaded oracle library mappings; found=";
+        for (const auto & item : found) error += item.first + ",";
+        return false;
+    }
+    std::ostringstream json;
+    json << "{";
+    bool first = true;
+    for (const auto & item : found) {
+        if (!first) json << ",";
+        first = false;
+        json << "\"" << json_escape(item.first) << "\":{";
+        json << "\"path\":\"" << json_escape(item.second.path) << "\",";
+        json << "\"device\":\"" << json_escape(item.second.device) << "\",";
+        json << "\"inode\":" << item.second.inode << "}";
+    }
+    json << "}";
+    output = json.str();
+    return true;
 }
 
 static void begin_dump_batch(DumpState * state, int32_t token_id) {
@@ -1137,6 +1208,14 @@ int main(int argc, char ** argv) {
         llama_backend_free();
         return 4;
     }
+    std::string loaded_libraries_json, mapping_error;
+    if (!loaded_library_mappings_json(loaded_libraries_json, mapping_error)) {
+        print_json_error(mapping_error);
+        llama_free(ctx);
+        llama_model_free(model);
+        llama_backend_free();
+        return 26;
+    }
 
     std::vector<llama_token> tokens_before(args.tokens_before.begin(), args.tokens_before.end());
     std::vector<llama_token> tokens_after(
@@ -1410,6 +1489,21 @@ int main(int argc, char ** argv) {
 
     std::cout << "{";
     std::cout << "\"ok\":true,";
+    std::cout << "\"loaded_libraries\":" << loaded_libraries_json << ",";
+    std::cout << "\"effective_settings\":{";
+    std::cout << "\"requested_context\":" << args.ctx_len << ",";
+    std::cout << "\"context\":" << llama_n_ctx(ctx) << ",";
+    std::cout << "\"batch\":" << llama_n_batch(ctx) << ",";
+    std::cout << "\"ubatch\":" << llama_n_ubatch(ctx) << ",";
+    std::cout << "\"threads\":" << llama_n_threads(ctx) << ",";
+    std::cout << "\"threads_batch\":" << llama_n_threads_batch(ctx) << ",";
+    std::cout << "\"cache_k\":\"" << ggml_type_name(cparams.type_k) << "\",";
+    std::cout << "\"cache_v\":\"" << ggml_type_name(cparams.type_v) << "\",";
+    std::cout << "\"cpu_only\":true,";
+    std::cout << "\"repack_enabled\":" << (args.no_repack ? "false" : "true") << ",";
+    std::cout << "\"flash_attention\":\""
+              << (dump_attention_internals ? "disabled_for_internal_dump" : args.flash_attention_mode)
+              << "\"},";
     std::cout << "\"n_vocab\":" << n_vocab << ",";
     std::cout << "\"token_count\":" << (tokens_before.size() + tokens_after.size()) << ",";
     std::cout << "\"token_count_before\":" << tokens_before.size() << ",";

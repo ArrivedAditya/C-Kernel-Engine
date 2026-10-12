@@ -142,6 +142,165 @@ def _digest(path: Path) -> str:
     return sha.hexdigest()
 
 
+def _digest_bytes(value: bytes) -> str:
+    return hashlib.sha256(value).hexdigest()
+
+
+def _verify_oracle_mappings(meta: dict, lib_dir: Path) -> dict[str, str]:
+    """Match the helper's live /proc/self/maps identities to the intended files."""
+    mappings = meta.get("loaded_libraries")
+    names = ("libllama.so", "libggml.so", "libggml-base.so", "libggml-cpu.so")
+    if not isinstance(mappings, dict) or set(mappings) != set(names):
+        raise AssertionError("oracle did not report its complete loaded-library set")
+    hashes = {}
+    for name in names:
+        item = mappings[name]
+        if not isinstance(item, dict) or not isinstance(item.get("path"), str):
+            raise AssertionError(f"malformed loaded oracle mapping: {name}")
+        path = Path(item["path"])
+        try:
+            expected = (lib_dir / name).resolve(strict=True)
+            if path.resolve(strict=True) != expected or " (deleted)" in item["path"]:
+                raise AssertionError(f"alternate or deleted loaded oracle library: {name}")
+            with path.open("rb") as backing:
+                stat = os.fstat(backing.fileno())
+                device = f"{os.major(stat.st_dev):02x}:{os.minor(stat.st_dev):02x}"
+                if item.get("device", "").lower() != device or item.get("inode") != stat.st_ino:
+                    raise AssertionError(f"stale loaded oracle library backing: {name}")
+                digest = hashlib.sha256()
+                for part in iter(lambda: backing.read(1024 * 1024), b""):
+                    digest.update(part)
+                current = path.stat()
+                if current.st_dev != stat.st_dev or current.st_ino != stat.st_ino:
+                    raise AssertionError(f"loaded oracle library replaced while hashing: {name}")
+                hashes[name] = digest.hexdigest()
+        except OSError as exc:
+            raise AssertionError(f"cannot inspect loaded oracle library: {name}") from exc
+    return hashes
+
+
+def _validated_oracle_result(result: dict, tokens: list[int], mode: str,
+                             lib_dir: Path) -> tuple[bytes, dict[str, str], dict]:
+    if not isinstance(result, dict) or not isinstance(result.get("meta"), dict):
+        raise AssertionError("llama.cpp returned malformed metadata")
+    meta = result["meta"]
+    logits = result.get("logits")
+    if (logits is None or int(meta.get("n_vocab", -1)) != len(logits) or
+            int(meta.get("token_count", -1)) != len(tokens) or
+            meta.get("tokens") != tokens or meta.get("decode_mode") != mode):
+        raise AssertionError("llama.cpp returned wrong tokens, mode, or vocabulary extent")
+    settings = meta.get("effective_settings")
+    if not isinstance(settings, dict) or not settings:
+        raise AssertionError("llama.cpp omitted effective execution settings")
+    row = logits.tobytes()
+    _logit_distance(row, row)  # Reject nonfinite or empty output.
+    return row, _verify_oracle_mappings(meta, lib_dir), settings
+
+
+def _verify_oracle_checkout(root: Path, llama_cpp: Path) -> str:
+    expected_pin = subprocess.check_output(
+        ["git", "-C", str(root), "ls-tree", "HEAD", "llama.cpp"], text=True).split()[2]
+    actual_pin = subprocess.check_output(
+        ["git", "-C", str(llama_cpp), "rev-parse", "HEAD"], text=True).strip()
+    if actual_pin != expected_pin:
+        raise AssertionError("llama.cpp checkout differs from the repository pin")
+    if subprocess.check_output(
+            ["git", "-C", str(llama_cpp), "status", "--porcelain",
+             "--untracked-files=no"], text=True).strip():
+        raise AssertionError("llama.cpp checkout has tracked source changes")
+    return actual_pin
+
+
+def _sample_gguf_bump_pair(gguf: Path, bundle: Path) -> dict:
+    """Check selected source tensor bytes and graph metadata, not a full conversion."""
+    from version.v8.scripts.convert_gguf_to_bump_v8 import (
+        GGUFReader, _gguf_read_value, _gguf_skip_value, align_up,
+    )
+    wanted = {
+        "general.architecture", "gemma3.block_count", "gemma3.embedding_length",
+        "gemma3.feed_forward_length", "gemma3.attention.head_count",
+        "gemma3.attention.head_count_kv", "gemma3.context_length",
+        "gemma3.rope.freq_base", "gemma3.attention.sliding_window",
+        "general.alignment",
+    }
+    pairs = {
+        "token_embd.weight": "token_emb",
+        "blk.0.attn_q.weight": "layer.0.wq",
+        "blk.0.attn_k.weight": "layer.0.wk",
+        "blk.0.attn_v.weight": "layer.0.wv",
+        "blk.0.ffn_down.weight": "layer.0.w2",
+        "blk.0.attn_norm.weight": "layer.0.ln1_gamma",
+        "output_norm.weight": "final_ln_weight",
+    }
+    manifest = json.loads((bundle / "weights_manifest.json").read_text())
+    entries = {item["name"]: item for item in manifest["entries"]}
+    config = json.loads((bundle / "config.json").read_text())
+    with gguf.open("rb") as source, (bundle / "weights.bump").open("rb") as converted:
+        reader = GGUFReader(source)
+        if reader._read_exact(4) != b"GGUF":
+            raise AssertionError("source is not GGUF")
+        version = reader.u32()
+        tensor_count, metadata_count = ((reader.u64(), reader.u64()) if version >= 2
+                                        else (reader.u32(), reader.u32()))
+        metadata = {}
+        for _ in range(metadata_count):
+            key, kind = reader.key_str(), reader.u32()
+            if key in wanted:
+                metadata[key] = _gguf_read_value(reader, kind)
+            else:
+                _gguf_skip_value(reader, kind)
+        tensors = {}
+        for _ in range(tensor_count):
+            name = reader.key_str()
+            dimensions = [reader.u64() for _ in range(reader.u32())]
+            quant_type, offset = reader.u32(), reader.u64()
+            tensors[name] = {"dimensions": dimensions, "quant_type": quant_type,
+                             "offset": offset}
+        data_start = align_up(reader.tell(), int(metadata.get("general.alignment", 32)))
+        expected = {
+            "general.architecture": "gemma3",
+            "gemma3.block_count": config["num_hidden_layers"],
+            "gemma3.embedding_length": config["hidden_size"],
+            "gemma3.feed_forward_length": config["intermediate_size"],
+            "gemma3.attention.head_count": config["num_attention_heads"],
+            "gemma3.attention.head_count_kv": config["num_key_value_heads"],
+            "gemma3.context_length": config["max_position_embeddings"],
+            "gemma3.rope.freq_base": config["rope_theta"],
+            "gemma3.attention.sliding_window": config["sliding_window"],
+        }
+        metadata_matches = {key: metadata.get(key) == value for key, value in expected.items()}
+        samples = {}
+        for source_name, converted_name in pairs.items():
+            tensor, entry = tensors[source_name], entries[converted_name]
+            size = int(entry["size"])
+            if size < 64:
+                raise AssertionError(f"sample tensor is too short: {source_name}")
+            offsets = sorted({0, (size // 2) // 64 * 64, size - 64})
+            matches = []
+            for offset in offsets:
+                source.seek(data_start + tensor["offset"] + offset)
+                converted.seek(int(entry["file_offset"]) + offset)
+                source_bytes, converted_bytes = source.read(64), converted.read(64)
+                matches.append(len(source_bytes) == len(converted_bytes) == 64 and
+                               source_bytes == converted_bytes)
+            samples[source_name] = {
+                "bump_name": converted_name, "gguf_type": tensor["quant_type"],
+                "dimensions": tensor["dimensions"], "sample_offsets": offsets,
+                "raw_64_byte_samples_match": matches,
+            }
+    return {
+        "config_metadata_matches": metadata_matches,
+        "sampled_tensor_bytes_match": all(all(item["raw_64_byte_samples_match"])
+                                          for item in samples.values()),
+        "samples": samples,
+        "converter_source_candidate_sha256": _digest(
+            Path(__file__).with_name("convert_gguf_to_bump_v8.py")),
+        "manifest_sha256": _digest(bundle / "weights_manifest.json"),
+        "converter_invocation_verified": False,
+        "full_tensor_inventory_verified": False,
+    }
+
+
 def certify(bundle: Path, *, threads: int = 4, context_length: int = 32,
             compare_ordinary: bool = False,
             oracle_gguf: Path | None = None) -> dict:
@@ -158,38 +317,86 @@ def certify(bundle: Path, *, threads: int = 4, context_length: int = 32,
     oracle_identity = None
     if oracle_gguf is not None:
         from version.v8.scripts.compare_first_token_logits_v8 import (
-            HELPER_SRC, LLAMA_CPP, run_llama_logits,
+            HELPER_SRC, LLAMA_CPP, ensure_llama_helper, run_llama_logits,
         )
         oracle_gguf = oracle_gguf.resolve(strict=True)
-        expected_pin = subprocess.check_output(
-            ["git", "-C", str(Path(__file__).resolve().parents[3]),
-             "ls-tree", "HEAD", "llama.cpp"], text=True).split()[2]
-        actual_pin = subprocess.check_output(
-            ["git", "-C", str(LLAMA_CPP), "rev-parse", "HEAD"],
-            text=True).strip()
-        if actual_pin != expected_pin:
-            raise AssertionError("llama.cpp checkout differs from the repository pin")
+        actual_pin = _verify_oracle_checkout(
+            Path(__file__).resolve().parents[3], LLAMA_CPP)
         lib_dir = LLAMA_CPP / "build" / "bin"
         libraries = ("libllama.so", "libggml.so", "libggml-base.so", "libggml-cpu.so")
+        helper = ensure_llama_helper()
+        library_hashes = {name: _digest(lib_dir / name) for name in libraries}
         oracle_identity = {
             "gguf_sha256": _digest(oracle_gguf),
             "llama_commit": actual_pin,
+            "submodule_tracked_dirty": False,
             "helper_source_sha256": _digest(HELPER_SRC),
-            "library_file_sha256": {name: _digest(lib_dir / name) for name in libraries},
+            "helper_binary_sha256": _digest(helper),
+            "library_file_sha256": library_hashes,
+            "loaded_library_sha256": None,
+            "library_build_provenance_verified": False,
+            "source_pair": _sample_gguf_bump_pair(oracle_gguf, bundle),
             "source_pair_verified": False,
             "status": "diagnostic_only",
         }
+        oracle_self = {}
+        oracle_settings = {}
+        reference_mappings = None
         for length in sorted({1, 9, 10, context_length - 4}):
             tokens = list(range(100, 100 + length))
             oracle_rows[length] = {}
+            repeatability = {}
+            settings = {}
             for mode in ("batched", "sequential"):
-                result = run_llama_logits(oracle_gguf, tokens,
-                                          max(64, context_length), 16, threads,
-                                          decode_mode=mode)
-                if (int(result["meta"]["n_vocab"]) != len(result["logits"]) or
-                        int(result["meta"]["token_count"]) != length):
-                    raise AssertionError("llama.cpp returned the wrong token or vocabulary extent")
-                oracle_rows[length][mode] = result["logits"].tobytes()
+                runs = []
+                for _ in range(2):
+                    result = run_llama_logits(oracle_gguf, tokens,
+                                              max(64, context_length), 16, threads,
+                                              decode_mode=mode)
+                    rows, mappings, effective = _validated_oracle_result(
+                        result, tokens, mode, lib_dir)
+                    meta = result["meta"]
+                    if mappings != library_hashes:
+                        raise AssertionError("loaded oracle library bytes differ from candidate files")
+                    if reference_mappings is not None and meta["loaded_libraries"] != reference_mappings:
+                        raise AssertionError("loaded oracle library mappings changed between replays")
+                    reference_mappings = meta["loaded_libraries"]
+                    runs.append(rows)
+                    if mode in settings and settings[mode] != effective:
+                        raise AssertionError("effective llama settings changed between replays")
+                    settings[mode] = effective
+                oracle_rows[length][mode] = runs[0]
+                repeatability[mode] = {
+                    "exact": runs[0] == runs[1],
+                    "logits_sha256": [_digest_bytes(row) for row in runs],
+                }
+            oracle_self[f"tokens_{length}"] = {
+                "batched_vs_sequential": _logit_distance(
+                    oracle_rows[length]["batched"], oracle_rows[length]["sequential"]),
+                "repeatability": repeatability,
+            }
+            oracle_settings[f"tokens_{length}"] = settings
+        one_token_sensitivity = {}
+        for sensitivity_threads in sorted({1, threads}):
+            for no_repack in (False, True):
+                result = run_llama_logits(
+                    oracle_gguf, [100], max(64, context_length), 16,
+                    sensitivity_threads, decode_mode="batched", no_repack=no_repack)
+                row, mappings, effective = _validated_oracle_result(
+                    result, [100], "batched", lib_dir)
+                if mappings != library_hashes or result["meta"]["loaded_libraries"] != reference_mappings:
+                    raise AssertionError("loaded oracle identity changed during one-token sensitivity check")
+                one_token_sensitivity[f"threads_{sensitivity_threads}/no_repack_{no_repack}"] = {
+                    "vs_baseline": _logit_distance(row, oracle_rows[1]["batched"]),
+                    "effective_settings": effective,
+                }
+        if _digest(helper) != oracle_identity["helper_binary_sha256"]:
+            raise AssertionError("oracle helper binary changed during replay")
+        oracle_identity["loaded_library_sha256"] = library_hashes
+        oracle_identity["loaded_library_mappings"] = reference_mappings
+        oracle_identity["effective_settings_by_case"] = oracle_settings
+        oracle_identity["reference_self_comparison"] = oracle_self
+        oracle_identity["one_token_sensitivity"] = one_token_sensitivity
     session = SessionV8.open(bundle, context_length=context_length, num_threads=threads)
     try:
         batch = session.enable_batch2(1 << 30)
@@ -372,7 +579,29 @@ def certify(bundle: Path, *, threads: int = 4, context_length: int = 32,
                 "repeatability": repeatability,
                 "first_unstable": unstable[0] if unstable else None,
                 "cases": ordinary_cases,
-                "llama_oracle": {"identity": oracle_identity, "cases": oracle_cases}
+                "llama_oracle": {
+                    "identity": oracle_identity,
+                    "summary": {
+                        "earliest_cke_ordinary_staged_failure": failures[0] if failures else None,
+                        "one_token_cke_oracle_top1_equal": (
+                            oracle_cases["slot_0/tokens_1"]["ordinary_vs_llama_batched"]
+                            ["top1_subject"] ==
+                            oracle_cases["slot_0/tokens_1"]["ordinary_vs_llama_batched"]
+                            ["top1_oracle"]),
+                        "llama_batched_sequential_top1_disagreement_lengths": [
+                            length for length in sorted(oracle_rows)
+                            if oracle_identity["reference_self_comparison"]
+                            [f"tokens_{length}"]["batched_vs_sequential"]
+                            ["top1_subject"] != oracle_identity["reference_self_comparison"]
+                            [f"tokens_{length}"]["batched_vs_sequential"]
+                            ["top1_oracle"]],
+                        "all_oracle_replays_exact": all(
+                            item["exact"] for row in oracle_identity["reference_self_comparison"]
+                            .values() for item in row["repeatability"].values()),
+                        "source_pair_verified": False,
+                    },
+                    "cases": oracle_cases,
+                }
                 if oracle_identity else None,
             }
         return {
