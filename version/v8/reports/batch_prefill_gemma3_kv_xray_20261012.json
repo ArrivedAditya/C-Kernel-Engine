@@ -1,0 +1,292 @@
+{
+  "attention_contracts": {
+    "0": {
+      "decode": {
+        "function": "attention_forward_decode_head_major_gqa_llama_regular_sliding_workspace",
+        "reduction": "fp32_llama_regular",
+        "sliding_window": 512
+      },
+      "prefill": {
+        "function": "attention_forward_causal_head_major_gqa_llama_regular_strided_sliding_workspace",
+        "reduction": "fp32_llama_regular",
+        "sliding_window": 512
+      }
+    },
+    "16": {
+      "decode": {
+        "function": "attention_forward_decode_head_major_gqa_llama_regular_sliding_workspace",
+        "reduction": "fp32_llama_regular",
+        "sliding_window": 512
+      },
+      "prefill": {
+        "function": "attention_forward_causal_head_major_gqa_llama_regular_strided_sliding_workspace",
+        "reduction": "fp32_llama_regular",
+        "sliding_window": 512
+      }
+    },
+    "17": {
+      "decode": {
+        "function": "attention_forward_decode_head_major_gqa_llama_regular_sliding_workspace",
+        "reduction": "fp32_llama_regular",
+        "sliding_window": 512
+      },
+      "prefill": {
+        "function": "attention_forward_causal_head_major_gqa_llama_regular_strided_sliding_workspace",
+        "reduction": "fp32_llama_regular",
+        "sliding_window": 512
+      }
+    }
+  },
+  "bundle": "/tmp/cke-gemma3-batch-http-bundle-20261011",
+  "cases": {
+    "slot_0/prefix_10": {
+      "0": {
+        "attention_read_span": {
+          "first": 0,
+          "last": 9,
+          "observed": false
+        },
+        "exact": true,
+        "first_difference": null,
+        "head_width": 256,
+        "kv_heads": 1,
+        "ordinary_sha256": "29165d8720cfca9f0ece84b5d54d3c1c38a33bff5c71bae33d95dc9fce6fd6fb",
+        "staged_sha256": "29165d8720cfca9f0ece84b5d54d3c1c38a33bff5c71bae33d95dc9fce6fd6fb",
+        "storage_dtype": 0,
+        "valid_position": 10
+      },
+      "16": {
+        "attention_read_span": {
+          "first": 0,
+          "last": 9,
+          "observed": false
+        },
+        "exact": true,
+        "first_difference": null,
+        "head_width": 256,
+        "kv_heads": 1,
+        "ordinary_sha256": "0f3f272bd6e9f4aa8ec5a744e02750e29c6035fe53662c01b341a7416e9628a1",
+        "staged_sha256": "0f3f272bd6e9f4aa8ec5a744e02750e29c6035fe53662c01b341a7416e9628a1",
+        "storage_dtype": 0,
+        "valid_position": 10
+      },
+      "17": {
+        "attention_read_span": {
+          "first": 0,
+          "last": 9,
+          "observed": false
+        },
+        "exact": false,
+        "first_difference": {
+          "byte_in_element": 0,
+          "channel": 0,
+          "head": 0,
+          "kind": "K",
+          "position": 9
+        },
+        "head_width": 256,
+        "kv_heads": 1,
+        "ordinary_sha256": "2e5c1f75677ce7558477843cc8a5c48f21fd01a36adeae0b97f428e1358b6c6e",
+        "staged_sha256": "1be889d5b446fba463ef9af8a08210643cea64f328488daf8dab7489e0f06255",
+        "storage_dtype": 0,
+        "valid_position": 10
+      }
+    },
+    "slot_0/prefix_9": {
+      "0": {
+        "attention_read_span": {
+          "first": 0,
+          "last": 8,
+          "observed": false
+        },
+        "exact": true,
+        "first_difference": null,
+        "head_width": 256,
+        "kv_heads": 1,
+        "ordinary_sha256": "220350172fa66b83e7fbf77565a81cfa0816f0cea5cd7551ddd50ec2066b7c38",
+        "staged_sha256": "220350172fa66b83e7fbf77565a81cfa0816f0cea5cd7551ddd50ec2066b7c38",
+        "storage_dtype": 0,
+        "valid_position": 9
+      },
+      "16": {
+        "attention_read_span": {
+          "first": 0,
+          "last": 8,
+          "observed": false
+        },
+        "exact": true,
+        "first_difference": null,
+        "head_width": 256,
+        "kv_heads": 1,
+        "ordinary_sha256": "2a0ccf4cb07161e14e4688643553d4790ad4adeca92938d10811c8350ee3b26b",
+        "staged_sha256": "2a0ccf4cb07161e14e4688643553d4790ad4adeca92938d10811c8350ee3b26b",
+        "storage_dtype": 0,
+        "valid_position": 9
+      },
+      "17": {
+        "attention_read_span": {
+          "first": 0,
+          "last": 8,
+          "observed": false
+        },
+        "exact": true,
+        "first_difference": null,
+        "head_width": 256,
+        "kv_heads": 1,
+        "ordinary_sha256": "f62053362afe6796211bb8b5a5e5972ac369a14152d674724da08d3722a6c77f",
+        "staged_sha256": "f62053362afe6796211bb8b5a5e5972ac369a14152d674724da08d3722a6c77f",
+        "storage_dtype": 0,
+        "valid_position": 9
+      }
+    },
+    "slot_1/prefix_10": {
+      "0": {
+        "attention_read_span": {
+          "first": 0,
+          "last": 9,
+          "observed": false
+        },
+        "exact": true,
+        "first_difference": null,
+        "head_width": 256,
+        "kv_heads": 1,
+        "ordinary_sha256": "29165d8720cfca9f0ece84b5d54d3c1c38a33bff5c71bae33d95dc9fce6fd6fb",
+        "staged_sha256": "29165d8720cfca9f0ece84b5d54d3c1c38a33bff5c71bae33d95dc9fce6fd6fb",
+        "storage_dtype": 0,
+        "valid_position": 10
+      },
+      "16": {
+        "attention_read_span": {
+          "first": 0,
+          "last": 9,
+          "observed": false
+        },
+        "exact": true,
+        "first_difference": null,
+        "head_width": 256,
+        "kv_heads": 1,
+        "ordinary_sha256": "0f3f272bd6e9f4aa8ec5a744e02750e29c6035fe53662c01b341a7416e9628a1",
+        "staged_sha256": "0f3f272bd6e9f4aa8ec5a744e02750e29c6035fe53662c01b341a7416e9628a1",
+        "storage_dtype": 0,
+        "valid_position": 10
+      },
+      "17": {
+        "attention_read_span": {
+          "first": 0,
+          "last": 9,
+          "observed": false
+        },
+        "exact": false,
+        "first_difference": {
+          "byte_in_element": 0,
+          "channel": 0,
+          "head": 0,
+          "kind": "K",
+          "position": 9
+        },
+        "head_width": 256,
+        "kv_heads": 1,
+        "ordinary_sha256": "2e5c1f75677ce7558477843cc8a5c48f21fd01a36adeae0b97f428e1358b6c6e",
+        "staged_sha256": "1be889d5b446fba463ef9af8a08210643cea64f328488daf8dab7489e0f06255",
+        "storage_dtype": 0,
+        "valid_position": 10
+      }
+    },
+    "slot_1/prefix_9": {
+      "0": {
+        "attention_read_span": {
+          "first": 0,
+          "last": 8,
+          "observed": false
+        },
+        "exact": true,
+        "first_difference": null,
+        "head_width": 256,
+        "kv_heads": 1,
+        "ordinary_sha256": "220350172fa66b83e7fbf77565a81cfa0816f0cea5cd7551ddd50ec2066b7c38",
+        "staged_sha256": "220350172fa66b83e7fbf77565a81cfa0816f0cea5cd7551ddd50ec2066b7c38",
+        "storage_dtype": 0,
+        "valid_position": 9
+      },
+      "16": {
+        "attention_read_span": {
+          "first": 0,
+          "last": 8,
+          "observed": false
+        },
+        "exact": true,
+        "first_difference": null,
+        "head_width": 256,
+        "kv_heads": 1,
+        "ordinary_sha256": "2a0ccf4cb07161e14e4688643553d4790ad4adeca92938d10811c8350ee3b26b",
+        "staged_sha256": "2a0ccf4cb07161e14e4688643553d4790ad4adeca92938d10811c8350ee3b26b",
+        "storage_dtype": 0,
+        "valid_position": 9
+      },
+      "17": {
+        "attention_read_span": {
+          "first": 0,
+          "last": 8,
+          "observed": false
+        },
+        "exact": true,
+        "first_difference": null,
+        "head_width": 256,
+        "kv_heads": 1,
+        "ordinary_sha256": "f62053362afe6796211bb8b5a5e5972ac369a14152d674724da08d3722a6c77f",
+        "staged_sha256": "f62053362afe6796211bb8b5a5e5972ac369a14152d674724da08d3722a6c77f",
+        "storage_dtype": 0,
+        "valid_position": 9
+      }
+    }
+  },
+  "checked_prefixes_by_slot": {
+    "0": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ],
+    "1": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ]
+  },
+  "exact_layer_checks": 58,
+  "failing_layer_checks": 2,
+  "first_failure": "slot_0/prefix_10/layer_17",
+  "full_logit_parity": "not_tested_by_this_probe",
+  "generated_source_sha256": "8bd6bf5e3ec91bef9205ed83f992d13789cf0bb70f2fdf520b4b0351c13b79cb",
+  "loaded_model_sha256": "14e3f81d872d77081416b658d84c61791cce7e8184d50c6ffc7e82a91f62dcca",
+  "loaded_session_sha256": "4daa4e1f859c733cf0e4e9fa5a3ff2ccfdfda892db06ae588f81763535945888",
+  "schema": "cke.v8.batch-prefill-kv-xray.v1",
+  "scope": "completed-prefix logical KV writes; attention read span is declared, not observed",
+  "status": "fail",
+  "tokens": [
+    100,
+    101,
+    102,
+    103,
+    104,
+    105,
+    106,
+    107,
+    108,
+    109
+  ],
+  "weights_sha256": "dae6375dc5f6e04db7a373fc747df6eda4f9938f019bc0c0d1fdda4ec2443c40"
+}

@@ -18,6 +18,65 @@ from version.v8.scripts.certify_batch_mixed_one_row_v8 import (
     _verify_oracle_mappings,
     _require_shared_projections, certify,
 )
+from version.v8.scripts.xray_batch_prefill_kv_v8 import (
+    attention_span, compare_kv_exports, parse_kv_export,
+)
+
+
+def _ckx_fixture(*, position=3, layer=16, heads=2, width=4, dtype=0):
+    import struct
+    row_bytes = width * (4 if dtype == 0 else 2)
+    payload = bytearray(2 * heads * position * row_bytes)
+    header = struct.pack("<8I", 0x564B5843, 2, layer, position,
+                         heads, 32, width, dtype)
+    return header + payload
+
+
+def test_kv_xray_reports_first_logical_difference_and_rejects_wrong_owner():
+    ordinary_bytes = _ckx_fixture()
+    staged_bytes = bytearray(ordinary_bytes)
+    # V, head 1, logical position 2, channel 3; physical cache padding is absent.
+    row = (2 + 1) * 3 + 2
+    staged_bytes[32 + row * 16 + 3 * 4] = 1
+    ordinary = parse_kv_export(ordinary_bytes, layer=16, position=3)
+    staged = parse_kv_export(bytes(staged_bytes), layer=16, position=3)
+    assert compare_kv_exports(ordinary, ordinary, ordinary_owner=0,
+                              staged_owner=0)["exact"]
+    result = compare_kv_exports(ordinary, staged, ordinary_owner=0, staged_owner=0)
+    assert result["first_difference"] == {
+        "kind": "V", "head": 1, "position": 2,
+        "channel": 3, "byte_in_element": 0,
+    }
+    with pytest.raises(ValueError, match="owner"):
+        compare_kv_exports(ordinary, staged, ordinary_owner=0, staged_owner=1)
+
+
+def test_kv_xray_rejects_wrong_position_geometry_and_truncated_payload():
+    payload = _ckx_fixture(position=3)
+    with pytest.raises(ValueError, match="position"):
+        parse_kv_export(payload, layer=16, position=2)
+    with pytest.raises(ValueError, match="layer"):
+        parse_kv_export(payload, layer=15, position=3)
+    with pytest.raises(ValueError, match="extent"):
+        parse_kv_export(payload[:-1], layer=16, position=3)
+    with pytest.raises(ValueError, match="format"):
+        parse_kv_export(b"bad!" + payload[4:], layer=16, position=3)
+    other_dtype = parse_kv_export(_ckx_fixture(dtype=1), layer=16, position=3)
+    with pytest.raises(ValueError, match="geometry"):
+        compare_kv_exports(parse_kv_export(payload, layer=16, position=3),
+                           other_dtype, ordinary_owner=0, staged_owner=0)
+
+
+def test_kv_xray_validates_declared_causal_and_window_boundaries():
+    assert attention_span(position=9, sliding_window=8,
+                          observed_first=2, observed_last=9) == {
+                              "first": 2, "last": 9, "observed": True}
+    assert attention_span(position=9, sliding_window=512) == {
+        "first": 0, "last": 9, "observed": False}
+    for first, last in ((1, 9), (2, 8), (0, 10)):
+        with pytest.raises(ValueError, match="causal/window"):
+            attention_span(position=9, sliding_window=8,
+                           observed_first=first, observed_last=last)
 
 
 def test_mixed_certificate_rejects_identical_nonfinite_logits_and_missing_shared_work():
