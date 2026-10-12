@@ -288,15 +288,15 @@
       10
     ]
   },
-  "cpu": "x86_64",
+  "cpu": "Intel(R) Core(TM) i7-14700T",
   "declared_bundle_assets_sha256": {
     "config.json": "3f1a4eb5edb53d349227434a09a3e516652a67a550e51915a0cc856d029d268b",
     "lowered_decode.json": "d7359ddc92b63e5aaa9c971880866223b9ddd6aa3b21781370d9ce9f70e2615a",
     "lowered_prefill.json": "fc6b504e3584c6116dc52fc7797a8de0af00de18e2c198af8f6196bc1137ccf9"
   },
-  "diagnostic_git_head": "2330695509621ff64e646c72616afb846f46ccea",
-  "diagnostic_source_sha256": "c0c6f0b0cccebd492e2b979f07b72bca3e0e5003e311fd1fa699193e3245ab0b",
-  "diagnostic_source_uncommitted_at_capture": true,
+  "diagnostic_git_head": "b2bb0fc7eded52a78960171d9a88a2e9b25bddc5",
+  "diagnostic_source_sha256": "209e41e5b63e61d080d96e6c9a334fa1d5a6ae34e547b0f02d53b1be8edd0ab8",
+  "diagnostic_source_uncommitted_at_capture": false,
   "exact_layer_checks": 58,
   "failing_layer_checks": 2,
   "first_failure": "slot_0/prefix_10/layer_17",
