@@ -302,9 +302,23 @@ class KokoroGeneratedWaveformTest(unittest.TestCase):
         outputs = []
         execution_seconds = []
         sample_counts = []
-        for inputs, seed, expected_count in ((baseline, 7, 61800),
-                                             (alternate, 8, 58800),
-                                             (baseline, 7, 61800)):
+        for request_index, (inputs, seed, expected_count) in enumerate((
+                (baseline, 7, 61800), (alternate, 8, 58800),
+                (baseline, 7, 61800))):
+            if request_index == 1:
+                # Reject a malformed request in the same arena before B. The
+                # B must still execute, and the repeated A must match exactly.
+                # This position-zero ID is rejected before model execution;
+                # it does not test recovery after a partial graph failure.
+                ids[:] = baseline[0]
+                ids[0] = -1
+                waveform.fill(-91.)
+                rejected_lengths = [ctypes.c_int32(-1) for _ in range(7)]
+                self.assertNotEqual(self.fn(arena, len(arena), *(
+                    ctypes.byref(value) for value in rejected_lengths)), 0)
+                self.assertEqual([value.value for value in rejected_lengths],
+                                 [-1] * 7)
+                self.assertTrue(np.all(waveform == -91.))
             ids[:] = inputs[0]
             predictor_style[:] = inputs[1]
             decoder_style[:] = inputs[2]
@@ -347,7 +361,9 @@ class KokoroGeneratedWaveformTest(unittest.TestCase):
             'peak_abs': peaks, 'rms': rms_values,
             'configuration': 'one process; one arena and generated entry; '
                 'two distinct 36-phoneme af_heart utterances; '
-                '103,98,103 frames; seeds 7,8,7; native Gaussian',
+                '103,98,103 frames; seeds 7,8,7; native Gaussian; '
+                'position-zero invalid ID rejected before B; B executes '
+                'with valid bounds; repeated A recovers exactly',
             'numerical_parity': 'NOT_TESTED against pinned PyTorch noise',
             'reproduction_command': 'CKE_TTS_RUN_SEEDED_REPLAY=1 '
                 'python3 -m unittest tests.test_v8_kokoro_generated_waveform.'

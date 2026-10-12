@@ -1,0 +1,265 @@
+{
+  "schema": "cke.tts.generated_waveform_profile.v1",
+  "status": "diagnostic; no optimized production provider or connected numerical certification",
+  "date_utc": "2026-10-12",
+  "source_tree_revision": "f0f16e7b33a1c85caf1b8a572d8d39bdabcf7519",
+  "circuit": {
+    "path": "version/v8/circuits/kokoro_waveform_bounded.json",
+    "sha256": "84c1abe2d51f4ac56f707aaff2529890285aa1d7f470e53e0abfbd60dea8f201"
+  },
+  "model": {
+    "name": "Kokoro",
+    "model_pin": "e8a90b41091c3c5b70375c47cc959799920fa4d6",
+    "reference_code_pin": "dfb907a02bba8152ca444717ca5d78747ccb4bec",
+    "voice": "af_heart",
+    "input_phoneme_count": 36,
+    "native_gaussian_seed": 7,
+    "native_gaussian_stream": 0
+  },
+  "host": {
+    "name": "cke-amd-zen5-01",
+    "cpu": "AMD Ryzen 9 9950X3D 16-Core Processor",
+    "online_logical_cpus": 32,
+    "affinity_mask": "0-31; no explicit pinning",
+    "governor": "performance",
+    "compiler": "cc (Ubuntu 15.2.0-16ubuntu1) 15.2.0",
+    "perf_version": "7.0.14",
+    "rerun_environment": {
+      "CK_NUM_THREADS": "1",
+      "OMP_NUM_THREADS": "1"
+    },
+    "original_run_thread_environment": "not recorded; the checked Conv1D provider is serial"
+  },
+  "artifact_identity": {
+    "generated_source_sha256": "01f041e0524eedf2d3bb1bd7fc31f45d97349c5cb41d364a874fceaf63d43729",
+    "source_sha256": {
+      "src/ck_threadpool.c": "8a5fb802d9d7050351abdc1d7d38ff90b6f3b82ec38ff59daf710c2295f095bc",
+      "src/ckernel_strict.c": "a4852c8da8be415dc5bfc038c912657b9b3e89535f5df0ab92901b25eb4b9952",
+      "src/kernels/attention_full_token_major.c": "306cfa65d9225cf5faea5a17135e0f8b11792e1209bb6b964baa927b3ae780a6",
+      "src/kernels/audio_adain_instance_norm.c": "a3c1d9d62c2a671ecc42fbc932c2a6862e7f6e9d1a5022de3555b10daf14d2d1",
+      "src/kernels/audio_adaptive_layer_norm.c": "d3cacb5441fb5bbb7ee712e4454f3326651af561c95f885b698d161101d5f670",
+      "src/kernels/audio_concat_channels_checked.c": "67396a10466f141a6bb613becf0ad02ecf271ee9b466c7bec202f3414eba3e4c",
+      "src/kernels/audio_conv1d_checked.c": "4b6b19e5d703f0a58fae8b29a97548a6d2cd036642e62a64a33ed5ce27a9a7c7",
+      "src/kernels/audio_conv_transpose_dense_checked.c": "a437126186c01d7bbeb6898229f951f6920ca310a8f73105259f9fb35f46f894",
+      "src/kernels/audio_duration_expand_token_major.c": "65ff70db9271388dda62162c25eb1c7748158b6d54bcadfbf2135e143845d358",
+      "src/kernels/audio_duration_logits.c": "77fb706cf66218f2f034c7ef893a937575c857b02040a6d9d49366901bba3e54",
+      "src/kernels/audio_harmonic_source_checked.c": "ce9ad4c24e6ee95059b997dc0fe4af8c25d84ac329fa9efe2a2c3bf6b349d887",
+      "src/kernels/audio_istft_mag_phase.c": "11ffac46862f3446a2c09ca5e0f92e9d593df2356965aa20cd103107500de7bf",
+      "src/kernels/audio_kernels.c": "e5ef074eed6183c737670fd6b945601228288ca83717d5d6d78631af130ba4c2",
+      "src/kernels/audio_lstm_scan.c": "1e7d25fabb7a54bab4a747be07f608091537dcb7f239172337e4391577ea472d",
+      "src/kernels/audio_prosody_upsample_checked.c": "7b582ad6c3d8d624a774748c5f21113a128e1a4d7222fecd6b413e58e4256e90",
+      "src/kernels/audio_reflect_pad_checked.c": "a1a7d79140beebad68f22bdb6c61a11f95bb8ef883aca82fb06f71b41d12f6ac",
+      "src/kernels/audio_scaled_sum_strided.c": "4ef8a5d7db44c15d0fc810b087bf086625eac30025d9f1122d46b18f7894a601",
+      "src/kernels/audio_snake_checked.c": "74325000b402ade4c97e6bc4bfb0b9057ae023dc069c614eb07631e8008f3b5e",
+      "src/kernels/audio_spectral_head.c": "a5085656bdcdef7adeaec6406eed94157cc866e79983cc897b498e7e97f31b64",
+      "src/kernels/audio_stft_mag_phase_checked.c": "dc04a7612fbb0716bfa57524ed2d730cd8daced30ef0a67e10e3c8d19f103bcc",
+      "src/kernels/audio_text_embedding.c": "7ed451d24769f20803216d1a2f271061e8b6c268bb0228680dffebf64d617db4",
+      "src/kernels/embedding_three_table_layer_norm.c": "ef8cb18ff284ab37e121a51e0fd9ee4e3fc2696184e6b651264f8b69cbb79d95",
+      "src/kernels/feature_concat_broadcast_rows.c": "a39fc0e90de73c3a0234d2eae1b6679e2d58981a7021bd860894dc0e8a036358",
+      "src/kernels/gelu_kernels.c": "a3f711073f8d4c1f1e2022ac9ce39d49776ea315e26d97d09abeef8601adfb20",
+      "src/kernels/gelu_rows_tanh_checked.c": "c24e71ec5939ba237a99a2fbdbbe198758243bbb2708dd58ceb115bd5292b815",
+      "src/kernels/layernorm_kernels.c": "73000bbb7e8c8eb733263c362c976443d31f50e84bd68c214c14845510de6927",
+      "src/kernels/layernorm_rows_checked.c": "59b95999467cde62f82dc8e8afac9b16b069b3500d57e3aa613523d59b6f54c4",
+      "src/kernels/linear_rows_checked.c": "137a8c0aaeafde3d17682d8d808070eeefc65f2757045621b96e2ad44d038175",
+      "src/kernels/runtime_extent.c": "e37de415d85dc540f761d9c57918420efdbd52158e47e7778f32240915744d94",
+      "src/kernels/strided_unary_checked.c": "4d3486e078aed26209a03f75b7d0b58d1568751203d7b8f720d427e758267f9e",
+      "src/kernels/vision_kernels.c": "dd5555034debe3b76852038a4b9bbe38ebd85ecff027aede41d91a36a03734ab"
+    },
+    "prepared_native_noise_package_sha256": "f0a532bbd586723ca091bfe9d96373757c3dabbc84e802b4bf785b21a5de45ab",
+    "native_host_sha256": "a0d97801b8cfc8ccba7469298b2e6f96b0361a8cadc35b01d8048c2fbfd93461",
+    "runtime_loaded_build_identity": "NOT_VERIFIED; hashes identify on-disk artifacts"
+  },
+  "build": {
+    "baseline_compile_command": [
+      "cc",
+      "-std=c11",
+      "-O2",
+      "-Wall",
+      "-Wextra",
+      "-Werror",
+      "-shared",
+      "-fPIC",
+      "-ffp-contract=off",
+      "-ffunction-sections",
+      "-fdata-sections",
+      "-Wl,--gc-sections",
+      "-Wl,--no-undefined",
+      "-Wl,--version-script=/tmp/tmp2wu6bf95/waveform/exports.map",
+      "/tmp/tmp2wu6bf95/waveform/generated.c",
+      "/data/cke/worktrees/kokoro-stft-phase-20261011/src/ck_threadpool.c",
+      "/data/cke/worktrees/kokoro-stft-phase-20261011/src/ckernel_strict.c",
+      "/data/cke/worktrees/kokoro-stft-phase-20261011/src/kernels/attention_full_token_major.c",
+      "/data/cke/worktrees/kokoro-stft-phase-20261011/src/kernels/audio_adain_instance_norm.c",
+      "/data/cke/worktrees/kokoro-stft-phase-20261011/src/kernels/audio_adaptive_layer_norm.c",
+      "/data/cke/worktrees/kokoro-stft-phase-20261011/src/kernels/audio_concat_channels_checked.c",
+      "/data/cke/worktrees/kokoro-stft-phase-20261011/src/kernels/audio_conv1d_checked.c",
+      "/data/cke/worktrees/kokoro-stft-phase-20261011/src/kernels/audio_conv_transpose_dense_checked.c",
+      "/data/cke/worktrees/kokoro-stft-phase-20261011/src/kernels/audio_duration_expand_token_major.c",
+      "/data/cke/worktrees/kokoro-stft-phase-20261011/src/kernels/audio_duration_logits.c",
+      "/data/cke/worktrees/kokoro-stft-phase-20261011/src/kernels/audio_harmonic_source_checked.c",
+      "/data/cke/worktrees/kokoro-stft-phase-20261011/src/kernels/audio_istft_mag_phase.c",
+      "/data/cke/worktrees/kokoro-stft-phase-20261011/src/kernels/audio_kernels.c",
+      "/data/cke/worktrees/kokoro-stft-phase-20261011/src/kernels/audio_lstm_scan.c",
+      "/data/cke/worktrees/kokoro-stft-phase-20261011/src/kernels/audio_prosody_upsample_checked.c",
+      "/data/cke/worktrees/kokoro-stft-phase-20261011/src/kernels/audio_reflect_pad_checked.c",
+      "/data/cke/worktrees/kokoro-stft-phase-20261011/src/kernels/audio_scaled_sum_strided.c",
+      "/data/cke/worktrees/kokoro-stft-phase-20261011/src/kernels/audio_snake_checked.c",
+      "/data/cke/worktrees/kokoro-stft-phase-20261011/src/kernels/audio_spectral_head.c",
+      "/data/cke/worktrees/kokoro-stft-phase-20261011/src/kernels/audio_stft_mag_phase_checked.c",
+      "/data/cke/worktrees/kokoro-stft-phase-20261011/src/kernels/audio_text_embedding.c",
+      "/data/cke/worktrees/kokoro-stft-phase-20261011/src/kernels/embedding_three_table_layer_norm.c",
+      "/data/cke/worktrees/kokoro-stft-phase-20261011/src/kernels/feature_concat_broadcast_rows.c",
+      "/data/cke/worktrees/kokoro-stft-phase-20261011/src/kernels/gelu_kernels.c",
+      "/data/cke/worktrees/kokoro-stft-phase-20261011/src/kernels/gelu_rows_tanh_checked.c",
+      "/data/cke/worktrees/kokoro-stft-phase-20261011/src/kernels/layernorm_kernels.c",
+      "/data/cke/worktrees/kokoro-stft-phase-20261011/src/kernels/layernorm_rows_checked.c",
+      "/data/cke/worktrees/kokoro-stft-phase-20261011/src/kernels/linear_rows_checked.c",
+      "/data/cke/worktrees/kokoro-stft-phase-20261011/src/kernels/runtime_extent.c",
+      "/data/cke/worktrees/kokoro-stft-phase-20261011/src/kernels/strided_unary_checked.c",
+      "/data/cke/worktrees/kokoro-stft-phase-20261011/src/kernels/vision_kernels.c",
+      "-I",
+      "/data/cke/worktrees/kokoro-stft-phase-20261011/include",
+      "-lm",
+      "-lpthread",
+      "-ldl",
+      "-o",
+      "/tmp/tmp2wu6bf95/waveform/generated.so"
+    ],
+    "global_fma_transform": "Insert -mfma into the baseline cc command before -o, applying to generated C and all C kernel sources. No -ffast-math.",
+    "conv_only_transform": {
+      "compile_each_source": [
+        "cc",
+        "-std=c11",
+        "-O2",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-fPIC",
+        "-ffp-contract=off",
+        "-ffunction-sections",
+        "-fdata-sections",
+        "-I",
+        "<repo>/include",
+        "-c",
+        "<source>",
+        "-o",
+        "<object>"
+      ],
+      "extra_flag_for_exact_source": {
+        "src/kernels/audio_conv1d_checked.c": [
+          "-mfma"
+        ]
+      },
+      "link": [
+        "cc",
+        "-shared",
+        "-fPIC",
+        "-Wl,--gc-sections",
+        "-Wl,--no-undefined",
+        "-Wl,--version-script=<generated exports.map>",
+        "<all objects>",
+        "-lm",
+        "-lpthread",
+        "-ldl",
+        "-o",
+        "generated.so"
+      ],
+      "source_count": 32
+    },
+    "notes": "The original baseline command contains a transient generated.c and exports.map path. Regenerate those from the pinned circuit/test setup; check generated_source_sha256 before comparing binaries. Whole-library and Conv1D-only variants were experimental out-of-tree builds."
+  },
+  "timing": {
+    "scope": "one new native host process including package load, noise fill, generated entry and WAV write; OS page cache uncontrolled; no warm-entry or first-playable-audio timing",
+    "audio_samples": 61800,
+    "sample_rate_hz": 24000,
+    "audio_seconds": 2.575,
+    "original_runs_seconds": {
+      "baseline": 94.473,
+      "global_fma": 49.199,
+      "conv_only_fma": 51.457
+    },
+    "reproduction_command": "cd /data/cke/tts/<variant-directory> && env CK_NUM_THREADS=1 OMP_NUM_THREADS=1 ./native-kokoro-wav prepared-native-noise.cktts review-seed7.wav 7",
+    "rerun_command": "cd /data/cke/tts/<variant-directory> && TIMEFORMAT=\"wall=%3R user=%3U sys=%3S\"; time env CK_NUM_THREADS=1 OMP_NUM_THREADS=1 ./native-kokoro-wav prepared-native-noise.cktts review-seed7.wav 7; sha256sum review-seed7.wav",
+    "controlled_reruns_seconds": {
+      "baseline": 78.365,
+      "global_fma": 49.167,
+      "conv_only_fma": 52.199
+    },
+    "controlled_rerun_order": [
+      "baseline",
+      "global_fma",
+      "conv_only_fma"
+    ],
+    "comparability": "Original and controlled runs use identical artifacts but different explicit environment; page-cache and host-frequency effects were not isolated. Compare variants within a run sequence; do not treat one ratio as a portable speedup."
+  },
+  "variants": {
+    "baseline": {
+      "directory": "kokoro-ryzen-20261012",
+      "library_sha256": "c4359584616c13df7e301eac5913becec49d26a25d0013d074595ac07d9e2ea8",
+      "wav_sha256": "187e777636f7071776968bb7a7c4ced52f3d0438bedc281b84416562c844015e"
+    },
+    "global_fma": {
+      "directory": "kokoro-ryzen-20261012-fma",
+      "library_sha256": "22ad2b472876d408122ffad99429bd6562edc1df1f42c9175753a4d3b3cd4900",
+      "wav_sha256": "63dfe6deb80f0890c3531cb8311edd8afc243ea0b2fbccb5c0c58d3c4e4a3231",
+      "changed_pcm_samples_vs_baseline": 26579,
+      "worst_pcm_step_difference": 192
+    },
+    "conv_only_fma": {
+      "directory": "kokoro-ryzen-20261012-conv-fma",
+      "library_sha256": "678d4c13016f38006b5e911315312ecc64c06a161ddfff252d1dc03a27b061e3",
+      "wav_sha256": "187e777636f7071776968bb7a7c4ced52f3d0438bedc281b84416562c844015e",
+      "identical_input_fp32_checkpoint_comparison": {
+        "changed_elements": 0,
+        "checkpoints": [
+          "projection_output",
+          "l00_query_output",
+          "f0_output",
+          "source_waveform",
+          "source_stft_channels",
+          "source_conv0",
+          "generator_waveform"
+        ]
+      }
+    }
+  },
+  "profile": {
+    "command_to_reproduce": "perf record -F 99 -e cpu/cycles/P -o perf.data -- env CK_NUM_THREADS=1 OMP_NUM_THREADS=1 ./native-kokoro-wav prepared-native-noise.cktts profile-seed7.wav 7; perf report --stdio --no-children -i perf.data",
+    "event": "cpu/cycles/P",
+    "sampling_frequency_hz": 99,
+    "report_mode": "self (--no-children), not inclusive",
+    "samples": "approximately 9000",
+    "lost_samples": 0,
+    "self_overhead_percent": {
+      "audio_conv1d_checked_impl": 54.05,
+      "libm___fmaf_fma3": 28.69,
+      "generated_library_fmaf_plt": 12.63
+    },
+    "interpretation": "Sampled symbol overhead identifies a Conv1D/FMA-call hotspot. It is not a component timing breakdown or a memory-bandwidth roofline.",
+    "perf_data_sha256": "40a562858acfb5b3a212e6fef9e65e4727ba57d4e7ea66a3146023a288ea3f5f",
+    "captured_data_path_on_ryzen": "/data/cke/tts/kokoro-ryzen-20261012/perf.data"
+  },
+  "limitations": [
+    "One voice and one 36-phoneme request.",
+    "Native noise is seeded but does not reproduce PyTorch Gaussian draws.",
+    "Connected pinned-model waveform parity remains FAIL.",
+    "No warm synthesis or first-playable-audio measurement.",
+    "Experimental flags are not production provider selection."
+  ],
+  "numerical_evidence": {
+    "native_seeded_waveform_vs_pytorch": "NOT_TESTED; PyTorch uses a different captured Gaussian stream",
+    "connected_captured_noise_baseline": {
+      "status": "FAIL",
+      "max_abs": 0.007652
+    },
+    "connected_captured_noise_global_fma": {
+      "status": "FAIL",
+      "max_abs": 0.006864
+    },
+    "conv_only_vs_baseline_identical_input": {
+      "status": "PASS for seven retained checkpoints in one fixed fixture",
+      "changed_fp32_elements": 0
+    },
+    "scope": "These are separate tests; the narrow exact-replay result does not repair connected pinned-model parity."
+  }
+}
