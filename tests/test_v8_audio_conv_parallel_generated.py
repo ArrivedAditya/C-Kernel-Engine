@@ -65,7 +65,8 @@ class ParallelConvGeneratedTest(unittest.TestCase):
                 'entries': entries, 'quant_summary': {}, 'template': circuit}
             layout, calls, _library, loaded, function = compile_native_graph(
                 root, source, path,
-                extra_exports=('ck_threadpool_create', 'ck_threadpool_destroy'))
+                extra_exports=('ck_threadpool_create', 'ck_threadpool_destroy',
+                               'audio_conv1d_checked_avx2_fma_available'))
             self.assertEqual(calls['errors'], [])
             self.assertEqual(calls['operations'][0]['function'],
                 'audio_conv1d_checked_channel_major_f32_avx2_parallel')
@@ -74,6 +75,9 @@ class ParallelConvGeneratedTest(unittest.TestCase):
             loaded.ck_threadpool_create.argtypes = [ctypes.c_int]
             loaded.ck_threadpool_create.restype = ctypes.c_void_p
             loaded.ck_threadpool_destroy.argtypes = [ctypes.c_void_p]
+            loaded.audio_conv1d_checked_avx2_fma_available.restype = ctypes.c_int
+            avx2_supported = bool(
+                loaded.audio_conv1d_checked_avx2_fma_available())
             pool = loaded.ck_threadpool_create(4)
             self.assertTrue(pool)
             try:
@@ -93,9 +97,14 @@ class ParallelConvGeneratedTest(unittest.TestCase):
                 convolved = view('convolved', (8, 24))
                 signal[:] = np.arange(72, dtype=np.float32).reshape(3, 24) / 50
                 convolved[:] = -77
+                rejected = function(arena, len(arena), None)
+                self.assertEqual(rejected, -1 if avx2_supported else -5)
+                self.assertTrue(np.all(convolved == -77))
                 status = function(arena, len(arena), pool)
-                if status == -5:
-                    self.skipTest('AVX2/FMA unavailable')
+                if not avx2_supported:
+                    self.assertEqual(status, -5)
+                    self.assertTrue(np.all(convolved == -77))
+                    self.skipTest('AVX2/FMA unavailable; unsupported and output preservation verified')
                 self.assertEqual(status, 0)
                 expected = np.zeros_like(convolved)
                 for oc in range(8):

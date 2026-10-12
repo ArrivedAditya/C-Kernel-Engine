@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import subprocess
 import tempfile
+import threading
 import unittest
 
 import numpy as np
@@ -63,8 +64,9 @@ class ParallelConvOracleTest(unittest.TestCase):
         return array.ctypes.data_as(F)
 
     def call(self, fn, pool, workers, source, weight, bias, output, scratch,
-             padding, dilation, output_capacity=None, scratch_capacity=None):
-        frames = source.shape[1]
+             padding, dilation, output_capacity=None, scratch_capacity=None,
+             valid_frames=None):
+        frames = source.shape[1] if valid_frames is None else valid_frames
         args = [self.pointer(source), source.size, source.shape[1],
                 self.pointer(weight), weight.size, self.pointer(bias), bias.size,
                 self.pointer(output), output.size if output_capacity is None else output_capacity,
@@ -171,17 +173,35 @@ class ParallelConvOracleTest(unittest.TestCase):
             self.skipTest('AVX2/FMA unavailable')
         pool = self.native.ck_threadpool_create(4)
         case = self.metadata['cases'][1]
-        def run(_):
-            source, weight, bias, output, scratch = self.fixture_case(1)
-            status = self.call(self.parallel, pool, 4, source, weight, bias, output,
-                               scratch, case['padding'], case['dilation'])
-            return status, output
+        caller_barrier = threading.Barrier(4)
+        def run(index):
+            source, weight, bias, output, scratch = self.fixture_case(1, padded=3)
+            source = source.copy()
+            bias = bias.copy()
+            source[:, :case['frames']] += np.float32(index * 0.03125)
+            bias += np.float32(index * 0.125)
+            reference = np.full_like(output, -77.0)
+            reference_scratch = np.full_like(scratch, 55.0)
+            self.assertEqual(self.call(self.serial, None, 0, source, weight, bias,
+                reference, reference_scratch, case['padding'], case['dilation'],
+                valid_frames=case['frames']), 0)
+            workers = (1, 2, 4, 2)[index % 4]
+            caller_barrier.wait(timeout=10)
+            status = self.call(self.parallel, pool, workers, source, weight,
+                bias, output, scratch, case['padding'], case['dilation'],
+                valid_frames=case['frames'])
+            return index, workers, status, output, reference
         try:
-            with ThreadPoolExecutor(max_workers=2) as executor:
+            with ThreadPoolExecutor(max_workers=4) as executor:
                 results = list(executor.map(run, range(8)))
-            for status, output in results:
+            self.assertEqual({workers for _, workers, _, _, _ in results},
+                             {1, 2, 4})
+            for index, _, status, output, reference in results:
                 self.assertEqual(status, 0)
-                np.testing.assert_array_equal(output, results[0][1])
+                np.testing.assert_array_equal(output, reference,
+                    err_msg=f'concurrent caller {index}')
+                self.assertTrue(np.all(output[:, case['frames']:] == -77.0))
+            self.assertEqual(len({output.tobytes() for _, _, _, output, _ in results}), 8)
         finally:
             self.native.ck_threadpool_destroy(pool)
 
