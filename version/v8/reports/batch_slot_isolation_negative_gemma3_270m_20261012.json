@@ -1,0 +1,43 @@
+{
+  "bundle": "/home/antshiv/.cache/ck-engine-v8/models/gemma-3-270m-it-Q5_K_M",
+  "bundle_file_sha256": {
+    "libckernel_engine.so": "680d8f07fd5604929381537b61eb3a615b7d815a8d36f57c006156ce9080164f",
+    "libmodel.so": "edffbf6883b7dab96dbd440db23b4ab1eba5ff985fe65f0e6b40cf74e811f75d",
+    "weights.bump": "dae6375dc5f6e04db7a373fc747df6eda4f9938f019bc0c0d1fdda4ec2443c40"
+  },
+  "control_artifact_identity": {
+    "diagnostic_source_sha256": "e0be6aa8ac00f9d5ec87636aec488204d30804901565cc52ff74706455602678",
+    "generated_source_sha256": "88954e7d2698a8ebdf7eb09dfabb0b2cbcf9ac038117aaa08ee42846ee3021d9",
+    "loaded_engine_sha256": "680d8f07fd5604929381537b61eb3a615b7d815a8d36f57c006156ce9080164f",
+    "loaded_model_sha256": "edffbf6883b7dab96dbd440db23b4ab1eba5ff985fe65f0e6b40cf74e811f75d",
+    "loaded_session_sha256": "4daa4e1f859c733cf0e4e9fa5a3ff2ccfdfda892db06ae588f81763535945888",
+    "weights_sha256": "dae6375dc5f6e04db7a373fc747df6eda4f9938f019bc0c0d1fdda4ec2443c40"
+  },
+  "control_cases": [
+    "0",
+    "1"
+  ],
+  "control_report_sha256": "78c272bcae905fb29bdba2c4acb4c10953a1dbcdc67d5b003db29e7cade1f696",
+  "layers": [
+    0,
+    16,
+    17
+  ],
+  "negative_cases": {
+    "advancing_0/parked_1": {
+      "exit_code": 1,
+      "guard_error": "InjectedParkedWriteDetected: non-advancing slot 1 logical KV changed",
+      "status": "detected"
+    },
+    "advancing_1/parked_0": {
+      "exit_code": 1,
+      "guard_error": "InjectedParkedWriteDetected: non-advancing slot 0 logical KV changed",
+      "status": "detected"
+    }
+  },
+  "probe_sha256": "e0be6aa8ac00f9d5ec87636aec488204d30804901565cc52ff74706455602678",
+  "schema": "cke.v8.batch-slot-isolation-negative.v1",
+  "status": "pass",
+  "threads": 1,
+  "timeout_seconds_per_run": 120
+}

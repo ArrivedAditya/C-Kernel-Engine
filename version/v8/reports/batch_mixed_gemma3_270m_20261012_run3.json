@@ -53,11 +53,11 @@
     "model": "Intel(R) Core(TM) i7-14700T"
   },
   "generated_context_length": 128,
-  "generated_source_sha256": "4b0baa4950a0e6447d2744a4d46c516695c78210946e592d2d924e5e54f91c89",
+  "generated_source_sha256": "88954e7d2698a8ebdf7eb09dfabb0b2cbcf9ac038117aaa08ee42846ee3021d9",
   "kv_bytes_per_sequence": 4718592,
   "loaded_sha256": {
-    "libckernel_engine.so": "1de560650452444bdbdaf06034c647b410ad3976ae37171aece7f9dcf2c5ca93",
-    "libmodel.so": "e624d49a345308198dbb2eacf6a0e077d53c624e6993c0a9fdc4ae006bd0ab96"
+    "libckernel_engine.so": "680d8f07fd5604929381537b61eb3a615b7d815a8d36f57c006156ce9080164f",
+    "libmodel.so": "edffbf6883b7dab96dbd440db23b4ab1eba5ff985fe65f0e6b40cf74e811f75d"
   },
   "mixed_decode_replay_status": "pass",
   "ordinary_prefill": null,

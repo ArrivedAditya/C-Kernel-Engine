@@ -297,8 +297,8 @@
     }
   },
   "cpu": "Intel(R) Core(TM) i7-14700T",
-  "diagnostic_git_head": "812efaa1c52626b2868316e0d4a70804524664e7",
-  "diagnostic_source_sha256": "725fe16461f768706210513c5c22cbdc2790e4e04664d387356f594180bb580c",
+  "diagnostic_git_head": "06541cfa2cf83949caafd299a061480b9a9f8802",
+  "diagnostic_source_sha256": "e0be6aa8ac00f9d5ec87636aec488204d30804901565cc52ff74706455602678",
   "diagnostic_source_uncommitted_at_capture": false,
   "followup_tokens": [
     104,
