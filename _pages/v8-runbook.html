@@ -130,6 +130,8 @@
 
 <p>For an architecture-aware memory and concurrency estimate, see the <a href="sizing.html">Model Sizing Lab</a>. Its bandwidth ceiling is theoretical, not a measured v8 runtime result.</p>
 
+<p>For how requests are admitted, decoded and cancelled — including the experimental two-slot batch mode — see <a href="serving.html">Serving &amp; Batching</a>.</p>
+
 <div class="alert alert-success">
     <div class="alert-icon">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>
@@ -1664,6 +1666,87 @@ version/v8/scripts/ck_serve_v8.py "$RUN_DIR" --run "$RUN_DIR" \
         receives HTTP 429; the ordinary single-flight path remains the default.
     </p>
     <p>
+        <code>--batch-http-decode-replay-chunk-tokens N</code> additionally opts into
+        staged prefill. The owner computes at most N prompt tokens through
+        generated single-token decode, then gives ready requests a decode turn
+        before the next chunk. Cancellation has a ticket before prompt work
+        starts. This prevents a whole prompt from monopolizing the owner, but
+        one slow token operation still sets the cancellation/latency granularity.
+        Decode replay can differ numerically from the artifact's ordinary
+        batched prefill and requires artifact-specific parity testing. The
+        effective serving record names the selected prefill strategy and chunk
+        budget. Add <code>--batch-http-mixed-one-row</code> to allow one ready
+        decode token and one staged prompt token to enter the same generated
+        two-row decode call. This is a two-slot, one-prompt-row bridge, not
+        variable-size chunk execution or a general batch-N contract. Both
+        options remain opt-in; the mixed flag requires staged prefill.
+        The local Gemma3-270M Q5_K_M generated-runtime check compares finite
+        full logits at every step, complete KV bytes and positions against
+        serialized decode replay for either prefill slot. It covers consecutive
+        mixed steps, continuation after prompt completion and a 32-token
+        session-capacity boundary. A separate optional comparison against the
+        ordinary generated prefill entry fails on the pinned artifact: 9
+        tokens match exactly, but 10 tokens change both full logits and KV
+        bytes; at 28 tokens, the top predicted token also changes. The
+        <code>--compare-ordinary</code> flag records this as a failing,
+        artifact-bound diagnostic in
+        <code>version/v8/reports/batch_prefill_gemma3_270m_20261011.json</code>.
+        The cause and which path matches the publisher reference remain
+        unverified. Mixed-step parity against decode replay does not certify
+        ordinary-prefill parity or a resolved serving deployment.
+    </p>
+    <p>
+        The optional <code>--compare-ordinary --oracle-gguf GGUF_PATH</code>
+        diagnostic compares complete logits using the same token IDs. The
+        retained result is <code>version/v8/reports/batch_prefill_gemma3_oracle_20261012.json</code>.
+        It verifies the helper's actual loaded llama.cpp library mappings,
+        records their backing-file hashes and effective settings, and repeats
+        each llama.cpp mode twice. Seven selected GGUF/BUMP tensors match at
+        beginning, middle and end samples; nine model metadata fields match.
+        Full conversion and build provenance remain unverified.
+    </p>
+    <p>
+        The comparison has an earlier boundary than the CKE prefill split:
+        at one token, CKE and llama.cpp select different top tokens. At 10
+        tokens, llama.cpp batched and sequential evaluation themselves select
+        different top tokens (107 versus 1018), with 1.248 full-logit RMSE;
+        repeated runs of each mode are exact. The one-token llama top token
+        is unchanged with one or four threads and with repacking on or off.
+        The helper requested 64 context tokens but used 256 after runtime
+        adjustment, while CKE's session
+        capacity was 32. These differences prevent treating either llama.cpp
+        mode as a numerical arbiter. CKE ordinary and staged prefill first
+        diverge at 10 tokens; an internal hidden-tensor inspection places that
+        CKE-only difference after matching layer-16 Q/K/V inputs. The
+        cross-runtime one-token mismatch is not explained by that later
+        difference. No numerical path is promoted, and batching remains
+        experimental on this artifact.
+    </p>
+    <p>
+        A separate resolved Gemma3-270M Q5_K_M chat-only HTTP acceptance is
+        available through <code>server/batch_http_acceptance.py</code>. It
+        checks expected serving and loaded session hashes before generation,
+        compares two simultaneous greedy streams with their isolated outputs,
+        requires mixed-step evidence attributed to both response IDs, then
+        cancels one request while its peer continues and serves a follow-up on
+        the same instance. The bounded
+        <code>/v1/cke/batch-observation/{response_id}</code> endpoint identifies
+        the exact peer sharing each generated step; global counters alone are
+        diagnostic. The probe requires an idle owner, records synthetic prompts,
+        settings, output hashes and terminal reasons, and cancels outstanding
+        requests on failure. The retained local run observed 27 attributed mixed
+        steps with matching outputs, peer continuation and recovery. The tested
+        artifact exhausted its output limit, so model-generated normal EOS is
+        explicitly not certified; deterministic stream tests cover normal EOS
+        and duplicate-terminal rejection. This certifies the tested HTTP/native
+        boundary only; Gemma3's
+        profile declares chat without tools, so it is not a completed agent
+        harness task or an ordinary-prefill parity result. Keep a full
+        <code>tokenizer.json</code> beside this GGUF-derived artifact when its
+        publisher template requires <code>bos_token</code>; the resolved bundle
+        hashes that asset and otherwise fails closed at rendering.
+    </p>
+    <p>
         Native slot budgeting does not bound HTTP delivery by itself. The
         opt-in path also limits undelivered response consumers (default 4),
         output token events (default 4096),
@@ -1682,13 +1765,13 @@ version/v8/scripts/ck_serve_v8.py "$RUN_DIR" --run "$RUN_DIR" \
     </p>
     <p>
         This is a bounded experimental integration, not certified overnight
-        concurrency. Prefill remains synchronous and cannot be interrupted
-        inside one slow native operation; a prompt-token cap is not a time
-        bound. Native per-request phase timing is reported unavailable.
+        concurrency. Without the staged flag, prefill remains synchronous and
+        cannot be interrupted inside one slow native operation; a prompt-token
+        cap is not a time bound. Native per-request phase timing is reported unavailable.
         A local generated Gemma3-270M diagnostic matched isolated and concurrent
         output with 11 shared decode steps, but it did not use a resolved
         deployment bundle or an external harness. Certify two real harness
-        tasks and add bounded cancellable prefill before promoting this path.
+        tasks and certify staged prefill on the deployed artifact before promoting this path.
         Recurrent Qwen state is outside this KV-only capability.
     </p>
 </div>

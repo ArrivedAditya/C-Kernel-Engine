@@ -1014,6 +1014,8 @@
                         <a href="kernel-tuning-methodology.html">Kernel Tuning Methodology<small>CPU-node performance runbook</small></a>
                         <a href="v7-profiling.html">v7 Profiling Runbook<small>Train kernels: VTune, Advisor, perf</small></a>
                         <a href="v7-runbook.html">v7 Inference + Training Runbook<small>Copy/paste train + infer workflow</small></a>
+                        <a href="sizing.html">Model Sizing Lab<small>KV, state, concurrency, six-GPU placement</small></a>
+                        <a href="serving.html">Serving &amp; Batching<small>Single-flight, batch2, continuous-batching roadmap</small></a>
                         <a href="v7-svg-dataset-runbook.html">v7 SVG Dataset Runbook<small>Pretrain + midtrain data generation</small></a>
                         <a href="testing.html">Testing<small>Numerical parity verification</small></a>
                         <a href="divergence-harness.html">Stitched Divergence Harness<small>llama.cpp/PyTorch tensor attribution</small></a>
@@ -1027,8 +1029,8 @@
     </header>
     <main>
 <h1>v8 Serving Coverage Inventory</h1>
-<p>This page is derived from 64 circuit templates and their referenced
-serving profiles. 3 circuits declare a profile. A declaration
+<p>This page is derived from 68 circuit templates and their referenced
+serving profiles. 4 circuits declare a profile. A declaration
 does not certify a model artifact, tokenizer, protocol, generated runtime, or harness task.</p>
 <p>Chat scope is derived from circuit structure: a linked declaration, an unlinked text-decoder
 candidate, a component without an independent text-decoder path, or unassessed. Component and
@@ -1039,6 +1041,9 @@ and separate evidence fields. Repository revision, quantization, tokenizer ident
 reasoning behavior, and task results remain unassessed until an exact resolved bundle and run
 report supply them. Missing declarations are visible; legacy imported sidecars may still allow
 chat but are not circuit-linked certification.</p>
+<p>For the execution model behind these declarations — admission, lifecycle, the experimental
+two-slot batch decode, and the continuous-batching roadmap — see
+<a href="serving.html">Serving &amp; Batching</a>.</p>
 <table class="table"><thead><tr><th>Circuit</th><th>Family</th><th>Chat scope</th><th>Profile</th>
 <th>Chat asset source</th><th>Declared output protocol</th><th>Input modalities</th></tr></thead>
 <tbody>
@@ -1051,7 +1056,7 @@ chat but are not circuit-linked certification.</p>
 <tr><td><code>cohere_compass_text</code></td><td><code>cohere_compass</code></td><td><code>unassessed</code></td><td><code>missing</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td></tr>
 <tr><td><code>cohere_compass_vision</code></td><td><code>cohere_compass</code></td><td><code>component</code></td><td><code>missing</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td></tr>
 <tr><td><code>cohere_transcribe</code></td><td><code>audio_encoder_decoder</code></td><td><code>component</code></td><td><code>missing</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td></tr>
-<tr><td><code>gemma3</code></td><td><code>llama</code></td><td><code>text_decoder_candidate</code></td><td><code>missing</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td></tr>
+<tr><td><code>gemma3</code></td><td><code>llama</code></td><td><code>linked_chat_declaration</code></td><td><code>serving_profiles/publisher_chat_v1.json</code></td><td><code>publisher</code></td><td><code>none</code></td><td><code>text</code></td></tr>
 <tr><td><code>gemma4</code></td><td><code>gemma4</code></td><td><code>linked_chat_declaration</code></td><td><code>serving_profiles/gemma4_v1.json</code></td><td><code>publisher</code></td><td><code>none</code></td><td><code>text</code></td></tr>
 <tr><td><code>gemma4_assistant</code></td><td><code>gemma4</code></td><td><code>text_decoder_candidate</code></td><td><code>missing</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td></tr>
 <tr><td><code>gemma4_speculative_pair</code></td><td><code>gemma4</code></td><td><code>component</code></td><td><code>missing</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td></tr>
@@ -1076,6 +1081,8 @@ chat but are not circuit-linked certification.</p>
 <tr><td><code>kokoro_generator_stage1_ingress_oracle_input_bounded</code></td><td><code>bounded_graph</code></td><td><code>component</code></td><td><code>missing</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td></tr>
 <tr><td><code>kokoro_generator_stage1_join_bounded</code></td><td><code>bounded_graph</code></td><td><code>component</code></td><td><code>missing</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td></tr>
 <tr><td><code>kokoro_generator_stage1_join_oracle_input_bounded</code></td><td><code>bounded_graph</code></td><td><code>component</code></td><td><code>missing</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td></tr>
+<tr><td><code>kokoro_generator_stage1_pool_bounded</code></td><td><code>bounded_graph</code></td><td><code>component</code></td><td><code>missing</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td></tr>
+<tr><td><code>kokoro_generator_stage1_pool_oracle_input_bounded</code></td><td><code>bounded_graph</code></td><td><code>component</code></td><td><code>missing</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td></tr>
 <tr><td><code>kokoro_generator_stage1_source_conv_bounded</code></td><td><code>bounded_graph</code></td><td><code>component</code></td><td><code>missing</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td></tr>
 <tr><td><code>kokoro_generator_stage1_source_conv_oracle_input_bounded</code></td><td><code>bounded_graph</code></td><td><code>component</code></td><td><code>missing</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td></tr>
 <tr><td><code>kokoro_phoneme_encoder_bounded</code></td><td><code>bounded_graph</code></td><td><code>component</code></td><td><code>missing</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td></tr>
@@ -1091,6 +1098,8 @@ chat but are not circuit-linked certification.</p>
 <tr><td><code>kokoro_source_residual_prefix_bounded</code></td><td><code>bounded_graph</code></td><td><code>component</code></td><td><code>missing</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td></tr>
 <tr><td><code>kokoro_text_embedding_bounded</code></td><td><code>bounded_graph</code></td><td><code>component</code></td><td><code>missing</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td></tr>
 <tr><td><code>kokoro_text_encoder_bounded</code></td><td><code>bounded_graph</code></td><td><code>component</code></td><td><code>missing</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td></tr>
+<tr><td><code>kokoro_waveform_bounded</code></td><td><code>bounded_graph</code></td><td><code>component</code></td><td><code>missing</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td></tr>
+<tr><td><code>kokoro_waveform_oracle_input_bounded</code></td><td><code>bounded_graph</code></td><td><code>component</code></td><td><code>missing</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td></tr>
 <tr><td><code>laguna</code></td><td><code>laguna</code></td><td><code>text_decoder_candidate</code></td><td><code>missing</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td></tr>
 <tr><td><code>llama</code></td><td><code>llama</code></td><td><code>text_decoder_candidate</code></td><td><code>missing</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td></tr>
 <tr><td><code>muse_glimmer_text</code></td><td><code>muse_glimmer</code></td><td><code>text_decoder_candidate</code></td><td><code>missing</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td><td><code>unresolved</code></td></tr>
@@ -1356,7 +1365,7 @@ chat but are not circuit-linked certification.</p>
             </div>
             <div style="text-align: right;">
                 <p style="color: #606060; font-size: 0.75rem; margin: 0;">Static docs · C-first execution</p>
-                <p style="color: #606060; font-size: 0.75rem; margin: 0.5rem 0 0 0;">2026-10-10</p>
+                <p style="color: #606060; font-size: 0.75rem; margin: 0.5rem 0 0 0;">2026-10-12</p>
             </div>
         </div>
     </footer>
