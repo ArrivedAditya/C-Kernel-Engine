@@ -48,6 +48,26 @@ int audio_conv1d_dilated_checked_channel_major_f32(
  * checked buffer contract. They return UNSUPPORTED without touching output on
  * CPUs without x86 FMA; callers can select the scalar providers instead. */
 int audio_conv1d_checked_hardware_fma_available(void);
+int audio_conv1d_checked_avx2_fma_available(void);
+
+int audio_conv1d_checked_channel_major_f32_avx2_fma(
+    const float *input, size_t input_elements, size_t input_stride,
+    const float *weight, size_t weight_elements,
+    const float *bias, size_t bias_elements,
+    float *output, size_t output_elements, size_t output_stride,
+    float *scratch, size_t scratch_elements,
+    size_t input_channels, size_t output_channels, size_t input_frames,
+    size_t kernel_size, size_t stride, size_t padding, size_t output_frames);
+
+int audio_conv1d_dilated_checked_channel_major_f32_avx2_fma(
+    const float *input, size_t input_elements, size_t input_stride,
+    const float *weight, size_t weight_elements,
+    const float *bias, size_t bias_elements,
+    float *output, size_t output_elements, size_t output_stride,
+    float *scratch, size_t scratch_elements,
+    size_t input_channels, size_t output_channels, size_t input_frames,
+    size_t kernel_size, size_t stride, size_t padding, size_t dilation,
+    size_t output_frames);
 
 int audio_conv1d_checked_channel_major_f32_hwfma(
     const float *input, size_t input_elements, size_t input_stride,

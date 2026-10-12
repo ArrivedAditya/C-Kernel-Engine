@@ -8,6 +8,11 @@
 
 #if (defined(__x86_64__) || defined(__i386__)) && \
     (defined(__GNUC__) || defined(__clang__))
+#include <immintrin.h>
+#endif
+
+#if (defined(__x86_64__) || defined(__i386__)) && \
+    (defined(__GNUC__) || defined(__clang__))
 #define CK_AUDIO_CONV_X86_TARGET_FMA 1
 #else
 #define CK_AUDIO_CONV_X86_TARGET_FMA 0
@@ -59,6 +64,57 @@ __attribute__((target("fma"), noinline))
 static void audio_conv1d_compute_hwfma(const ck_audio_conv1d_job *job) {
     CK_AUDIO_CONV1D_COMPUTE_BODY
 }
+
+/* Output frames are independent. SIMD lanes retain the input-channel/tap
+ * reduction order of the scalar FMA provider; padding frames use its exact
+ * scalar path, so no zero-padded arithmetic is introduced. */
+__attribute__((target("avx2,fma"), noinline))
+static void audio_conv1d_compute_avx2(const ck_audio_conv1d_job *job) {
+    if (job->stride != 1 || job->output_frames < 8) {
+        audio_conv1d_compute_hwfma(job);
+        return;
+    }
+    const size_t final_tap = (job->kernel_size - 1) * job->dilation;
+    for (size_t oc = 0; oc < job->output_channels; ++oc) {
+        size_t frame = 0;
+        for (; frame < job->output_frames;) {
+            const int64_t first = (int64_t)frame - (int64_t)job->padding;
+            const int64_t last = first + 7 + (int64_t)final_tap;
+            if (frame + 8 <= job->output_frames && first >= 0 &&
+                last < (int64_t)job->input_frames) {
+                __m256 sums = _mm256_set1_ps(job->bias[oc]);
+                for (size_t ic = 0; ic < job->input_channels; ++ic) {
+                    const float *row = job->weight +
+                        (oc * job->input_channels + ic) * job->kernel_size;
+                    const float *input = job->input + ic * job->input_stride +
+                        (size_t)first;
+                    for (size_t tap = 0; tap < job->kernel_size; ++tap) {
+                        const __m256 values = _mm256_loadu_ps(input + tap * job->dilation);
+                        sums = _mm256_fmadd_ps(values, _mm256_set1_ps(row[tap]), sums);
+                    }
+                }
+                _mm256_storeu_ps(job->staged + oc * job->output_frames + frame, sums);
+                frame += 8;
+            } else {
+                float sum = job->bias[oc];
+                for (size_t ic = 0; ic < job->input_channels; ++ic) {
+                    const float *row = job->weight +
+                        (oc * job->input_channels + ic) * job->kernel_size;
+                    for (size_t tap = 0; tap < job->kernel_size; ++tap) {
+                        const int64_t source = (int64_t)frame +
+                            (int64_t)tap * (int64_t)job->dilation -
+                            (int64_t)job->padding;
+                        if (source >= 0 && source < (int64_t)job->input_frames)
+                            sum = fmaf(job->input[ic * job->input_stride +
+                                (size_t)source], row[tap], sum);
+                    }
+                }
+                job->staged[oc * job->output_frames + frame] = sum;
+                ++frame;
+            }
+        }
+    }
+}
 #endif
 #undef CK_AUDIO_CONV1D_COMPUTE_BODY
 
@@ -66,6 +122,15 @@ int audio_conv1d_checked_hardware_fma_available(void) {
 #if CK_AUDIO_CONV_X86_TARGET_FMA
     __builtin_cpu_init();
     return __builtin_cpu_supports("fma") != 0;
+#else
+    return 0;
+#endif
+}
+
+int audio_conv1d_checked_avx2_fma_available(void) {
+#if CK_AUDIO_CONV_X86_TARGET_FMA
+    __builtin_cpu_init();
+    return __builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma");
 #else
     return 0;
 #endif
@@ -237,6 +302,61 @@ int audio_conv1d_dilated_checked_channel_major_f32_hwfma(
         output_stride, scratch, scratch_elements, input_channels,
         output_channels, input_frames, kernel_size, stride, padding, dilation,
         output_frames, audio_conv1d_compute_hwfma);
+#else
+    (void)input; (void)input_elements; (void)input_stride;
+    (void)weight; (void)weight_elements; (void)bias; (void)bias_elements;
+    (void)output; (void)output_elements; (void)output_stride;
+    (void)scratch; (void)scratch_elements; (void)input_channels;
+    (void)output_channels; (void)input_frames; (void)kernel_size;
+    (void)stride; (void)padding; (void)dilation; (void)output_frames;
+    return CK_AUDIO_CONV_CHECKED_UNSUPPORTED;
+#endif
+}
+
+int audio_conv1d_checked_channel_major_f32_avx2_fma(
+    const float *input, size_t input_elements, size_t input_stride,
+    const float *weight, size_t weight_elements,
+    const float *bias, size_t bias_elements,
+    float *output, size_t output_elements, size_t output_stride,
+    float *scratch, size_t scratch_elements,
+    size_t input_channels, size_t output_channels, size_t input_frames,
+    size_t kernel_size, size_t stride, size_t padding, size_t output_frames) {
+#if CK_AUDIO_CONV_X86_TARGET_FMA
+    if (!audio_conv1d_checked_avx2_fma_available())
+        return CK_AUDIO_CONV_CHECKED_UNSUPPORTED;
+    return audio_conv1d_checked_impl(input, input_elements, input_stride,
+        weight, weight_elements, bias, bias_elements, output, output_elements,
+        output_stride, scratch, scratch_elements, input_channels,
+        output_channels, input_frames, kernel_size, stride, padding, 1,
+        output_frames, audio_conv1d_compute_avx2);
+#else
+    (void)input; (void)input_elements; (void)input_stride;
+    (void)weight; (void)weight_elements; (void)bias; (void)bias_elements;
+    (void)output; (void)output_elements; (void)output_stride;
+    (void)scratch; (void)scratch_elements; (void)input_channels;
+    (void)output_channels; (void)input_frames; (void)kernel_size;
+    (void)stride; (void)padding; (void)output_frames;
+    return CK_AUDIO_CONV_CHECKED_UNSUPPORTED;
+#endif
+}
+
+int audio_conv1d_dilated_checked_channel_major_f32_avx2_fma(
+    const float *input, size_t input_elements, size_t input_stride,
+    const float *weight, size_t weight_elements,
+    const float *bias, size_t bias_elements,
+    float *output, size_t output_elements, size_t output_stride,
+    float *scratch, size_t scratch_elements,
+    size_t input_channels, size_t output_channels, size_t input_frames,
+    size_t kernel_size, size_t stride, size_t padding, size_t dilation,
+    size_t output_frames) {
+#if CK_AUDIO_CONV_X86_TARGET_FMA
+    if (!audio_conv1d_checked_avx2_fma_available())
+        return CK_AUDIO_CONV_CHECKED_UNSUPPORTED;
+    return audio_conv1d_checked_impl(input, input_elements, input_stride,
+        weight, weight_elements, bias, bias_elements, output, output_elements,
+        output_stride, scratch, scratch_elements, input_channels,
+        output_channels, input_frames, kernel_size, stride, padding, dilation,
+        output_frames, audio_conv1d_compute_avx2);
 #else
     (void)input; (void)input_elements; (void)input_stride;
     (void)weight; (void)weight_elements; (void)bias; (void)bias_elements;

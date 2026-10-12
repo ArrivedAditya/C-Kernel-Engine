@@ -43,9 +43,14 @@ def main():
         available.restype = ctypes.c_int
         if not available():
             raise SystemExit('x86 FMA unavailable; hardware-FMA benchmark skipped')
+        avx2_available = native.audio_conv1d_checked_avx2_fma_available
+        avx2_available.restype = ctypes.c_int
         functions = {}
         for symbol in ('audio_conv1d_checked_channel_major_f32',
-                       'audio_conv1d_checked_channel_major_f32_hwfma'):
+                       'audio_conv1d_checked_channel_major_f32_hwfma',
+                       'audio_conv1d_checked_channel_major_f32_avx2_fma'):
+            if symbol.endswith('avx2_fma') and not avx2_available():
+                continue
             function = getattr(native, symbol)
             function.argtypes = SIGNATURE
             function.restype = ctypes.c_int
@@ -90,6 +95,9 @@ def main():
             hardware_symbol = 'audio_conv1d_checked_channel_major_f32_hwfma'
             if outputs[scalar_symbol] != outputs[hardware_symbol]:
                 raise RuntimeError('scalar/hardware-FMA outputs differ')
+            vector_symbol = 'audio_conv1d_checked_channel_major_f32_avx2_fma'
+            if vector_symbol in outputs and outputs[scalar_symbol] != outputs[vector_symbol]:
+                raise RuntimeError('scalar/AVX2 outputs differ')
             scalar_ms = statistics.median(samples[scalar_symbol])
             hardware_ms = statistics.median(samples[hardware_symbol])
             cases.append({'input_channels': input_channels,
@@ -99,7 +107,10 @@ def main():
                           'speedup': scalar_ms / hardware_ms,
                           'equal_elements': len(output),
                           'scalar_samples_ms': samples[scalar_symbol],
-                          'hardware_fma_samples_ms': samples[hardware_symbol]})
+                          'hardware_fma_samples_ms': samples[hardware_symbol],
+                          'avx2_fma_samples_ms': samples.get(vector_symbol),
+                          'avx2_fma_median_ms': statistics.median(samples[vector_symbol])
+                              if vector_symbol in samples else None})
         print(json.dumps({'host': platform.node(), 'cpu': platform.processor(),
                           'machine': platform.machine(), 'compiler': compiler,
                           'build_command': command[:-2] + ['-o', '<temporary .so>'],

@@ -149,14 +149,17 @@ class KokoroGeneratedWaveformTest(unittest.TestCase):
     @unittest.skipUnless(os.environ.get('CKE_TTS_RUN_HW_FMA_REPLAY'),
                          'asset-backed full-waveform hardware-FMA replay not requested')
     def test_full_waveform_hardware_fma_provider_replay(self):
-        """Compare explicit candidate selection with the full scalar graph."""
+        """Compare an explicit FP32 FMA candidate with the full scalar graph."""
         candidate = copy.deepcopy(self.waveform_source)
         selected = 0
+        candidate_variant = os.environ.get('CKE_TTS_CONV_PROVIDER', 'hwfma')
+        if candidate_variant not in ('hwfma', 'avx2_fma'):
+            self.fail(f'unsupported explicit Conv1D candidate: {candidate_variant}')
         names = {
             'audio_conv1d_checked_channel_major_f32':
-                'audio_conv1d_checked_channel_major_f32_hwfma',
+                f'audio_conv1d_checked_channel_major_f32_{candidate_variant}',
             'audio_conv1d_dilated_checked_channel_major_f32':
-                'audio_conv1d_dilated_checked_channel_major_f32_hwfma'}
+                f'audio_conv1d_dilated_checked_channel_major_f32_{candidate_variant}'}
         for block in candidate['template']['block_types'].values():
             for op in block['header'] + block['body']['ops'] + block['footer']:
                 if op.get('kernel') in names:
@@ -165,7 +168,8 @@ class KokoroGeneratedWaveformTest(unittest.TestCase):
         self.assertGreater(selected, 0)
         candidate['template']['required_numerical_contracts'][
             'audio_conv1d_checked']['phases']['prefill']['contract_id'] = \
-            'audio_conv1d_checked_x86_hwfma_fp32'
+            ('audio_conv1d_checked_x86_hwfma_fp32' if candidate_variant == 'hwfma'
+             else 'audio_conv1d_checked_x86_avx2_fma_fp32')
         candidate_root = Path(self.temp.name) / 'hwfma'
         candidate_root.mkdir()
         layout, calls, _, _, function = compile_native_graph(
@@ -180,11 +184,11 @@ class KokoroGeneratedWaveformTest(unittest.TestCase):
         candidate_arena = self.arena(layout)
         repeats = int(os.environ.get('CKE_TTS_HW_FMA_TIMING_REPEATS', '2'))
         self.assertGreaterEqual(repeats, 2)
-        timings = {'scalar': [], 'hardware_fma': []}
+        timings = {'scalar': [], 'candidate': []}
         baseline_lengths = candidate_lengths = None
         for repetition in range(repeats):
             variants = [('scalar', self.fn, baseline_arena),
-                        ('hardware_fma', function, candidate_arena)]
+                        ('candidate', function, candidate_arena)]
             if repetition % 2:
                 variants.reverse()
             for variant, entry, arena in variants:
@@ -206,8 +210,9 @@ class KokoroGeneratedWaveformTest(unittest.TestCase):
             baseline = self.view(self.layout, baseline_arena, name)
             optimized = self.view(layout, candidate_arena, name)
             np.testing.assert_array_equal(baseline, optimized, err_msg=name)
-        print('CKE_HW_FMA_FULL_WAVEFORM ' + json.dumps({
+        print('CKE_CONV_CANDIDATE_FULL_WAVEFORM ' + json.dumps({
             'selected_conv_operations': selected,
+            'candidate_provider': candidate_variant,
             'valid_samples': candidate_lengths[3].value,
             'waveform_sha256': hashlib.sha256(self.view(
                 layout, candidate_arena, 'generator_waveform')[:61800]
@@ -218,7 +223,7 @@ class KokoroGeneratedWaveformTest(unittest.TestCase):
                 'build-identity.json').read_text())['library_sha256'],
             'complete_entry_seconds': timings,
             'warm_speedup': float(np.median(timings['scalar'][1:]) /
-                                  np.median(timings['hardware_fma'][1:])),
+                                  np.median(timings['candidate'][1:])),
             'timing_scope': 'generated native entry only; prepared arena and '
                 'weights, captured Gaussian, no WAV serialization'}))
 

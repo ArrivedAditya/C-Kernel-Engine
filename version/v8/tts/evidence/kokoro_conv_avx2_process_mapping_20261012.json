@@ -1,0 +1,15 @@
+{
+  "pid": 1051057,
+  "cwd": "/data/cke/tts/kokoro-post-avx2-profile-20261012",
+  "cmdline": "./native-kokoro-wav prepared-native-noise.cktts review-series.wav 7 ",
+  "mappings": [
+    "78ec00258000-78ec00259000 r--p 00000000 08:01 2422503                    /data/cke/tts/kokoro-post-avx2-profile-20261012/generated.so",
+    "78ec00259000-78ec00271000 r-xp 00001000 08:01 2422503                    /data/cke/tts/kokoro-post-avx2-profile-20261012/generated.so",
+    "78ec00271000-78ec00277000 r--p 00019000 08:01 2422503                    /data/cke/tts/kokoro-post-avx2-profile-20261012/generated.so",
+    "78ec00277000-78ec00278000 r--p 0001f000 08:01 2422503                    /data/cke/tts/kokoro-post-avx2-profile-20261012/generated.so",
+    "78ec00278000-78ec00279000 rw-p 00020000 08:01 2422503                    /data/cke/tts/kokoro-post-avx2-profile-20261012/generated.so"
+  ],
+  "mapped_path_sha256_at_capture": "140f20a4014d19c279dda1fe02c7e5b3822f9de43921a8a89e04f5ba3cd4ee63",
+  "host_sha256": "a0d97801b8cfc8ccba7469298b2e6f96b0361a8cadc35b01d8048c2fbfd93461",
+  "captured_utc": "2026-10-12T16:50:30Z"
+}
