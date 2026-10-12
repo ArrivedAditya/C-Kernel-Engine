@@ -326,6 +326,75 @@ class CheckedConvHardwareFmaTest(unittest.TestCase):
         np.testing.assert_array_equal(output[0, :17], np.full(17, 6., np.float32))
         self.assertTrue(np.all(output[0, 17:] == -91.))
 
+    def test_avx2_vector_boundaries_stride_and_dilation(self):
+        if not self.avx2_available():
+            self.skipTest('x86 AVX2/FMA unavailable')
+        rng = np.random.default_rng(744)
+        # Zero, one, and multiple complete eight-frame tiles, plus scalar
+        # padding/tails and the non-unit-stride fallback in both ABIs.
+        geometries = (
+            ('ordinary', 7, 1, 1, 0, 1),
+            ('ordinary', 8, 1, 1, 0, 1),
+            ('ordinary', 9, 3, 1, 1, 1),
+            ('ordinary', 15, 1, 1, 0, 1),
+            ('ordinary', 16, 1, 1, 0, 1),
+            ('ordinary', 17, 3, 1, 1, 1),
+            ('ordinary', 17, 1, 2, 0, 1),
+            ('dilated', 7, 3, 1, 2, 2),
+            ('dilated', 8, 1, 1, 0, 3),
+            ('dilated', 9, 3, 1, 2, 2),
+            ('dilated', 15, 1, 1, 0, 2),
+            ('dilated', 16, 3, 1, 2, 2),
+            ('dilated', 17, 1, 1, 0, 2),
+            ('dilated', 17, 3, 2, 2, 2),
+        )
+        for entry, output_frames, kernel, stride, padding, dilation in geometries:
+            with self.subTest(entry=entry, output_frames=output_frames,
+                              kernel=kernel, stride=stride, padding=padding,
+                              dilation=dilation):
+                effective = 1 + (kernel - 1) * dilation
+                frames = (output_frames - 1) * stride - 2 * padding + effective
+                source = np.full((3, frames + 3), np.nan, np.float32)
+                source[:, :frames] = rng.normal(size=(3, frames))
+                weight = rng.normal(size=(5, 3, kernel)).astype(np.float32)
+                bias = rng.normal(size=5).astype(np.float32)
+                stem = ('audio_conv1d_dilated_checked_channel_major_f32'
+                        if entry == 'dilated' else
+                        'audio_conv1d_checked_channel_major_f32')
+                results = []
+                for suffix in ('hwfma', 'avx2_fma'):
+                    output = np.full((5, output_frames + 4), -91., np.float32)
+                    scratch = np.full((5, output_frames), -73., np.float32)
+                    status = self.call(self.functions[f'{stem}_{suffix}'],
+                        source, weight, bias, output, scratch, frames, kernel,
+                        stride, padding, dilation)
+                    self.assertEqual(status, 0)
+                    self.assertTrue(np.all(output[:, output_frames:] == -91.))
+                    self.assertTrue(np.isfinite(output[:, :output_frames]).all())
+                    results.append(output[:, :output_frames].copy())
+                np.testing.assert_array_equal(results[0], results[1])
+
+    def test_avx2_cpu_guard_covers_both_entry_points(self):
+        source = np.full((1, 17), 2., np.float32)
+        weight = np.full((1, 1, 1), 3., np.float32)
+        bias = np.zeros(1, np.float32)
+        for stem in ('audio_conv1d_checked_channel_major_f32',
+                     'audio_conv1d_dilated_checked_channel_major_f32'):
+            with self.subTest(provider=stem):
+                output = np.full((1, 20), -91., np.float32)
+                scratch = np.full((1, 17), -73., np.float32)
+                status = self.call(self.functions[f'{stem}_avx2_fma'],
+                    source, weight, bias, output, scratch, 17, 1, 1, 0, 1)
+                if self.avx2_available():
+                    self.assertEqual(status, 0)
+                    np.testing.assert_array_equal(
+                        output[0, :17], np.full(17, 6., np.float32))
+                    self.assertTrue(np.all(output[0, 17:] == -91.))
+                else:
+                    self.assertEqual(status, -5)
+                    self.assertTrue(np.all(output == -91.))
+                    self.assertTrue(np.all(scratch == -73.))
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -4,7 +4,10 @@
   "base_revision": "398380406c53da1ce68992cf33a00a230e63d9f7",
   "circuit_sha256": "84c1abe2d51f4ac56f707aaff2529890285aa1d7f470e53e0abfbd60dea8f201",
   "provider_selection": {
-    "baseline": "audio_conv1d_checked_channel_major_f32_hwfma and dilated companion",
+    "baseline_by_machine": {
+      "local_p3": "audio_conv1d_checked_channel_major_f32 scalar and dilated companion",
+      "ryzen": "audio_conv1d_checked_channel_major_f32_hwfma and dilated companion"
+    },
     "candidate": "audio_conv1d_checked_channel_major_f32_avx2_fma and dilated companion",
     "replaced_calls": 88,
     "default_selection_changed": false,
@@ -26,13 +29,21 @@
     "cpu": "Intel Core i7-14700T",
     "compiler": "cc (Ubuntu 15.2.0-16ubuntu1) 15.2.0",
     "complete_entry_seconds": {
-      "scalar": [106.86236044857651, 106.85120179038495],
-      "avx2_fma": [14.242575447075069, 14.243669553659856]
+      "scalar": [106.8990371664986, 106.92323631979525, 106.89288073033094, 106.85652177687734, 106.87489900924265, 106.84792259801179],
+      "avx2_fma": [14.228735262528062, 14.20449918601662, 14.229596175253391, 14.228257515467703, 14.226589834317565, 14.207239916548133]
     },
-    "warm_speedup": 7.501662502618922,
+    "warmup_runs_per_variant": 1,
+    "measured_runs_per_variant": 5,
+    "alternating_order": true,
+    "pinned_cpu": 2,
+    "warm_median_seconds": {"scalar": 106.87489900924265, "avx2_fma": 14.226589834317565},
+    "warm_min_max_seconds": {"scalar": [106.84792259801179, 106.92323631979525], "avx2_fma": [14.20449918601662, 14.229596175253391]},
+    "warm_speedup": 7.512334315806141,
+    "load_average_before": [1.06, 1.09, 1.09],
+    "load_average_after": [1.07, 1.32, 1.37],
     "comparison": "six selected checkpoints and all 61800 FP32 waveform samples equal to scalar, elementwise",
     "fp32_waveform_sha256": "c5bc40f9d6bab4e1ddca82a2711244af5f3d570d020fe26923d1bb106abfdd8c",
-    "reproduction_command": "CKE_TTS_RUN_HW_FMA_REPLAY=1 CKE_TTS_CONV_PROVIDER=avx2_fma CKE_TTS_HW_FMA_TIMING_REPEATS=2 python3 -m unittest tests.test_v8_kokoro_generated_waveform.KokoroGeneratedWaveformTest.test_full_waveform_hardware_fma_provider_replay"
+    "reproduction_command": "taskset -c 2 env CKE_TTS_RUN_HW_FMA_REPLAY=1 CKE_TTS_CONV_PROVIDER=avx2_fma CKE_TTS_HW_FMA_TIMING_REPEATS=6 python3 -m unittest tests.test_v8_kokoro_generated_waveform.KokoroGeneratedWaveformTest.test_full_waveform_hardware_fma_provider_replay -v"
   },
   "ryzen": {
     "host": "cke-amd-zen5-01",
@@ -42,13 +53,37 @@
     "baseline_library_sha256": "48904ae0e5905555dd3826fc105e7bac63f3a78576a635fe5ab3813f39dfe807",
     "candidate_generated_source_sha256": "38fbd9fbb470f5fdcf028bcb02a466d3de6954d1b9e8965abee2633aa57b46e3",
     "baseline_generated_source_sha256": "f4060f1501ab74cc16f553d809e85fc29dff2030f1955644a67032de823258d1",
+    "prepared_package_sha256": "f0a532bbd586723ca091bfe9d96373757c3dabbc84e802b4bf785b21a5de45ab",
+    "native_host_sha256": "a0d97801b8cfc8ccba7469298b2e6f96b0361a8cadc35b01d8048c2fbfd93461",
+    "build_identity_files": {
+      "hardware_fma": "kokoro_conv_hwfma_build_identity_20261012.json",
+      "avx2_fma": "kokoro_conv_avx2_build_identity_20261012.json"
+    },
+    "actual_process_mapping": "kokoro_conv_avx2_process_mapping_20261012.json",
+    "native_host_build_command": "cc -std=c11 -O2 -Wall -Wextra -Werror -pedantic -I . native_kokoro_wav_host.c audio_noise_counter.c -L . -l:generated.so '-Wl,-rpath,$ORIGIN' -lm -o native-kokoro-wav",
+    "native_run_command": "taskset -c 0 env CK_NUM_THREADS=1 OMP_NUM_THREADS=1 ./native-kokoro-wav prepared-native-noise.cktts review-series.wav 7",
     "alternating_process_wall_seconds": {
       "hardware_fma": [51.865, 58.385],
       "avx2_fma": [11.246, 11.222]
     },
+    "review_series": {
+      "source": "kokoro_conv_avx2_ryzen_series_20261012.json",
+      "timing_script": "kokoro_conv_avx2_ryzen_timing_20261012.py",
+      "warmup_runs_per_variant": 1,
+      "measured_runs_per_variant": 5,
+      "alternating_order": true,
+      "pinned_cpu": 0,
+      "hardware_fma_seconds": [55.841711, 53.670658, 53.61566, 53.618851, 56.046475],
+      "avx2_fma_seconds": [11.633457, 11.633649, 11.648753, 11.634998, 11.629385],
+      "median_seconds": {"hardware_fma": 53.670658, "avx2_fma": 11.633649},
+      "min_max_seconds": {"hardware_fma": [53.61566, 56.046475], "avx2_fma": [11.629385, 11.648753]},
+      "median_ratio_hardware_fma_over_avx2_fma": 4.613398427269037,
+      "load_average_before": [0.13232421875, 0.04296875, 0.0126953125],
+      "load_average_after": [1.0, 0.76171875, 0.3740234375]
+    },
     "scope": "new process each run, including prepared-package load, generated entry, native Gaussian generation, and WAV write; OS cache and frequency not controlled",
     "wav_sha256_all_variants": "187e777636f7071776968bb7a7c4ced52f3d0438bedc281b84416562c844015e",
-    "loaded_library_resolution": "ldd resolved generated.so to the candidate run directory through host $ORIGIN RUNPATH; no embedded runtime build identity",
+    "loaded_library_resolution": "The running native-kokoro-wav process mapped generated.so from the candidate directory according to /proc/PID/maps; its path hashed to the candidate library SHA at capture. This establishes mapped artifact identity, not an embedded runtime build identity. ldd independently resolves the same path through host $ORIGIN RUNPATH.",
     "profile": {
       "command": "perf record -F 99 -e cpu/cycles/P -o perf.data -- env CK_NUM_THREADS=1 OMP_NUM_THREADS=1 ./native-kokoro-wav prepared-native-noise.cktts profile-seed7.wav 7",
       "event": "cpu/cycles/P",
