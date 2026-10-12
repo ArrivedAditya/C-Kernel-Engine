@@ -1,0 +1,71 @@
+{
+  "bundle": "/home/antshiv/.cache/ck-engine-v8/models/gemma-3-270m-it-Q5_K_M",
+  "capabilities": 217215,
+  "cases_by_prefill_slot": {
+    "near_capacity/prefill_slot_0": {
+      "complete_kv_sha256_equal": true,
+      "continuation_steps": 1,
+      "full_finite_logit_bytes_equal_at_every_step": true,
+      "mixed_steps": 3,
+      "positions": [
+        5,
+        32
+      ]
+    },
+    "near_capacity/prefill_slot_1": {
+      "complete_kv_sha256_equal": true,
+      "continuation_steps": 1,
+      "full_finite_logit_bytes_equal_at_every_step": true,
+      "mixed_steps": 3,
+      "positions": [
+        32,
+        5
+      ]
+    },
+    "unequal/prefill_slot_0": {
+      "complete_kv_sha256_equal": true,
+      "continuation_steps": 1,
+      "full_finite_logit_bytes_equal_at_every_step": true,
+      "mixed_steps": 6,
+      "positions": [
+        8,
+        16
+      ]
+    },
+    "unequal/prefill_slot_1": {
+      "complete_kv_sha256_equal": true,
+      "continuation_steps": 1,
+      "full_finite_logit_bytes_equal_at_every_step": true,
+      "mixed_steps": 6,
+      "positions": [
+        16,
+        8
+      ]
+    }
+  },
+  "cpu": {
+    "isa_flags": [
+      "avx",
+      "avx2",
+      "fma"
+    ],
+    "machine": "x86_64",
+    "model": "Intel(R) Core(TM) i7-14700T"
+  },
+  "generated_context_length": 128,
+  "generated_source_sha256": "4b0baa4950a0e6447d2744a4d46c516695c78210946e592d2d924e5e54f91c89",
+  "kv_bytes_per_sequence": 4718592,
+  "loaded_sha256": {
+    "libckernel_engine.so": "1de560650452444bdbdaf06034c647b410ad3976ae37171aece7f9dcf2c5ca93",
+    "libmodel.so": "e624d49a345308198dbb2eacf6a0e077d53c624e6993c0a9fdc4ae006bd0ab96"
+  },
+  "mixed_decode_replay_status": "pass",
+  "ordinary_prefill": null,
+  "scope": "one decode row plus one staged prompt row; two slots; generated decode-replay parity only",
+  "session_context_length": 32,
+  "session_library_sha256": "4daa4e1f859c733cf0e4e9fa5a3ff2ccfdfda892db06ae588f81763535945888",
+  "shared_projection_groups": 72,
+  "status": "pass",
+  "threads": 1,
+  "weights_sha256": "dae6375dc5f6e04db7a373fc747df6eda4f9938f019bc0c0d1fdda4ec2443c40"
+}
