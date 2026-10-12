@@ -7,7 +7,7 @@
  * @brief Persistent pthread thread pool for CK-Engine inference
  *
  * Architecture:
- *   - N-1 worker pthreads created at startup, main thread is thread 0
+ *   - N-1 worker pthreads created at startup, calling thread executes slot 0
  *   - Workers spin on atomic dispatch counter waiting for work
  *   - Barriers use atomic counter + spin-wait with _mm_pause()
  *   - Hybrid polling: spin CK_THREADPOOL_SPIN_COUNT rounds, then condvar
@@ -99,6 +99,7 @@ struct ck_threadpool {
     _Alignas(CK_CACHE_LINE) atomic_int paused;
 
     /* Condvar for sleep/wake (hybrid polling) */
+    pthread_mutex_t dispatch_mutex; /* one multi-worker descriptor at a time */
     pthread_mutex_t mutex;
     pthread_cond_t  cond_dispatch;  /* workers wait here when sleeping */
     pthread_cond_t  cond_done;      /* main waits here for completion */
@@ -109,6 +110,26 @@ struct ck_threadpool {
     atomic_uint_fast64_t profile_main_work_ns;
     atomic_uint_fast64_t profile_completion_wait_ns;
 };
+
+/* A caller can be slot 0 even when it did not create the pool. The callback's
+ * dispatch width also cannot be inferred from the pool's worker capacity:
+ * single-worker calls may overlap a multi-worker dispatch. */
+typedef struct {
+    const ck_threadpool_t *pool;
+    int ith;
+    int nth;
+} ck_dispatch_context_t;
+
+static _Thread_local ck_dispatch_context_t g_dispatch_context;
+
+static void run_work(ck_threadpool_t *pool, ck_work_fn_t fn,
+                     int ith, int nth, void *args)
+{
+    const ck_dispatch_context_t previous = g_dispatch_context;
+    g_dispatch_context = (ck_dispatch_context_t){pool, ith, nth};
+    fn(ith, nth, args);
+    g_dispatch_context = previous;
+}
 
 static uint64_t monotonic_ns(void)
 {
@@ -231,13 +252,13 @@ static void *worker_main(void *arg)
 worker_have_work:
         /* Execute work */
         if (fn) {
-            fn(ith, active, args);
+            run_work(pool, fn, ith, active, args);
         }
 
         /* Signal completion */
         if (atomic_fetch_add_explicit(&pool->n_complete, 1, memory_order_acq_rel)
             == active - 2) {
-            /* Last worker done — wake main thread if it's waiting */
+            /* Last worker done — wake the calling thread if it is waiting */
             pthread_mutex_lock(&pool->mutex);
             pthread_cond_signal(&pool->cond_done);
             pthread_mutex_unlock(&pool->mutex);
@@ -304,11 +325,12 @@ ck_threadpool_t *ck_threadpool_create_capacity(int default_threads,
 
     barrier_init(&pool->barrier, default_threads);
 
+    pthread_mutex_init(&pool->dispatch_mutex, NULL);
     pthread_mutex_init(&pool->mutex, NULL);
     pthread_cond_init(&pool->cond_dispatch, NULL);
     pthread_cond_init(&pool->cond_done, NULL);
 
-    /* Thread 0 = main thread (no pthread created) */
+    /* Slot 0 runs on the dispatch caller (no worker pthread created). */
     pool->workers[0].id = 0;
     pool->workers[0].pool = pool;
     pool->workers[0].thread = pthread_self();
@@ -364,6 +386,7 @@ void ck_threadpool_destroy(ck_threadpool_t *pool)
     pthread_cond_destroy(&pool->cond_dispatch);
     pthread_cond_destroy(&pool->cond_done);
     pthread_mutex_destroy(&pool->mutex);
+    pthread_mutex_destroy(&pool->dispatch_mutex);
 
     free(pool);
 }
@@ -388,7 +411,7 @@ void ck_threadpool_dispatch_n(ck_threadpool_t *pool, int active_threads, ck_work
 
     /* Single-thread fast path: just call directly */
     if (active_threads == 1 || pool->n_threads == 1) {
-        fn(0, 1, args);
+        run_work(pool, fn, 0, 1, args);
         if (profile) {
             const uint64_t dispatch_end = monotonic_ns();
             atomic_fetch_add_explicit(&pool->profile_dispatch_count, 1, memory_order_relaxed);
@@ -403,6 +426,11 @@ void ck_threadpool_dispatch_n(ck_threadpool_t *pool, int active_threads, ck_work
         }
         return;
     }
+
+    /* The work descriptor and completion counter belong to one dispatch.
+     * Concurrent callers may share a pool, but their multi-worker dispatches
+     * must not overwrite one another's descriptor or barrier state. */
+    pthread_mutex_lock(&pool->dispatch_mutex);
 
     /* Reset barrier phase for this dispatch */
     barrier_init(&pool->barrier, active_threads);
@@ -423,7 +451,7 @@ void ck_threadpool_dispatch_n(ck_threadpool_t *pool, int active_threads, ck_work
 
     /* Main thread (ith=0) does its share */
     const uint64_t main_start = profile ? monotonic_ns() : 0;
-    fn(0, active_threads, args);
+    run_work(pool, fn, 0, active_threads, args);
     const uint64_t main_end = profile ? monotonic_ns() : 0;
 
     /* Wait for all workers to complete */
@@ -460,6 +488,7 @@ void ck_threadpool_dispatch_n(ck_threadpool_t *pool, int active_threads, ck_work
             dispatch_end - main_end,
             memory_order_relaxed);
     }
+    pthread_mutex_unlock(&pool->dispatch_mutex);
 }
 
 void ck_threadpool_dispatch(ck_threadpool_t *pool, ck_work_fn_t fn, void *args)
@@ -519,7 +548,11 @@ void ck_threadpool_parallel_for_n(ck_threadpool_t *pool,
 
 void ck_threadpool_barrier(ck_threadpool_t *pool)
 {
-    if (!pool || pool->n_threads <= 1) return;
+    /* Only participants in this multi-worker dispatch use its barrier.
+     * In particular, an overlapping single-worker callback must never touch
+     * the shared barrier belonging to a different dispatch. */
+    if (!pool || g_dispatch_context.pool != pool ||
+        g_dispatch_context.nth <= 1) return;
     barrier_wait(&pool->barrier);
 }
 
@@ -561,6 +594,7 @@ int ck_threadpool_capacity(const ck_threadpool_t *pool)
 int ck_threadpool_thread_id(const ck_threadpool_t *pool)
 {
     if (!pool) return -1;
+    if (g_dispatch_context.pool == pool) return g_dispatch_context.ith;
     pthread_t self = pthread_self();
     for (int i = 0; i < pool->n_threads; i++) {
         if (pthread_equal(self, pool->workers[i].thread)) {
