@@ -267,6 +267,8 @@ class CheckedConvHardwareFmaTest(unittest.TestCase):
                           self.dilated[f'case{index}_output'],
                           geometry['kernel'], 1, geometry['padding'],
                           geometry['dilation']))
+        max_diff = 0.0
+        tolerance = 0.0
         for source_data, weight, bias, expected, kernel, step, padding, dilation in cases:
             frames = source_data.shape[1]
             source = np.full((source_data.shape[0], frames + 3), np.nan, np.float32)
@@ -292,8 +294,11 @@ class CheckedConvHardwareFmaTest(unittest.TestCase):
                 results.append(output[:, :output_frames].copy())
             np.testing.assert_array_equal(results[0], results[1])
             self.assertTrue(np.isfinite(results[1]).all())
-            self.assertLessEqual(float(np.max(np.abs(results[1] - expected))),
-                                 1.3e-5 if dilation == 1 else 3e-5)
+            case_diff = float(np.max(np.abs(results[1] - expected)))
+            case_tolerance = 1.3e-5 if dilation == 1 else 3e-5
+            self.assertLessEqual(case_diff, case_tolerance)
+            max_diff = max(max_diff, case_diff)
+            tolerance = max(tolerance, case_tolerance)
         print('CKE_NUMERICAL_CASE ' + json.dumps({
             'case_id': 'audio.conv1d.avx2-fma.pinned-v1',
             'name': 'AVX2/FMA frame lanes versus ordered FMA and pinned PyTorch',
@@ -303,6 +308,7 @@ class CheckedConvHardwareFmaTest(unittest.TestCase):
             'dtype': 'fp32', 'direction': 'inference',
             'oracle': 'pinned-pytorch-2.8.0+cpu and exact ordered-FMA C',
             'status': 'pass', 'cases': len(cases),
+            'max_diff': max_diff, 'tolerance': tolerance,
             'ordered_fma_changed_elements': 0,
             'reproduction_command':
                 'python3 -m unittest tests.test_v8_audio_conv_hwfma_oracle'}))
