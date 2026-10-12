@@ -1,0 +1,293 @@
+{
+  "schema": "cke.tts.conv1d_hwfma_evidence.v1",
+  "date_utc": "2026-10-12",
+  "baseline_revision": "6bc90a988be0f233d1b8e9f3d98aadcb07622976",
+  "scope": "explicit x86 hardware-FMA checked Conv1D candidate; complete Kokoro remains diagnostic",
+  "source_sha256": {
+    "src/kernels/audio_conv1d_checked.c": "7310d9685275ff1247d40930bbbe8d6e664363ec308d30824f049ce2d5dafc2a",
+    "scripts/benchmark_audio_conv_hwfma.py": "70b33e8f01bb2c592e979114be23b75395aeeb7584c70f8acb71960b7dfc8da3"
+  },
+  "microbenchmarks": {
+    "synthetic_inputs_seed": 740,
+    "single_threaded_provider": true,
+    "timing_unit": "milliseconds",
+    "intel_local": {
+      "host": "antshiv",
+      "cpu": "Intel Core i7-14700T",
+      "machine": "x86_64",
+      "compiler": "cc (Ubuntu 15.2.0-16ubuntu1) 15.2.0",
+      "build_command": [
+        "cc",
+        "-std=c11",
+        "-O2",
+        "-ffp-contract=off",
+        "-fPIC",
+        "-shared",
+        "-I",
+        "include",
+        "src/kernels/audio_conv1d_checked.c",
+        "-lm",
+        "-o",
+        "<temporary .so>"
+      ],
+      "repeats": 2,
+      "cases": [
+        {
+          "input_channels": 512,
+          "output_channels": 512,
+          "frames": 36,
+          "taps": 5,
+          "scalar_median_ms": 47.2144475,
+          "hardware_fma_median_ms": 46.3146875,
+          "speedup": 1.019427098585087,
+          "equal_elements": 18432,
+          "scalar_samples_ms": [
+            47.215171,
+            47.213724
+          ],
+          "hardware_fma_samples_ms": [
+            46.350671,
+            46.278704
+          ]
+        },
+        {
+          "input_channels": 128,
+          "output_channels": 22,
+          "frames": 12000,
+          "taps": 7,
+          "scalar_median_ms": 384.2281605,
+          "hardware_fma_median_ms": 235.8855345,
+          "speedup": 1.6288754684107176,
+          "equal_elements": 264000,
+          "scalar_samples_ms": [
+            384.242551,
+            384.21377
+          ],
+          "hardware_fma_samples_ms": [
+            235.879319,
+            235.89175
+          ]
+        }
+      ]
+    },
+    "interpretation": "kernel-only medians; do not infer complete synthesis latency",
+    "ryzen_cpu0": {
+      "host": "cke-amd-zen5-01",
+      "cpu": "AMD Ryzen 9 9950X3D",
+      "machine": "x86_64",
+      "compiler": "cc (Ubuntu 15.2.0-16ubuntu1) 15.2.0",
+      "build_command": [
+        "cc",
+        "-std=c11",
+        "-O2",
+        "-ffp-contract=off",
+        "-fPIC",
+        "-shared",
+        "-I",
+        "include",
+        "src/kernels/audio_conv1d_checked.c",
+        "-lm",
+        "-o",
+        "<temporary .so>"
+      ],
+      "repeats": 5,
+      "cases": [
+        {
+          "input_channels": 512,
+          "output_channels": 512,
+          "frames": 36,
+          "taps": 5,
+          "scalar_median_ms": 52.835999,
+          "hardware_fma_median_ms": 33.384459,
+          "speedup": 1.582652545006046,
+          "equal_elements": 18432,
+          "scalar_samples_ms": [
+            52.835999,
+            52.827543,
+            52.828835,
+            52.857389,
+            52.863369
+          ],
+          "hardware_fma_samples_ms": [
+            33.384459,
+            33.352338,
+            33.400628,
+            33.374659,
+            33.423191
+          ]
+        },
+        {
+          "input_channels": 128,
+          "output_channels": 22,
+          "frames": 12000,
+          "taps": 7,
+          "scalar_median_ms": 270.068178,
+          "hardware_fma_median_ms": 170.623892,
+          "speedup": 1.582827438961479,
+          "equal_elements": 264000,
+          "scalar_samples_ms": [
+            269.664041,
+            270.047339,
+            270.068178,
+            270.0907,
+            270.136526
+          ],
+          "hardware_fma_samples_ms": [
+            170.565672,
+            170.594136,
+            170.623892,
+            170.675448,
+            170.63904
+          ]
+        }
+      ],
+      "affinity_core": 0,
+      "reproduction_command": "taskset -c 0 python3 scripts/benchmark_audio_conv_hwfma.py --repeats 5"
+    },
+    "ryzen_cpu16": {
+      "host": "cke-amd-zen5-01",
+      "cpu": "AMD Ryzen 9 9950X3D",
+      "machine": "x86_64",
+      "compiler": "cc (Ubuntu 15.2.0-16ubuntu1) 15.2.0",
+      "build_command": [
+        "cc",
+        "-std=c11",
+        "-O2",
+        "-ffp-contract=off",
+        "-fPIC",
+        "-shared",
+        "-I",
+        "include",
+        "src/kernels/audio_conv1d_checked.c",
+        "-lm",
+        "-o",
+        "<temporary .so>"
+      ],
+      "repeats": 5,
+      "cases": [
+        {
+          "input_channels": 512,
+          "output_channels": 512,
+          "frames": 36,
+          "taps": 5,
+          "scalar_median_ms": 53.173941,
+          "hardware_fma_median_ms": 33.486779,
+          "speedup": 1.5879084996499664,
+          "equal_elements": 18432,
+          "scalar_samples_ms": [
+            53.126783,
+            53.155467,
+            53.180754,
+            53.184822,
+            53.173941
+          ],
+          "hardware_fma_samples_ms": [
+            33.499393,
+            33.485236,
+            33.486779,
+            33.480658,
+            33.494845
+          ]
+        },
+        {
+          "input_channels": 128,
+          "output_channels": 22,
+          "frames": 12000,
+          "taps": 7,
+          "scalar_median_ms": 270.818082,
+          "hardware_fma_median_ms": 170.97567,
+          "speedup": 1.5839568401749793,
+          "equal_elements": 264000,
+          "scalar_samples_ms": [
+            270.665877,
+            270.818082,
+            270.825436,
+            270.829714,
+            270.764171
+          ],
+          "hardware_fma_samples_ms": [
+            170.982774,
+            170.922912,
+            170.97567,
+            170.929073,
+            170.994776
+          ]
+        }
+      ],
+      "affinity_core": 16,
+      "reproduction_command": "taskset -c 16 python3 scripts/benchmark_audio_conv_hwfma.py --repeats 5"
+    },
+    "measurement_note": "An unpinned alternating run varied on the 128x22x12000 shape; the retained Ryzen comparisons are pinned to cores 0 and 16. This is kernel-only timing, not full synthesis latency."
+  },
+  "full_graph_replay": {
+    "host": "Intel Core i7-14700T",
+    "selected_conv_operations": 88,
+    "entry": "ck_kokoro_waveform_bounded",
+    "valid_samples": 61800,
+    "voice": "af_heart",
+    "phoneme_count": 36,
+    "noise": "captured Gaussian diagnostic lane",
+    "checkpoint_comparison": "exact scalar/candidate equality for text_conv0, f0_conv0, source_conv0, generator_stage1_source_conv, generator_conv_post, generator_waveform",
+    "waveform_sha256": "c5bc40f9d6bab4e1ddca82a2711244af5f3d570d020fe26923d1bb106abfdd8c",
+    "baseline_generated_library_sha256": "855dd75224a06367ce12b9dfeea00621d56eeef65e3ba06633218496aa8c5112",
+    "candidate_generated_library_sha256": "48904ae0e5905555dd3826fc105e7bac63f3a78576a635fe5ab3813f39dfe807",
+    "reproduction_command": "CKE_TTS_RUN_HW_FMA_REPLAY=1 python3 -m unittest -v tests.test_v8_kokoro_generated_waveform.KokoroGeneratedWaveformTest.test_full_waveform_hardware_fma_provider_replay",
+    "numerical_oracle_status": "connected Kokoro-versus-PyTorch waveform parity remains FAIL in existing diagnostic lane",
+    "complete_entry_timing": {
+      "intel_local": {
+        "selected_conv_operations": 88,
+        "valid_samples": 61800,
+        "waveform_sha256": "c5bc40f9d6bab4e1ddca82a2711244af5f3d570d020fe26923d1bb106abfdd8c",
+        "baseline_library_sha256": "855dd75224a06367ce12b9dfeea00621d56eeef65e3ba06633218496aa8c5112",
+        "candidate_library_sha256": "48904ae0e5905555dd3826fc105e7bac63f3a78576a635fe5ab3813f39dfe807",
+        "complete_entry_seconds": {
+          "scalar": [
+            106.98814094532281,
+            106.89157161209732
+          ],
+          "hardware_fma": [
+            72.06201162189245,
+            72.0862568905577
+          ]
+        },
+        "warm_speedup": 1.4828287141386949,
+        "timing_scope": "generated native entry only; prepared arena and weights, captured Gaussian, no WAV serialization",
+        "cpu": "Intel Core i7-14700T",
+        "affinity": "not pinned",
+        "audio_seconds": 2.575,
+        "candidate_warm_audio_seconds_per_wall_second": 0.03572109457575802,
+        "reproduction_command": "CKE_TTS_RUN_HW_FMA_REPLAY=1 CKE_TTS_HW_FMA_TIMING_REPEATS=2 python3 -m unittest -v tests.test_v8_kokoro_generated_waveform.KokoroGeneratedWaveformTest.test_full_waveform_hardware_fma_provider_replay"
+      },
+      "ryzen_cpu0": {
+        "selected_conv_operations": 88,
+        "valid_samples": 61800,
+        "waveform_sha256": "c5bc40f9d6bab4e1ddca82a2711244af5f3d570d020fe26923d1bb106abfdd8c",
+        "baseline_library_sha256": "855dd75224a06367ce12b9dfeea00621d56eeef65e3ba06633218496aa8c5112",
+        "candidate_library_sha256": "48904ae0e5905555dd3826fc105e7bac63f3a78576a635fe5ab3813f39dfe807",
+        "complete_entry_seconds": {
+          "scalar": [
+            100.87232448300347,
+            100.89222701918334
+          ],
+          "hardware_fma": [
+            53.21174165280536,
+            53.155248019844294
+          ]
+        },
+        "warm_speedup": 1.8980670917294475,
+        "timing_scope": "generated native entry only; prepared arena and weights, captured Gaussian, no WAV serialization",
+        "cpu": "AMD Ryzen 9 9950X3D",
+        "affinity": "CPU 0",
+        "audio_seconds": 2.575,
+        "candidate_warm_audio_seconds_per_wall_second": 0.048443006023388,
+        "reproduction_command": "taskset -c 0 CKE_TTS_RUN_HW_FMA_REPLAY=1 CKE_TTS_HW_FMA_TIMING_REPEATS=2 python3 -m unittest -v tests.test_v8_kokoro_generated_waveform.KokoroGeneratedWaveformTest.test_full_waveform_hardware_fma_provider_replay"
+      }
+    },
+    "timing_note": "Two executions per variant on each host; second is warm. Same process and prepared arenas, alternating order. Includes all generated model stages, excludes asset loading, arena preparation, PCM/WAV, and playback. Captured Gaussian diagnostic input; no model-level parity claim.",
+    "test_source_sha256": "97623748a28b2b59f8b96fa4ae428f81e2f27f2a7f3f1c170305654e6966276e"
+  },
+  "nightly_selection": {
+    "command": "python3 scripts/nightly_runner.py --tests tts_audio_conv_hardware_fma tts_audio_dilated_conv_generated tts_kokoro_generated_text_encoder --json <report.json>",
+    "observed": "3 passed, 0 failed, 0 skipped on Intel Core i7-14700T"
+  }
+}

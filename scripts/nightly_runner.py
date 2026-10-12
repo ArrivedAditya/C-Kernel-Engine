@@ -997,6 +997,10 @@ TEST_SUITES = {
         "Checked Dilated Conv1D PyTorch Oracles", "kernels",
         ROOT / "tests" / "test_v8_audio_dilated_conv_oracle.py",
     ),
+    "tts_audio_conv_hardware_fma": TestSuite(
+        "Checked Conv1D Hardware FMA and Pinned PyTorch Oracles", "kernels",
+        ROOT / "tests" / "test_v8_audio_conv_hwfma_oracle.py",
+    ),
     "tts_audio_dilated_conv_generated": TestSuite(
         "Checked Dilated Conv1D and Snake Generated Graph", "inference",
         ROOT / "tests" / "test_v8_audio_dilated_conv_generated.py",

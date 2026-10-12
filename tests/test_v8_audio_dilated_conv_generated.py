@@ -4,8 +4,10 @@ import ctypes
 import hashlib
 import json
 from pathlib import Path
+import platform
 import tempfile
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -13,7 +15,36 @@ from tests.v8_checked_graph_test_support import compile_native_graph
 
 
 class DilatedConvGeneratedTest(unittest.TestCase):
-    def compile(self, wrong_weight_capacity=False):
+    @staticmethod
+    def host_has_x86_fma():
+        if platform.machine().lower() not in ('x86_64', 'amd64', 'i386', 'i686'):
+            return False
+        cpuinfo = Path('/proc/cpuinfo')
+        if not cpuinfo.is_file():
+            raise RuntimeError('cannot establish x86 FMA support for generated test')
+        flags = next((line.partition(':')[2].split()
+                      for line in cpuinfo.read_text().splitlines()
+                      if line.startswith('flags')), None)
+        if flags is None:
+            raise RuntimeError('missing x86 CPU flags for generated test')
+        return 'fma' in flags
+
+    def reject_unsupported(self, convolved, activated):
+        self.assertTrue(np.all(convolved == -77.))
+        self.assertTrue(np.all(activated == -91.))
+        self.assertFalse(self.host_has_x86_fma(),
+            'generated FMA provider unexpectedly unsupported on FMA-capable host')
+        self.skipTest('x86 hardware FMA unavailable')
+
+    def test_fma_capable_host_rejects_unexpected_unsupported(self):
+        convolved = np.full((2, 7), -77., np.float32)
+        activated = np.full((2, 7), -91., np.float32)
+        with mock.patch.object(self, 'host_has_x86_fma', return_value=True):
+            with self.assertRaisesRegex(AssertionError,
+                    'unexpectedly unsupported on FMA-capable host'):
+                self.reject_unsupported(convolved, activated)
+
+    def compile(self, wrong_weight_capacity=False, hardware_fma=False):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
@@ -31,7 +62,8 @@ class DilatedConvGeneratedTest(unittest.TestCase):
             offset += len(data)
         conv = {
             'id': 'conv', 'op': 'audio_conv1d_dilated_checked',
-            'kernel': 'audio_conv1d_dilated_checked_channel_major_f32',
+            'kernel': 'audio_conv1d_dilated_checked_channel_major_f32_hwfma'
+                if hardware_fma else 'audio_conv1d_dilated_checked_channel_major_f32',
             'returns_status': True,
             'weight_refs': {'weight': 'stage.weight', 'bias': 'stage.bias'},
             'params': {'I': 2, 'O': 2, 'T': 5, 'K': 3, 'U': 5, 'Q': 10,
@@ -82,11 +114,13 @@ class DilatedConvGeneratedTest(unittest.TestCase):
             'entries': entries, 'quant_summary': {}, 'template': circuit}
         return compile_native_graph(root, source, path), weight, bias, alpha
 
-    def test_generated_composition_and_failure_propagation(self):
-        (layout, calls, _library, _loaded, function), weight, bias, alpha = self.compile()
+    def check_generated_composition(self, hardware_fma):
+        (layout, calls, _library, _loaded, function), weight, bias, alpha = self.compile(
+            hardware_fma=hardware_fma)
         self.assertEqual(calls['errors'], [])
         self.assertEqual([item['function'] for item in calls['operations']],
-            ['audio_conv1d_dilated_checked_channel_major_f32',
+            ['audio_conv1d_dilated_checked_channel_major_f32_hwfma'
+                if hardware_fma else 'audio_conv1d_dilated_checked_channel_major_f32',
              'audio_snake_strided_f32_checked'])
         size = layout['memory']['arena']['total_size']
         raw = (ctypes.c_uint8 * (size + 63))()
@@ -112,7 +146,10 @@ class DilatedConvGeneratedTest(unittest.TestCase):
             signal[:, :5] = values
             convolved[:] = -77.
             activated[:] = -91.
-            self.assertEqual(function(arena, len(arena)), 0)
+            status = function(arena, len(arena))
+            if hardware_fma and status == -5:
+                self.reject_unsupported(convolved, activated)
+            self.assertEqual(status, 0)
             expected = np.empty((2, 5), np.float32)
             for oc in range(2):
                 for frame in range(5):
@@ -133,6 +170,12 @@ class DilatedConvGeneratedTest(unittest.TestCase):
         self.assertNotEqual(function(arena, len(arena)), 0)
         self.assertTrue(np.all(convolved == -77.))
         self.assertTrue(np.all(activated == -91.))
+
+    def test_generated_composition_and_failure_propagation(self):
+        self.check_generated_composition(False)
+
+    def test_generated_hardware_fma_selection_and_failure_propagation(self):
+        self.check_generated_composition(True)
 
     def test_wrong_weight_geometry_rejected_before_codegen(self):
         with self.assertRaisesRegex(RuntimeError, 'HARD CALL CONSTANT FAULT'):

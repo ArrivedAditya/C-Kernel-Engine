@@ -77,6 +77,7 @@ class KokoroGeneratedWaveformTest(unittest.TestCase):
         weights['waveform_decoder.generator.conv_post.bias'] = \
             cls.spectral['bias']
         fixture = prepare_duration_fixture(root, waveform_author.OUTPUT, weights)
+        cls.waveform_source = fixture.source
         cls.encoder, cls.duration = fixture.encoder, fixture.duration
         cls.entries, cls.bump = fixture.entries, fixture.bump
         native = root / 'waveform'
@@ -126,23 +127,100 @@ class KokoroGeneratedWaveformTest(unittest.TestCase):
                           buffer=arena, offset=item['abs_offset'])
 
     @classmethod
-    def arena(cls):
+    def arena(cls, layout=None):
+        layout = cls.layout if layout is None else layout
         arena = populated_duration_arena(
-            cls.layout, cls.entries, cls.bump, cls.encoder, cls.duration)
-        cls.view(cls.layout, arena, 'decoder_style')[:] = \
+            layout, cls.entries, cls.bump, cls.encoder, cls.duration)
+        cls.view(layout, arena, 'decoder_style')[:] = \
             cls.refs.encode['decoder_style'].ravel()
-        cls.view(cls.layout, arena, 'source_gaussian').reshape(
+        cls.view(layout, arena, 'source_gaussian').reshape(
             76800, 9)[:61800] = cls.refs.source['gaussian'].reshape(61800, 9)
-        cls.view(cls.layout, arena, 'source_stft_window')[:] = \
+        cls.view(layout, arena, 'source_stft_window')[:] = \
             cls.refs.source['window']
         taps = np.arange(20, dtype=np.float64)
         angles = -2 * np.pi * np.arange(11)[:, None] * taps / 20
-        cls.view(cls.layout, arena, 'source_stft_cos').reshape(11, 20)[:] = \
+        cls.view(layout, arena, 'source_stft_cos').reshape(11, 20)[:] = \
             np.cos(angles)
-        cls.view(cls.layout, arena, 'source_stft_sin').reshape(11, 20)[:] = \
+        cls.view(layout, arena, 'source_stft_sin').reshape(11, 20)[:] = \
             np.sin(angles)
-        cls.view(cls.layout, arena, 'generator_waveform')[:] = -91.
+        cls.view(layout, arena, 'generator_waveform')[:] = -91.
         return arena
+
+    @unittest.skipUnless(os.environ.get('CKE_TTS_RUN_HW_FMA_REPLAY'),
+                         'asset-backed full-waveform hardware-FMA replay not requested')
+    def test_full_waveform_hardware_fma_provider_replay(self):
+        """Compare explicit candidate selection with the full scalar graph."""
+        candidate = copy.deepcopy(self.waveform_source)
+        selected = 0
+        names = {
+            'audio_conv1d_checked_channel_major_f32':
+                'audio_conv1d_checked_channel_major_f32_hwfma',
+            'audio_conv1d_dilated_checked_channel_major_f32':
+                'audio_conv1d_dilated_checked_channel_major_f32_hwfma'}
+        for block in candidate['template']['block_types'].values():
+            for op in block['header'] + block['body']['ops'] + block['footer']:
+                if op.get('kernel') in names:
+                    op['kernel'] = names[op['kernel']]
+                    selected += 1
+        self.assertGreater(selected, 0)
+        candidate['template']['required_numerical_contracts'][
+            'audio_conv1d_checked']['phases']['prefill']['contract_id'] = \
+            'audio_conv1d_checked_x86_hwfma_fp32'
+        candidate_root = Path(self.temp.name) / 'hwfma'
+        candidate_root.mkdir()
+        layout, calls, _, _, function = compile_native_graph(
+            candidate_root, candidate, waveform_author.OUTPUT)
+        self.assertEqual(calls['errors'], [])
+        functions = [item['function'] for item in calls['operations']]
+        self.assertEqual(sum(name in functions for name in names.values()), 2)
+        self.assertEqual(sum(function_name in names.values()
+                             for function_name in functions), selected)
+        function.argtypes = self.fn.argtypes
+        baseline_arena = self.arena()
+        candidate_arena = self.arena(layout)
+        repeats = int(os.environ.get('CKE_TTS_HW_FMA_TIMING_REPEATS', '2'))
+        self.assertGreaterEqual(repeats, 2)
+        timings = {'scalar': [], 'hardware_fma': []}
+        baseline_lengths = candidate_lengths = None
+        for repetition in range(repeats):
+            variants = [('scalar', self.fn, baseline_arena),
+                        ('hardware_fma', function, candidate_arena)]
+            if repetition % 2:
+                variants.reverse()
+            for variant, entry, arena in variants:
+                lengths = [ctypes.c_int32(-999) for _ in range(7)]
+                started = time.perf_counter()
+                status = entry(arena, len(arena), *(
+                    ctypes.byref(value) for value in lengths))
+                timings[variant].append(time.perf_counter() - started)
+                self.assertEqual(status, 0, variant)
+                if variant == 'scalar':
+                    baseline_lengths = lengths
+                else:
+                    candidate_lengths = lengths
+        self.assertEqual([value.value for value in baseline_lengths],
+                         [value.value for value in candidate_lengths])
+        for name in ('text_conv0', 'f0_conv0', 'source_conv0',
+                     'generator_stage1_source_conv', 'generator_conv_post',
+                     'generator_waveform'):
+            baseline = self.view(self.layout, baseline_arena, name)
+            optimized = self.view(layout, candidate_arena, name)
+            np.testing.assert_array_equal(baseline, optimized, err_msg=name)
+        print('CKE_HW_FMA_FULL_WAVEFORM ' + json.dumps({
+            'selected_conv_operations': selected,
+            'valid_samples': candidate_lengths[3].value,
+            'waveform_sha256': hashlib.sha256(self.view(
+                layout, candidate_arena, 'generator_waveform')[:61800]
+                .tobytes()).hexdigest(),
+            'baseline_library_sha256': json.loads((self.native_dir /
+                'build-identity.json').read_text())['library_sha256'],
+            'candidate_library_sha256': json.loads((candidate_root /
+                'build-identity.json').read_text())['library_sha256'],
+            'complete_entry_seconds': timings,
+            'warm_speedup': float(np.median(timings['scalar'][1:]) /
+                                  np.median(timings['hardware_fma'][1:])),
+            'timing_scope': 'generated native entry only; prepared arena and '
+                'weights, captured Gaussian, no WAV serialization'}))
 
     @classmethod
     def direct_arena(cls):
