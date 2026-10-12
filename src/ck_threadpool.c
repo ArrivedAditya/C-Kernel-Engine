@@ -111,6 +111,26 @@ struct ck_threadpool {
     atomic_uint_fast64_t profile_completion_wait_ns;
 };
 
+/* A caller can be slot 0 even when it did not create the pool. The callback's
+ * dispatch width also cannot be inferred from the pool's worker capacity:
+ * single-worker calls may overlap a multi-worker dispatch. */
+typedef struct {
+    const ck_threadpool_t *pool;
+    int ith;
+    int nth;
+} ck_dispatch_context_t;
+
+static _Thread_local ck_dispatch_context_t g_dispatch_context;
+
+static void run_work(ck_threadpool_t *pool, ck_work_fn_t fn,
+                     int ith, int nth, void *args)
+{
+    const ck_dispatch_context_t previous = g_dispatch_context;
+    g_dispatch_context = (ck_dispatch_context_t){pool, ith, nth};
+    fn(ith, nth, args);
+    g_dispatch_context = previous;
+}
+
 static uint64_t monotonic_ns(void)
 {
     struct timespec now;
@@ -232,7 +252,7 @@ static void *worker_main(void *arg)
 worker_have_work:
         /* Execute work */
         if (fn) {
-            fn(ith, active, args);
+            run_work(pool, fn, ith, active, args);
         }
 
         /* Signal completion */
@@ -391,7 +411,7 @@ void ck_threadpool_dispatch_n(ck_threadpool_t *pool, int active_threads, ck_work
 
     /* Single-thread fast path: just call directly */
     if (active_threads == 1 || pool->n_threads == 1) {
-        fn(0, 1, args);
+        run_work(pool, fn, 0, 1, args);
         if (profile) {
             const uint64_t dispatch_end = monotonic_ns();
             atomic_fetch_add_explicit(&pool->profile_dispatch_count, 1, memory_order_relaxed);
@@ -431,7 +451,7 @@ void ck_threadpool_dispatch_n(ck_threadpool_t *pool, int active_threads, ck_work
 
     /* Main thread (ith=0) does its share */
     const uint64_t main_start = profile ? monotonic_ns() : 0;
-    fn(0, active_threads, args);
+    run_work(pool, fn, 0, active_threads, args);
     const uint64_t main_end = profile ? monotonic_ns() : 0;
 
     /* Wait for all workers to complete */
@@ -528,7 +548,11 @@ void ck_threadpool_parallel_for_n(ck_threadpool_t *pool,
 
 void ck_threadpool_barrier(ck_threadpool_t *pool)
 {
-    if (!pool || pool->n_threads <= 1) return;
+    /* Only participants in this multi-worker dispatch use its barrier.
+     * In particular, an overlapping single-worker callback must never touch
+     * the shared barrier belonging to a different dispatch. */
+    if (!pool || g_dispatch_context.pool != pool ||
+        g_dispatch_context.nth <= 1) return;
     barrier_wait(&pool->barrier);
 }
 
@@ -570,6 +594,7 @@ int ck_threadpool_capacity(const ck_threadpool_t *pool)
 int ck_threadpool_thread_id(const ck_threadpool_t *pool)
 {
     if (!pool) return -1;
+    if (g_dispatch_context.pool == pool) return g_dispatch_context.ith;
     pthread_t self = pthread_self();
     for (int i = 0; i < pool->n_threads; i++) {
         if (pthread_equal(self, pool->workers[i].thread)) {

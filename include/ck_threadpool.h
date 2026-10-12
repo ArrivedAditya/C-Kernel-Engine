@@ -153,7 +153,7 @@ void ck_threadpool_destroy(ck_threadpool_t *pool);
  * 1. Sets the work function and args
  * 2. Bumps the dispatch counter (wakes workers)
  * 3. Main thread (ith=0) executes its share
- * 4. Waits for all threads to complete via barrier
+ * 4. Waits for all worker callbacks to complete
  *
  * This is a blocking call — returns when ALL threads have finished.
  * Concurrent multi-worker dispatches on the same pool are serialized.
@@ -202,8 +202,9 @@ void ck_threadpool_parallel_for_n(ck_threadpool_t *pool,
 /**
  * Barrier synchronization within a dispatched work function.
  *
- * ALL threads must call this at the same point. Threads spin-wait
- * until all have arrived, then proceed.
+ * ALL participants in the current dispatch must call this at the same point.
+ * A single-worker dispatch returns immediately, even if the pool has more
+ * workers or another caller is executing a multi-worker dispatch.
  *
  * Must only be called from within a work function (during dispatch).
  *
@@ -238,7 +239,12 @@ int ck_threadpool_n_threads(const ck_threadpool_t *pool);
 /** Get the maximum worker capacity available to explicit dispatch_n calls. */
 int ck_threadpool_capacity(const ck_threadpool_t *pool);
 
-/** Get thread index for current thread (0 = main, -1 if not in pool) */
+/**
+ * Get the current callback's ith for this pool. Outside a callback, return
+ * the physical worker index (or the pool creator's legacy index 0), and -1
+ * for an unrelated thread. The current dispatch caller is always index 0,
+ * including callers that did not create the pool.
+ */
 int ck_threadpool_thread_id(const ck_threadpool_t *pool);
 
 /** Enable profiling and reset cumulative dispatch timing counters. */

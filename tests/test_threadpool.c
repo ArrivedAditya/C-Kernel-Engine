@@ -14,6 +14,7 @@
  *   9. Parallel sum correctness (simulated GEMV row split)
  *  10. Dynamic parallel-for covers every independent item exactly once
  *  11. Simultaneous callers keep their dispatch descriptors and ranges private
+ *  12. Callback barriers and logical IDs follow each dispatch's width/caller
  *
  * Usage:
  *   ./build/test_threadpool           # Run all tests
@@ -578,6 +579,121 @@ static int test_concurrent_dispatch_callers(void)
     return 1;
 }
 
+typedef struct {
+    ck_threadpool_t *pool;
+    atomic_int *start;
+    atomic_int *single_entered;
+    atomic_int *wide_entered;
+    int width;
+    int repeats;
+    atomic_int seen[4];
+    atomic_int wrong_identity;
+    atomic_int wrong_barrier;
+    int outside_id;
+} callback_contract_case_t;
+
+static void callback_contract_work(int ith, int nth, void *opaque)
+{
+    callback_contract_case_t *test = opaque;
+    if (nth != test->width || ck_threadpool_thread_id(test->pool) != ith) {
+        atomic_fetch_add(&test->wrong_identity, 1);
+    }
+    atomic_fetch_add(&test->seen[ith], 1);
+    if (nth > 1) {
+        atomic_store(test->wide_entered, 1);
+        while (!atomic_load(test->single_entered)) {
+            struct timespec pause = {0, 100000};
+            nanosleep(&pause, NULL);
+        }
+    }
+    if (nth == 1) {
+        if (test->single_entered) atomic_store(test->single_entered, 1);
+        while (!atomic_load(test->wide_entered)) {
+            struct timespec pause = {0, 100000};
+            nanosleep(&pause, NULL);
+        }
+    }
+    ck_threadpool_barrier(test->pool);
+    if (nth > 1) {
+        for (int i = 0; i < nth; i++) {
+            if (atomic_load(&test->seen[i]) == 0) {
+                atomic_fetch_add(&test->wrong_barrier, 1);
+            }
+        }
+    }
+    ck_threadpool_barrier(test->pool);
+}
+
+static void *callback_contract_caller(void *opaque)
+{
+    callback_contract_case_t *test = opaque;
+    while (!atomic_load(test->start)) {
+        struct timespec pause = {0, 100000};
+        nanosleep(&pause, NULL);
+    }
+    for (int repeat = 0; repeat < test->repeats; repeat++) {
+        ck_threadpool_dispatch_n(test->pool, test->width,
+                                 callback_contract_work, test);
+    }
+    test->outside_id = ck_threadpool_thread_id(test->pool);
+    return NULL;
+}
+
+static int test_callback_dispatch_context(void)
+{
+    printf("  [11] Dispatch-local barriers and callback identity...\n");
+    ck_threadpool_t *pool = ck_threadpool_create(4);
+    TEST_ASSERT(pool != NULL, "create callback-contract pool");
+    atomic_int start = 0;
+    atomic_int single_entered = 0;
+    atomic_int wide_entered = 0;
+    callback_contract_case_t single = {.pool = pool, .wide_entered = &wide_entered,
+                                       .width = 1};
+    atomic_init(&single.seen[0], 0);
+    atomic_init(&single.wrong_identity, 0);
+    atomic_store(&wide_entered, 1);
+    ck_threadpool_dispatch_n(pool, 1, callback_contract_work, &single);
+    TEST_ASSERT(atomic_load(&single.seen[0]) == 1,
+                "one-worker callback on larger pool completes both barriers");
+    TEST_ASSERT(atomic_load(&single.wrong_identity) == 0,
+                "one-worker callback reports logical ID zero");
+    atomic_store(&wide_entered, 0);
+    callback_contract_case_t cases[2] = {{0}};
+    pthread_t callers[2];
+    for (int i = 0; i < 2; i++) {
+        cases[i].pool = pool;
+        cases[i].start = &start;
+        cases[i].single_entered = &single_entered;
+        cases[i].wide_entered = &wide_entered;
+        cases[i].width = i == 0 ? 1 : 4;
+        cases[i].repeats = 20;
+        for (int j = 0; j < 4; j++) atomic_init(&cases[i].seen[j], 0);
+        atomic_init(&cases[i].wrong_identity, 0);
+        atomic_init(&cases[i].wrong_barrier, 0);
+        TEST_ASSERT(pthread_create(&callers[i], NULL,
+            callback_contract_caller, &cases[i]) == 0,
+            "create callback-contract caller");
+    }
+    atomic_store(&start, 1);
+    for (int i = 0; i < 2; i++) {
+        TEST_ASSERT(pthread_join(callers[i], NULL) == 0,
+                    "join callback-contract caller");
+        TEST_ASSERT(cases[i].outside_id == -1,
+                    "external caller has no pool identity outside dispatch");
+        TEST_ASSERT(atomic_load(&cases[i].wrong_identity) == 0,
+                    "callback ID agrees with ith on external callers and workers");
+        TEST_ASSERT(atomic_load(&cases[i].wrong_barrier) == 0,
+                    "barrier waits for every participant in its dispatch");
+        for (int j = 0; j < 4; j++) {
+            TEST_ASSERT(atomic_load(&cases[i].seen[j]) ==
+                        (j < cases[i].width ? cases[i].repeats : 0),
+                        "only participants in each width execute callbacks");
+        }
+    }
+    ck_threadpool_destroy(pool);
+    return 1;
+}
+
 static int test_gemm_schedule_policy(void)
 {
     printf("  [10] GEMM schedule policy...\n");
@@ -725,6 +841,7 @@ int main(int argc, char **argv)
         ok &= test_subset_dispatch();
         ok &= test_dynamic_parallel_for();
         ok &= test_concurrent_dispatch_callers();
+        ok &= test_callback_dispatch_context();
         ok &= test_gemm_schedule_policy();
 
         printf("\n  Results: %d/%d passed\n", g_tests_passed, g_tests_run);

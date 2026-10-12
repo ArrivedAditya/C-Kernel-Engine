@@ -189,6 +189,14 @@ descriptor and completion counter. A single-worker call runs directly without
 publishing a descriptor. A caller must not destroy the pool during a dispatch or
 recursively dispatch the same pool from its work function.</p>
 
+<p>Inside a work callback, <code>ck_threadpool_thread_id(pool)</code> returns
+that callback's logical <code>ith</code>, including slot 0 on a host thread
+that did not create the pool. The explicit barrier uses the callback's active
+dispatch width. It returns immediately for a one-worker callback, even when
+that callback overlaps another caller's multi-worker dispatch. Every participant
+in a multi-worker callback must reach each barrier in the same order. Outside
+a callback, the ID query retains its legacy physical-worker/creator lookup.</p>
+
 <!-- ================================================================== -->
 <!--  4. LIFECYCLE                                                       -->
 <!-- ================================================================== -->
