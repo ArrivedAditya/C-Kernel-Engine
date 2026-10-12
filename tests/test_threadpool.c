@@ -13,6 +13,7 @@
  *   8. Barrier latency benchmark
  *   9. Parallel sum correctness (simulated GEMV row split)
  *  10. Dynamic parallel-for covers every independent item exactly once
+ *  11. Simultaneous callers keep their dispatch descriptors and ranges private
  *
  * Usage:
  *   ./build/test_threadpool           # Run all tests
@@ -507,6 +508,76 @@ static int test_dynamic_parallel_for(void)
     return 1;
 }
 
+typedef struct {
+    ck_threadpool_t *pool;
+    atomic_int *start;
+    atomic_int hits[PARALLEL_FOR_N];
+    int active;
+    int repeats;
+} concurrent_range_case_t;
+
+static void concurrent_range(int begin, int end, void *opaque)
+{
+    concurrent_range_case_t *test = opaque;
+    for (int index = begin; index < end; index++) {
+        atomic_fetch_add_explicit(&test->hits[index], 1, memory_order_relaxed);
+    }
+    /* Hold the descriptor long enough to exercise overlapping callers. */
+    struct timespec pause = {0, 100000};
+    nanosleep(&pause, NULL);
+}
+
+static void *concurrent_range_caller(void *opaque)
+{
+    concurrent_range_case_t *test = opaque;
+    while (!atomic_load_explicit(test->start, memory_order_acquire)) {
+        struct timespec pause = {0, 100000};
+        nanosleep(&pause, NULL);
+    }
+    for (int repeat = 0; repeat < test->repeats; repeat++) {
+        ck_threadpool_parallel_for_n(test->pool, test->active, 0,
+            PARALLEL_FOR_N, 16, concurrent_range, test);
+    }
+    return NULL;
+}
+
+static int test_concurrent_dispatch_callers(void)
+{
+    printf("  [10] Concurrent independent dispatch callers...\n");
+    ck_threadpool_t *pool = ck_threadpool_create(4);
+    TEST_ASSERT(pool != NULL, "create shared dispatch pool");
+    atomic_int start = 0;
+    concurrent_range_case_t cases[3] = {{0}};
+    pthread_t callers[3];
+    const int widths[] = {1, 2, 4};
+    for (int case_id = 0; case_id < 3; case_id++) {
+        cases[case_id].pool = pool;
+        cases[case_id].start = &start;
+        cases[case_id].active = widths[case_id];
+        cases[case_id].repeats = 50;
+        for (int index = 0; index < PARALLEL_FOR_N; index++) {
+            atomic_init(&cases[case_id].hits[index], 0);
+        }
+        TEST_ASSERT(pthread_create(&callers[case_id], NULL,
+            concurrent_range_caller, &cases[case_id]) == 0,
+            "create concurrent caller");
+    }
+    atomic_store_explicit(&start, 1, memory_order_release);
+    for (int case_id = 0; case_id < 3; case_id++) {
+        TEST_ASSERT(pthread_join(callers[case_id], NULL) == 0,
+            "join concurrent caller");
+    }
+    for (int case_id = 0; case_id < 3; case_id++) {
+        for (int index = 0; index < PARALLEL_FOR_N; index++) {
+            TEST_ASSERT(atomic_load(&cases[case_id].hits[index]) ==
+                cases[case_id].repeats,
+                "each caller owns its complete range on every dispatch");
+        }
+    }
+    ck_threadpool_destroy(pool);
+    return 1;
+}
+
 static int test_gemm_schedule_policy(void)
 {
     printf("  [10] GEMM schedule policy...\n");
@@ -653,6 +724,7 @@ int main(int argc, char **argv)
         ok &= test_parallel_sum();
         ok &= test_subset_dispatch();
         ok &= test_dynamic_parallel_for();
+        ok &= test_concurrent_dispatch_callers();
         ok &= test_gemm_schedule_policy();
 
         printf("\n  Results: %d/%d passed\n", g_tests_passed, g_tests_run);

@@ -1368,6 +1368,12 @@ MAKE_TARGETS = {
         "target": "test-threadpool-parity",
         "timeout_sec": 300,
     },
+    "threadpool_dispatch_contracts": {
+        "name": "Threadpool Dispatch and Concurrent Caller Contracts",
+        "category": "parity",
+        "target": "test-threadpool",
+        "timeout_sec": 60,
+    },
     "v6_6_contracts": {
         "name": "v6.6 Tooling Contracts (archive)",
         "category": "archive",
@@ -1821,6 +1827,7 @@ NIGHTLY_PROFILES = {
         "llamacpp_xray_callback",
         "q4q6_production_graph_parity",
         "threadpool_parity",
+        "threadpool_dispatch_contracts",
         "v8_regression_fast",
         "v8_audio_contracts",
         "v8_xeon_family_contracts",

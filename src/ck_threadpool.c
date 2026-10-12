@@ -7,7 +7,7 @@
  * @brief Persistent pthread thread pool for CK-Engine inference
  *
  * Architecture:
- *   - N-1 worker pthreads created at startup, main thread is thread 0
+ *   - N-1 worker pthreads created at startup, calling thread executes slot 0
  *   - Workers spin on atomic dispatch counter waiting for work
  *   - Barriers use atomic counter + spin-wait with _mm_pause()
  *   - Hybrid polling: spin CK_THREADPOOL_SPIN_COUNT rounds, then condvar
@@ -99,6 +99,7 @@ struct ck_threadpool {
     _Alignas(CK_CACHE_LINE) atomic_int paused;
 
     /* Condvar for sleep/wake (hybrid polling) */
+    pthread_mutex_t dispatch_mutex; /* one multi-worker descriptor at a time */
     pthread_mutex_t mutex;
     pthread_cond_t  cond_dispatch;  /* workers wait here when sleeping */
     pthread_cond_t  cond_done;      /* main waits here for completion */
@@ -237,7 +238,7 @@ worker_have_work:
         /* Signal completion */
         if (atomic_fetch_add_explicit(&pool->n_complete, 1, memory_order_acq_rel)
             == active - 2) {
-            /* Last worker done — wake main thread if it's waiting */
+            /* Last worker done — wake the calling thread if it is waiting */
             pthread_mutex_lock(&pool->mutex);
             pthread_cond_signal(&pool->cond_done);
             pthread_mutex_unlock(&pool->mutex);
@@ -304,11 +305,12 @@ ck_threadpool_t *ck_threadpool_create_capacity(int default_threads,
 
     barrier_init(&pool->barrier, default_threads);
 
+    pthread_mutex_init(&pool->dispatch_mutex, NULL);
     pthread_mutex_init(&pool->mutex, NULL);
     pthread_cond_init(&pool->cond_dispatch, NULL);
     pthread_cond_init(&pool->cond_done, NULL);
 
-    /* Thread 0 = main thread (no pthread created) */
+    /* Slot 0 runs on the dispatch caller (no worker pthread created). */
     pool->workers[0].id = 0;
     pool->workers[0].pool = pool;
     pool->workers[0].thread = pthread_self();
@@ -364,6 +366,7 @@ void ck_threadpool_destroy(ck_threadpool_t *pool)
     pthread_cond_destroy(&pool->cond_dispatch);
     pthread_cond_destroy(&pool->cond_done);
     pthread_mutex_destroy(&pool->mutex);
+    pthread_mutex_destroy(&pool->dispatch_mutex);
 
     free(pool);
 }
@@ -403,6 +406,11 @@ void ck_threadpool_dispatch_n(ck_threadpool_t *pool, int active_threads, ck_work
         }
         return;
     }
+
+    /* The work descriptor and completion counter belong to one dispatch.
+     * Concurrent callers may share a pool, but their multi-worker dispatches
+     * must not overwrite one another's descriptor or barrier state. */
+    pthread_mutex_lock(&pool->dispatch_mutex);
 
     /* Reset barrier phase for this dispatch */
     barrier_init(&pool->barrier, active_threads);
@@ -460,6 +468,7 @@ void ck_threadpool_dispatch_n(ck_threadpool_t *pool, int active_threads, ck_work
             dispatch_end - main_end,
             memory_order_relaxed);
     }
+    pthread_mutex_unlock(&pool->dispatch_mutex);
 }
 
 void ck_threadpool_dispatch(ck_threadpool_t *pool, ck_work_fn_t fn, void *args)

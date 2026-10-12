@@ -7,7 +7,7 @@
  * - Zero allocation after init (all memory pre-allocated)
  * - Cache-line aligned atomics to avoid false sharing
  * - Hybrid polling: spin N rounds, then fall back to condvar
- * - Thread 0 = main thread (does serial ops + its share of parallel work)
+ * - Thread 0 = calling thread (does serial ops + its share of parallel work)
  *
  * Usage:
  *   ck_threadpool_t *pool = ck_threadpool_create(4);  // 4 threads total
@@ -59,9 +59,9 @@ extern "C" {
 
 /**
  * Work function signature.
- * Called on ALL threads (including main thread 0).
+ * Called on ALL threads (including calling thread 0).
  *
- * @param ith   Thread index (0 = main thread)
+ * @param ith   Thread index (0 = calling thread)
  * @param nth   Total number of threads
  * @param args  Opaque argument pointer (set via dispatch)
  */
@@ -115,7 +115,7 @@ int ck_gemm_dynamic_schedule_enabled(void);
 
 /**
  * Create a thread pool with `n_threads` total threads.
- * Thread 0 is the calling (main) thread; n_threads-1 workers are spawned.
+ * Thread 0 is the calling thread; n_threads-1 workers are spawned.
  *
  * @param n_threads  Total thread count (including main). Must be >= 1.
  *                   Pass 0 for auto-detect (physical cores).
@@ -156,6 +156,10 @@ void ck_threadpool_destroy(ck_threadpool_t *pool);
  * 4. Waits for all threads to complete via barrier
  *
  * This is a blocking call — returns when ALL threads have finished.
+ * Concurrent multi-worker dispatches on the same pool are serialized.
+ * Single-worker calls may execute concurrently because they do not publish
+ * a shared work descriptor. Do not destroy a pool while a call is active or
+ * recursively dispatch the same pool from one of its work functions.
  *
  * @param pool  Thread pool
  * @param fn    Work function (called on each thread)
@@ -170,7 +174,7 @@ void ck_threadpool_dispatch(ck_threadpool_t *pool, ck_work_fn_t fn, void *args);
  * The work function sees nth == active_threads.
  *
  * @param pool            Thread pool
- * @param active_threads  Number of active threads including main thread
+ * @param active_threads  Number of active threads including the calling thread
  * @param fn              Work function
  * @param args            Argument passed to fn
  */
@@ -228,7 +232,7 @@ void ck_threadpool_resume(ck_threadpool_t *pool);
  * Queries
  * ============================================================================ */
 
-/** Get the ordinary/default dispatch width (including the main thread). */
+/** Get the ordinary/default dispatch width (including the calling thread). */
 int ck_threadpool_n_threads(const ck_threadpool_t *pool);
 
 /** Get the maximum worker capacity available to explicit dispatch_n calls. */
