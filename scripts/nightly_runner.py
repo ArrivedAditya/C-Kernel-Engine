@@ -701,6 +701,11 @@ TEST_SUITES = {
     "embedding": TestSuite("Embedding", "kernels", UNITTEST_DIR / "test_embedding.py"),
     "attention": TestSuite("Attention", "kernels", UNITTEST_DIR / "test_attention.py"),
     "attention_sliding": TestSuite("Attention Sliding Window", "kernels", UNITTEST_DIR / "test_attention_sliding_contract.py"),
+    "attention_gemma3_arithmetic": TestSuite(
+        "Gemma3 Attention Arithmetic Fixture", "kernels",
+        ROOT / "tests" / "test_v8_gemma3_attention_arithmetic_fixture.py",
+        timeout_sec=180,
+    ),
     "kv_cache": TestSuite("KV Cache Attention", "kernels", UNITTEST_DIR / "test_kv_cache_attention.py"),
     "kv_cache_decode": TestSuite("KV Cache Decode", "kernels", UNITTEST_DIR / "test_kv_cache_layer_decode.py"),
     "fused_attention_decode": TestSuite("Fused Attention Decode", "kernels", UNITTEST_DIR / "test_fused_attention_decode.py"),
