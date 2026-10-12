@@ -14,8 +14,11 @@ import hashlib
 import json
 import math
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from server.serving_bundle import verified_loaded_symbol_backing
 from server.session_v8 import SESSION_LIB_PATH, SessionV8
@@ -25,6 +28,7 @@ from version.v8.scripts.xray_batch_prefill_kv_v8 import (
 
 PROMPTS = ((100, 101, 102), (110, 111))
 NEXT_TOKENS = (103, 112)
+FOLLOWUP_TOKENS = (104, 113)
 REUSE_PROMPT = (120, 121, 122)
 
 
@@ -38,6 +42,14 @@ def assert_isolated_parity(shared: dict, isolated: dict) -> None:
             shared["kv"] != isolated["kv"] or
             shared["logits_sha256"] != isolated["logits_sha256"]):
         raise AssertionError("advancing slot differs from isolated execution")
+
+
+def assert_new_logical_rows(before: dict, after: dict) -> None:
+    """A position-only header change must not count as KV progress."""
+    if after["position"] != before["position"] + 1:
+        raise AssertionError("advancing slot position did not progress")
+    if not any(layer["last_row_nonzero"] for layer in after["kv"].values()):
+        raise AssertionError("new logical KV row was not written")
 
 
 def diagnose(bundle: Path, *, layers: tuple[int, ...] = (0, 16, 17),
@@ -84,8 +96,23 @@ def diagnose(bundle: Path, *, layers: tuple[int, ...] = (0, 16, 17),
                     path = Path(directory) / f"layer_{layer}.ckx"
                     if model.ck_model_debug_export_kv(str(path).encode(), layer):
                         raise RuntimeError(f"KV export failed at layer {layer}")
-                    kv[str(layer)] = parse_kv_export(
-                        path.read_bytes(), layer=layer, position=position)["sha256"]
+                    exported = parse_kv_export(
+                        path.read_bytes(), layer=layer, position=position)
+                    row_bytes = exported["row_bytes"]
+                    payload = exported["payload"]
+                    last_rows = [
+                        payload[row * row_bytes:(row + 1) * row_bytes]
+                        for kind in range(2) for head in range(exported["heads"])
+                        for row in [((kind * exported["heads"] + head) * position
+                                    + position - 1)]
+                    ]
+                    kv[str(layer)] = {
+                        "ckx_sha256": exported["sha256"],
+                        "logical_payload_sha256": hashlib.sha256(payload).hexdigest(),
+                        "last_row_sha256": [hashlib.sha256(row).hexdigest()
+                                            for row in last_rows],
+                        "last_row_nonzero": any(any(row) for row in last_rows),
+                    }
             result = {"position": position, "kv": kv, "arena_pointer": pointer}
             if logits is not None:
                 if any(not math.isfinite(value) for value in logits):
@@ -111,18 +138,28 @@ def diagnose(bundle: Path, *, layers: tuple[int, ...] = (0, 16, 17),
                 raise AssertionError("wrong slot advanced after cancellation")
             after = [snapshot(0), snapshot(1)]
             assert_parked_unchanged(before[parked], after[parked])
-            if (after[advancing]["position"] != before[advancing]["position"] + 1 or
-                    after[advancing]["kv"] == before[advancing]["kv"]):
-                raise AssertionError("advancing slot made no logical progress")
+            assert_new_logical_rows(before[advancing], after[advancing])
             shared = snapshot(advancing, logits[advancing])
 
             batch.reset_slot(parked)
-            batch.prefill(parked, REUSE_PROMPT)
+            replacement_ticket, replacement_logits = batch.prefill(parked, REUSE_PROMPT)
             after_reuse = snapshot(advancing)
             assert_parked_unchanged(after[advancing], after_reuse)
-            replacement = snapshot(parked)
-            if replacement["kv"] == before[parked]["kv"]:
-                raise AssertionError("reused slot retained prior logical KV")
+            replacement = snapshot(parked, replacement_logits)
+
+            batch.request_cancel(replacement_ticket)
+            followup_mask, followup_logits = batch.step(FOLLOWUP_TOKENS)
+            if followup_mask != 1 << advancing:
+                raise AssertionError("surviving slot failed to advance after reuse")
+            continued = snapshot(advancing, followup_logits[advancing])
+            assert_new_logical_rows(shared, continued)
+            assert_parked_unchanged(replacement, snapshot(parked))
+
+            for slot in (0, 1):
+                batch.reset_slot(slot)
+            _, clean_replacement_logits = batch.prefill(parked, REUSE_PROMPT)
+            clean_replacement = snapshot(parked, clean_replacement_logits)
+            assert_isolated_parity(replacement, clean_replacement)
 
             for slot in (0, 1):
                 batch.reset_slot(slot)
@@ -132,17 +169,27 @@ def diagnose(bundle: Path, *, layers: tuple[int, ...] = (0, 16, 17),
                 raise AssertionError("isolated execution advanced wrong slot")
             isolated = snapshot(advancing, isolated_logits[advancing])
             assert_isolated_parity(shared, isolated)
+            isolated_followup_mask, isolated_followup_logits = batch.step(FOLLOWUP_TOKENS)
+            if isolated_followup_mask != 1 << advancing:
+                raise AssertionError("isolated follow-up advanced wrong slot")
+            isolated_continued = snapshot(advancing, isolated_followup_logits[advancing])
+            assert_isolated_parity(continued, isolated_continued)
             cases[str(advancing)] = {
                 "advancing_slot": advancing, "parked_slot": parked,
                 "shared_advanced_mask": mask,
+                "followup_advanced_mask": followup_mask,
                 "before": [{key: value for key, value in item.items()
                             if key != "arena_pointer"} for item in before],
                 "after": [{key: value for key, value in item.items()
                            if key != "arena_pointer"} for item in after],
                 "shared_logits_sha256": shared["logits_sha256"],
                 "isolated_logits_sha256": isolated["logits_sha256"],
+                "followup_shared_logits_sha256": continued["logits_sha256"],
+                "followup_isolated_logits_sha256": isolated_continued["logits_sha256"],
                 "parked_state_exact": True, "reuse_kept_advancing_state": True,
                 "isolated_full_logit_and_kv_exact": True,
+                "replacement_matches_clean_execution": True,
+                "survivor_continuation_matches_isolated": True,
             }
         return {
             "schema": "cke.v8.batch-slot-isolation-xray.v1",
@@ -150,6 +197,7 @@ def diagnose(bundle: Path, *, layers: tuple[int, ...] = (0, 16, 17),
             "bundle": str(bundle), "layers": list(layers),
             "prompts": [list(tokens) for tokens in PROMPTS],
             "next_tokens": list(NEXT_TOKENS), "reuse_prompt": list(REUSE_PROMPT),
+            "followup_tokens": list(FOLLOWUP_TOKENS),
             "requested_threads": threads,
             "cpu": _cpu_identity(),
             "loaded_model_sha256": loaded_model["sha256"],
