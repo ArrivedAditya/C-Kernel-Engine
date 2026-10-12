@@ -1,0 +1,77 @@
+{
+  "schema": "cke.tts.generated_waveform_provider_comparison.v1",
+  "status": "candidate; exact scalar replay for one pinned fixture, connected PyTorch parity remains failed",
+  "base_revision": "398380406c53da1ce68992cf33a00a230e63d9f7",
+  "circuit_sha256": "84c1abe2d51f4ac56f707aaff2529890285aa1d7f470e53e0abfbd60dea8f201",
+  "provider_selection": {
+    "baseline": "audio_conv1d_checked_channel_major_f32_hwfma and dilated companion",
+    "candidate": "audio_conv1d_checked_channel_major_f32_avx2_fma and dilated companion",
+    "replaced_calls": 88,
+    "default_selection_changed": false,
+    "dtype": "fp32",
+    "reduction": "ascending input channel then tap for each independent output frame; AVX2 lanes do not merge accumulators"
+  },
+  "model": {
+    "name": "Kokoro",
+    "model_pin": "e8a90b41091c3c5b70375c47cc959799920fa4d6",
+    "reference_code_pin": "dfb907a02bba8152ca444717ca5d78747ccb4bec",
+    "voice": "af_heart",
+    "phoneme_count": 36,
+    "audio_samples": 61800,
+    "sample_rate_hz": 24000,
+    "audio_seconds": 2.575,
+    "diagnostic_noise": "native request-local Gaussian seed 7 for standalone Ryzen WAV; captured Gaussian for P3 FP32 graph comparison"
+  },
+  "local_p3": {
+    "cpu": "Intel Core i7-14700T",
+    "compiler": "cc (Ubuntu 15.2.0-16ubuntu1) 15.2.0",
+    "complete_entry_seconds": {
+      "scalar": [106.86236044857651, 106.85120179038495],
+      "avx2_fma": [14.242575447075069, 14.243669553659856]
+    },
+    "warm_speedup": 7.501662502618922,
+    "comparison": "six selected checkpoints and all 61800 FP32 waveform samples equal to scalar, elementwise",
+    "fp32_waveform_sha256": "c5bc40f9d6bab4e1ddca82a2711244af5f3d570d020fe26923d1bb106abfdd8c",
+    "reproduction_command": "CKE_TTS_RUN_HW_FMA_REPLAY=1 CKE_TTS_CONV_PROVIDER=avx2_fma CKE_TTS_HW_FMA_TIMING_REPEATS=2 python3 -m unittest tests.test_v8_kokoro_generated_waveform.KokoroGeneratedWaveformTest.test_full_waveform_hardware_fma_provider_replay"
+  },
+  "ryzen": {
+    "host": "cke-amd-zen5-01",
+    "cpu": "AMD Ryzen 9 9950X3D 16-Core Processor",
+    "thread_environment": {"CK_NUM_THREADS": "1", "OMP_NUM_THREADS": "1"},
+    "candidate_library_sha256": "140f20a4014d19c279dda1fe02c7e5b3822f9de43921a8a89e04f5ba3cd4ee63",
+    "baseline_library_sha256": "48904ae0e5905555dd3826fc105e7bac63f3a78576a635fe5ab3813f39dfe807",
+    "candidate_generated_source_sha256": "38fbd9fbb470f5fdcf028bcb02a466d3de6954d1b9e8965abee2633aa57b46e3",
+    "baseline_generated_source_sha256": "f4060f1501ab74cc16f553d809e85fc29dff2030f1955644a67032de823258d1",
+    "alternating_process_wall_seconds": {
+      "hardware_fma": [51.865, 58.385],
+      "avx2_fma": [11.246, 11.222]
+    },
+    "scope": "new process each run, including prepared-package load, generated entry, native Gaussian generation, and WAV write; OS cache and frequency not controlled",
+    "wav_sha256_all_variants": "187e777636f7071776968bb7a7c4ced52f3d0438bedc281b84416562c844015e",
+    "loaded_library_resolution": "ldd resolved generated.so to the candidate run directory through host $ORIGIN RUNPATH; no embedded runtime build identity",
+    "profile": {
+      "command": "perf record -F 99 -e cpu/cycles/P -o perf.data -- env CK_NUM_THREADS=1 OMP_NUM_THREADS=1 ./native-kokoro-wav prepared-native-noise.cktts profile-seed7.wav 7",
+      "event": "cpu/cycles/P",
+      "samples": 1113,
+      "lost_samples": 0,
+      "self_overhead_percent": {
+        "audio_conv1d_compute_avx2": 52.63,
+        "linear_rows_checked_f32": 18.28,
+        "audio_conv_transpose1d_dense_channel_major_f32_checked": 9.90
+      },
+      "perf_data_sha256": "c7a525567d5cc84b66490775309471eaacefa9c2f4fc6fa20643624df4a0455e"
+    }
+  },
+  "numerical_scope": {
+    "primitive": "Pinned PyTorch 2.8 fixtures for ordinary and dilated Conv1D; exact ordered-FMA C equality",
+    "generated_waveform": "exact scalar equality for the fixed diagnostic utterance",
+    "connected_pytorch_waveform": "FAIL from prior baseline; this candidate does not repair the upstream discrepancy"
+  },
+  "limitations": [
+    "The candidate requires x86 AVX2 and FMA and is explicitly selected; scalar remains default.",
+    "One 36-phoneme, one-voice complete-waveform fixture; no arbitrary-text or listening certification.",
+    "The Ryzen timings are process wall time, not warm-entry or time-to-first-audio measurements.",
+    "Sampled perf percentages are self overhead, not exact stage durations.",
+    "This test does not establish AVX-512F, VNNI, BF16 or INT8 performance."
+  ]
+}
