@@ -19,6 +19,9 @@ from version.v8.scripts.certify_batch_mixed_one_row_v8 import (
     _verify_oracle_mappings,
     _require_shared_projections, certify,
 )
+from version.v8.scripts.certify_batch_slot_isolation_negative_v8 import (
+    certify as certify_slot_negative,
+)
 from version.v8.scripts.xray_batch_prefill_kv_v8 import (
     attention_span, compare_kv_exports, parse_kv_export, retain_prefix_result,
 )
@@ -27,6 +30,7 @@ from version.v8.scripts.xray_batch_prefill_attention_v8 import (
 )
 from version.v8.scripts.xray_batch_slot_isolation_v8 import (
     assert_isolated_parity, assert_new_logical_rows, assert_parked_unchanged,
+    inject_parked_kv_write,
 )
 
 
@@ -178,6 +182,95 @@ def test_live_batch_slot_xray_rejects_parked_writes_and_wrong_isolated_output():
     assert_isolated_parity(shared, dict(shared))
     with pytest.raises(AssertionError, match="differs from isolated"):
         assert_isolated_parity(shared, {**shared, "logits_sha256": "different"})
+
+
+def test_parked_write_injection_changes_real_pointer_bytes():
+    import hashlib
+
+    arena = (ctypes.c_ubyte * 4)(42, 0, 0, 0)
+
+    class Batch:
+        def position(self, slot):
+            assert slot == 1
+            return 2
+
+    class Model:
+        def ck_model_get_named_activation_ptr(self, name):
+            assert name == b"kv_cache"
+            return ctypes.addressof(arena)
+
+    def snapshot():
+        return {"position": 2, "kv": {"0": hashlib.sha256(bytes(arena)).hexdigest()}}
+
+    before = snapshot()
+    inject_parked_kv_write(Batch(), Model(), 1)
+    assert arena[0] == 43
+    with pytest.raises(AssertionError, match="non-advancing slot changed"):
+        assert_parked_unchanged(before, snapshot())
+
+
+def test_slot_negative_driver_runs_control_and_both_subprocess_directions(tmp_path, monkeypatch):
+    probe = tmp_path / "fake_probe.py"
+    probe.write_text('''
+import argparse
+import hashlib
+import json
+import os
+import sys
+p = argparse.ArgumentParser()
+p.add_argument("bundle")
+p.add_argument("--layers")
+p.add_argument("--threads")
+p.add_argument("--json-out")
+p.add_argument("--inject-parked-write", type=int)
+a = p.parse_args()
+mode = os.environ.get("FAKE_SLOT_PROBE", "valid")
+if a.inject_parked_write is None:
+    if mode == "control_failure":
+        print("RuntimeError: model load failed", file=sys.stderr)
+        raise SystemExit(1)
+    row = {"schema": "cke.v8.batch-slot-isolation-xray.v1", "status": "pass",
+           "cases": {"0": {}, "1": {}}}
+    for name, filename in (("loaded_model_sha256", "libmodel.so"),
+                           ("loaded_engine_sha256", "libckernel_engine.so"),
+                           ("weights_sha256", "weights.bump")):
+        row[name] = hashlib.sha256(open(os.path.join(a.bundle, filename), "rb").read()).hexdigest()
+    for name in ("loaded_session_sha256", "generated_source_sha256",
+                 "diagnostic_source_sha256"):
+        row[name] = "a" * 64
+    open(a.json_out, "w").write(json.dumps(row))
+else:
+    if mode == "model_load_failure":
+        print("RuntimeError: model load failed", file=sys.stderr)
+    elif mode == "import_failure":
+        print("ModuleNotFoundError: fake dependency", file=sys.stderr)
+    elif mode == "unrelated_assertion":
+        print("AssertionError: wrong slot advanced", file=sys.stderr)
+    elif mode == "wrong_direction":
+        print("InjectedParkedWriteDetected: non-advancing slot 9 logical KV changed",
+              file=sys.stderr)
+    else:
+        parked = a.inject_parked_write ^ 1
+        print(f"InjectedParkedWriteDetected: non-advancing slot {parked} logical KV changed",
+              file=sys.stderr)
+    raise SystemExit(1)
+''')
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    for filename in ("libmodel.so", "libckernel_engine.so", "weights.bump"):
+        (bundle / filename).write_bytes(filename.encode())
+    result = certify_slot_negative(bundle, probe=probe)
+    assert result["status"] == "pass"
+    assert set(result["negative_cases"]) == {
+        "advancing_0/parked_1", "advancing_1/parked_0"}
+    for mode, error in (("control_failure", "control run did not complete"),
+                        ("model_load_failure", "did not reach its logical-KV guard"),
+                        ("import_failure", "did not reach its logical-KV guard"),
+                        ("unrelated_assertion", "did not reach its logical-KV guard"),
+                        ("wrong_direction", "did not reach its logical-KV guard")):
+        monkeypatch.setenv("FAKE_SLOT_PROBE", mode)
+        with pytest.raises(AssertionError, match=error):
+            certify_slot_negative(bundle, probe=probe)
 
 
 def test_live_batch_slot_xray_rejects_header_only_progress():
