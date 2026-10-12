@@ -1,0 +1,241 @@
+{
+  "arithmetic_verdict": {
+    "classification": "expected_phase_specific_arithmetic_difference_on_captured_boundary",
+    "first_differing_operation": "QK score reduction differs already at query 8; first change to attention output is query 9, head 2",
+    "limits": "applies to this loaded Gemma artifact and AVX2 reduction contract; does not certify full logits, token quality, other ISAs or repeated mixed execution",
+    "preceding_control": "query position 8 has differing FP32 scores but identical FP16-rounded probabilities and complete attention output",
+    "probability_v": "independent scalar simulation of each declared FP16-operand/FP32-accumulator reduction reproduces complete native attention output",
+    "softmax": "shared normalizer with different padded extents; phase-specific score vectors already straddle the FP16 probability midpoint at key position 7 of query 9"
+  },
+  "artifact": {
+    "bundle": "cke-gemma3-batch-http-bundle-20261011 (local diagnostic artifact)",
+    "loaded_engine_sha256": "5189d20a52a3da4b8279b2518a50d6dfe7699e3f4929f4bf605c34d71623749a",
+    "loaded_model_sha256": "14e3f81d872d77081416b658d84c61791cce7e8184d50c6ffc7e82a91f62dcca",
+    "loaded_session_sha256": "4daa4e1f859c733cf0e4e9fa5a3ff2ccfdfda892db06ae588f81763535945888",
+    "weights_sha256": "dae6375dc5f6e04db7a373fc747df6eda4f9938f019bc0c0d1fdda4ec2443c40"
+  },
+  "cases": {
+    "8": {
+      "observed_attention_read_span": {
+        "first": 0,
+        "last": 8,
+        "mask": "causal sliding window 512; no left truncation at these positions"
+      },
+      "ordinary_capture_sha256": "301da77283fd717eddc1b7a5cd99d001a356d889285355ceb3304c780bef1a39",
+      "phases": {
+        "ordinary": {
+          "high_precision_reference": {
+            "max_output_abs_error": 0.0021505352233646136,
+            "max_score_abs_error": 5.816837074235082e-07,
+            "max_softmax_abs_error": 9.488590002604269e-08,
+            "mean_output_abs_error": 0.0002616937934409346
+          },
+          "output_channel_183": 14.37061595916748,
+          "output_sha256": "bd07410e91df8b8d66f82918394243b3171b72a2167678418b997aae893d0499",
+          "padded_tokens": 256,
+          "probabilities": [
+            0.007208308205008507,
+            0.0021744011901319027,
+            0.003408313263207674,
+            0.0006131097325123847,
+            0.003648273879662156,
+            0.0005098318797536194,
+            0.006614014972001314,
+            0.21914121508598328,
+            0.7566825151443481
+          ],
+          "scores": [
+            5.2381744384765625,
+            4.039693355560303,
+            4.489157676696777,
+            2.773728847503662,
+            4.557194232940674,
+            2.589266061782837,
+            5.152131080627441,
+            8.652656555175781,
+            9.891883850097656
+          ]
+        },
+        "staged": {
+          "high_precision_reference": {
+            "max_output_abs_error": 0.0021505352233646136,
+            "max_score_abs_error": 5.816837074235082e-07,
+            "max_softmax_abs_error": 9.488590002604269e-08,
+            "mean_output_abs_error": 0.0002616937934409346
+          },
+          "output_channel_183": 14.37061595916748,
+          "output_sha256": "bd07410e91df8b8d66f82918394243b3171b72a2167678418b997aae893d0499",
+          "padded_tokens": 128,
+          "probabilities": [
+            0.007208308205008507,
+            0.0021744021214544773,
+            0.003408313263207674,
+            0.0006131094414740801,
+            0.003648273879662156,
+            0.000509832170791924,
+            0.006614011712372303,
+            0.21914121508598328,
+            0.7566825151443481
+          ],
+          "scores": [
+            5.2381744384765625,
+            4.039693832397461,
+            4.489157676696777,
+            2.773728609085083,
+            4.557194232940674,
+            2.589266300201416,
+            5.152130603790283,
+            8.652656555175781,
+            9.891883850097656
+          ]
+        }
+      },
+      "position": 8,
+      "staged_capture_sha256": "f2e4344420163a6dfbe2480dddd883ae6c3e27cf1fdf47b3f12224284d8304a5"
+    },
+    "9": {
+      "observed_attention_read_span": {
+        "first": 0,
+        "last": 9,
+        "mask": "causal sliding window 512; no left truncation at these positions"
+      },
+      "ordinary_capture_sha256": "01910eefdaff3ff03e843fab2433dd52ab410633e6795eb274fe426df04f3a03",
+      "phases": {
+        "ordinary": {
+          "high_precision_reference": {
+            "max_output_abs_error": 0.0027056458709431297,
+            "max_score_abs_error": 7.526105036959052e-07,
+            "max_softmax_abs_error": 1.3078995020343598e-07,
+            "mean_output_abs_error": 0.000303701679988429
+          },
+          "output_channel_183": 15.918624877929688,
+          "output_sha256": "585e28d3543e806d2f0361cfed7536d40a5e48e25f725996d9aaf13f730204a6",
+          "padded_tokens": 256,
+          "probabilities": [
+            0.0008343123481608927,
+            0.000142321630846709,
+            0.0005809259018860757,
+            0.0001590055035194382,
+            0.0013595761265605688,
+            0.00014610702055506408,
+            0.0008105410961434245,
+            0.06059260666370392,
+            0.17095740139484406,
+            0.7644171714782715
+          ],
+          "scores": [
+            2.4003427028656006,
+            0.6318249702453613,
+            2.038358211517334,
+            0.7426738739013672,
+            2.8886630535125732,
+            0.6580744385719299,
+            2.3714370727539062,
+            6.685663223266602,
+            7.722904682159424,
+            9.220603942871094
+          ]
+        },
+        "staged": {
+          "high_precision_reference": {
+            "max_output_abs_error": 0.003040147137422622,
+            "max_score_abs_error": 6.780755938962102e-07,
+            "max_softmax_abs_error": 2.7515097644759123e-08,
+            "mean_output_abs_error": 0.0003384962606425244
+          },
+          "output_channel_183": 15.91895866394043,
+          "output_sha256": "a5b58ea24f7f3e6295859c6ca34e38900927635dbf010e10943718aea2f0a097",
+          "padded_tokens": 128,
+          "probabilities": [
+            0.0008343138033524156,
+            0.0001423218782292679,
+            0.0005809260765090585,
+            0.00015900578000582755,
+            0.001359577290713787,
+            0.0001461071369703859,
+            0.0008105416782200336,
+            0.060592662543058395,
+            0.1709575355052948,
+            0.7644170522689819
+          ],
+          "scores": [
+            2.400343656539917,
+            0.6318249702453613,
+            2.038357734680176,
+            0.7426743507385254,
+            2.8886630535125732,
+            0.658074676990509,
+            2.3714370727539062,
+            6.685663223266602,
+            7.722904682159424,
+            9.220602989196777
+          ]
+        }
+      },
+      "position": 9,
+      "staged_capture_sha256": "16c023bfc5443104ef3211f5b33bd125e7774dc02e836d79d4ad014f30b573ef"
+    }
+  },
+  "contract": {
+    "head_dim": 256,
+    "kv_stride_tokens": 128,
+    "ordinary_score_and_value_reduction": "fp16 operands, fp32 one accumulator over 8-wide tiles",
+    "ordinary_softmax_padding": 256,
+    "scale": 0.0625,
+    "sliding_window": 512,
+    "staged_score_and_value_reduction": "fp16 operands, fp32 four-way accumulator over 32-wide tiles",
+    "staged_softmax_padding": 128
+  },
+  "operand_file": "gemma3_attention_boundary_20261012.f32",
+  "operand_layout": {
+    "cross_phase_comparison": {
+      "logical_v_exact": true,
+      "ordinary_k_sha256": "1fdf0eb35572ee78ffbd788960f5798439f5f5ad490bae90bddd2fe1ca0faa2c",
+      "ordinary_q_sha256": "dbe7a423b11cfdbd9565867b0da18e6501f5d52a4975a7875e06cd825fe5b725",
+      "post_rope_k_exact": true,
+      "post_rope_q_exact": true,
+      "staged_k_sha256": "1fdf0eb35572ee78ffbd788960f5798439f5f5ad490bae90bddd2fe1ca0faa2c",
+      "staged_q_sha256": "dbe7a423b11cfdbd9565867b0da18e6501f5d52a4975a7875e06cd825fe5b725"
+    },
+    "dtype": "little-endian float32",
+    "head_dim": 256,
+    "k_positions": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9
+    ],
+    "order": [
+      "q8",
+      "q9",
+      "k0..k9",
+      "v0..v9"
+    ],
+    "q_k_v_identical_between_phases": true,
+    "q_positions": [
+      8,
+      9
+    ],
+    "v_positions": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9
+    ]
+  },
+  "operand_sha256": "182b78b2122390da5d6ad88550b19331e0cc3406c3180ce042fb9593053a1619",
+  "schema": "cke.v8.gemma3-attention-arithmetic-fixture.v1",
+  "scope": "captured layer 16, head 2, preceding query position 8 and first differing query position 9"
+}
