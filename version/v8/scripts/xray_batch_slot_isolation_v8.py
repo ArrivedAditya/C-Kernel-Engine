@@ -52,10 +52,23 @@ def assert_new_logical_rows(before: dict, after: dict) -> None:
         raise AssertionError("new logical KV row was not written")
 
 
+def inject_parked_kv_write(batch, model, slot: int) -> None:
+    """Corrupt parked KV storage; the logical export must expose the write."""
+    if batch.position(slot) < 1:
+        raise AssertionError("injected slot has no logical KV row")
+    pointer = int(model.ck_model_get_named_activation_ptr(b"kv_cache"))
+    if not pointer:
+        raise AssertionError("injected slot has no KV arena")
+    first_byte = ctypes.c_ubyte.from_address(pointer)
+    first_byte.value ^= 1
+
+
 def diagnose(bundle: Path, *, layers: tuple[int, ...] = (0, 16, 17),
-             threads: int = 1) -> dict:
+             threads: int = 1, inject_parked_write: bool = False) -> dict:
     if not layers or len(set(layers)) != len(layers) or threads < 1:
         raise ValueError("invalid layer or thread selection")
+    if inject_parked_write and 0 not in layers:
+        raise ValueError("parked-write injection requires layer 0 in the KV export")
     bundle = bundle.resolve(strict=True)
     config = json.loads((bundle / "config.json").read_text())
     if any(layer < 0 or layer >= int(config["num_hidden_layers"]) for layer in layers):
@@ -136,6 +149,8 @@ def diagnose(bundle: Path, *, layers: tuple[int, ...] = (0, 16, 17),
             mask, logits = batch.step(NEXT_TOKENS)
             if mask != 1 << advancing:
                 raise AssertionError("wrong slot advanced after cancellation")
+            if inject_parked_write and advancing == 0:
+                inject_parked_kv_write(batch, model, parked)
             after = [snapshot(0), snapshot(1)]
             assert_parked_unchanged(before[parked], after[parked])
             assert_new_logical_rows(before[advancing], after[advancing])
@@ -224,10 +239,13 @@ def main() -> int:
     parser.add_argument("bundle", type=Path)
     parser.add_argument("--layers", default="0,16,17")
     parser.add_argument("--threads", type=int, default=1)
+    parser.add_argument("--inject-parked-write", action="store_true",
+                        help="Negative control: corrupt parked KV and require isolation rejection")
     parser.add_argument("--json-out", type=Path)
     args = parser.parse_args()
     result = diagnose(args.bundle, layers=tuple(int(x) for x in args.layers.split(",")),
-                      threads=args.threads)
+                      threads=args.threads,
+                      inject_parked_write=args.inject_parked_write)
     rendered = json.dumps(result, indent=2, sort_keys=True) + "\n"
     if args.json_out:
         args.json_out.write_text(rendered)

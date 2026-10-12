@@ -27,6 +27,7 @@ from version.v8.scripts.xray_batch_prefill_attention_v8 import (
 )
 from version.v8.scripts.xray_batch_slot_isolation_v8 import (
     assert_isolated_parity, assert_new_logical_rows, assert_parked_unchanged,
+    inject_parked_kv_write,
 )
 
 
@@ -178,6 +179,31 @@ def test_live_batch_slot_xray_rejects_parked_writes_and_wrong_isolated_output():
     assert_isolated_parity(shared, dict(shared))
     with pytest.raises(AssertionError, match="differs from isolated"):
         assert_isolated_parity(shared, {**shared, "logits_sha256": "different"})
+
+
+def test_parked_write_injection_changes_real_pointer_bytes():
+    import hashlib
+
+    arena = (ctypes.c_ubyte * 4)(42, 0, 0, 0)
+
+    class Batch:
+        def position(self, slot):
+            assert slot == 1
+            return 2
+
+    class Model:
+        def ck_model_get_named_activation_ptr(self, name):
+            assert name == b"kv_cache"
+            return ctypes.addressof(arena)
+
+    def snapshot():
+        return {"position": 2, "kv": {"0": hashlib.sha256(bytes(arena)).hexdigest()}}
+
+    before = snapshot()
+    inject_parked_kv_write(Batch(), Model(), 1)
+    assert arena[0] == 43
+    with pytest.raises(AssertionError, match="non-advancing slot changed"):
+        assert_parked_unchanged(before, snapshot())
 
 
 def test_live_batch_slot_xray_rejects_header_only_progress():
