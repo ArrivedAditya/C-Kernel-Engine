@@ -45,6 +45,10 @@ class CheckedConvHardwareFmaTest(unittest.TestCase):
             function.argtypes = ARGTYPES + ([Z] if 'dilated' in name else [])
             function.restype = ctypes.c_int
             cls.functions[name] = function
+        text_metadata = json.loads(TEXT_FIXTURE.with_suffix('.json').read_text())
+        if hashlib.sha256(TEXT_FIXTURE.read_bytes()).hexdigest() != \
+                text_metadata['fixture_sha256']:
+            raise RuntimeError('text encoder fixture checksum mismatch')
         with np.load(TEXT_FIXTURE) as archive:
             cls.text = {key: archive[key].copy() for key in archive.files}
         metadata = json.loads(DILATED_FIXTURE.with_suffix('.json').read_text())

@@ -178,12 +178,26 @@ class KokoroGeneratedWaveformTest(unittest.TestCase):
         function.argtypes = self.fn.argtypes
         baseline_arena = self.arena()
         candidate_arena = self.arena(layout)
-        baseline_lengths = [ctypes.c_int32(-999) for _ in range(7)]
-        candidate_lengths = [ctypes.c_int32(-999) for _ in range(7)]
-        self.assertEqual(self.fn(baseline_arena, len(baseline_arena), *(
-            ctypes.byref(value) for value in baseline_lengths)), 0)
-        self.assertEqual(function(candidate_arena, len(candidate_arena), *(
-            ctypes.byref(value) for value in candidate_lengths)), 0)
+        repeats = int(os.environ.get('CKE_TTS_HW_FMA_TIMING_REPEATS', '2'))
+        self.assertGreaterEqual(repeats, 2)
+        timings = {'scalar': [], 'hardware_fma': []}
+        baseline_lengths = candidate_lengths = None
+        for repetition in range(repeats):
+            variants = [('scalar', self.fn, baseline_arena),
+                        ('hardware_fma', function, candidate_arena)]
+            if repetition % 2:
+                variants.reverse()
+            for variant, entry, arena in variants:
+                lengths = [ctypes.c_int32(-999) for _ in range(7)]
+                started = time.perf_counter()
+                status = entry(arena, len(arena), *(
+                    ctypes.byref(value) for value in lengths))
+                timings[variant].append(time.perf_counter() - started)
+                self.assertEqual(status, 0, variant)
+                if variant == 'scalar':
+                    baseline_lengths = lengths
+                else:
+                    candidate_lengths = lengths
         self.assertEqual([value.value for value in baseline_lengths],
                          [value.value for value in candidate_lengths])
         for name in ('text_conv0', 'f0_conv0', 'source_conv0',
@@ -201,7 +215,12 @@ class KokoroGeneratedWaveformTest(unittest.TestCase):
             'baseline_library_sha256': json.loads((self.native_dir /
                 'build-identity.json').read_text())['library_sha256'],
             'candidate_library_sha256': json.loads((candidate_root /
-                'build-identity.json').read_text())['library_sha256']}))
+                'build-identity.json').read_text())['library_sha256'],
+            'complete_entry_seconds': timings,
+            'warm_speedup': float(np.median(timings['scalar'][1:]) /
+                                  np.median(timings['hardware_fma'][1:])),
+            'timing_scope': 'generated native entry only; prepared arena and '
+                'weights, captured Gaussian, no WAV serialization'}))
 
     @classmethod
     def direct_arena(cls):
