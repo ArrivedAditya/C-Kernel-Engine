@@ -20,8 +20,8 @@ KERNEL = 20
 PADDING = 5
 
 
-def build_circuit():
-    graph = decoder_circuit()
+def build_circuit(tokens=36):
+    graph = decoder_circuit(tokens)
     graph['name'] = 'kokoro_generator_stage0_bounded'
     graph['native_entry']['function'] = 'ck_kokoro_generator_stage0_bounded'
     graph['native_entry']['params'].append(

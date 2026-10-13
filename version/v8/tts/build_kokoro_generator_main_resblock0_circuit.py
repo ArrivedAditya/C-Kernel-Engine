@@ -18,8 +18,8 @@ PREFIX = 'waveform_decoder.generator.resblocks.0'
 FRAMES = 'generator_stage0_frames'
 
 
-def build_circuit():
-    graph = join_circuit()
+def build_circuit(tokens=36):
+    graph = join_circuit(tokens)
     graph['name'] = 'kokoro_generator_main_resblock0_bounded'
     graph['native_entry']['function'] = 'ck_kokoro_generator_main_resblock0_bounded'
     graph['contract']['runtime_invariants'].update(

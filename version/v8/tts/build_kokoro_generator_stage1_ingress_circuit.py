@@ -153,8 +153,8 @@ def add_ingress(graph):
     return graph
 
 
-def build_circuit():
-    graph = stage0_circuit()
+def build_circuit(tokens=36):
+    graph = stage0_circuit(tokens)
     graph['name'] = 'kokoro_generator_stage1_ingress_bounded'
     graph['native_entry']['function'] = 'ck_kokoro_generator_stage1_ingress_bounded'
     graph['contract']['runtime_invariants'].update(

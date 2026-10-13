@@ -15,8 +15,8 @@ INPUT_CHANNELS = 22
 OUTPUT_CHANNELS = 128
 
 
-def build_circuit():
-    graph = ingress_circuit()
+def build_circuit(tokens=36):
+    graph = ingress_circuit(tokens)
     graph['name'] = 'kokoro_generator_stage1_source_conv_bounded'
     graph['native_entry']['function'] = 'ck_kokoro_generator_stage1_source_conv_bounded'
     graph['contract']['runtime_invariants'].update(

@@ -117,8 +117,8 @@ def upsampling_block_ops():
     return ops
 
 
-def build_circuit():
-    graph = encode_circuit()
+def build_circuit(tokens=36):
+    graph = encode_circuit(tokens)
     graph['name'] = 'kokoro_decoder_complete_bounded'
     graph['native_entry']['function'] = 'ck_kokoro_decoder_complete_bounded'
     graph['contract']['runtime_invariants'].update(

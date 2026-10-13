@@ -1,0 +1,246 @@
+"""Two explicit Kokoro phoneme-count buckets through the generated WAV graph."""
+
+import ctypes
+import hashlib
+import json
+import mmap
+import os
+from pathlib import Path
+import platform
+import shutil
+import struct
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+import wave
+
+import numpy as np
+
+from tests.v8_checked_graph_test_support import compile_native_graph
+from tests.v8_kokoro_duration_fixture_support import populated_duration_arena
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'version/v8/tts'))
+import build_kokoro_waveform_circuit as author
+
+FIXTURE = ROOT / 'tests/fixtures/tts/kokoro_waveform_hello_8_pinned.npz'
+
+
+class KokoroWaveformTwoLengthsTest(unittest.TestCase):
+    def test_exact_bucket_authoring_preserves_default(self):
+        self.assertEqual(json.loads(author.OUTPUT.read_text()), author.build_circuit())
+        graph = author.build_circuit(8)
+        self.assertEqual(graph['runtime_constants']['phoneme_count'], 8)
+        self.assertEqual(graph['activation_buffers']['word_ids']['shape'], [8])
+        self.assertEqual(graph['activation_buffers']['text_encoder_features']['shape'], [8, 512])
+        self.assertEqual(graph['activation_buffers']['generator_waveform']['shape'], [76800])
+        text = graph['block_types']['text_encoder']['body']['ops']
+        self.assertEqual(next(op for op in text if op['id'] == 'text_lstm')['params']['T'], 8)
+        for tokens in (0, 1, 2, 41, 512, True):
+            with self.subTest(tokens=tokens), self.assertRaises(ValueError):
+                author.build_circuit(tokens)
+
+    @unittest.skipUnless(os.environ.get('CKE_TTS_RUN_TWO_LENGTH_WAVEFORM'),
+                         'asset-backed two-length waveform replay not requested')
+    def test_loaded_exact_buckets_short_long_short(self):
+        from tests.test_v8_kokoro_generated_waveform import KokoroGeneratedWaveformTest
+        meta = json.loads(FIXTURE.with_suffix('.json').read_text())
+        self.assertEqual(hashlib.sha256(FIXTURE.read_bytes()).hexdigest(),
+                         meta['fixture_sha256'])
+        self.assertEqual(meta['input_text'], 'Hello.')
+        self.assertEqual(meta['voice_row_index'], len(meta['input_ids']) - 3)
+        long_reference = json.loads((ROOT / 'version/v8/tts/reference/fixture_manifest.json').read_text())
+        self.assertEqual(long_reference['voice_row_index'], len(long_reference['input_ids']) - 3)
+        self.assertEqual(len(long_reference['input_ids']), 36)
+        with np.load(FIXTURE, allow_pickle=False) as archive:
+            short = {name: archive[name].copy() for name in archive.files}
+        self.assertEqual(short['word_ids'].tolist(), meta['input_ids'])
+        baseline = KokoroGeneratedWaveformTest
+        baseline.setUpClass()
+        try:
+            self.assertEqual(meta['model_pin']['revision'],
+                             baseline.spectral_meta['model_pin'])
+            self.assertEqual(meta['code_pin']['kokoro'],
+                             baseline.spectral_meta['code_pin'])
+            self.assertEqual(meta['asset_sha256'],
+                             baseline.spectral_meta['asset_sha256'])
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                circuit = root / 'kokoro-waveform-8.json'
+                circuit.write_text(json.dumps(author.build_circuit(8)))
+                source = json.loads(json.dumps(baseline.waveform_source))
+                source['template'] = author.build_circuit(8)
+                source['config'].update(model=source['template']['name'],
+                    arch=source['template']['name'], context_length=8,
+                    max_seq_len=8, T=8)
+                layout, calls, library, loaded, short_fn = compile_native_graph(
+                    root, source, circuit)
+                self.assertEqual(calls['errors'], [])
+                self.assertEqual(len(calls['operations']), len(baseline.calls['operations']))
+                short_fn.argtypes = [ctypes.POINTER(ctypes.c_uint8),
+                    ctypes.c_size_t] + [ctypes.POINTER(ctypes.c_int32)] * 7
+                short_arena = populated_duration_arena(layout,
+                    baseline.entries, baseline.bump, baseline.encoder,
+                    baseline.duration, word_ids=short['word_ids'])
+                view = baseline.view
+                view(layout, short_arena, 'predictor_style')[:] = \
+                    short['predictor_style'].ravel()
+                view(layout, short_arena, 'decoder_style')[:] = \
+                    short['decoder_style'].ravel()
+                gaussian = view(layout, short_arena, 'source_gaussian').reshape(-1, 9)
+                gaussian[:32400] = short['gaussian'].reshape(32400, 9)
+                view(layout, short_arena, 'source_stft_window')[:] = short['window']
+                taps = np.arange(20, dtype=np.float64)
+                angles = -2 * np.pi * np.arange(11)[:, None] * taps / 20
+                view(layout, short_arena, 'source_stft_cos').reshape(11, 20)[:] = np.cos(angles)
+                view(layout, short_arena, 'source_stft_sin').reshape(11, 20)[:] = np.sin(angles)
+                long_arena = baseline.arena()
+                short_output = view(layout, short_arena, 'generator_waveform')
+                short_output.fill(-91.)
+                rejected_lengths = [ctypes.c_int32(-1) for _ in range(7)]
+                self.assertNotEqual(short_fn(short_arena, len(short_arena) - 1,
+                    *(ctypes.byref(value) for value in rejected_lengths)), 0)
+                self.assertEqual([value.value for value in rejected_lengths], [-1] * 7)
+                self.assertTrue(np.all(short_output == -91.))
+                outputs = []
+                report = []
+                for label, fn, arena, selected_layout, expected in (
+                    ('short', short_fn, short_arena, layout, short['waveform']),
+                    ('long', baseline.fn, long_arena, baseline.layout,
+                     baseline.spectral['waveform'][0, 0]),
+                    ('short', short_fn, short_arena, layout, short['waveform'])):
+                    output = view(selected_layout, arena, 'generator_waveform')
+                    output.fill(-91.)
+                    lengths = [ctypes.c_int32(-1) for _ in range(7)]
+                    started = time.perf_counter()
+                    self.assertEqual(fn(arena, len(arena), *(
+                        ctypes.byref(value) for value in lengths)), 0)
+                    elapsed = time.perf_counter() - started
+                    count = lengths[3].value
+                    self.assertEqual(count, len(expected))
+                    self.assertTrue(np.isfinite(output[:count]).all())
+                    self.assertTrue(np.all(output[count:] == -91.))
+                    actual = output[:count].copy()
+                    error = np.abs(actual.astype(np.float64) -
+                                   expected.astype(np.float64))
+                    report.append({'bucket': label, 'tokens': 8 if label == 'short' else 36,
+                        'sample_count': count, 'seconds': elapsed,
+                        'oracle_max_abs': float(error.max()),
+                        'oracle_rmse': float(np.sqrt(np.mean(error * error))),
+                        'oracle_numerical_status': 'pass' if error.max() <= 1e-5 else 'fail'})
+                    if label == 'short' and not outputs:
+                        durations = view(layout, short_arena, 'runtime_values', np.int32)[:8]
+                        np.testing.assert_array_equal(durations, short['durations'])
+                        f0 = view(layout, short_arena, 'f0_output')[:short['f0'].size]
+                        report[-1]['f0_max_abs'] = float(np.max(np.abs(
+                            f0.astype(np.float64) - short['f0'].ravel().astype(np.float64))))
+                    outputs.append(actual)
+                np.testing.assert_array_equal(outputs[0], outputs[2])
+                self.assertNotEqual(hashlib.sha256(outputs[0].tobytes()).hexdigest(),
+                                    hashlib.sha256(outputs[1].tobytes()).hexdigest())
+                host_root = root / 'standalone-short'
+                host_root.mkdir()
+                for source_path, name in (
+                    (library, 'generated.so'),
+                    (ROOT / 'version/v8/tts/native_kokoro_wav_host.c', 'host.c'),
+                    (ROOT / 'src/kernels/audio_noise_counter.c', 'audio_noise_counter.c'),
+                    (ROOT / 'src/kernels/checked_float_buffer.h', 'checked_float_buffer.h'),
+                    (ROOT / 'include/ckernel_tts.h', 'ckernel_tts.h')):
+                    shutil.copy2(source_path, host_root / name)
+                binary = host_root / 'native-kokoro-wav'
+                subprocess.run(['cc', '-std=c11', '-O2', '-Wall', '-Wextra',
+                    '-Werror', '-pedantic', '-I', str(host_root),
+                    str(host_root / 'host.c'), str(host_root / 'audio_noise_counter.c'),
+                    '-L', str(host_root), '-l:generated.so', '-Wl,-rpath,$ORIGIN',
+                    '-lm', '-o', str(binary)], check=True, capture_output=True)
+                buffers = {item['name']: item for item in
+                    layout['memory']['activations']['buffers']}
+                arena_bytes = layout['memory']['arena']['total_size']
+                package = host_root / 'prepared-hello.cktts'
+                with mmap.mmap(-1, arena_bytes) as packed:
+                    for item in layout['memory']['weights']['entries']:
+                        entry = baseline.entries[item['name']]
+                        start = entry['file_offset']
+                        packed[item['abs_offset']:item['abs_offset'] + entry['size']] = \
+                            baseline.bump[start:start + entry['size']]
+                    def fill(name, values, dtype=np.float32):
+                        item = buffers[name]
+                        array = np.asarray(values, dtype=dtype).ravel()
+                        np.ndarray((array.size,), dtype, buffer=packed,
+                            offset=item['abs_offset'])[:] = array
+                    fill('word_ids', short['word_ids'], np.int32)
+                    fill('predictor_style', short['predictor_style'])
+                    fill('decoder_style', short['decoder_style'])
+                    fill('source_gaussian', short['gaussian'])
+                    fill('source_stft_window', short['window'])
+                    fill('source_stft_cos', np.cos(angles))
+                    fill('source_stft_sin', np.sin(angles))
+                    output_item = buffers['generator_waveform']
+                    segments = 0
+                    with package.open('wb') as stream:
+                        stream.write(b'CKTTS001')
+                        stream.write(struct.pack('<QQQI', arena_bytes,
+                            output_item['abs_offset'], output_item['size'] // 4, 0))
+                        for offset in range(0, arena_bytes, 65536):
+                            chunk = packed[offset:offset + 65536]
+                            if any(chunk):
+                                stream.write(struct.pack('<QQ', offset, len(chunk)))
+                                stream.write(chunk)
+                                segments += 1
+                        stream.seek(32)
+                        stream.write(struct.pack('<I', segments))
+                wav_path = host_root / 'hello-generated.wav'
+                native = subprocess.run([str(binary), str(package), str(wav_path)],
+                    cwd=host_root, check=True, capture_output=True, text=True)
+                self.assertIn('wrote 32400 samples at 24000 Hz', native.stdout)
+                with wave.open(str(wav_path), 'rb') as audio:
+                    self.assertEqual((audio.getnchannels(), audio.getsampwidth(),
+                                      audio.getframerate(), audio.getnframes()),
+                                     (1, 2, 24000, 32400))
+                    pcm = audio.readframes(32400)
+                expected_pcm = np.rint(np.clip(outputs[0], -1., 1.) *
+                    np.float32(32767.)).astype('<i2')
+                np.testing.assert_array_equal(np.frombuffer(pcm, dtype='<i2'),
+                                              expected_pcm)
+                evidence = {
+                    'schema': 'cke.kokoro.two_length_waveform_diagnostic.v1',
+                    'execution_status': 'pass',
+                    'numerical_status': 'fail' if any(
+                        item['oracle_numerical_status'] == 'fail' for item in report)
+                        else 'pass',
+                    'scope': 'two precompiled exact-length graphs loaded in one process; '
+                             'captured oracle Gaussian; no text frontend or bucket padding',
+                    'model_revision': meta['model_pin']['revision'],
+                    'reference_revision': meta['code_pin']['kokoro'],
+                    'fixture_sha256': meta['fixture_sha256'],
+                    'voice_row_index': {'short': meta['voice_row_index'],
+                                        'long': long_reference['voice_row_index']},
+                    'capacity_rejection_and_recovery': 'pass',
+                    'generated_library_sha256': {
+                        'short': hashlib.sha256(library.read_bytes()).hexdigest(),
+                        'long': hashlib.sha256((baseline.native_dir / 'generated.so').read_bytes()).hexdigest()},
+                    'library_artifact_paths': {'short': str(library),
+                                               'long': str(baseline.native_dir / 'generated.so')},
+                    'runtime_build_identity': 'NOT_VERIFIED',
+                    'standalone_short_wav_sha256': hashlib.sha256(
+                        wav_path.read_bytes()).hexdigest(),
+                    'host': platform.platform(),
+                    'reproduction_command': 'CKE_TTS_RUN_TWO_LENGTH_WAVEFORM=1 '
+                        'python3 -m unittest '
+                        'tests.test_v8_kokoro_waveform_two_lengths.'
+                        'KokoroWaveformTwoLengthsTest.'
+                        'test_loaded_exact_buckets_short_long_short',
+                    'requests': report,
+                }
+                output_path = os.environ.get('CKE_TTS_TWO_LENGTH_REPORT')
+                if output_path:
+                    Path(output_path).write_text(json.dumps(evidence, indent=2) + '\n')
+                print('CKE_TTS_TWO_LENGTH_DIAGNOSTIC ' + json.dumps(evidence, sort_keys=True))
+        finally:
+            baseline.tearDownClass()
+
+
+if __name__ == '__main__':
+    unittest.main()

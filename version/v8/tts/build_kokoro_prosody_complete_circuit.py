@@ -59,8 +59,8 @@ def final_branch(branch):
     return ops
 
 
-def build_circuit():
-    graph = second_circuit()
+def build_circuit(tokens=36):
+    graph = second_circuit(tokens)
     graph['name'] = 'kokoro_prosody_complete_bounded'
     graph['native_entry']['function'] = 'ck_kokoro_prosody_complete_bounded'
     graph['contract']['runtime_invariants'].update(

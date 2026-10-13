@@ -19,8 +19,8 @@ OUTPUT_CHANNELS = 512
 HIDDEN = 256
 
 
-def build_circuit():
-    graph = text_circuit()
+def build_circuit(tokens=36):
+    graph = text_circuit(tokens)
     graph['name'] = 'kokoro_prosody_shared_bounded'
     graph['native_entry']['function'] = 'ck_kokoro_prosody_shared_bounded'
     graph['contract']['runtime_invariants'].update(

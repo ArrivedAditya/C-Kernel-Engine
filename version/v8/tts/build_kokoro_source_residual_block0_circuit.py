@@ -85,8 +85,8 @@ def append_pair(graph, pair, input_name):
     return output_name
 
 
-def build_circuit():
-    graph = first_pair_circuit()
+def build_circuit(tokens=36):
+    graph = first_pair_circuit(tokens)
     graph['name'] = 'kokoro_source_residual_block0_bounded'
     graph['native_entry']['function'] = 'ck_kokoro_source_residual_block0_bounded'
     graph['contract']['runtime_invariants'].update(

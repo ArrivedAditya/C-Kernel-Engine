@@ -18,32 +18,32 @@ STRIDE = 40
 FRAMES = 128
 
 
-def conv_op(index, source):
+def conv_op(index, source, tokens):
     prefix=f'acoustic_text_encoder.conv{index}'
     output=f'text_conv{index}'
     return {'id':output,'op':'audio_conv1d_checked',
         'kernel':'audio_conv1d_checked_channel_major_f32',
         'returns_status':True,
         'weight_refs':{'weight':f'{prefix}.weight','bias':f'{prefix}.bias'},
-        'params':{'I':CHANNELS,'O':CHANNELS,'T':TOKENS,'K':5,'U':TOKENS,
-                  'Q':CHANNELS*TOKENS,
+        'params':{'I':CHANNELS,'O':CHANNELS,'T':tokens,'K':5,'U':tokens,
+                  'Q':CHANNELS*tokens,
                   'call_constants':{
             'conv_input_elements':CHANNELS*STRIDE,'conv_input_stride':STRIDE,
             'conv_weight_elements':CHANNELS*CHANNELS*5,
             'conv_bias_elements':CHANNELS,
             'conv_output_elements':CHANNELS*STRIDE,'conv_output_stride':STRIDE,
-            'conv_scratch_elements':CHANNELS*TOKENS,
+            'conv_scratch_elements':CHANNELS*tokens,
             'conv_input_channels':CHANNELS,'conv_output_channels':CHANNELS,
-            'conv_input_frames':TOKENS,'conv_kernel_size':5,
-            'conv_stride':1,'conv_padding':2,'conv_output_frames':TOKENS}},
+            'conv_input_frames':tokens,'conv_kernel_size':5,
+            'conv_stride':1,'conv_padding':2,'conv_output_frames':tokens}},
         'graph_slots':{'inputs':{'input':source},'outputs':{'output':output}}}
 
 
-def transpose_op(index,source,channel_to_token=True):
+def transpose_op(index,source,tokens,channel_to_token=True):
     output=(f'text_conv{index}_token' if channel_to_token else
             f'text_act{index}_channel')
-    rows=CHANNELS if channel_to_token else TOKENS
-    columns=TOKENS if channel_to_token else CHANNELS
+    rows=CHANNELS if channel_to_token else tokens
+    columns=tokens if channel_to_token else CHANNELS
     input_stride=STRIDE if channel_to_token else CHANNELS
     output_stride=CHANNELS if channel_to_token else STRIDE
     return {'id':output,'op':'transpose_strided_checked',
@@ -57,56 +57,56 @@ def transpose_op(index,source,channel_to_token=True):
         'graph_slots':{'inputs':{'input':source},'outputs':{'output':output}}}
 
 
-def norm_op(index):
+def norm_op(index, tokens):
     prefix=f'acoustic_text_encoder.norm{index}'
     output=f'text_norm{index}'
     return {'id':output,'op':'layernorm_rows_param_checked',
         'kernel':'layernorm_rows_checked_param_epsilon_f32',
         'returns_status':True,
         'weight_refs':{'gamma':f'{prefix}.weight','beta':f'{prefix}.bias'},
-        'params':{'M':TOKENS,'C':CHANNELS,'Q':TOKENS*(CHANNELS+2),
+        'params':{'M':tokens,'C':CHANNELS,'Q':tokens*(CHANNELS+2),
             'epsilon':1e-5,'call_constants':{
-            'norm_input_elements':TOKENS*CHANNELS,
+            'norm_input_elements':tokens*CHANNELS,
             'norm_input_stride':CHANNELS,
             'norm_gamma_elements':CHANNELS,
             'norm_beta_elements':CHANNELS,
-            'norm_output_elements':TOKENS*CHANNELS,
+            'norm_output_elements':tokens*CHANNELS,
             'norm_output_stride':CHANNELS,
-            'norm_scratch_elements':TOKENS*(CHANNELS+2),
-            'norm_rows':TOKENS,'norm_channels':CHANNELS}},
+            'norm_scratch_elements':tokens*(CHANNELS+2),
+            'norm_rows':tokens,'norm_channels':CHANNELS}},
         'graph_slots':{'inputs':{'input':f'text_conv{index}_token'},
                        'outputs':{'output':output}}}
 
 
-def activation_op(index):
+def activation_op(index, tokens):
     output=f'text_act{index}'
     return {'id':output,'op':'leaky_relu_strided_checked',
         'kernel':'leaky_relu_strided_f32_checked','returns_status':True,
-        'params':{'R':TOKENS,'C':CHANNELS,'negative_slope':0.2,
+        'params':{'R':tokens,'C':CHANNELS,'negative_slope':0.2,
                   'call_constants':{
-            'leaky_input_elements':TOKENS*CHANNELS,
+            'leaky_input_elements':tokens*CHANNELS,
             'leaky_input_stride':CHANNELS,
-            'leaky_output_elements':TOKENS*CHANNELS,
+            'leaky_output_elements':tokens*CHANNELS,
             'leaky_output_stride':CHANNELS,
-            'leaky_rows':TOKENS,'leaky_columns':CHANNELS}},
+            'leaky_rows':tokens,'leaky_columns':CHANNELS}},
         'graph_slots':{'inputs':{'input':f'text_norm{index}'},
                        'outputs':{'output':output}}}
 
 
-def lstm_op():
+def lstm_op(tokens):
     prefix='acoustic_text_encoder.lstm'
     return {'id':'text_lstm','op':'audio_lstm_bidirectional_scan',
         'kernel':'audio_lstm_bidirectional_scan_f32','returns_status':True,
         'weight_refs':{kind:f'{prefix}.{kind}' for kind in
                        ('weight_ih','weight_hh','bias_ih','bias_hh')},
-        'params':{'T':TOKENS,'I':CHANNELS,'H':256,
+        'params':{'T':tokens,'I':CHANNELS,'H':256,
             'input_size':CHANNELS,'hidden_size':256,
             'call_constants':{
-            'scan_input_elements':TOKENS*CHANNELS,
+            'scan_input_elements':tokens*CHANNELS,
             'scan_weight_ih_elements':2*1024*CHANNELS,
             'scan_weight_hh_elements':2*1024*256,
             'scan_bias_ih_elements':2*1024,'scan_bias_hh_elements':2*1024,
-            'scan_output_elements':TOKENS*CHANNELS,
+            'scan_output_elements':tokens*CHANNELS,
             'scan_hidden_state_elements':512,
             'scan_cell_state_elements':512,
             'scan_input_stride':CHANNELS,'scan_output_stride':CHANNELS}},
@@ -114,8 +114,10 @@ def lstm_op():
                        'outputs':{'output':'text_encoder_features'}}}
 
 
-def build_circuit():
-    graph=embedding_circuit()
+def build_circuit(tokens=TOKENS):
+    if isinstance(tokens, bool) or not isinstance(tokens, int) or not 2 <= tokens <= STRIDE:
+        raise ValueError('text encoder tokens must be an integer between 2 and 40')
+    graph=embedding_circuit(tokens)
     graph['name']='kokoro_text_encoder_bounded'
     graph['native_entry']['function']='ck_kokoro_text_encoder_bounded'
     graph['contract']['runtime_invariants'].update(
@@ -125,20 +127,20 @@ def build_circuit():
     ops=[]
     previous='text_features'
     for index in range(3):
-        ops.extend((conv_op(index,previous),
-                    transpose_op(index,f'text_conv{index}'),
-                    norm_op(index),activation_op(index)))
+        ops.extend((conv_op(index,previous,tokens),
+                    transpose_op(index,f'text_conv{index}',tokens),
+                    norm_op(index,tokens),activation_op(index,tokens)))
         graph['activation_buffers'][f'text_conv{index}']={'shape':[CHANNELS,STRIDE]}
-        graph['activation_buffers'][f'text_conv{index}_token']={'shape':[TOKENS,CHANNELS]}
-        graph['activation_buffers'][f'text_norm{index}']={'shape':[TOKENS,CHANNELS]}
-        graph['activation_buffers'][f'text_act{index}']={'shape':[TOKENS,CHANNELS]}
+        graph['activation_buffers'][f'text_conv{index}_token']={'shape':[tokens,CHANNELS]}
+        graph['activation_buffers'][f'text_norm{index}']={'shape':[tokens,CHANNELS]}
+        graph['activation_buffers'][f'text_act{index}']={'shape':[tokens,CHANNELS]}
         if index<2:
-            ops.append(transpose_op(index,f'text_act{index}',False))
+            ops.append(transpose_op(index,f'text_act{index}',tokens,False))
             graph['activation_buffers'][f'text_act{index}_channel']={
                 'shape':[CHANNELS,STRIDE]}
             previous=f'text_act{index}_channel'
-    ops.append(lstm_op())
-    graph['activation_buffers']['text_encoder_features']={'shape':[TOKENS,CHANNELS]}
+    ops.append(lstm_op(tokens))
+    graph['activation_buffers']['text_encoder_features']={'shape':[tokens,CHANNELS]}
     for name in graph['activation_buffers']:
         graph['activation_bindings'][name]=name
     graph['sequence'].insert(-1,'text_encoder')
@@ -179,7 +181,7 @@ def build_circuit():
     expansion['id']='expand_generated_text_encoder'
     expansion['kernel']='audio_duration_expand_token_major_f32'
     expansion['graph_slots']['inputs']['features']='text_encoder_features'
-    expansion['params']['call_constants']['input_elements']=TOKENS*CHANNELS
+    expansion['params']['call_constants']['input_elements']=tokens*CHANNELS
     expansion['params']['call_constants']['input_stride']=CHANNELS
     graph['semantic_checkpoints']['exports'].pop('expand_generated_text_embedding')
     graph['semantic_checkpoints']['exports'][expansion['id']]={

@@ -14,8 +14,8 @@ from build_kokoro_generator_main_resblock0_circuit import (
 OUTPUT = ROOT / 'version/v8/circuits/kokoro_generator_stage0_pool_bounded.json'
 
 
-def build_circuit():
-    graph = first_block_circuit()
+def build_circuit(tokens=36):
+    graph = first_block_circuit(tokens)
     graph['name'] = 'kokoro_generator_stage0_pool_bounded'
     graph['native_entry']['function'] = 'ck_kokoro_generator_stage0_pool_bounded'
     graph['contract']['runtime_invariants'].update(

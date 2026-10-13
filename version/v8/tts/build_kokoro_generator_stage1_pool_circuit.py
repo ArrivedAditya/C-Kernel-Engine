@@ -150,8 +150,8 @@ def add_stage1_pool(graph):
     return graph
 
 
-def build_circuit():
-    graph = stage1_join_circuit()
+def build_circuit(tokens=36):
+    graph = stage1_join_circuit(tokens)
     graph['name'] = 'kokoro_generator_stage1_pool_bounded'
     graph['native_entry']['function'] = 'ck_kokoro_generator_stage1_pool_bounded'
     graph['contract']['runtime_invariants'].update(

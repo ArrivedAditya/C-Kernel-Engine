@@ -167,8 +167,8 @@ def add_source_residual_and_join(graph):
     return graph
 
 
-def build_circuit():
-    graph = source_conv_circuit()
+def build_circuit(tokens=36):
+    graph = source_conv_circuit(tokens)
     graph['name'] = 'kokoro_generator_stage1_join_bounded'
     graph['native_entry']['function'] = 'ck_kokoro_generator_stage1_join_bounded'
     graph['contract']['runtime_invariants'].update(
