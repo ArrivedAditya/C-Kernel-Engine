@@ -106,8 +106,8 @@ def add_decoder_block(graph, block_name, ops):
         'footer': []}
 
 
-def build_circuit():
-    graph = ingress_circuit()
+def build_circuit(tokens=36):
+    graph = ingress_circuit(tokens)
     graph['name'] = 'kokoro_decoder_encode_bounded'
     graph['native_entry']['function'] = 'ck_kokoro_decoder_encode_bounded'
     graph['contract']['runtime_invariants'].update(

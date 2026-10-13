@@ -125,8 +125,8 @@ def branch_ops(branch):
     return ops
 
 
-def build_circuit():
-    graph = norm_circuit()
+def build_circuit(tokens=36):
+    graph = norm_circuit(tokens)
     graph['name'] = 'kokoro_prosody_first_block_bounded'
     graph['native_entry']['function'] = 'ck_kokoro_prosody_first_block_bounded'
     graph['contract']['runtime_invariants'].update(

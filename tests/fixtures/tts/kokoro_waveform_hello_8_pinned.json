@@ -1,0 +1,105 @@
+{
+  "schema": "cke.kokoro.short_waveform_fixture.v1",
+  "scope": "Hello. 8 phoneme IDs; direct pinned full-model capture",
+  "model_pin": {
+    "repository": "hexgrad/Kokoro-82M",
+    "revision": "e8a90b41091c3c5b70375c47cc959799920fa4d6",
+    "files": [
+      "config.json",
+      "kokoro-v1_0.pth",
+      "voices/af_heart.pt"
+    ],
+    "license": "Apache-2.0"
+  },
+  "code_pin": {
+    "kokoro": "dfb907a02bba8152ca444717ca5d78747ccb4bec",
+    "misaki": "fba1236595f2d2bf21d414ba6e57d25256afada3"
+  },
+  "asset_sha256": {
+    "config.json": "5abb01e2403b072bf03d04fde160443e209d7a0dad49a423be15196b9b43c17f",
+    "kokoro-v1_0.pth": "496dba118d1a58f5f3db2efc88dbdc216e0483fc89fe6e47ee1f2c53f18ad1e4",
+    "voices/af_heart.pt": "0ab5709b8ffab19bfd849cd11d98f75b60af7733253ad0d67b12382a102cb4ff"
+  },
+  "environment": {
+    "kokoro": "0.9.4",
+    "misaki": "0.9.4",
+    "torch": "2.8.0+cpu",
+    "transformers": "5.17.0",
+    "spacy": "3.8.16",
+    "num2words": "0.5.14",
+    "phonemizer-fork": "3.3.2",
+    "espeakng-loader": "0.2.4"
+  },
+  "input_text": "Hello.",
+  "phonemes": "h\u0259l\u02c8O.",
+  "voice_row_index": 5,
+  "input_ids": [
+    0,
+    50,
+    83,
+    54,
+    156,
+    31,
+    4,
+    0
+  ],
+  "source_manifest_sha256": "943a03ab690591592356c0a3814d42bc214060a14c783782504b3cfeaae173b5",
+  "fixture_sha256": "3cc4cdea15e17760e3c571d93e57553734de0e0ca1a640396b1c9ff1e3d03c74",
+  "tensors": {
+    "word_ids": {
+      "shape": [
+        8
+      ],
+      "dtype": "int32"
+    },
+    "predictor_style": {
+      "shape": [
+        1,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "decoder_style": {
+      "shape": [
+        1,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "gaussian": {
+      "shape": [
+        1,
+        32400,
+        9
+      ],
+      "dtype": "float32"
+    },
+    "window": {
+      "shape": [
+        20
+      ],
+      "dtype": "float32"
+    },
+    "durations": {
+      "shape": [
+        8
+      ],
+      "dtype": "int64"
+    },
+    "f0": {
+      "shape": [
+        1,
+        1,
+        108
+      ],
+      "dtype": "float32"
+    },
+    "waveform": {
+      "shape": [
+        32400
+      ],
+      "dtype": "float32"
+    }
+  },
+  "reproduction_command": "python version/v8/tts/reference/capture_kokoro_v1.py --model-dir /path/to/pinned/kokoro --output-dir /tmp/hello --text 'Hello.'; python version/v8/tts/reference/build_kokoro_second_length_fixture.py --capture /tmp/hello"
+}

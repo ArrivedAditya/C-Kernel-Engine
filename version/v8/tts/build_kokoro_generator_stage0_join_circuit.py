@@ -16,9 +16,9 @@ CHANNELS = 256
 CAPACITY = 2560
 
 
-def build_circuit():
-    graph = main_circuit()
-    source = source_circuit()
+def build_circuit(tokens=36):
+    graph = main_circuit(tokens)
+    source = source_circuit(tokens)
     for name in graph['sequence']:
         if name in source['block_types'] and graph['block_types'][name] != source['block_types'][name]:
             raise ValueError(f'shared Kokoro block differs: {name}')

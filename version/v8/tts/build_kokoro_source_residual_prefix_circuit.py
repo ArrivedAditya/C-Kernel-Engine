@@ -16,8 +16,8 @@ STYLE = 128
 PREFIX = 'waveform_decoder.generator.noise_res.0'
 
 
-def build_circuit():
-    graph = source_circuit()
+def build_circuit(tokens=36):
+    graph = source_circuit(tokens)
     graph['name'] = 'kokoro_source_residual_prefix_bounded'
     graph['native_entry']['function'] = 'ck_kokoro_source_residual_prefix_bounded'
     graph['contract']['runtime_invariants'].update(

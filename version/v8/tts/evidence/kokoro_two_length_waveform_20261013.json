@@ -1,0 +1,82 @@
+{
+  "schema": "cke.kokoro.two_length_waveform_diagnostic.v1",
+  "execution_status": "pass",
+  "numerical_status": "fail",
+  "scope": "two precompiled exact-length graphs loaded in one process; captured oracle Gaussian; no text frontend or bucket padding",
+  "model_revision": "e8a90b41091c3c5b70375c47cc959799920fa4d6",
+  "reference_revision": "dfb907a02bba8152ca444717ca5d78747ccb4bec",
+  "fixture_sha256": "3cc4cdea15e17760e3c571d93e57553734de0e0ca1a640396b1c9ff1e3d03c74",
+  "voice_row_index": {
+    "short": 5,
+    "long": 33
+  },
+  "capacity_rejection_and_recovery": "pass",
+  "generated_library_sha256": {
+    "short": "3b65084882ec4e459842d44a8c3bce92680eb7adcd6e522b390789a247425c4e",
+    "long": "7cae5e23ec616ee8ae90d95b8fb66d750f2983b2776892d3b62c74a56c4f97ea"
+  },
+  "runtime_build_identity": "NOT_VERIFIED",
+  "standalone_short_wav_sha256": "7ddb0f091142e182e722c577bb6e69a43557f491c0c8b8ad999da3647fa84efd",
+  "host": "Linux-7.0.0-29-generic-x86_64-with-glibc2.43",
+  "reproduction_command": "CKE_TTS_RUN_TWO_LENGTH_WAVEFORM=1 python3 -m unittest tests.test_v8_kokoro_waveform_two_lengths.KokoroWaveformTwoLengthsTest.test_loaded_exact_buckets_short_long_short",
+  "requests": [
+    {
+      "bucket": "short",
+      "tokens": 8,
+      "sample_count": 32400,
+      "seconds": 55.162343923933804,
+      "oracle_max_abs": 0.010312862694263458,
+      "oracle_rmse": 0.00033829447736022074,
+      "oracle_numerical_status": "fail",
+      "f0_max_abs": 0.00023651123046875
+    },
+    {
+      "bucket": "long",
+      "tokens": 36,
+      "sample_count": 61800,
+      "seconds": 106.8864240758121,
+      "oracle_max_abs": 0.007651925086975098,
+      "oracle_rmse": 0.00024222997700931208,
+      "oracle_numerical_status": "fail"
+    },
+    {
+      "bucket": "short",
+      "tokens": 8,
+      "sample_count": 32400,
+      "seconds": 55.17858728393912,
+      "oracle_max_abs": 0.010312862694263458,
+      "oracle_rmse": 0.00033829447736022074,
+      "oracle_numerical_status": "fail"
+    }
+  ],
+  "artifact_scope": "Generated libraries were built in a temporary directory; SHA-256 values identify those files, not embedded runtime build identities.",
+  "test_result": "PASS: one optional asset-backed unittest through standard nightly; execution and safety gates pass, connected numerical parity fails separately.",
+  "standalone_wav_scope": "8-ID native host WAV checked against generated FP32 output after PCM16 conversion; WAV file is temporary, hash retained.",
+  "nightly_result": {
+    "suite_status": "pass",
+    "sub_tests_passed": 1,
+    "sub_tests_failed": 2,
+    "numerical_cases": [
+      {
+        "case_id": "kokoro.waveform.exact-bucket-short-diagnostic-v1",
+        "status": "fail",
+        "max_diff": 0.010312862694263458,
+        "tolerance": 1e-05
+      },
+      {
+        "case_id": "kokoro.waveform.exact-bucket-long-diagnostic-v1",
+        "status": "fail",
+        "max_diff": 0.007651925086975098,
+        "tolerance": 1e-05
+      }
+    ]
+  },
+  "voice_bank_validation": {
+    "status": "pass",
+    "environment": "pinned PyTorch 2.8 CPU; pinned asset path supplied by CKE_KOKORO_MODEL_DIR",
+    "asset_sha256": "0ab5709b8ffab19bfd849cd11d98f75b60af7733253ad0d67b12382a102cb4ff",
+    "comparison": "exact rows 5 and 33 against captured decoder and predictor style vectors",
+    "production_selection": "NOT_TESTED; host/fixture supplies already-selected styles",
+    "reproduction_command": "CKE_KOKORO_MODEL_DIR=<pinned-assets> <pinned-oracle-python> -m unittest tests.test_v8_kokoro_waveform_two_lengths.KokoroWaveformTwoLengthsTest.test_selected_voice_styles_match_pinned_bank"
+  }
+}

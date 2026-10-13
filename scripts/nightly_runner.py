@@ -1095,6 +1095,25 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_kokoro_generated_waveform.py",
         timeout_sec=300,
     ),
+    "tts_kokoro_waveform_two_lengths": TestSuite(
+        "Kokoro Exact-Length Circuit Authoring", "inference",
+        ROOT / "tests" / "test_v8_kokoro_waveform_two_lengths.py",
+        unittest_targets=("tests.test_v8_kokoro_waveform_two_lengths."
+            "KokoroWaveformTwoLengthsTest.test_exact_bucket_authoring_preserves_default",),
+    ),
+    "tts_kokoro_waveform_two_lengths_asset": TestSuite(
+        "Kokoro Exact-Length Asset-Backed Waveforms", "inference",
+        ROOT / "tests" / "test_v8_kokoro_waveform_two_lengths.py",
+        timeout_sec=480,
+        unittest_targets=("tests.test_v8_kokoro_waveform_two_lengths."
+            "KokoroWaveformTwoLengthsTest.test_loaded_exact_buckets_short_long_short",),
+    ),
+    "tts_kokoro_voice_bank_asset": TestSuite(
+        "Kokoro Pinned Voice-Row Conditioning", "inference",
+        ROOT / "tests" / "test_v8_kokoro_waveform_two_lengths.py",
+        unittest_targets=("tests.test_v8_kokoro_waveform_two_lengths."
+            "KokoroWaveformTwoLengthsTest.test_selected_voice_styles_match_pinned_bank",),
+    ),
     "tts_checked_text_ops_generated": TestSuite(
         "Model-Neutral Checked Conv1D, Transpose, and Activation Graph", "inference",
         ROOT / "tests" / "test_v8_checked_text_ops_generated.py",

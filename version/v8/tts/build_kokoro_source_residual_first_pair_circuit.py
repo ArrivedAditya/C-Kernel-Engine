@@ -13,8 +13,8 @@ from build_kokoro_source_residual_prefix_circuit import (
 OUTPUT = ROOT / 'version/v8/circuits/kokoro_source_residual_first_pair_bounded.json'
 
 
-def build_circuit():
-    graph = prefix_circuit()
+def build_circuit(tokens=36):
+    graph = prefix_circuit(tokens)
     graph['name'] = 'kokoro_source_residual_first_pair_bounded'
     graph['native_entry']['function'] = 'ck_kokoro_source_residual_first_pair_bounded'
     graph['contract']['runtime_invariants'].update(

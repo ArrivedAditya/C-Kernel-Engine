@@ -17,8 +17,8 @@ CHANNELS = 512
 STYLE = 128
 
 
-def build_circuit():
-    graph = shared_circuit()
+def build_circuit(tokens=36):
+    graph = shared_circuit(tokens)
     graph['name'] = 'kokoro_prosody_norm_bounded'
     graph['native_entry']['function'] = 'ck_kokoro_prosody_norm_bounded'
     graph['contract']['runtime_invariants'].update(

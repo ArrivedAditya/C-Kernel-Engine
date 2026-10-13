@@ -76,8 +76,8 @@ def concat(name, left, right, left_channels, right_channels):
     }
 
 
-def build_circuit():
-    graph = prosody_circuit()
+def build_circuit(tokens=36):
+    graph = prosody_circuit(tokens)
     graph['name'] = 'kokoro_decoder_ingress_bounded'
     graph['native_entry']['function'] = 'ck_kokoro_decoder_ingress_bounded'
     graph['contract']['runtime_invariants'].update(

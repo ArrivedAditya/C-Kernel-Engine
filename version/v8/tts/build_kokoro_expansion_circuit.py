@@ -17,13 +17,13 @@ CAPACITY = 128
 
 
 def expansion_op(name, provider, features, output, channels, input_elements,
-                 input_stride):
+                 input_stride, tokens=TOKENS):
     return {'id': name, 'op': 'audio_duration_expand', 'kernel': provider,
         'returns_status': True,
         'consumes_runtime_lengths': ['expanded_frames'],
-        'params': {'T': TOKENS, 'C': channels, 'A_capacity': CAPACITY,
+        'params': {'T': tokens, 'C': channels, 'A_capacity': CAPACITY,
                    'channels': channels, 'call_constants': {
-            'input_elements': input_elements, 'phoneme_count': TOKENS,
+            'input_elements': input_elements, 'phoneme_count': tokens,
             'input_stride': input_stride,
             'output_elements': 640 * CAPACITY, 'output_stride': CAPACITY}},
         'graph_slots': {'inputs': {'features': features,
@@ -31,8 +31,10 @@ def expansion_op(name, provider, features, output, channels, input_elements,
                         'outputs': {'output': output}}}
 
 
-def build_circuit():
-    graph = duration_circuit()
+def build_circuit(tokens=TOKENS):
+    if isinstance(tokens, bool) or not isinstance(tokens, int) or not 2 <= tokens <= 40:
+        raise ValueError('expansion tokens must be an integer between 2 and 40')
+    graph = duration_circuit(tokens)
     graph['name'] = 'kokoro_duration_expansion_bounded'
     graph['native_entry']['function'] = 'ck_kokoro_duration_expansion'
     graph['contract']['runtime_invariants'].update(
@@ -48,10 +50,10 @@ def build_circuit():
     operations = [
         expansion_op('expand_generated_duration',
             'audio_duration_expand_token_major_f32', 'predictor_features',
-            'duration_expanded', 640, TOKENS * 640, 640),
+            'duration_expanded', 640, tokens * 640, 640, tokens),
         expansion_op('expand_oracle_text',
             'audio_duration_expand_channel_major_f32', 'external:text_features',
-            'text_expanded', 512, 640 * 40, 40)]
+            'text_expanded', 512, 640 * 40, 40, tokens)]
     graph['block_types']['duration_expansion'] = {
         'sequence': ['header', 'body', 'footer'],
         'header': [], 'body': {'type': 'dense', 'ops': operations}, 'footer': []}

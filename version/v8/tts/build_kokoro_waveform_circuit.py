@@ -17,8 +17,12 @@ WAVEFORM_CAPACITY = 76800
 ISTFT_SCRATCH = 2 * (WAVEFORM_CAPACITY + 20) + 20
 
 
-def build_circuit():
-    graph = pool_circuit()
+def build_circuit(tokens=36):
+    # One start ID, at least one phoneme, and one end ID are required before
+    # selecting voice_pack[tokens - 3]. The text encoder reserves 40 columns.
+    if isinstance(tokens, bool) or not isinstance(tokens, int) or not 3 <= tokens <= 40:
+        raise ValueError('waveform tokens must be an integer between 3 and 40')
+    graph = pool_circuit(tokens)
     graph['name'] = 'kokoro_waveform_bounded'
     graph['native_entry']['function'] = 'ck_kokoro_waveform_bounded'
     graph['contract']['runtime_invariants'].update(

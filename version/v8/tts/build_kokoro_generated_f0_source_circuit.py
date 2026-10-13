@@ -18,8 +18,8 @@ HARMONIC_ELEMENTS = SAMPLES_CAPACITY * HARMONICS
 SCRATCH_ELEMENTS = F0_CAPACITY * HARMONICS + HARMONIC_ELEMENTS
 
 
-def build_circuit():
-    graph = prosody_circuit()
+def build_circuit(tokens=36):
+    graph = prosody_circuit(tokens)
     graph['name'] = 'kokoro_generated_f0_source_bounded'
     graph['native_entry']['function'] = 'ck_kokoro_generated_f0_source_bounded'
     graph['native_entry']['params'].append(

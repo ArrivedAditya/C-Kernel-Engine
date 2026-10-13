@@ -15,8 +15,8 @@ ROOT = Path(__file__).resolve().parents[3]
 OUTPUT = ROOT / 'version/v8/circuits/kokoro_text_embedding_bounded.json'
 
 
-def build_circuit():
-    graph = expansion_circuit()
+def build_circuit(tokens=36):
+    graph = expansion_circuit(tokens)
     graph['name'] = 'kokoro_text_embedding_bounded'
     graph['native_entry']['function'] = 'ck_kokoro_text_embedding_bounded'
     graph['contract']['runtime_invariants'].update(
@@ -35,11 +35,11 @@ def build_circuit():
         'kernel': 'audio_text_embedding_channel_major_f32',
         'returns_status': True,
         'weight_refs': {'table': 'acoustic_text_encoder.embedding.weight'},
-        'params': {'T': 36, 'V': 178, 'C': 512, 'T_capacity': 40,
-                   'call_constants': {'id_elements': 36,
+        'params': {'T': tokens, 'V': 178, 'C': 512, 'T_capacity': 40,
+                   'call_constants': {'id_elements': tokens,
             'table_elements': 178 * 512, 'vocabulary': 178, 'channels': 512,
             'table_stride': 512, 'output_elements': 512 * 40,
-            'tokens': 36, 'output_stride': 40}},
+            'tokens': tokens, 'output_stride': 40}},
         'graph_slots': {'inputs': {'ids': 'external:word_ids'},
                         'outputs': {'output': 'text_features'}}}
     graph['block_types']['text_embedding'] = {'sequence': ['header', 'body', 'footer'],
