@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Declare fixed 36-token Kokoro encoder → duration predictor graph."""
+"""Declare a bounded Kokoro encoder → duration predictor graph."""
 import argparse
 import json
 from pathlib import Path
@@ -16,19 +16,19 @@ SCAN_WIDTH = CHANNELS + STYLE
 BINS = 50
 
 
-def concat_op(index, source):
+def concat_op(index, source, tokens):
     name = f'duration_concat{index}'
     output = f'scan{index}_input' if index < 3 else 'predictor_features'
     return {'id': name, 'op': 'feature_concat_broadcast_rows',
         'kernel': 'feature_concat_broadcast_rows_f32', 'returns_status': True,
-        'params': {'T': TOKENS, 'C': CHANNELS, 'S': STYLE, 'N': SCAN_WIDTH,
+        'params': {'T': tokens, 'C': CHANNELS, 'S': STYLE, 'N': SCAN_WIDTH,
                    'call_constants': {
-            'concat_input_elements': TOKENS * CHANNELS,
+            'concat_input_elements': tokens * CHANNELS,
             'concat_input_stride': CHANNELS,
             'concat_feature_elements': STYLE,
-            'concat_output_elements': TOKENS * SCAN_WIDTH,
+            'concat_output_elements': tokens * SCAN_WIDTH,
             'concat_output_stride': SCAN_WIDTH,
-            'concat_rows': TOKENS, 'concat_input_channels': CHANNELS,
+            'concat_rows': tokens, 'concat_input_channels': CHANNELS,
             'concat_feature_channels': STYLE,
             'concat_output_channels': SCAN_WIDTH}},
         'graph_slots': {'inputs': {'input': source,
@@ -36,7 +36,7 @@ def concat_op(index, source):
                         'outputs': {'output': output}}}
 
 
-def scan_op(index, source, final=False):
+def scan_op(index, source, tokens, final=False):
     prefix = ('duration_prosody.head_scan' if final else
               f'duration_prosody.text_encoder.scan{index}')
     output = 'head_scan_output' if final else f'scan{index}_output'
@@ -45,15 +45,15 @@ def scan_op(index, source, final=False):
         'kernel': 'audio_lstm_bidirectional_scan_f32', 'returns_status': True,
         'weight_refs': {kind: f'{prefix}.{kind}' for kind in
                         ('weight_ih', 'weight_hh', 'bias_ih', 'bias_hh')},
-        'params': {'T': TOKENS, 'I': SCAN_WIDTH, 'H': HIDDEN,
+        'params': {'T': tokens, 'I': SCAN_WIDTH, 'H': HIDDEN,
                    'input_size': SCAN_WIDTH, 'hidden_size': HIDDEN,
                    'call_constants': {
-            'scan_input_elements': TOKENS * SCAN_WIDTH,
+            'scan_input_elements': tokens * SCAN_WIDTH,
             'scan_weight_ih_elements': 2 * 4 * HIDDEN * SCAN_WIDTH,
             'scan_weight_hh_elements': 2 * 4 * HIDDEN * HIDDEN,
             'scan_bias_ih_elements': 2 * 4 * HIDDEN,
             'scan_bias_hh_elements': 2 * 4 * HIDDEN,
-            'scan_output_elements': TOKENS * CHANNELS,
+            'scan_output_elements': tokens * CHANNELS,
             'scan_hidden_state_elements': 2 * HIDDEN,
             'scan_cell_state_elements': 2 * HIDDEN,
             'scan_input_stride': SCAN_WIDTH,
@@ -62,21 +62,21 @@ def scan_op(index, source, final=False):
                         'outputs': {'output': output}}}
 
 
-def norm_op(index):
+def norm_op(index, tokens):
     prefix = f'duration_prosody.text_encoder.norm{index}'
     return {'id': f'duration_norm{index}', 'op': 'audio_adaptive_layer_norm',
         'kernel': 'audio_adaptive_layer_norm_f32', 'returns_status': True,
         'weight_refs': {kind: f'{prefix}.{kind}' for kind in
                         ('projection_weight', 'projection_bias')},
-        'params': {'T': TOKENS, 'C': CHANNELS, 'S': STYLE,
+        'params': {'T': tokens, 'C': CHANNELS, 'S': STYLE,
                    'channels': CHANNELS, 'style_dim': STYLE,
                    'normalization_epsilon': 1e-5,
                    'call_constants': {
-            'adaln_input_elements': TOKENS * CHANNELS,
+            'adaln_input_elements': tokens * CHANNELS,
             'adaln_style_elements': STYLE,
             'adaln_projection_weight_elements': 2 * CHANNELS * STYLE,
             'adaln_projection_bias_elements': 2 * CHANNELS,
-            'adaln_output_elements': TOKENS * CHANNELS,
+            'adaln_output_elements': tokens * CHANNELS,
             'adaln_input_stride': CHANNELS,
             'adaln_output_stride': CHANNELS}},
         'graph_slots': {'inputs': {'input': f'scan{index}_output',
@@ -84,8 +84,10 @@ def norm_op(index):
                         'outputs': {'output': f'norm{index}_output'}}}
 
 
-def build_circuit():
-    graph = encoder_circuit(TOKENS)
+def build_circuit(tokens=TOKENS):
+    if isinstance(tokens, bool) or not isinstance(tokens, int) or not 2 <= tokens <= 512:
+        raise ValueError('duration tokens must be an integer between 2 and 512')
+    graph = encoder_circuit(tokens)
     graph['name'] = 'kokoro_duration_predictor_bounded'
     graph['native_entry'] = {'function': 'ck_kokoro_duration_predictor',
         'params': [{'c_type': 'uint8_t *', 'name': 'arena'},
@@ -98,54 +100,54 @@ def build_circuit():
         all_tokens_valid=True, fixed_voice='af_heart',
         max_expanded_frames=128)
     graph['activation_buffers']['predictor_style'] = {'shape': [STYLE]}
-    graph['activation_buffers']['duration_logits'] = {'shape': [TOKENS, BINS]}
-    graph['activation_buffers']['runtime_values'] = {'shape': [TOKENS]}
+    graph['activation_buffers']['duration_logits'] = {'shape': [tokens, BINS]}
+    graph['activation_buffers']['runtime_values'] = {'shape': [tokens]}
     graph['activation_buffers']['runtime_valid_extent'] = {'shape': [1]}
     graph['activation_bindings'].update({name: name for name in
         ('predictor_style', 'duration_logits', 'runtime_values', 'runtime_valid_extent')})
     graph['runtime_lengths'] = {'expanded_frames': {'producer': 'duration_frames',
         'result': 'expanded_frames', 'capacity': 128, 'allow_zero': False}}
     graph['runtime_constants'].update({
-        'logit_elements': TOKENS * BINS, 'phoneme_count': TOKENS,
-        'logit_stride': BINS, 'duration_capacity': TOKENS,
+        'logit_elements': tokens * BINS, 'phoneme_count': tokens,
+        'logit_stride': BINS, 'duration_capacity': tokens,
         'max_duration': BINS, 'expanded_capacity': 128})
-    header = [concat_op(0, 'phoneme_features')]
+    header = [concat_op(0, 'phoneme_features', tokens)]
     body = []
     for i in range(3):
-        graph['activation_buffers'][f'scan{i}_input'] = {'shape': [TOKENS, SCAN_WIDTH]}
-        graph['activation_buffers'][f'scan{i}_output'] = {'shape': [TOKENS, CHANNELS]}
-        graph['activation_buffers'][f'norm{i}_output'] = {'shape': [TOKENS, CHANNELS]}
-        body.extend([scan_op(i, f'scan{i}_input'), norm_op(i),
-                     concat_op(i+1, f'norm{i}_output')])
-    graph['activation_buffers']['predictor_features'] = {'shape': [TOKENS, SCAN_WIDTH]}
-    graph['activation_buffers']['head_scan_output'] = {'shape': [TOKENS, CHANNELS]}
+        graph['activation_buffers'][f'scan{i}_input'] = {'shape': [tokens, SCAN_WIDTH]}
+        graph['activation_buffers'][f'scan{i}_output'] = {'shape': [tokens, CHANNELS]}
+        graph['activation_buffers'][f'norm{i}_output'] = {'shape': [tokens, CHANNELS]}
+        body.extend([scan_op(i, f'scan{i}_input', tokens), norm_op(i, tokens),
+                     concat_op(i+1, f'norm{i}_output', tokens)])
+    graph['activation_buffers']['predictor_features'] = {'shape': [tokens, SCAN_WIDTH]}
+    graph['activation_buffers']['head_scan_output'] = {'shape': [tokens, CHANNELS]}
     for name in graph['activation_buffers']:
         graph['activation_bindings'][name] = name
     projection = {'id': 'duration_projection', 'op': 'linear_rows_checked',
         'kernel': 'linear_rows_checked_f32', 'returns_status': True,
         'weight_refs': {'weight': 'duration_prosody.duration_head.weight',
                         'bias': 'duration_prosody.duration_head.bias'},
-        'params': {'M': TOKENS, 'K': CHANNELS, 'N': BINS,
+        'params': {'M': tokens, 'K': CHANNELS, 'N': BINS,
                    'call_constants': {
-            'linear_input_elements': TOKENS * CHANNELS,
+            'linear_input_elements': tokens * CHANNELS,
             'linear_input_stride': CHANNELS,
             'linear_weight_elements': BINS * CHANNELS,
             'linear_weight_stride': CHANNELS,
             'linear_bias_elements': BINS,
-            'linear_output_elements': TOKENS * BINS,
+            'linear_output_elements': tokens * BINS,
             'linear_output_stride': BINS,
-            'linear_rows': TOKENS, 'linear_input_channels': CHANNELS,
+            'linear_rows': tokens, 'linear_input_channels': CHANNELS,
             'linear_output_channels': BINS}},
         'graph_slots': {'inputs': {'input': 'head_scan_output'},
                         'outputs': {'output': 'duration_logits'}}}
     frames = {'id': 'duration_frames', 'op': 'audio_duration_logits_to_frames',
         'kernel': 'audio_duration_logits_to_frames_f32', 'returns_status': True,
         'produces_runtime_lengths': {'expanded_frames': 'expanded_frames'},
-        'params': {'T': TOKENS, 'B': BINS, 'bins': BINS},
+        'params': {'T': tokens, 'B': BINS, 'bins': BINS},
         'graph_slots': {'inputs': {'logits': 'duration_logits'},
                         'outputs': {'durations': 'runtime_values',
                                     'expanded_frames': 'runtime_valid_extent'}}}
-    footer = [scan_op(3, 'predictor_features', final=True), projection, frames]
+    footer = [scan_op(3, 'predictor_features', tokens, final=True), projection, frames]
     graph['sequence'].append('duration_predictor')
     graph['block_types']['duration_predictor'] = {'sequence': ['header', 'body', 'footer'],
         'header': header, 'body': {'type': 'dense', 'ops': body}, 'footer': footer}
