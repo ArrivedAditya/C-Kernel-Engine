@@ -503,7 +503,7 @@ def resolve_two_row_batch_contract(
     A second map-compatible gate/up projection can be shared after a checked
     sequence-local attention interval. Cache writes remain sequence-local.
     """
-    if resolve_sequence_state_contract(layout, config) is None or len(ops) < 6:
+    if resolve_sequence_state_contract(layout, config, ops) is None or len(ops) < 6:
         return None
     if [op.get("op") for op in ops[:5]] != [
         "dense_embedding_lookup", "residual_save", "attn_norm", "q_proj", "k_proj"
