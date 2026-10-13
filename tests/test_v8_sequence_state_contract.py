@@ -15,6 +15,7 @@ from sequence_state_codegen_v8 import emit_sequence_state_api  # noqa: E402
 from sequence_state_contract_v8 import resolve_sequence_state_contract  # noqa: E402
 import codegen_core_v8  # noqa: E402
 import codegen_v8  # noqa: E402
+from codegen_prefill_v8 import emit_prefill_op  # noqa: E402
 
 
 def _layout(*, extra: list[dict] | None = None) -> dict:
@@ -33,6 +34,194 @@ def _layout(*, extra: list[dict] | None = None) -> dict:
 
 
 class SequenceStateContractTests(unittest.TestCase):
+    def test_recurrent_handles_switch_all_state_and_reject_stale_reuse(self) -> None:
+        contract = {
+            "arena_bytes": 192,
+            "recurrent_conv_state_arena_offset": 64,
+            "recurrent_conv_state_bytes": 16,
+            "recurrent_ssm_state_arena_offset": 128,
+            "recurrent_ssm_state_bytes": 32,
+        }
+        source = r'''
+#include <assert.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#define CK_EXPORT
+#define KV_CACHE_SIZE 32
+#define A_KV_CACHE 64
+#define A_RECURRENT_CONV_STATE 192
+#define A_RECURRENT_SSM_STATE 256
+typedef struct {
+    uint8_t *bump;
+    size_t bump_size;
+    float *kv_cache;
+    uint16_t *kv_cache_f16;
+    float *recurrent_conv_state;
+    float *recurrent_ssm_state;
+    int pos;
+    int rope_pos;
+} CKModel;
+static CKModel *g_model;
+''' + emit_sequence_state_api(contract) + r'''
+static void mutate(float *conv, float *ssm, float delta) {
+    conv[0] += delta;
+    ssm[0] += delta;
+}
+static void advance(CKModel *model, float delta) {
+''' + codegen_core_v8.emit_op({
+    "op": "probe", "function": "mutate", "layer": 0,
+    "args": [
+        {"name": "conv", "buffer_ref": "recurrent_conv_state",
+         "expr": "(float*)(model->bump + A_RECURRENT_CONV_STATE)"},
+        {"name": "ssm", "buffer_ref": "recurrent_ssm_state",
+         "expr": "(float*)(model->bump + A_RECURRENT_SSM_STATE)"},
+        {"name": "delta", "expr": "delta"},
+    ],
+}) + r'''
+}
+int main(void) {
+    _Alignas(64) uint8_t bump[320] = {0};
+    _Alignas(64) uint8_t first[192] = {0};
+    _Alignas(64) uint8_t second[192] = {0};
+    CKModel model = {.bump = bump, .bump_size = sizeof(bump),
+        .kv_cache = (float *)(bump + A_KV_CACHE),
+        .kv_cache_f16 = (uint16_t *)(bump + A_KV_CACHE),
+        .recurrent_conv_state = (float *)(bump + A_RECURRENT_CONV_STATE),
+        .recurrent_ssm_state = (float *)(bump + A_RECURRENT_SSM_STATE)};
+    g_model = &model;
+    size_t bytes = 0, alignment = 0;
+    assert(ck_model_sequence_state_requirements(&bytes, &alignment) == 0);
+    assert(bytes == 192 && alignment == 64);
+    uint64_t original = ck_model_sequence_state_default(), a = 0, b = 0;
+    assert(ck_model_sequence_state_create(bump + A_RECURRENT_CONV_STATE,
+                                          bytes, &a) == -2);
+    assert(ck_model_sequence_state_create(first, bytes, &a) == 0);
+    assert(ck_model_sequence_state_create(second, bytes, &b) == 0);
+    assert(ck_model_sequence_state_activate(a) == 0);
+    ((uint8_t *)model.kv_cache)[0] = 11;
+    advance(&model, 1.0f);
+    model.pos = 3;
+    assert(ck_model_sequence_state_activate(b) == 0);
+    assert(((uint8_t *)model.kv_cache)[0] == 0);
+    assert(model.recurrent_conv_state[0] == 0.0f);
+    assert(model.recurrent_ssm_state[0] == 0.0f);
+    ((uint8_t *)model.kv_cache)[0] = 21;
+    advance(&model, 2.0f);
+    assert(ck_model_sequence_state_activate(a) == 0);
+    assert(model.pos == 3);
+    assert(((uint8_t *)model.kv_cache)[0] == 11);
+    assert(model.recurrent_conv_state[0] == 1.0f);
+    assert(model.recurrent_ssm_state[0] == 1.0f);
+    advance(&model, 3.0f);
+    assert(model.recurrent_conv_state[0] == 4.0f);
+    assert(model.recurrent_ssm_state[0] == 4.0f);
+    assert(ck_model_sequence_state_activate(b) == 0);
+    assert(model.recurrent_conv_state[0] == 2.0f);
+    assert(model.recurrent_ssm_state[0] == 2.0f);
+    assert(ck_model_sequence_state_destroy(a) == 0);
+    assert(ck_model_sequence_state_activate(a) == -1);
+    uint64_t stale = a;
+    assert(ck_model_sequence_state_create(first, bytes, &a) == 0);
+    assert(a != stale && ck_model_sequence_state_activate(stale) == -1);
+    assert(ck_model_sequence_state_activate(a) == 0);
+    assert(((uint8_t *)model.recurrent_ssm_state)[0] == 0);
+    assert(ck_model_sequence_state_activate(original) == 0);
+    assert(model.recurrent_conv_state == (float *)(bump + A_RECURRENT_CONV_STATE));
+    assert(model.recurrent_ssm_state == (float *)(bump + A_RECURRENT_SSM_STATE));
+    ck_sequence_release_all();
+    return 0;
+}
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "sequence.c").write_text(source)
+            compile_result = subprocess.run(
+                ["cc", "-std=c11", "-Wall", "-Wextra", "-Werror",
+                 "sequence.c", "-o", "sequence"], cwd=root,
+                capture_output=True, text=True)
+            self.assertEqual(compile_result.returncode, 0, compile_result.stderr)
+            subprocess.run([str(root / "sequence")], check=True, capture_output=True)
+
+    def test_recurrent_regions_require_checked_operands(self) -> None:
+        layout = _layout(extra=[
+            {"name": "recurrent_conv_state", "abs_offset": 192, "size": 16,
+             "shape": "[2, 2]", "dtype": "fp32", "lifetime": "sequence", "mutable": True},
+            {"name": "recurrent_ssm_state", "abs_offset": 256, "size": 32,
+             "shape": "[2, 4]", "dtype": "fp32", "lifetime": "sequence", "mutable": True},
+        ])
+        layout["memory"]["arena"]["total_size"] = 320
+        def state_arg(ref: str, offset: int = 0) -> dict:
+            macro = "A_" + ref.upper()
+            suffix = f"({macro} + {offset})" if offset else macro
+            return {"buffer_ref": ref, "expr": f"(float*)(model->bump + {suffix})"}
+        ops = [
+            {"layer": 0, "args": [state_arg("recurrent_conv_state"),
+                                   state_arg("recurrent_ssm_state")]},
+            {"layer": 1, "args": [state_arg("recurrent_conv_state", 8),
+                                   state_arg("recurrent_ssm_state", 16)]},
+        ]
+        config = {"num_layers": 2}
+        self.assertIsNone(resolve_sequence_state_contract(layout, config))
+        contract = resolve_sequence_state_contract(layout, config, ops)
+        self.assertEqual(contract["arena_bytes"], 192)
+        self.assertEqual(contract["recurrent_conv_state_arena_offset"], 64)
+        self.assertEqual(contract["recurrent_ssm_state_arena_offset"], 128)
+        source = codegen_core_v8.emit_model_and_api(
+            layout=layout, config={"num_layers": 2, "num_kv_heads": 1,
+                                   "head_dim": 4}, decode_ops=ops)
+        self.assertIn("ck_model_sequence_state_create", source)
+        self.assertIn("memset(g_model->recurrent_conv_state", source)
+        self.assertIn("memset(g_model->recurrent_ssm_state", source)
+        capability = codegen_v8._emit_runtime_capability_api(
+            {"config": config, "operations": ops}, layout, None)
+        self.assertIn("CK_MODEL_CAP_SEQUENCE_STATE_SWITCH", capability)
+        self.assertNotIn("CK_MODEL_CAP_BATCH_DECODE_2", capability)
+        self.assertIsNone(resolve_sequence_state_contract(layout, config,
+            [{"layer": 0, "args": [state_arg("recurrent_conv_state"),
+                                    state_arg("recurrent_ssm_state", 32)]}]))
+        self.assertIsNone(resolve_sequence_state_contract(layout, config,
+            [{"layer": 0, "args": [state_arg("recurrent_conv_state"),
+                                    {"buffer_ref": "recurrent_ssm_state", "expr": "unknown_pointer"}]}]))
+        prefill_ops = [{**op, "mode": "prefill"} for op in ops]
+        for phase, phase_ops in (("decode", ops), ("prefill", prefill_ops)):
+            # A valid access elsewhere must not hide an untyped or mislabelled
+            # access that remains attached to model->bump in emitted C.
+            for bad in (
+                {"expr": state_arg("recurrent_ssm_state")["expr"]},
+                {"buffer_ref": "recurrent_conv_state",
+                 "expr": state_arg("recurrent_ssm_state")["expr"]},
+            ):
+                with self.subTest(phase=phase, bad=bad):
+                    poisoned = [*phase_ops, {"layer": 0, "args": [bad]}]
+                    self.assertIsNone(resolve_sequence_state_contract(layout, config, poisoned))
+            for wrong in (
+                {"layer": 1, "args": [state_arg("recurrent_conv_state"),
+                                        state_arg("recurrent_ssm_state", 16)]},
+                {"layer": 0, "args": [state_arg("recurrent_conv_state"),
+                                        state_arg("recurrent_ssm_state", 16)]},
+            ):
+                with self.subTest(phase=phase, wrong=wrong):
+                    self.assertIsNone(resolve_sequence_state_contract(
+                        layout, config, [*phase_ops, wrong]))
+        layout["memory"]["activations"]["buffers"][2]["shape"] = "[4, 1]"
+        self.assertIsNone(resolve_sequence_state_contract(layout, config, ops))
+        layout["memory"]["activations"]["buffers"][2]["shape"] = "[2, 2]"
+        self.assertIsNone(resolve_sequence_state_contract(layout, config,
+            [{"layer": 0, "args": [state_arg("recurrent_conv_state"),
+                                    state_arg("recurrent_ssm_state")]},
+             {"layer": 1, "args": [state_arg("recurrent_conv_state", 8),
+                                    state_arg("recurrent_ssm_state")]}]))
+        self.assertIsNone(resolve_sequence_state_contract(_layout(),
+            {"layer_recurrent_policy": ["deltanet"]}, ops))
+        self.assertIn("model->recurrent_conv_state", codegen_core_v8.emit_op({
+            "op": "probe", "function": "probe", "args": [state_arg("recurrent_conv_state")]}))
+        self.assertIn("model->recurrent_ssm_state", codegen_core_v8.emit_op({
+            "op": "probe", "function": "probe", "args": [state_arg("recurrent_ssm_state", 16)]}))
+        self.assertIn("model->recurrent_ssm_state", emit_prefill_op({
+            "op": "probe", "function": "probe", "args": [state_arg("recurrent_ssm_state", 16)]},
+            0, {}))
+
     def test_generated_capability_matches_generated_api(self) -> None:
         layout = _layout()
         config = {"num_layers": 1, "num_kv_heads": 1, "head_dim": 4}
@@ -114,6 +303,7 @@ class SequenceStateContractTests(unittest.TestCase):
 #define KV_CACHE_SIZE 16
 typedef struct {
     uint8_t *bump;
+    size_t bump_size;
     float *kv_cache;
     uint16_t *kv_cache_f16;
     int pos;
@@ -131,7 +321,8 @@ int main(void) {
     _Alignas(64) uint8_t arena_a[64] = {0};
     _Alignas(64) uint8_t arena_b[64] = {0};
     _Alignas(64) uint8_t arena_c[64] = {0};
-    CKModel model = {.bump = bump, .kv_cache = (float *)bump,
+    CKModel model = {.bump = bump, .bump_size = sizeof(bump),
+                     .kv_cache = (float *)bump,
                      .kv_cache_f16 = (uint16_t *)bump};
     g_model = &model;
     size_t bytes = 0, alignment = 0;

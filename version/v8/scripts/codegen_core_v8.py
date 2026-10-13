@@ -819,6 +819,15 @@ def emit_op(
     lines = []
     lines.append(f"    /* Op {idx}: {function} ({op_name}) layer={layer} section={section} */")
     args = [{**arg, "expr": _normalize_arg_expr(str(arg.get("expr", "0")))} for arg in args]
+    # Persistent recurrent operands follow the active sequence pointer. The
+    # lowered graph identifies their buffer and supplies a literal byte offset
+    # within it; arbitrary expressions retain the old path and must not be
+    # advertised as sequence-switch capable.
+    from sequence_state_contract_v8 import recurrent_state_operand
+    for arg in args:
+        operand = recurrent_state_operand(arg)
+        if operand:
+            arg["expr"] = operand[2]
 
     if op_name == "residual_save" and int(layer) >= 0:
         by_name = {str(arg.get("name", "")).lower(): str(arg.get("expr", "0")) for arg in args}
@@ -3167,6 +3176,7 @@ def emit_model_and_api(
     dump: bool = False,
     layout: Dict | None = None,
     config: Dict | None = None,
+    decode_ops: list[Dict] | None = None,
 ) -> str:
     """Emit model struct and clean API functions.
 
@@ -3191,8 +3201,8 @@ def emit_model_and_api(
     from sequence_state_contract_v8 import resolve_sequence_state_contract
     from sequence_state_codegen_v8 import emit_sequence_state_api
 
-    sequence_state_contract = resolve_sequence_state_contract(layout or {}, config or {})
-    sequence_state_api = emit_sequence_state_api() if sequence_state_contract else ""
+    sequence_state_contract = resolve_sequence_state_contract(layout or {}, config or {}, decode_ops)
+    sequence_state_api = emit_sequence_state_api(sequence_state_contract) if sequence_state_contract else ""
     sequence_state_release = "    ck_sequence_release_all();\n" if sequence_state_contract else ""
     if logits_stride > 0:
         decode_logits_copy = f"""
@@ -3546,7 +3556,7 @@ CK_EXPORT int32_t ck_model_audio_prompt_token_id(int index) {{
             if buf.get("name") != buf_name:
                 continue
             recurrent_reset_lines.append(
-                f"    memset(g_model->bump + {macro_name}, 0, {int(buf.get('size', 0))});"
+                f"    memset(g_model->{buf_name}, 0, {int(buf.get('size', 0))});"
             )
             break
     recurrent_reset_code = "\n".join(recurrent_reset_lines)
@@ -3565,6 +3575,8 @@ typedef struct {{
     float *activations;      /* Activations section */
     float *kv_cache;         /* KV cache section */
     uint16_t *kv_cache_f16;  /* Packed FP16 KV cache section */
+    float *recurrent_conv_state; /* Active sequence convolution history */
+    float *recurrent_ssm_state;  /* Active sequence recurrent matrix */
     float *rope_cos;         /* RoPE cos table */
     float *rope_sin;         /* RoPE sin table */
     float *logits;           /* Output logits */
@@ -3736,6 +3748,12 @@ static int do_init(const char *weights_path) {{
 #else
     g_model->kv_cache = NULL;
     g_model->kv_cache_f16 = NULL;
+#endif
+#ifdef A_RECURRENT_CONV_STATE
+    g_model->recurrent_conv_state = (float*)(g_model->bump + A_RECURRENT_CONV_STATE);
+#endif
+#ifdef A_RECURRENT_SSM_STATE
+    g_model->recurrent_ssm_state = (float*)(g_model->bump + A_RECURRENT_SSM_STATE);
 #endif
 #ifdef A_ROPE_CACHE
     g_model->rope_cos = (float*)(g_model->bump + A_ROPE_CACHE);
@@ -4352,6 +4370,7 @@ static void _ck_profile_dump(void) {
             dump=dump,
             layout=layout,
             config=config,
+            decode_ops=ops,
         )
     )  # Pass lowered init IR for init ops
     parts.append(

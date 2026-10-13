@@ -637,6 +637,10 @@ def emit_prefill_op(
         elif name == "kv_stride_tokens" and op_type in ("attn", "attn_sliding"):
             expr = "MAX_SEQ_LEN" if use_prefill_shared_kv_cache else "num_tokens"
 
+        from sequence_state_contract_v8 import recurrent_state_operand
+        operand = recurrent_state_operand({**arg, "expr": expr})
+        if operand:
+            expr = operand[2]
         args.append(expr)
         name_key = str(name).lower()
         if name_key and expr and name_key not in arg_expr_by_name:

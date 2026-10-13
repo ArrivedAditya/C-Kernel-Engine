@@ -178,7 +178,7 @@ def _emit_runtime_capability_api(
 
     sequence_config = dict(config)
     sequence_config.update(layout_config)  # Match codegen_core_v8.generate.
-    if not encoder_only and resolve_sequence_state_contract(layout_obj, sequence_config):
+    if not encoder_only and resolve_sequence_state_contract(layout_obj, sequence_config, operations):
         capabilities.append("CK_MODEL_CAP_SEQUENCE_STATE_SWITCH")
         from batch_decode_contract_v8 import resolve_two_row_batch_contract
         if (
@@ -2670,6 +2670,18 @@ def main(argv: list[str] | None = None) -> int:
         layout_path.write_text(json.dumps(layout_obj, indent=2), encoding="utf-8")
         prefill_code = ""
         if prefill_obj is not None:
+            from sequence_state_contract_v8 import resolve_sequence_state_contract
+            sequence_config = dict(ir_obj.get("config", {}) or {})
+            sequence_config.update(layout_obj.get("config", {}) or {})
+            decode_state = resolve_sequence_state_contract(
+                layout_obj, sequence_config, ir_obj.get("operations", []))
+            if (decode_state and "recurrent_conv_state_bytes" in decode_state and
+                    resolve_sequence_state_contract(
+                        layout_obj, sequence_config,
+                        prefill_obj.get("operations", [])) is None):
+                raise RuntimeError(
+                    "generated recurrent prefill does not preserve the sequence-state operand contract"
+                )
             prefill_path = td_path / "prefill.v8.json"
             prefill_path.write_text(json.dumps(prefill_obj, indent=2), encoding="utf-8")
             prefill_code = codegen_prefill_v8.generate_prefill(
@@ -2747,7 +2759,8 @@ def main(argv: list[str] | None = None) -> int:
 
         sequence_config = dict(ir_obj.get("config", {}) or {})
         sequence_config.update(layout_obj.get("config", {}) or {})
-        sequence_switch = bool(resolve_sequence_state_contract(layout_obj, sequence_config))
+        sequence_switch = bool(resolve_sequence_state_contract(
+            layout_obj, sequence_config, ir_obj.get("operations", ir_obj.get("ops", []))))
         code = _inject_activation_lookup_api(
             code, layout_obj, sequence_switch=sequence_switch
         )
