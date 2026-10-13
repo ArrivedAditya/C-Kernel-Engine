@@ -982,6 +982,10 @@ TEST_SUITES = {
         "Native Kokoro WAV Host Seeded Excitation Contract", "inference",
         ROOT / "tests" / "test_v8_native_kokoro_wav_host.py",
     ),
+    "tts_kokoro_request_package": TestSuite(
+        "Kokoro Static Request Package BUMP and Bounds Contract", "inference",
+        ROOT / "tests" / "test_v8_kokoro_request_package.py",
+    ),
     "tts_audio_harmonic_source_generated": TestSuite(
         "Checked Harmonic Source Normal-Compiler Generated Graph", "inference",
         ROOT / "tests" / "test_v8_audio_harmonic_source_generated.py",
