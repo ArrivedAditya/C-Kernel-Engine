@@ -31,16 +31,49 @@ FIXTURE = ROOT / 'tests/fixtures/tts/kokoro_waveform_hello_8_pinned.npz'
 class KokoroWaveformTwoLengthsTest(unittest.TestCase):
     def test_exact_bucket_authoring_preserves_default(self):
         self.assertEqual(json.loads(author.OUTPUT.read_text()), author.build_circuit())
-        graph = author.build_circuit(8)
-        self.assertEqual(graph['runtime_constants']['phoneme_count'], 8)
-        self.assertEqual(graph['activation_buffers']['word_ids']['shape'], [8])
-        self.assertEqual(graph['activation_buffers']['text_encoder_features']['shape'], [8, 512])
-        self.assertEqual(graph['activation_buffers']['generator_waveform']['shape'], [76800])
-        text = graph['block_types']['text_encoder']['body']['ops']
-        self.assertEqual(next(op for op in text if op['id'] == 'text_lstm')['params']['T'], 8)
+        for tokens in (3, 8, 40):
+            with self.subTest(tokens=tokens):
+                graph = author.build_circuit(tokens)
+                self.assertEqual(graph['runtime_constants']['phoneme_count'], tokens)
+                self.assertEqual(graph['activation_buffers']['word_ids']['shape'], [tokens])
+                self.assertEqual(graph['activation_buffers']['text_encoder_features']['shape'], [tokens, 512])
+                self.assertEqual(graph['activation_buffers']['generator_waveform']['shape'], [76800])
+                text = graph['block_types']['text_encoder']['body']['ops']
+                self.assertEqual(next(op for op in text if op['id'] == 'text_lstm')['params']['T'], tokens)
         for tokens in (0, 1, 2, 41, 512, True):
             with self.subTest(tokens=tokens), self.assertRaises(ValueError):
                 author.build_circuit(tokens)
+
+    @unittest.skipUnless(os.environ.get('CKE_KOKORO_MODEL_DIR'),
+                         'pinned voice bank unavailable; set CKE_KOKORO_MODEL_DIR')
+    def test_selected_voice_styles_match_pinned_bank(self):
+        try:
+            import torch
+        except ImportError:
+            self.skipTest('PyTorch unavailable for pinned voice-bank comparison')
+
+        model_dir = Path(os.environ['CKE_KOKORO_MODEL_DIR'])
+        voice_path = model_dir / 'voices/af_heart.pt'
+        short_meta = json.loads(FIXTURE.with_suffix('.json').read_text())
+        long_meta = json.loads((ROOT / 'version/v8/tts/reference/fixture_manifest.json').read_text())
+        expected_hash = short_meta['asset_sha256']['voices/af_heart.pt']
+        self.assertEqual(expected_hash, long_meta['assets']['voices/af_heart.pt'])
+        self.assertEqual(hashlib.sha256(voice_path.read_bytes()).hexdigest(), expected_hash)
+        bank = torch.load(voice_path, map_location='cpu', weights_only=True).detach().numpy()
+        self.assertEqual(bank.shape[-1], 256)
+        bank = bank.reshape(bank.shape[0], 256)
+        for tokens in (3, 8, 36, 40):
+            self.assertLess(tokens - 3, bank.shape[0])
+        with np.load(FIXTURE, allow_pickle=False) as short, \
+                np.load(ROOT / 'tests/fixtures/tts/kokoro_generator_stage0_pinned.npz',
+                        allow_pickle=False) as long:
+            for tokens, metadata, fixture in ((8, short_meta, short), (36, long_meta, long)):
+                with self.subTest(tokens=tokens):
+                    row = tokens - 3
+                    self.assertEqual(metadata['voice_row_index'], row)
+                    np.testing.assert_array_equal(fixture['decoder_style'].ravel(), bank[row, :128])
+                    np.testing.assert_array_equal(fixture['predictor_style'].ravel(), bank[row, 128:])
+        self.assertFalse(np.array_equal(bank[5], bank[33]))
 
     @unittest.skipUnless(os.environ.get('CKE_TTS_RUN_TWO_LENGTH_WAVEFORM'),
                          'asset-backed two-length waveform replay not requested')
@@ -237,6 +270,22 @@ class KokoroWaveformTwoLengthsTest(unittest.TestCase):
                 output_path = os.environ.get('CKE_TTS_TWO_LENGTH_REPORT')
                 if output_path:
                     Path(output_path).write_text(json.dumps(evidence, indent=2) + '\n')
+                for ordinal, item in enumerate(report[:2]):
+                    label = 'short' if ordinal == 0 else 'long'
+                    print('CKE_NUMERICAL_CASE ' + json.dumps({
+                        'case_id': f'kokoro.waveform.exact-bucket-{label}-diagnostic-v1',
+                        'name': f'Kokoro {item["tokens"]}-ID connected waveform',
+                        'provider': 'generated_kokoro_waveform', 'dtype': 'fp32',
+                        'direction': 'inference',
+                        'oracle': 'pinned-PyTorch-2.8-full-model-waveform',
+                        'status': item['oracle_numerical_status'],
+                        'gate': 'diagnostic', 'blocking': False,
+                        'max_diff': item['oracle_max_abs'], 'tolerance': 1e-5,
+                        'rmse': item['oracle_rmse'],
+                        'configuration': f'{item["tokens"]} IDs, af_heart, '
+                            f'captured Gaussian, {item["sample_count"]} samples',
+                        'reproduction_command': evidence['reproduction_command'],
+                    }, sort_keys=True))
                 print('CKE_TTS_TWO_LENGTH_DIAGNOSTIC ' + json.dumps(evidence, sort_keys=True))
         finally:
             baseline.tearDownClass()

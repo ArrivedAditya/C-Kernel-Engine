@@ -1,5 +1,6 @@
 """Failure isolation and shared kernel-map/nightly selection regressions."""
 import contextlib
+from datetime import datetime, timezone
 import io
 import json
 import os
@@ -17,6 +18,35 @@ import tests.test_v8_audio_adaptive_layer_norm_oracle as adaln
 
 
 class KernelOracleReportingTest(unittest.TestCase):
+    def test_waveform_execution_pass_keeps_numerical_failure_in_report(self):
+        record = {"case_id": "kokoro.waveform.exact-bucket-short-diagnostic-v1",
+                  "name": "Kokoro 8-ID connected waveform", "status": "fail",
+                  "max_diff": 0.010312862694263458, "tolerance": 1e-5,
+                  "gate": "diagnostic", "blocking": False,
+                  "oracle": "pinned-PyTorch-2.8-full-model-waveform"}
+        completed = types.SimpleNamespace(returncode=0,
+            stdout="CKE_NUMERICAL_CASE " + json.dumps(record) + "\n",
+            stderr="test_loaded_exact_buckets_short_long_short (tests.example.Case) ... ok\n"
+                   "Ran 1 test in 0.01s\n\nOK\n")
+        with mock.patch.object(nightly.subprocess, "run", return_value=completed):
+            result = nightly.run_python_test(
+                nightly.TEST_SUITES["tts_kokoro_waveform_two_lengths_asset"])
+        self.assertEqual(result.status, "pass")
+        numerical = [case for case in result.sub_tests if case.case_id == record["case_id"]]
+        self.assertEqual(len(numerical), 1)
+        self.assertEqual(numerical[0].status, "fail")
+        self.assertEqual(numerical[0].metadata["blocking"], False)
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "nightly.json"
+            with mock.patch.object(nightly, "capture_runner_hardware", return_value={}):
+                nightly.save_json_report([result], path, datetime.now(timezone.utc))
+            saved = json.loads(path.read_text())
+        self.assertEqual(saved["summary"]["passed"], 1)
+        self.assertEqual(saved["summary"]["sub_tests_failed"], 1)
+        self.assertEqual(saved["results"][0]["status"], "pass")
+        self.assertEqual(next(case for case in saved["results"][0]["sub_tests"]
+            if case["case_id"] == record["case_id"])["status"], "fail")
+
     def test_reference_drift_does_not_hide_native_comparison(self):
         fixture = json.loads(adaln.FIXTURE.read_text())
         case = fixture["cases"][1]

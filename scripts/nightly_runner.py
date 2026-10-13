@@ -1108,6 +1108,12 @@ TEST_SUITES = {
         unittest_targets=("tests.test_v8_kokoro_waveform_two_lengths."
             "KokoroWaveformTwoLengthsTest.test_loaded_exact_buckets_short_long_short",),
     ),
+    "tts_kokoro_voice_bank_asset": TestSuite(
+        "Kokoro Pinned Voice-Row Conditioning", "inference",
+        ROOT / "tests" / "test_v8_kokoro_waveform_two_lengths.py",
+        unittest_targets=("tests.test_v8_kokoro_waveform_two_lengths."
+            "KokoroWaveformTwoLengthsTest.test_selected_voice_styles_match_pinned_bank",),
+    ),
     "tts_checked_text_ops_generated": TestSuite(
         "Model-Neutral Checked Conv1D, Transpose, and Activation Graph", "inference",
         ROOT / "tests" / "test_v8_checked_text_ops_generated.py",
