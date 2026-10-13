@@ -1110,6 +1110,31 @@ def _copy_optional(src: Path, dst: Path) -> None:
         shutil.copy2(src, dst)
 
 
+def _stage_local_gguf_tokenizer_assets(gguf_path: Path, work_dir: Path) -> None:
+    """Keep publisher tokenizer sidecars beside a local GGUF in the built bundle.
+
+    GGUF files retain token IDs, but a publisher Jinja template may need the
+    corresponding token text from tokenizer metadata. Never silently retain a
+    different sidecar from an earlier build in the same run directory.
+    """
+    for name in ("tokenizer.json", "tokenizer_config.json",
+                 "special_tokens_map.json"):
+        source = gguf_path.parent / name
+        if not source.is_file():
+            continue
+        if not _validate_json_file(source):
+            raise RuntimeError(f"invalid local GGUF tokenizer asset: {source}")
+        target = work_dir / name
+        if source.resolve() == target.resolve():
+            continue
+        if target.exists():
+            if _sha256_file(target) != _sha256_file(source):
+                raise RuntimeError(f"conflicting local GGUF tokenizer asset: {target}")
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+
+
 def _prepare_runtime_dir_from_local_artifacts(model_dir: Path, work_dir: Path) -> tuple[Path, Path, Path]:
     src_bump = model_dir / "weights.bump"
     src_manifest = model_dir / "weights_manifest.json"
@@ -2098,6 +2123,8 @@ def run_pipeline(args: argparse.Namespace) -> int:
         gguf_path, repo_id_for_tokenizer = _resolve_gguf_input(model_input, force_download=args.force_download)
         if repo_id_for_tokenizer:
             ensure_tokenizer_files(repo_id_for_tokenizer, work_dir)
+        else:
+            _stage_local_gguf_tokenizer_assets(gguf_path, work_dir)
         weights_path, config_path, manifest_path = step_convert_gguf(
             gguf_path,
             work_dir,

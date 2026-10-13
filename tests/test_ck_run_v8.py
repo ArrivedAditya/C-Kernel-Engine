@@ -558,6 +558,54 @@ def test_ensure_tokenizer_files_keeps_valid_json_payload(tmp_path: Path, monkeyp
     }
 
 
+def test_local_gguf_stages_token_text_needed_by_publisher_jinja(tmp_path: Path) -> None:
+    from server.serving_bundle import resolved_renderer_tokens
+
+    source = tmp_path / "source"
+    run = tmp_path / "run"
+    source.mkdir()
+    gguf = source / "model.gguf"
+    gguf.write_bytes(b"GGUF")
+    (source / "tokenizer.json").write_text(json.dumps({
+        "added_tokens": [{"id": 2, "content": "<bos>"}],
+    }), encoding="utf-8")
+    (run / "weights_manifest.json").parent.mkdir()
+    (run / "weights_manifest.json").write_text(json.dumps({
+        "special_tokens": {"bos_token_id": 2},
+    }), encoding="utf-8")
+
+    ck_run_v8._stage_local_gguf_tokenizer_assets(gguf, run)
+
+    doc = {"assets": {
+        "weights_manifest.json": {"path": "weights_manifest.json"},
+        "tokenizer.json": {"path": "tokenizer.json"},
+    }}
+    assert resolved_renderer_tokens(run, doc)["bos_token"] == "<bos>"
+
+
+def test_local_gguf_rejects_stale_or_invalid_tokenizer_asset(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    run = tmp_path / "run"
+    source.mkdir()
+    run.mkdir()
+    gguf = source / "model.gguf"
+    gguf.write_bytes(b"GGUF")
+    tokenizer = source / "tokenizer.json"
+    tokenizer.write_text('{"added_tokens": []}', encoding="utf-8")
+    target = run / "tokenizer.json"
+    target.write_text('{"added_tokens": [{"id": 2}]}', encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="conflicting local GGUF tokenizer asset"):
+        ck_run_v8._stage_local_gguf_tokenizer_assets(gguf, run)
+    assert target.read_text(encoding="utf-8") == '{"added_tokens": [{"id": 2}]}'
+
+    target.unlink()
+    tokenizer.write_text("<html>download failed</html>", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="invalid local GGUF tokenizer asset"):
+        ck_run_v8._stage_local_gguf_tokenizer_assets(gguf, run)
+    assert not target.exists()
+
+
 # --- Rate-limit-aware outer retries -------------------------------------------
 
 
