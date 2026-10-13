@@ -24,6 +24,7 @@ from tests.v8_kokoro_duration_fixture_support import populated_duration_arena
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'version/v8/tts'))
 import build_kokoro_waveform_circuit as author
+import export_kokoro_voice_bank as voice_export
 
 FIXTURE = ROOT / 'tests/fixtures/tts/kokoro_waveform_hello_8_pinned.npz'
 
@@ -62,6 +63,17 @@ class KokoroWaveformTwoLengthsTest(unittest.TestCase):
         bank = torch.load(voice_path, map_location='cpu', weights_only=True).detach().numpy()
         self.assertEqual(bank.shape[-1], 256)
         bank = bank.reshape(bank.shape[0], 256)
+        with tempfile.TemporaryDirectory() as directory:
+            native_path = Path(directory) / 'af_heart.ckvoice'
+            export_meta = voice_export.export_voice_bank(voice_path, native_path)
+            self.assertEqual(export_meta['source_sha256'], expected_hash)
+            self.assertEqual(export_meta['native_sha256'],
+                '50a2b7d543cc5a9bdefb3217e3bf1a8d87e947dd5b4e8babf685c0bc4b3b4177')
+            packed = native_path.read_bytes()
+            self.assertEqual(packed[:8], b'CKVOICE1')
+            self.assertEqual(struct.unpack_from('<II', packed, 8), (510, 256))
+            np.testing.assert_array_equal(np.frombuffer(packed, dtype='<f4',
+                offset=16).reshape(510, 256), bank)
         for tokens in (3, 8, 36, 40):
             self.assertLess(tokens - 3, bank.shape[0])
         with np.load(FIXTURE, allow_pickle=False) as short, \
@@ -184,7 +196,8 @@ class KokoroWaveformTwoLengthsTest(unittest.TestCase):
                     shutil.copy2(source_path, host_root / name)
                 binary = host_root / 'native-kokoro-wav'
                 subprocess.run(['cc', '-std=c11', '-O2', '-Wall', '-Wextra',
-                    '-Werror', '-pedantic', '-I', str(host_root),
+                    '-Werror', '-pedantic', '-DCK_TTS_COMPILED_TOKEN_COUNT=8',
+                    '-I', str(host_root),
                     str(host_root / 'host.c'), str(host_root / 'audio_noise_counter.c'),
                     '-L', str(host_root), '-l:generated.so', '-Wl,-rpath,$ORIGIN',
                     '-lm', '-o', str(binary)], check=True, capture_output=True)
@@ -285,6 +298,51 @@ class KokoroWaveformTwoLengthsTest(unittest.TestCase):
                     actual_seeded_pcm = audio.readframes(32400)
                 np.testing.assert_array_equal(
                     np.frombuffer(actual_seeded_pcm, dtype='<i2'), seeded_pcm)
+                # CKTTS003 binds request IDs and the selected voice-bank row
+                # at the native host boundary. Use the complete pinned bank
+                # when supplied; otherwise package the verified fixture row.
+                voice_bank = host_root / 'af_heart-fixture-row.ckvoice'
+                full_bank = os.environ.get('CKE_TTS_NATIVE_VOICE_BANK')
+                if full_bank:
+                    voice_bank_bytes = Path(full_bank).read_bytes()
+                    self.assertEqual(hashlib.sha256(voice_bank_bytes).hexdigest(),
+                        '50a2b7d543cc5a9bdefb3217e3bf1a8d87e947dd5b4e8babf685c0bc4b3b4177')
+                    rows_count, columns = struct.unpack_from('<II',
+                        voice_bank_bytes, 8)
+                    self.assertEqual((voice_bank_bytes[:8], rows_count, columns),
+                                     (b'CKVOICE1', 510, 256))
+                    rows = np.frombuffer(voice_bank_bytes, dtype='<f4',
+                        offset=16).reshape(rows_count, columns)
+                    voice_source = 'complete pinned af_heart bank'
+                    voice_bank.write_bytes(voice_bank_bytes)
+                else:
+                    rows = np.zeros((6, 256), dtype='<f4')
+                    rows[5, :128] = short['decoder_style'].ravel()
+                    rows[5, 128:] = short['predictor_style'].ravel()
+                    voice_source = 'pinned fixture row only'
+                    voice_bank.write_bytes(b'CKVOICE1' +
+                        struct.pack('<II', 6, 256) + rows.tobytes())
+                np.testing.assert_array_equal(rows[5, :128],
+                                              short['decoder_style'].ravel())
+                np.testing.assert_array_equal(rows[5, 128:],
+                                              short['predictor_style'].ravel())
+                request_package = host_root / 'prepared-hello-request.cktts'
+                with package.open('rb') as captured, request_package.open('wb') as stream:
+                    stream.write(b'CKTTS003')
+                    stream.write(struct.pack('<QQQQQQQQQI', arena_bytes,
+                        output_item['abs_offset'], output_item['size'] // 4,
+                        gaussian_item['abs_offset'], gaussian_item['size'] // 4,
+                        buffers['word_ids']['abs_offset'], 8,
+                        buffers['predictor_style']['abs_offset'],
+                        buffers['decoder_style']['abs_offset'], segments))
+                    captured.seek(36)
+                    shutil.copyfileobj(captured, stream, length=65536)
+                request_wav = host_root / 'hello-native-request.wav'
+                ids_csv = ','.join(str(int(value)) for value in short['word_ids'])
+                subprocess.run([str(binary), str(request_package),
+                    str(request_wav), '7', ids_csv, str(voice_bank)],
+                    cwd=host_root, check=True, capture_output=True, text=True)
+                self.assertEqual(request_wav.read_bytes(), seeded_wav.read_bytes())
                 evidence = {
                     'schema': 'cke.kokoro.two_length_waveform_diagnostic.v1',
                     'execution_status': 'pass',
@@ -316,6 +374,18 @@ class KokoroWaveformTwoLengthsTest(unittest.TestCase):
                         'pcm_matches_generated_seeded_output': True,
                         'pytorch_noise_parity': 'NOT_TESTED',
                     },
+                    'native_request_short': {
+                        'status': 'pass',
+                        'phoneme_count': 8,
+                        'voice_row': 5,
+                        'voice_source': voice_source,
+                        'voice_bank_sha256': hashlib.sha256(
+                            voice_bank.read_bytes()).hexdigest(),
+                        'seed': 7,
+                        'wav_sha256': hashlib.sha256(
+                            request_wav.read_bytes()).hexdigest(),
+                        'pcm_matches_seeded_host': True,
+                    },
                     'host': platform.platform(),
                     'reproduction_command': 'CKE_TTS_RUN_TWO_LENGTH_WAVEFORM=1 '
                         'python3 -m unittest '
@@ -330,7 +400,8 @@ class KokoroWaveformTwoLengthsTest(unittest.TestCase):
                     retained.mkdir(parents=True, exist_ok=True)
                     retained_wavs = {}
                     for label, source in (('captured-noise', wav_path),
-                                          ('seeded-noise', seeded_wav)):
+                                          ('seeded-noise', seeded_wav),
+                                          ('native-request', request_wav)):
                         target = retained / f'hello-{label}.wav'
                         shutil.copy2(source, target)
                         self.assertEqual(hashlib.sha256(target.read_bytes()).hexdigest(),
@@ -342,6 +413,18 @@ class KokoroWaveformTwoLengthsTest(unittest.TestCase):
                 output_path = os.environ.get('CKE_TTS_TWO_LENGTH_REPORT')
                 if output_path:
                     Path(output_path).write_text(json.dumps(evidence, indent=2) + '\n')
+                print('CKE_NUMERICAL_CASE ' + json.dumps({
+                    'case_id': 'kokoro.waveform.exact-bucket-native-request-v1',
+                    'name': 'Kokoro 8-ID native request and voice-row binding',
+                    'provider': 'generated_kokoro_waveform+native_request_host',
+                    'dtype': 'fp32', 'direction': 'inference',
+                    'oracle': 'same-seed generated-entry PCM',
+                    'status': 'pass', 'gate': 'session', 'blocking': True,
+                    'max_diff': 0, 'tolerance': 0,
+                    'configuration': '8 supplied IDs, fixture voice row 5, '
+                        'seed 7, 32400 samples; request WAV equals seeded host WAV',
+                    'reproduction_command': evidence['reproduction_command'],
+                }, sort_keys=True))
                 print('CKE_NUMERICAL_CASE ' + json.dumps({
                     'case_id': 'kokoro.waveform.exact-bucket-short-native-noise-v1',
                     'name': 'Kokoro 8-ID seeded native host PCM replay',

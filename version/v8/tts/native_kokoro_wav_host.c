@@ -3,11 +3,18 @@
  * fills request-local excitation, and writes WAV. */
 #include "ckernel_tts.h"
 #include <errno.h>
+#include <float.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* Exact-length generated libraries have different buffer layouts. The host
+ * build must declare the graph's token count before accepting CKTTS003. */
+#ifndef CK_TTS_COMPILED_TOKEN_COUNT
+#define CK_TTS_COMPILED_TOKEN_COUNT 0
+#endif
 
 extern int ck_kokoro_waveform_bounded(uint8_t *, size_t, int32_t *, int32_t *,
     int32_t *, int32_t *, int32_t *, int32_t *, int32_t *);
@@ -25,6 +32,67 @@ static int read_u64(FILE *stream, uint64_t *value) {
     if (!read_u32(stream, &low) || !read_u32(stream, &high)) return 0;
     *value = (uint64_t)low | (uint64_t)high << 32;
     return 1;
+}
+
+static int bounded_region(uint64_t offset, uint64_t elements,
+    uint64_t element_bytes, uint64_t arena_bytes) {
+    return element_bytes && offset <= arena_bytes &&
+        !(offset % element_bytes) &&
+        elements <= (arena_bytes - offset) / element_bytes;
+}
+
+static int overlaps(uint64_t a, uint64_t a_bytes,
+    uint64_t b, uint64_t b_bytes) {
+    return a < b + b_bytes && b < a + a_bytes;
+}
+
+static int parse_phoneme_ids(const char *text, int32_t *ids, size_t count) {
+    if (count < 3 || count > 40 || !text) return 0;
+    const char *cursor = text;
+    for (size_t i = 0; i < count; ++i) {
+        if (*cursor < '0' || *cursor > '9') return 0;
+        char *end = NULL;
+        errno = 0;
+        const long parsed = strtol(cursor, &end, 10);
+        if (errno || end == cursor || parsed < 0 || parsed >= 178) return 0;
+        ids[i] = (int32_t)parsed;
+        if (i + 1 == count) {
+            if (*end) return 0;
+        } else {
+            if (*end != ',') return 0;
+            cursor = end + 1;
+        }
+    }
+    return ids[0] == 0 && ids[count - 1] == 0;
+}
+
+/* CKVOICE1: magic, LE row count, LE 256 columns, then row-major FP32.
+ * The importer verifies the source artifact; the host validates the native
+ * package and reads only the row selected by this request. */
+static int read_voice_row(const char *path, size_t row, float values[256]) {
+    const uint16_t endian = 1;
+    if (sizeof(float) != 4 || FLT_RADIX != 2 ||
+        FLT_MANT_DIG != 24 || FLT_MAX_EXP != 128 ||
+        *(const unsigned char *)&endian != 1) return 0;
+    FILE *stream = fopen(path, "rb");
+    if (!stream) return 0;
+    char magic[8];
+    uint32_t rows, columns;
+    int okay = fread(magic, 1, 8, stream) == 8 &&
+        memcmp(magic, "CKVOICE1", 8) == 0 &&
+        read_u32(stream, &rows) && read_u32(stream, &columns) &&
+        rows <= 4096 && columns == 256 && row < rows;
+    if (okay) {
+        const long expected = 16L + (long)rows * 256L * 4L;
+        okay = fseek(stream, 0, SEEK_END) == 0 &&
+            ftell(stream) == expected &&
+            fseek(stream, 16L + (long)row * 256L * 4L, SEEK_SET) == 0 &&
+            fread(values, sizeof(float), 256, stream) == 256;
+        for (size_t i = 0; okay && i < 256; ++i)
+            if (!isfinite(values[i])) okay = 0;
+    }
+    if (fclose(stream) != 0) okay = 0;
+    return okay;
 }
 
 static int write_u16(FILE *stream, uint16_t value) {
@@ -64,12 +132,13 @@ static int write_wav(const char *path, const float *samples, size_t count) {
 }
 
 int main(int argc, char **argv) {
-    if (argc != 3 && argc != 4) {
-        fprintf(stderr, "usage: %s prepared-arena.cktts output.wav [seed]\n", argv[0]);
+    if (argc != 3 && argc != 4 && argc != 6) {
+        fprintf(stderr, "usage: %s prepared-arena.cktts output.wav "
+            "[seed [phoneme-ids-csv voice-bank.ckvoice]]\n", argv[0]);
         return 2;
     }
     uint64_t seed = 0;
-    if (argc == 4) {
+    if (argc >= 4) {
         char *end = NULL;
         errno = 0;
         const unsigned long long parsed = strtoull(argv[3], &end, 0);
@@ -82,31 +151,62 @@ int main(int argc, char **argv) {
     char magic[8];
     uint64_t bytes64, waveform_offset, waveform_capacity;
     uint64_t gaussian_offset = 0, gaussian_capacity = 0;
+    uint64_t ids_offset = 0, ids_count = 0;
+    uint64_t predictor_offset = 0, decoder_offset = 0;
     uint32_t segments;
     if (fread(magic, 1, 8, input) != 8) {
         fclose(input); return 4;
     }
-    const int native_noise = memcmp(magic, "CKTTS002", 8) == 0;
+    const int request = memcmp(magic, "CKTTS003", 8) == 0;
+    const int native_noise = request || memcmp(magic, "CKTTS002", 8) == 0;
     if ((!native_noise && memcmp(magic, "CKTTS001", 8) != 0) ||
-        native_noise != (argc == 4) ||
+        (request ? argc != 6 : native_noise ? argc != 4 : argc != 3) ||
         !read_u64(input, &bytes64) || !read_u64(input, &waveform_offset) ||
         !read_u64(input, &waveform_capacity) ||
         (native_noise && (!read_u64(input, &gaussian_offset) ||
                           !read_u64(input, &gaussian_capacity))) ||
+        (request && (!read_u64(input, &ids_offset) ||
+                     !read_u64(input, &ids_count) ||
+                     !read_u64(input, &predictor_offset) ||
+                     !read_u64(input, &decoder_offset))) ||
         !read_u32(input, &segments) ||
         bytes64 > SIZE_MAX - 63u || bytes64 == 0 ||
         bytes64 > UINT64_C(4) * 1024u * 1024u * 1024u ||
-        waveform_offset > bytes64 ||
-        (waveform_offset & (sizeof(float) - 1u)) || !waveform_capacity ||
-        waveform_capacity > (bytes64 - waveform_offset) / sizeof(float) ||
-        (native_noise && (gaussian_offset > bytes64 ||
-            (gaussian_offset & (sizeof(float) - 1u)) ||
+        !waveform_capacity ||
+        !bounded_region(waveform_offset, waveform_capacity, 4, bytes64) ||
+        (native_noise && (
+            !bounded_region(gaussian_offset, gaussian_capacity, 4, bytes64) ||
             gaussian_capacity != 76800u * 9u ||
-            gaussian_capacity > (bytes64 - gaussian_offset) / sizeof(float) ||
-            (gaussian_offset < waveform_offset +
-                waveform_capacity * sizeof(float) &&
-             waveform_offset < gaussian_offset +
-                gaussian_capacity * sizeof(float))))) {
+            overlaps(gaussian_offset, gaussian_capacity * 4,
+                waveform_offset, waveform_capacity * 4))) ||
+        (request && (CK_TTS_COMPILED_TOKEN_COUNT < 3 ||
+            ids_count != CK_TTS_COMPILED_TOKEN_COUNT || ids_count > 40 ||
+            !bounded_region(ids_offset, ids_count, 4, bytes64) ||
+            !bounded_region(predictor_offset, 128, 4, bytes64) ||
+            !bounded_region(decoder_offset, 128, 4, bytes64) ||
+            overlaps(ids_offset, ids_count * 4, gaussian_offset,
+                gaussian_capacity * 4) ||
+            overlaps(ids_offset, ids_count * 4, waveform_offset,
+                waveform_capacity * 4) ||
+            overlaps(predictor_offset, 512, decoder_offset, 512) ||
+            overlaps(predictor_offset, 512, gaussian_offset,
+                gaussian_capacity * 4) ||
+            overlaps(decoder_offset, 512, gaussian_offset,
+                gaussian_capacity * 4) ||
+            overlaps(predictor_offset, 512, waveform_offset,
+                waveform_capacity * 4) ||
+            overlaps(decoder_offset, 512, waveform_offset,
+                waveform_capacity * 4) ||
+            overlaps(ids_offset, ids_count * 4, predictor_offset, 512) ||
+            overlaps(ids_offset, ids_count * 4, decoder_offset, 512)))) {
+        fclose(input); return 4;
+    }
+    int32_t request_ids[40];
+    float request_voice[256];
+    if (request && (!parse_phoneme_ids(argv[4], request_ids,
+                                       (size_t)ids_count) ||
+                    !read_voice_row(argv[5], (size_t)ids_count - 3u,
+                                    request_voice))) {
         fclose(input); return 4;
     }
     const size_t arena_bytes = (size_t)bytes64;
@@ -124,6 +224,13 @@ int main(int argc, char **argv) {
     if (fgetc(input) != EOF) okay = 0;
     fclose(input);
     if (!okay) { free(arena); return 6; }
+    if (request) {
+        memcpy(arena + (size_t)ids_offset, request_ids,
+               (size_t)ids_count * 4u);
+        memcpy(arena + (size_t)decoder_offset, request_voice, 128u * 4u);
+        memcpy(arena + (size_t)predictor_offset, request_voice + 128,
+               128u * 4u);
+    }
     if (native_noise && audio_noise_counter_gaussian_f32(
             (float *)(arena + (size_t)gaussian_offset),
             (size_t)gaussian_capacity, (size_t)gaussian_capacity,
