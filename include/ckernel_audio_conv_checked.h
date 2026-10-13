@@ -69,6 +69,31 @@ int audio_conv1d_dilated_checked_channel_major_f32_avx2_fma(
     size_t kernel_size, size_t stride, size_t padding, size_t dilation,
     size_t output_frames);
 
+/* Explicitly selected output-channel-parallel AVX2/FMA providers. The host
+ * owns worker_pool and keeps it alive until the checked call returns. The
+ * implementation validates all buffers before dispatch and commits output
+ * only after the staged result is finite. worker_count is bounded by the
+ * pool capacity and independent output channels; small cases run serially. */
+int audio_conv1d_checked_channel_major_f32_avx2_parallel(
+    const float *input, size_t input_elements, size_t input_stride,
+    const float *weight, size_t weight_elements,
+    const float *bias, size_t bias_elements,
+    float *output, size_t output_elements, size_t output_stride,
+    float *scratch, size_t scratch_elements,
+    size_t input_channels, size_t output_channels, size_t input_frames,
+    size_t kernel_size, size_t stride, size_t padding, size_t output_frames,
+    void *worker_pool, size_t worker_count);
+
+int audio_conv1d_dilated_checked_channel_major_f32_avx2_parallel(
+    const float *input, size_t input_elements, size_t input_stride,
+    const float *weight, size_t weight_elements,
+    const float *bias, size_t bias_elements,
+    float *output, size_t output_elements, size_t output_stride,
+    float *scratch, size_t scratch_elements,
+    size_t input_channels, size_t output_channels, size_t input_frames,
+    size_t kernel_size, size_t stride, size_t padding, size_t dilation,
+    size_t output_frames, void *worker_pool, size_t worker_count);
+
 int audio_conv1d_checked_channel_major_f32_hwfma(
     const float *input, size_t input_elements, size_t input_stride,
     const float *weight, size_t weight_elements,

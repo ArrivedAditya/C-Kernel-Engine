@@ -1,5 +1,6 @@
 #include "ckernel_audio_conv_checked.h"
 #include "checked_float_buffer.h"
+#include "audio_conv1d_checked_internal.h"
 
 #include <limits.h>
 #include <math.h>
@@ -18,26 +19,10 @@
 #define CK_AUDIO_CONV_X86_TARGET_FMA 0
 #endif
 
-typedef struct {
-    const float *input;
-    const float *weight;
-    const float *bias;
-    float *staged;
-    size_t input_stride;
-    size_t input_channels;
-    size_t output_channels;
-    size_t input_frames;
-    size_t kernel_size;
-    size_t stride;
-    size_t padding;
-    size_t dilation;
-    size_t output_frames;
-} ck_audio_conv1d_job;
-
 /* Both implementations execute the same channel/frame/input/tap reduction.
  * Only the function target changes how the explicit fmaf is implemented. */
 #define CK_AUDIO_CONV1D_COMPUTE_BODY \
-    for (size_t oc = 0; oc < job->output_channels; ++oc) { \
+    for (size_t oc = job->channel_begin; oc < job->channel_end; ++oc) { \
         for (size_t frame = 0; frame < job->output_frames; ++frame) { \
             float sum = job->bias[oc]; \
             for (size_t ic = 0; ic < job->input_channels; ++ic) { \
@@ -55,13 +40,15 @@ typedef struct {
         } \
     }
 
-static void audio_conv1d_compute_scalar(const ck_audio_conv1d_job *job) {
+static void audio_conv1d_compute_scalar(const ck_audio_conv1d_job *job, void *unused) {
+    (void)unused;
     CK_AUDIO_CONV1D_COMPUTE_BODY
 }
 
 #if CK_AUDIO_CONV_X86_TARGET_FMA
 __attribute__((target("fma"), noinline))
-static void audio_conv1d_compute_hwfma(const ck_audio_conv1d_job *job) {
+static void audio_conv1d_compute_hwfma(const ck_audio_conv1d_job *job, void *unused) {
+    (void)unused;
     CK_AUDIO_CONV1D_COMPUTE_BODY
 }
 
@@ -69,13 +56,14 @@ static void audio_conv1d_compute_hwfma(const ck_audio_conv1d_job *job) {
  * reduction order of the scalar FMA provider; padding frames use its exact
  * scalar path, so no zero-padded arithmetic is introduced. */
 __attribute__((target("avx2,fma"), noinline))
-static void audio_conv1d_compute_avx2(const ck_audio_conv1d_job *job) {
+void audio_conv1d_compute_avx2(const ck_audio_conv1d_job *job, void *unused) {
+    (void)unused;
     if (job->stride != 1 || job->output_frames < 8) {
-        audio_conv1d_compute_hwfma(job);
+        audio_conv1d_compute_hwfma(job, NULL);
         return;
     }
     const size_t final_tap = (job->kernel_size - 1) * job->dilation;
-    for (size_t oc = 0; oc < job->output_channels; ++oc) {
+    for (size_t oc = job->channel_begin; oc < job->channel_end; ++oc) {
         size_t frame = 0;
         for (; frame < job->output_frames;) {
             const int64_t first = (int64_t)frame - (int64_t)job->padding;
@@ -151,7 +139,7 @@ int audio_conv1d_checked_workspace(size_t input_channels, size_t output_channels
     return CK_AUDIO_CONV_CHECKED_OK;
 }
 
-static int audio_conv1d_checked_impl(
+int ck_audio_conv1d_checked_execute(
     const float *input, size_t input_elements, size_t input_stride,
     const float *weight, size_t weight_elements,
     const float *bias, size_t bias_elements,
@@ -160,7 +148,7 @@ static int audio_conv1d_checked_impl(
     size_t input_channels, size_t output_channels, size_t input_frames,
     size_t kernel_size, size_t stride, size_t padding, size_t dilation,
     size_t output_frames,
-    void (*compute)(const ck_audio_conv1d_job *)) {
+    ck_audio_conv1d_compute_fn compute, void *compute_context) {
     size_t input_span, output_span, weight_count, scratch_need;
     if (!input_channels || !output_channels || !input_frames ||
         !kernel_size || !stride || !dilation || !output_frames ||
@@ -216,8 +204,9 @@ static int audio_conv1d_checked_impl(
     /* Validation and staged commit remain shared by both providers. */
     const ck_audio_conv1d_job job = {input, weight, bias, scratch,
         input_stride, input_channels, output_channels, input_frames,
-        kernel_size, stride, padding, dilation, output_frames};
-    compute(&job);
+        kernel_size, stride, padding, dilation, output_frames, 0,
+        output_channels};
+    compute(&job, compute_context);
     if (!ck_checked_finite(scratch, (size_t)output_channels * (size_t)output_frames))
         return CK_AUDIO_CONV_CHECKED_NONFINITE;
     for (size_t channel = 0; channel < output_channels; ++channel)
@@ -235,11 +224,11 @@ int audio_conv1d_checked_channel_major_f32(
     float *scratch, size_t scratch_elements,
     size_t input_channels, size_t output_channels, size_t input_frames,
     size_t kernel_size, size_t stride, size_t padding, size_t output_frames) {
-    return audio_conv1d_checked_impl(input, input_elements, input_stride,
+    return ck_audio_conv1d_checked_execute(input, input_elements, input_stride,
         weight, weight_elements, bias, bias_elements, output, output_elements,
         output_stride, scratch, scratch_elements, input_channels,
         output_channels, input_frames, kernel_size, stride, padding, 1,
-        output_frames, audio_conv1d_compute_scalar);
+        output_frames, audio_conv1d_compute_scalar, NULL);
 }
 
 int audio_conv1d_dilated_checked_channel_major_f32(
@@ -251,11 +240,11 @@ int audio_conv1d_dilated_checked_channel_major_f32(
     size_t input_channels, size_t output_channels, size_t input_frames,
     size_t kernel_size, size_t stride, size_t padding, size_t dilation,
     size_t output_frames) {
-    return audio_conv1d_checked_impl(input, input_elements, input_stride,
+    return ck_audio_conv1d_checked_execute(input, input_elements, input_stride,
         weight, weight_elements, bias, bias_elements, output, output_elements,
         output_stride, scratch, scratch_elements, input_channels,
         output_channels, input_frames, kernel_size, stride, padding, dilation,
-        output_frames, audio_conv1d_compute_scalar);
+        output_frames, audio_conv1d_compute_scalar, NULL);
 }
 
 int audio_conv1d_checked_channel_major_f32_hwfma(
@@ -269,11 +258,11 @@ int audio_conv1d_checked_channel_major_f32_hwfma(
 #if CK_AUDIO_CONV_X86_TARGET_FMA
     if (!audio_conv1d_checked_hardware_fma_available())
         return CK_AUDIO_CONV_CHECKED_UNSUPPORTED;
-    return audio_conv1d_checked_impl(input, input_elements, input_stride,
+    return ck_audio_conv1d_checked_execute(input, input_elements, input_stride,
         weight, weight_elements, bias, bias_elements, output, output_elements,
         output_stride, scratch, scratch_elements, input_channels,
         output_channels, input_frames, kernel_size, stride, padding, 1,
-        output_frames, audio_conv1d_compute_hwfma);
+        output_frames, audio_conv1d_compute_hwfma, NULL);
 #else
     (void)input; (void)input_elements; (void)input_stride;
     (void)weight; (void)weight_elements; (void)bias; (void)bias_elements;
@@ -297,11 +286,11 @@ int audio_conv1d_dilated_checked_channel_major_f32_hwfma(
 #if CK_AUDIO_CONV_X86_TARGET_FMA
     if (!audio_conv1d_checked_hardware_fma_available())
         return CK_AUDIO_CONV_CHECKED_UNSUPPORTED;
-    return audio_conv1d_checked_impl(input, input_elements, input_stride,
+    return ck_audio_conv1d_checked_execute(input, input_elements, input_stride,
         weight, weight_elements, bias, bias_elements, output, output_elements,
         output_stride, scratch, scratch_elements, input_channels,
         output_channels, input_frames, kernel_size, stride, padding, dilation,
-        output_frames, audio_conv1d_compute_hwfma);
+        output_frames, audio_conv1d_compute_hwfma, NULL);
 #else
     (void)input; (void)input_elements; (void)input_stride;
     (void)weight; (void)weight_elements; (void)bias; (void)bias_elements;
@@ -324,11 +313,11 @@ int audio_conv1d_checked_channel_major_f32_avx2_fma(
 #if CK_AUDIO_CONV_X86_TARGET_FMA
     if (!audio_conv1d_checked_avx2_fma_available())
         return CK_AUDIO_CONV_CHECKED_UNSUPPORTED;
-    return audio_conv1d_checked_impl(input, input_elements, input_stride,
+    return ck_audio_conv1d_checked_execute(input, input_elements, input_stride,
         weight, weight_elements, bias, bias_elements, output, output_elements,
         output_stride, scratch, scratch_elements, input_channels,
         output_channels, input_frames, kernel_size, stride, padding, 1,
-        output_frames, audio_conv1d_compute_avx2);
+        output_frames, audio_conv1d_compute_avx2, NULL);
 #else
     (void)input; (void)input_elements; (void)input_stride;
     (void)weight; (void)weight_elements; (void)bias; (void)bias_elements;
@@ -352,11 +341,11 @@ int audio_conv1d_dilated_checked_channel_major_f32_avx2_fma(
 #if CK_AUDIO_CONV_X86_TARGET_FMA
     if (!audio_conv1d_checked_avx2_fma_available())
         return CK_AUDIO_CONV_CHECKED_UNSUPPORTED;
-    return audio_conv1d_checked_impl(input, input_elements, input_stride,
+    return ck_audio_conv1d_checked_execute(input, input_elements, input_stride,
         weight, weight_elements, bias, bias_elements, output, output_elements,
         output_stride, scratch, scratch_elements, input_channels,
         output_channels, input_frames, kernel_size, stride, padding, dilation,
-        output_frames, audio_conv1d_compute_avx2);
+        output_frames, audio_conv1d_compute_avx2, NULL);
 #else
     (void)input; (void)input_elements; (void)input_stride;
     (void)weight; (void)weight_elements; (void)bias; (void)bias_elements;

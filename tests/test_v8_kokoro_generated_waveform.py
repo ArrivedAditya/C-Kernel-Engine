@@ -5,6 +5,7 @@ import copy
 import hashlib
 import json
 import os
+import platform
 from pathlib import Path
 import shutil
 import struct
@@ -146,70 +147,107 @@ class KokoroGeneratedWaveformTest(unittest.TestCase):
         cls.view(layout, arena, 'generator_waveform')[:] = -91.
         return arena
 
+    def conv_variant(self, variant, workers=4):
+        if variant not in ('hwfma', 'avx2_fma', 'avx2_parallel'):
+            self.fail(f'unsupported explicit Conv1D candidate: {variant}')
+        candidate = copy.deepcopy(self.waveform_source)
+        names = {
+            'audio_conv1d_checked_channel_major_f32':
+                f'audio_conv1d_checked_channel_major_f32_{variant}',
+            'audio_conv1d_dilated_checked_channel_major_f32':
+                f'audio_conv1d_dilated_checked_channel_major_f32_{variant}'}
+        selected = 0
+        for block in candidate['template']['block_types'].values():
+            for op in block['header'] + block['body']['ops'] + block['footer']:
+                if op.get('kernel') in names:
+                    op['kernel'] = names[op['kernel']]
+                    if variant == 'avx2_parallel':
+                        op.setdefault('params', {})['conv_worker_pool'] = 'worker_pool'
+                        op['params']['conv_worker_count'] = workers
+                    selected += 1
+        if variant == 'avx2_parallel':
+            candidate['template']['native_entry']['params'].append(
+                {'c_type': 'void *', 'name': 'worker_pool'})
+        self.assertGreater(selected, 0)
+        candidate['template']['required_numerical_contracts'][
+            'audio_conv1d_checked']['phases']['prefill']['contract_id'] = {
+                'hwfma': 'audio_conv1d_checked_x86_hwfma_fp32',
+                'avx2_fma': 'audio_conv1d_checked_x86_avx2_fma_fp32',
+                'avx2_parallel': 'audio_conv1d_checked_x86_avx2_parallel_fp32',
+            }[variant]
+        return candidate, selected
+
     @unittest.skipUnless(os.environ.get('CKE_TTS_RUN_HW_FMA_REPLAY'),
                          'asset-backed full-waveform hardware-FMA replay not requested')
     def test_full_waveform_hardware_fma_provider_replay(self):
         """Compare an explicit FP32 FMA candidate with the full scalar graph."""
-        candidate = copy.deepcopy(self.waveform_source)
-        selected = 0
         candidate_variant = os.environ.get('CKE_TTS_CONV_PROVIDER', 'hwfma')
-        if candidate_variant not in ('hwfma', 'avx2_fma'):
-            self.fail(f'unsupported explicit Conv1D candidate: {candidate_variant}')
+        candidate, selected = self.conv_variant(candidate_variant, int(
+            os.environ.get('CKE_TTS_CONV_WORKERS', '4')))
         names = {
             'audio_conv1d_checked_channel_major_f32':
                 f'audio_conv1d_checked_channel_major_f32_{candidate_variant}',
             'audio_conv1d_dilated_checked_channel_major_f32':
                 f'audio_conv1d_dilated_checked_channel_major_f32_{candidate_variant}'}
-        for block in candidate['template']['block_types'].values():
-            for op in block['header'] + block['body']['ops'] + block['footer']:
-                if op.get('kernel') in names:
-                    op['kernel'] = names[op['kernel']]
-                    selected += 1
-        self.assertGreater(selected, 0)
-        candidate['template']['required_numerical_contracts'][
-            'audio_conv1d_checked']['phases']['prefill']['contract_id'] = \
-            ('audio_conv1d_checked_x86_hwfma_fp32' if candidate_variant == 'hwfma'
-             else 'audio_conv1d_checked_x86_avx2_fma_fp32')
         candidate_root = Path(self.temp.name) / 'hwfma'
         candidate_root.mkdir()
-        layout, calls, _, _, function = compile_native_graph(
-            candidate_root, candidate, waveform_author.OUTPUT)
+        extra_exports = (('ck_threadpool_create', 'ck_threadpool_destroy')
+                         if candidate_variant == 'avx2_parallel' else ())
+        layout, calls, _, loaded, function = compile_native_graph(
+            candidate_root, candidate, waveform_author.OUTPUT,
+            extra_exports=extra_exports)
         self.assertEqual(calls['errors'], [])
         functions = [item['function'] for item in calls['operations']]
         self.assertEqual(sum(name in functions for name in names.values()), 2)
         self.assertEqual(sum(function_name in names.values()
                              for function_name in functions), selected)
-        function.argtypes = self.fn.argtypes
+        function.argtypes = self.fn.argtypes + ([ctypes.c_void_p]
+            if candidate_variant == 'avx2_parallel' else [])
+        worker_pool = None
+        if candidate_variant == 'avx2_parallel':
+            loaded.ck_threadpool_create.argtypes = [ctypes.c_int]
+            loaded.ck_threadpool_create.restype = ctypes.c_void_p
+            loaded.ck_threadpool_destroy.argtypes = [ctypes.c_void_p]
+            worker_pool = loaded.ck_threadpool_create(int(
+                os.environ.get('CKE_TTS_CONV_WORKERS', '4')))
+            self.assertTrue(worker_pool)
         baseline_arena = self.arena()
         candidate_arena = self.arena(layout)
         repeats = int(os.environ.get('CKE_TTS_HW_FMA_TIMING_REPEATS', '2'))
         self.assertGreaterEqual(repeats, 2)
         timings = {'scalar': [], 'candidate': []}
         baseline_lengths = candidate_lengths = None
-        for repetition in range(repeats):
-            variants = [('scalar', self.fn, baseline_arena),
-                        ('candidate', function, candidate_arena)]
-            if repetition % 2:
-                variants.reverse()
-            for variant, entry, arena in variants:
-                lengths = [ctypes.c_int32(-999) for _ in range(7)]
-                started = time.perf_counter()
-                status = entry(arena, len(arena), *(
-                    ctypes.byref(value) for value in lengths))
-                timings[variant].append(time.perf_counter() - started)
-                self.assertEqual(status, 0, variant)
-                if variant == 'scalar':
-                    baseline_lengths = lengths
-                else:
-                    candidate_lengths = lengths
-        self.assertEqual([value.value for value in baseline_lengths],
-                         [value.value for value in candidate_lengths])
-        for name in ('text_conv0', 'f0_conv0', 'source_conv0',
-                     'generator_stage1_source_conv', 'generator_conv_post',
-                     'generator_waveform'):
-            baseline = self.view(self.layout, baseline_arena, name)
-            optimized = self.view(layout, candidate_arena, name)
-            np.testing.assert_array_equal(baseline, optimized, err_msg=name)
+        try:
+            for repetition in range(repeats):
+                variants = [('scalar', self.fn, baseline_arena),
+                            ('candidate', function, candidate_arena)]
+                if repetition % 2:
+                    variants.reverse()
+                for variant, entry, arena in variants:
+                    lengths = [ctypes.c_int32(-999) for _ in range(7)]
+                    started = time.perf_counter()
+                    arguments = [arena, len(arena), *(
+                        ctypes.byref(value) for value in lengths)]
+                    if variant == 'candidate' and worker_pool is not None:
+                        arguments.append(worker_pool)
+                    status = entry(*arguments)
+                    timings[variant].append(time.perf_counter() - started)
+                    self.assertEqual(status, 0, variant)
+                    if variant == 'scalar':
+                        baseline_lengths = lengths
+                    else:
+                        candidate_lengths = lengths
+            self.assertEqual([value.value for value in baseline_lengths],
+                             [value.value for value in candidate_lengths])
+            for name in ('text_conv0', 'f0_conv0', 'source_conv0',
+                         'generator_stage1_source_conv', 'generator_conv_post',
+                         'generator_waveform'):
+                baseline = self.view(self.layout, baseline_arena, name)
+                optimized = self.view(layout, candidate_arena, name)
+                np.testing.assert_array_equal(baseline, optimized, err_msg=name)
+        finally:
+            if worker_pool is not None:
+                loaded.ck_threadpool_destroy(worker_pool)
         print('CKE_CONV_CANDIDATE_FULL_WAVEFORM ' + json.dumps({
             'selected_conv_operations': selected,
             'candidate_provider': candidate_variant,
@@ -226,6 +264,125 @@ class KokoroGeneratedWaveformTest(unittest.TestCase):
                                   np.median(timings['candidate'][1:])),
             'timing_scope': 'generated native entry only; prepared arena and '
                 'weights, captured Gaussian, no WAV serialization'}))
+
+    @unittest.skipUnless(os.environ.get('CKE_TTS_RUN_PARALLEL_SCALING'),
+                         'asset-backed serial AVX2 versus parallel scaling not requested')
+    def test_full_waveform_parallel_scaling(self):
+        """Compare the selected provider with serial AVX2 in one run."""
+        variants = {}
+        for name in ('avx2_fma', 'avx2_parallel'):
+            source, selected = self.conv_variant(name, 4)
+            self.assertEqual(selected, 88)
+            root = Path(self.temp.name) / f'scaling_{name}'
+            root.mkdir()
+            exports = ['audio_conv1d_checked_avx2_fma_available']
+            if name == 'avx2_parallel':
+                exports += ['ck_threadpool_create', 'ck_threadpool_destroy']
+            layout, calls, library, loaded, function = compile_native_graph(
+                root, source, waveform_author.OUTPUT, extra_exports=exports)
+            self.assertEqual(calls['errors'], [])
+            loaded.audio_conv1d_checked_avx2_fma_available.restype = ctypes.c_int
+            if not loaded.audio_conv1d_checked_avx2_fma_available():
+                self.skipTest('AVX2/FMA unavailable on this host')
+            function.argtypes = self.fn.argtypes + ([ctypes.c_void_p]
+                if name == 'avx2_parallel' else [])
+            identity = json.loads((root / 'build-identity.json').read_text())
+            mapped = str(library.resolve()) in Path('/proc/self/maps').read_text()
+            self.assertTrue(mapped, f'compiled library not found in runtime maps: {library}')
+            variants[name] = (layout, loaded, function, identity)
+        parallel_lib = variants['avx2_parallel'][1]
+        parallel_lib.ck_threadpool_create.argtypes = [ctypes.c_int]
+        parallel_lib.ck_threadpool_create.restype = ctypes.c_void_p
+        parallel_lib.ck_threadpool_destroy.argtypes = [ctypes.c_void_p]
+        pools = {count: parallel_lib.ck_threadpool_create(count)
+                 for count in (1, 2, 4)}
+        self.assertTrue(all(pools.values()))
+        arenas = {'serial_avx2': self.arena(variants['avx2_fma'][0])}
+        arenas.update({f'parallel_{count}': self.arena(variants['avx2_parallel'][0])
+                       for count in pools})
+        timings = {name: [] for name in arenas}
+        outputs = {}
+        repeats = int(os.environ.get('CKE_TTS_PARALLEL_TIMING_REPEATS', '5'))
+        self.assertGreaterEqual(repeats, 1)
+        order = tuple(arenas)
+        started_load = os.getloadavg()
+        try:
+            for iteration in range(repeats + 1):
+                sequence = list(order[iteration % len(order):] +
+                                order[:iteration % len(order)])
+                if iteration % 2:
+                    sequence.reverse()
+                for name in sequence:
+                    variant = 'avx2_fma' if name == 'serial_avx2' else 'avx2_parallel'
+                    layout, _, function, _ = variants[variant]
+                    arena = arenas[name]
+                    lengths = [ctypes.c_int32(-999) for _ in range(7)]
+                    arguments = [arena, len(arena), *(
+                        ctypes.byref(value) for value in lengths)]
+                    if variant == 'avx2_parallel':
+                        arguments.append(pools[int(name.rsplit('_', 1)[1])])
+                    start = time.perf_counter()
+                    status = function(*arguments)
+                    elapsed = time.perf_counter() - start
+                    self.assertEqual(status, 0, name)
+                    if iteration:
+                        timings[name].append(elapsed)
+                    outputs[name] = ([value.value for value in lengths],
+                        {tensor: self.view(layout, arena, tensor).copy()
+                         for tensor in ('text_conv0', 'f0_conv0',
+                             'source_conv0', 'generator_stage1_source_conv',
+                             'generator_conv_post', 'generator_waveform')})
+            serial_lengths, serial_tensors = outputs['serial_avx2']
+            self.assertEqual(serial_lengths[3], 61800)
+            for name, (lengths, tensors) in outputs.items():
+                self.assertEqual(lengths, serial_lengths, name)
+                for tensor, expected in serial_tensors.items():
+                    np.testing.assert_array_equal(tensors[tensor], expected,
+                                                  err_msg=f'{name}: {tensor}')
+        finally:
+            for pool in pools.values():
+                if pool:
+                    parallel_lib.ck_threadpool_destroy(pool)
+        source_revision = subprocess.check_output(
+            ['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
+        dirty = bool(subprocess.check_output(
+            ['git', 'status', '--porcelain'], cwd=ROOT, text=True).strip())
+        report = {
+            'status': 'pass', 'source_revision': source_revision,
+            'worktree_dirty': dirty,
+            'host_cpu': next((line.partition(':')[2].strip()
+                for line in Path('/proc/cpuinfo').read_text().splitlines()
+                if line.startswith('model name')), platform.processor()),
+            'affinity_cpus': sorted(os.sched_getaffinity(0)),
+            'load_average_before': started_load,
+            'load_average_after': os.getloadavg(),
+            'compiler': variants['avx2_fma'][3]['compiler'],
+            'builds': {name: {key: identity[key] for key in (
+                'library_sha256', 'generated_source_sha256', 'source_sha256',
+                'compile_command', 'embedded_runtime_build_identity')}
+                for name, (_, _, _, identity) in variants.items()},
+            'loaded_library_mapping_verified': True,
+            'selected_conv_operations': 88,
+            'warmup_runs_per_variant': 1,
+            'measured_runs_per_variant': repeats,
+            'seconds': timings,
+            'speedup_vs_serial_avx2_at_four_workers': float(
+                np.median(timings['serial_avx2']) /
+                np.median(timings['parallel_4'])),
+            'audio_seconds': 61800 / 24000,
+            'waveform_sha256': hashlib.sha256(
+                serial_tensors['generator_waveform'][:61800].tobytes()).hexdigest(),
+            'reproduction_command': 'CKE_TTS_RUN_PARALLEL_SCALING=1 '
+                'CKE_TTS_PARALLEL_TIMING_REPEATS=5 python3 -m unittest '
+                'tests.test_v8_kokoro_generated_waveform.'
+                'KokoroGeneratedWaveformTest.test_full_waveform_parallel_scaling -q',
+            'scope': 'warm generated native entry only; prepared weights and '
+                'arena, captured Gaussian, no loading/WAV/playback timing',
+        }
+        report_path = os.environ.get('CKE_TTS_PARALLEL_TIMING_REPORT')
+        if report_path:
+            Path(report_path).write_text(json.dumps(report, indent=2) + '\n')
+        print('CKE_CONV_PARALLEL_SCALING ' + json.dumps(report))
 
     @classmethod
     def direct_arena(cls):

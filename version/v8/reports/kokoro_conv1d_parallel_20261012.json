@@ -1,0 +1,25 @@
+{
+  "status": "pass",
+  "scope": "generated native entry; prepared weights and arena; pinned 36-token Kokoro fixture with captured Gaussian inputs; no WAV serialization",
+  "source_base": "80bcb6361",
+  "host_cpu": "Intel Core i7-14700T",
+  "selected_conv_operations": 88,
+  "worker_count": 4,
+  "scalar_entry_seconds": [
+    106.87677607871592,
+    106.8840926811099
+  ],
+  "parallel_entry_seconds": [
+    7.883530734106898,
+    7.8613091269508
+  ],
+  "warm_speedup_vs_scalar": 13.59622054737434,
+  "valid_samples": 61800,
+  "waveform_sha256": "c5bc40f9d6bab4e1ddca82a2711244af5f3d570d020fe26923d1bb106abfdd8c",
+  "scalar_library_sha256": "7cae5e23ec616ee8ae90d95b8fb66d750f2983b2776892d3b62c74a56c4f97ea",
+  "parallel_library_sha256": "3d117702a477f02340b320886bd9ced28109ca618f90c38998675e360e0b66f4",
+  "numerical_evidence": "all compared intermediate tensors and the 61800-sample waveform were exactly equal to the scalar provider",
+  "reproduction_command": "CKE_TTS_RUN_HW_FMA_REPLAY=1 CKE_TTS_CONV_PROVIDER=avx2_parallel CKE_TTS_CONV_WORKERS=4 CKE_TTS_HW_FMA_TIMING_REPEATS=2 python3 -m unittest tests.test_v8_kokoro_generated_waveform.KokoroGeneratedWaveformTest.test_full_waveform_hardware_fma_provider_replay -q",
+  "limitations": "This measures the fixed diagnostic graph with captured Gaussian input on one host. It does not measure text preparation, loading, PCM playback, cancellation, or other CPUs. Scalar and parallel timings were alternated for two warm repeats; this is not a broad performance distribution.",
+  "evidence_label": "historical pre-review scalar comparison; use kokoro_conv1d_parallel_final_20261012.json for the same-run serial AVX2 baseline"
+}

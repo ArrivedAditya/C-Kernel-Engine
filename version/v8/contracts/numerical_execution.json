@@ -96,6 +96,82 @@
       "position_transform": null,
       "description": "Explicit x86 AVX2/FMA provider computes eight independent output frames per vector while retaining each frame's ordered FP32 FMA reduction and explicit tap dilation. Scalar handling covers padding, tails and non-unit stride. It shares staged-output validation and requires runtime AVX2/FMA support."
     },
+    "audio_conv1d_checked_x86_avx2_parallel_fp32": {
+      "operator_family": "audio_conv1d",
+      "status": "validated",
+      "storage": {
+        "input": "fp32",
+        "weight": "fp32",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "fp32",
+        "accumulator": "fp32",
+        "contraction": "enabled",
+        "evaluation_order": "independent_output_frame_lanes_ascending_input_channel_kernel_fma"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "input_load",
+          "reduction_update",
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "dot_product",
+        "order": "ascending_k",
+        "partial_accumulator": "fp32",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "independent_rows",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Explicit caller-owned threadpool partitions independent output channels. Each output uses the same frame-lane AVX2/FMA reduction as the serial provider; staged output commits after finite validation."
+    },
+    "audio_conv1d_dilated_checked_x86_avx2_parallel_fp32": {
+      "operator_family": "audio_conv1d",
+      "status": "validated",
+      "storage": {
+        "input": "fp32",
+        "weight": "fp32",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "fp32",
+        "accumulator": "fp32",
+        "contraction": "enabled",
+        "evaluation_order": "independent_output_frame_lanes_ascending_input_channel_dilated_kernel_fma"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "input_load",
+          "reduction_update",
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "dot_product",
+        "order": "ascending_k",
+        "partial_accumulator": "fp32",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "independent_rows",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Explicit caller-owned threadpool partitions independent output channels. Each output uses the same frame-lane AVX2/FMA reduction as the serial provider; staged output commits after finite validation."
+    },
     "transpose_strided_f32_checked_exact_fp32": {
       "operator_family": "layout_transform",
       "status": "validated",
