@@ -13,7 +13,11 @@ import wave
 ROOT = Path(__file__).resolve().parents[1]
 GAUSSIAN_COUNT = 76800 * 9
 GAUSSIAN_BYTES = GAUSSIAN_COUNT * 4
-ARENA_BYTES = GAUSSIAN_BYTES + 128
+WAVEFORM_OFFSET = GAUSSIAN_BYTES
+IDS_OFFSET = WAVEFORM_OFFSET + 128
+PREDICTOR_OFFSET = IDS_OFFSET + 64
+DECODER_OFFSET = PREDICTOR_OFFSET + 512
+ARENA_BYTES = DECODER_OFFSET + 512
 
 
 class NativeKokoroWavHostTest(unittest.TestCase):
@@ -31,12 +35,19 @@ int ck_kokoro_waveform_bounded(uint8_t *arena, size_t capacity,
     const float *noise = (const float *)arena;
     float *audio = (float *)(arena + ''' + str(GAUSSIAN_BYTES) + ''');
     for (int i = 0; i < 20; ++i) audio[i] = .01f * noise[i];
+    const int32_t *ids = (const int32_t *)(arena + ''' + str(IDS_OFFSET) + ''');
+    const float *predictor = (const float *)(arena + ''' + str(PREDICTOR_OFFSET) + ''');
+    const float *decoder = (const float *)(arena + ''' + str(DECODER_OFFSET) + ''');
+    for (int i = 0; i < 20; ++i)
+        audio[i] += .0001f * (float)ids[1] +
+            .1f * predictor[0] + .1f * decoder[0];
     *a = 1; *b = 1; *c = 1; *d = 20; *e = 5; *f = 1; *g = 1;
     return 0;
 }\n''')
         cls.binary = cls.root / 'wav-host'
         subprocess.run(['cc', '-std=c11', '-O2', '-Wall', '-Wextra', '-Werror',
-            '-pedantic', '-I', str(ROOT / 'include'), '-I',
+            '-pedantic', '-DCK_TTS_COMPILED_TOKEN_COUNT=8',
+            '-I', str(ROOT / 'include'), '-I',
             str(ROOT / 'src/kernels'),
             str(ROOT / 'version/v8/tts/native_kokoro_wav_host.c'),
             str(ROOT / 'src/kernels/audio_noise_counter.c'), str(stub),
@@ -47,10 +58,29 @@ int ck_kokoro_waveform_bounded(uint8_t *arena, size_t capacity,
         cls.temp.cleanup()
 
     def package(self, name, gaussian_offset=0, gaussian_count=GAUSSIAN_COUNT,
-                waveform_offset=GAUSSIAN_BYTES):
+                waveform_offset=WAVEFORM_OFFSET):
         path = self.root / name
         path.write_bytes(struct.pack('<8sQQQQQI', b'CKTTS002', ARENA_BYTES,
             waveform_offset, 20, gaussian_offset, gaussian_count, 0))
+        return path
+
+    def request_package(self, name, ids_offset=IDS_OFFSET, ids_count=8,
+                        predictor_offset=PREDICTOR_OFFSET,
+                        decoder_offset=DECODER_OFFSET):
+        path = self.root / name
+        path.write_bytes(struct.pack('<8sQQQQQQQQQI', b'CKTTS003', ARENA_BYTES,
+            WAVEFORM_OFFSET, 20, 0, GAUSSIAN_COUNT, ids_offset, ids_count,
+            predictor_offset, decoder_offset, 0))
+        return path
+
+    def voice_bank(self, name, selected_decoder=.25,
+                   selected_predictor=.5):
+        path = self.root / name
+        values = [0.] * (6 * 256)
+        values[5 * 256] = selected_decoder
+        values[5 * 256 + 128] = selected_predictor
+        path.write_bytes(b'CKVOICE1' + struct.pack('<II', 6, 256) +
+                         struct.pack('<' + 'f' * len(values), *values))
         return path
 
     def test_seeded_replay_distinct_seed_and_bounds(self):
@@ -103,6 +133,90 @@ int ck_kokoro_waveform_bounded(uint8_t *arena, size_t capacity,
                                   capture_output=True)
         self.assertNotEqual(rejected.returncode, 0)
         self.assertFalse(wav.exists())
+
+    def test_native_request_ids_and_selected_voice_row(self):
+        package = self.request_package('request.cktts')
+        bank = self.voice_bank('voice.ckvoice')
+        ids = '0,50,83,54,156,31,4,0'
+        wav = self.root / 'request.wav'
+        command = [str(self.binary), str(package), str(wav), '7', ids,
+                   str(bank)]
+        subprocess.run(command, check=True, capture_output=True)
+        with wave.open(str(wav), 'rb') as stream:
+            self.assertEqual((stream.getframerate(), stream.getnframes()),
+                             (24000, 20))
+        expected = hashlib.sha256(wav.read_bytes()).hexdigest()
+        wav.unlink()
+        subprocess.run(command, check=True, capture_output=True)
+        self.assertEqual(hashlib.sha256(wav.read_bytes()).hexdigest(), expected)
+        wav.unlink()
+        altered = self.voice_bank('other.ckvoice', selected_decoder=.125)
+        subprocess.run(command[:-1] + [str(altered)], check=True,
+                       capture_output=True)
+        self.assertNotEqual(hashlib.sha256(wav.read_bytes()).hexdigest(),
+                            expected)
+        wav.unlink()
+        changed_ids = '0,51,83,54,156,31,4,0'
+        subprocess.run(command[:4] + [changed_ids, str(bank)], check=True,
+                       capture_output=True)
+        self.assertNotEqual(hashlib.sha256(wav.read_bytes()).hexdigest(),
+                            expected)
+        wav.unlink()
+        for bad_ids in ('0,50,83,54,156,31,0',
+                        '0,50,83,54,178,31,4,0',
+                        '1,50,83,54,156,31,4,0',
+                        '0,50,83,54,156,31,4,0,'):
+            with self.subTest(ids=bad_ids):
+                rejected = subprocess.run(command[:4] + [bad_ids, str(bank)],
+                                          capture_output=True)
+                self.assertNotEqual(rejected.returncode, 0)
+                self.assertFalse(wav.exists())
+        for bad_package in (
+                self.request_package('wrong-count.cktts', ids_count=9),
+                self.request_package('overlap-ids.cktts', ids_offset=0),
+                self.request_package('overlap-styles.cktts',
+                                     predictor_offset=DECODER_OFFSET)):
+            with self.subTest(package=bad_package.name):
+                rejected = subprocess.run([str(self.binary), str(bad_package),
+                    str(wav), '7', ids, str(bank)], capture_output=True)
+                self.assertNotEqual(rejected.returncode, 0)
+                self.assertFalse(wav.exists())
+        malformed = self.root / 'truncated.ckvoice'
+        malformed.write_bytes(bank.read_bytes()[:-4])
+        rejected = subprocess.run(command[:-1] + [str(malformed)],
+                                  capture_output=True)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertFalse(wav.exists())
+        missing_row = self.root / 'missing-row.ckvoice'
+        raw = bank.read_bytes()
+        missing_row.write_bytes(raw[:8] + struct.pack('<II', 5, 256) +
+                                raw[16:16 + 5 * 256 * 4])
+        rejected = subprocess.run(command[:-1] + [str(missing_row)],
+                                  capture_output=True)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertFalse(wav.exists())
+        nonfinite = self.root / 'nan-row.ckvoice'
+        raw = bytearray(raw)
+        struct.pack_into('<f', raw, 16 + 5 * 256 * 4, float('nan'))
+        nonfinite.write_bytes(raw)
+        rejected = subprocess.run(command[:-1] + [str(nonfinite)],
+                                  capture_output=True)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertFalse(wav.exists())
+        print('CKE_NUMERICAL_CASE ' + json.dumps({
+            'case_id': 'kokoro.native-wav-host.request-binding-v1',
+            'name': 'native host exact-length phoneme and voice-row binding',
+            'provider': 'native_kokoro_wav_host',
+            'dtype': 'fp32', 'direction': 'inference',
+            'oracle': 'synthetic-entry changed-input-and-voice controls',
+            'status': 'pass', 'gate': 'session', 'blocking': True,
+            'max_diff': 0, 'tolerance': 0,
+            'same_request_wav_sha256': expected,
+            'configuration': 'CKTTS003, 8 IDs, CKVOICE1 row 5; invalid '
+                'count, layout, ID and bank inputs rejected before WAV output',
+            'reproduction_command': 'python3 -m unittest '
+                'tests.test_v8_native_kokoro_wav_host',
+        }))
 
 
 if __name__ == '__main__':
