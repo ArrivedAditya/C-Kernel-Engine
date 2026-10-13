@@ -9,7 +9,17 @@ encoder state, and multimodal state remain ineligible.
 from __future__ import annotations
 
 import re
+from math import prod
 from typing import Any
+
+
+_RECURRENT_MACROS = {
+    "A_RECURRENT_CONV_STATE": "recurrent_conv_state",
+    "A_RECURRENT_SSM_STATE": "recurrent_ssm_state",
+}
+_RECURRENT_MACRO_PATTERN = re.compile(
+    r"\b(?:A_RECURRENT_CONV_STATE|A_RECURRENT_SSM_STATE)\b"
+)
 
 
 def recurrent_state_operand(arg: dict[str, Any]) -> tuple[str, int, str] | None:
@@ -122,20 +132,40 @@ def resolve_sequence_state_contract(
             return None
         strides: dict[str, int] = {}
         for name in recurrent_names:
-            region_bytes = by_name[name]["size"]
-            if region_bytes % layers:
+            row = by_name[name]
+            # The layout describes contiguous [layer, ...] FP32 state. Do not
+            # infer a slice solely from total size: a differently shaped arena
+            # could have the same byte count but different layer ownership.
+            shape = row.get("shape")
+            if not isinstance(shape, str) or row.get("dtype") != "fp32":
                 return None
-            strides[name] = region_bytes // layers
+            dimensions = re.fullmatch(r"\[\s*([0-9]+(?:\s*,\s*[0-9]+)*)\s*\]", shape)
+            if dimensions is None:
+                return None
+            extents = [int(value.strip()) for value in dimensions.group(1).split(",")]
+            if (len(extents) < 2 or any(value <= 0 for value in extents)
+                    or extents[0] != layers or prod(extents) * 4 != row["size"]):
+                return None
+            strides[name] = prod(extents[1:]) * 4
         seen: set[str] = set()
         for op in ops:
             for arg in op.get("args", []):
                 ref = arg.get("buffer_ref")
+                macros = set(_RECURRENT_MACRO_PATTERN.findall(str(arg.get("expr", ""))))
+                # Every lowered access to either state macro must carry the
+                # corresponding typed buffer reference, or codegen would
+                # leave it attached to the shared model arena.
+                if macros and (len(macros) != 1 or
+                               ref != _RECURRENT_MACROS[next(iter(macros))]):
+                    return None
                 if ref not in recurrent_names:
                     continue
                 seen.add(ref)
                 operand = recurrent_state_operand(arg)
-                if (operand is None or operand[1] % strides[ref] or
-                        operand[1] + strides[ref] > by_name[ref]["size"]):
+                layer = op.get("layer")
+                if (operand is None or not isinstance(layer, int) or
+                        not 0 <= layer < layers or
+                        operand[1] != layer * strides[ref]):
                     return None
         if seen != set(recurrent_names):
             return None
