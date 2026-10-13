@@ -237,6 +237,54 @@ class KokoroWaveformTwoLengthsTest(unittest.TestCase):
                     np.float32(32767.)).astype('<i2')
                 np.testing.assert_array_equal(np.frombuffer(pcm, dtype='<i2'),
                                               expected_pcm)
+                # Keep the captured-noise oracle lane above intact. Independently
+                # exercise the shorter graph with CKE's request-owned noise and
+                # compare its generated output with the standalone native host.
+                noise_library = host_root / 'audio_noise_counter.so'
+                subprocess.run(['cc', '-std=c11', '-O2', '-Wall', '-Wextra',
+                    '-Werror', '-pedantic', '-shared', '-fPIC', '-I', str(host_root),
+                    str(host_root / 'audio_noise_counter.c'), '-lm',
+                    '-o', str(noise_library)], check=True, capture_output=True)
+                noise = ctypes.CDLL(str(noise_library)).audio_noise_counter_gaussian_f32
+                noise.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.c_size_t,
+                                  ctypes.c_size_t, ctypes.c_uint64, ctypes.c_uint64]
+                noise.restype = ctypes.c_int
+                short_gaussian = view(layout, short_arena, 'source_gaussian')
+                self.assertEqual(noise(short_gaussian.ctypes.data_as(
+                    ctypes.POINTER(ctypes.c_float)), short_gaussian.size,
+                    short_gaussian.size, 7, 0), 0)
+                short_output.fill(-91.)
+                seeded_lengths = [ctypes.c_int32(-1) for _ in range(7)]
+                self.assertEqual(short_fn(short_arena, len(short_arena), *(
+                    ctypes.byref(value) for value in seeded_lengths)), 0)
+                self.assertEqual(seeded_lengths[3].value, 32400)
+                self.assertTrue(np.isfinite(short_output[:32400]).all())
+                self.assertTrue(np.all(short_output[32400:] == -91.))
+                seeded_pcm = np.rint(np.clip(short_output[:32400], -1., 1.) *
+                    np.float32(32767.)).astype('<i2')
+                self.assertFalse(np.array_equal(seeded_pcm, expected_pcm))
+                gaussian_item = buffers['source_gaussian']
+                self.assertEqual(gaussian_item['size'] // 4, 76800 * 9)
+                native_package = host_root / 'prepared-hello-native-noise.cktts'
+                with package.open('rb') as captured, native_package.open('wb') as stream:
+                    stream.write(b'CKTTS002')
+                    stream.write(struct.pack('<QQQQQI', arena_bytes,
+                        output_item['abs_offset'], output_item['size'] // 4,
+                        gaussian_item['abs_offset'], gaussian_item['size'] // 4,
+                        segments))
+                    captured.seek(36)
+                    shutil.copyfileobj(captured, stream, length=65536)
+                seeded_wav = host_root / 'hello-native-seed-7.wav'
+                subprocess.run([str(binary), str(native_package),
+                    str(seeded_wav), '7'], cwd=host_root, check=True,
+                    capture_output=True, text=True)
+                with wave.open(str(seeded_wav), 'rb') as audio:
+                    self.assertEqual((audio.getnchannels(), audio.getsampwidth(),
+                                      audio.getframerate(), audio.getnframes()),
+                                     (1, 2, 24000, 32400))
+                    actual_seeded_pcm = audio.readframes(32400)
+                np.testing.assert_array_equal(
+                    np.frombuffer(actual_seeded_pcm, dtype='<i2'), seeded_pcm)
                 evidence = {
                     'schema': 'cke.kokoro.two_length_waveform_diagnostic.v1',
                     'execution_status': 'pass',
@@ -244,7 +292,8 @@ class KokoroWaveformTwoLengthsTest(unittest.TestCase):
                         item['oracle_numerical_status'] == 'fail' for item in report)
                         else 'pass',
                     'scope': 'two precompiled exact-length graphs loaded in one process; '
-                             'captured oracle Gaussian; no text frontend or bucket padding',
+                             'captured Gaussian oracle replay plus seeded short '
+                             'standalone replay; no text frontend or bucket padding',
                     'model_revision': meta['model_pin']['revision'],
                     'reference_revision': meta['code_pin']['kokoro'],
                     'fixture_sha256': meta['fixture_sha256'],
@@ -259,6 +308,14 @@ class KokoroWaveformTwoLengthsTest(unittest.TestCase):
                     'runtime_build_identity': 'NOT_VERIFIED',
                     'standalone_short_wav_sha256': hashlib.sha256(
                         wav_path.read_bytes()).hexdigest(),
+                    'native_noise_short': {
+                        'seed': 7,
+                        'status': 'pass',
+                        'wav_sha256': hashlib.sha256(
+                            seeded_wav.read_bytes()).hexdigest(),
+                        'pcm_matches_generated_seeded_output': True,
+                        'pytorch_noise_parity': 'NOT_TESTED',
+                    },
                     'host': platform.platform(),
                     'reproduction_command': 'CKE_TTS_RUN_TWO_LENGTH_WAVEFORM=1 '
                         'python3 -m unittest '
@@ -267,9 +324,37 @@ class KokoroWaveformTwoLengthsTest(unittest.TestCase):
                         'test_loaded_exact_buckets_short_long_short',
                     'requests': report,
                 }
+                retain_dir = os.environ.get('CKE_TTS_RETAIN_DIR')
+                if retain_dir:
+                    retained = Path(retain_dir) / 'kokoro-two-length-short'
+                    retained.mkdir(parents=True, exist_ok=True)
+                    retained_wavs = {}
+                    for label, source in (('captured-noise', wav_path),
+                                          ('seeded-noise', seeded_wav)):
+                        target = retained / f'hello-{label}.wav'
+                        shutil.copy2(source, target)
+                        self.assertEqual(hashlib.sha256(target.read_bytes()).hexdigest(),
+                                         hashlib.sha256(source.read_bytes()).hexdigest())
+                        retained_wavs[label] = str(target)
+                    evidence['retained_wavs'] = retained_wavs
+                    (retained / 'reproduction.json').write_text(
+                        json.dumps(evidence, indent=2) + '\n')
                 output_path = os.environ.get('CKE_TTS_TWO_LENGTH_REPORT')
                 if output_path:
                     Path(output_path).write_text(json.dumps(evidence, indent=2) + '\n')
+                print('CKE_NUMERICAL_CASE ' + json.dumps({
+                    'case_id': 'kokoro.waveform.exact-bucket-short-native-noise-v1',
+                    'name': 'Kokoro 8-ID seeded native host PCM replay',
+                    'provider': 'audio_noise_counter_gaussian_f32+generated_kokoro_waveform',
+                    'dtype': 'fp32', 'direction': 'inference',
+                    'oracle': 'same-seed generated-entry PCM',
+                    'status': 'pass', 'gate': 'session', 'blocking': True,
+                    'max_diff': 0, 'tolerance': 0,
+                    'configuration': '8 IDs, af_heart, seed 7, 32400 samples; '
+                        'native host PCM equals in-process seeded generated output',
+                    'pytorch_noise_parity': 'NOT_TESTED',
+                    'reproduction_command': evidence['reproduction_command'],
+                }, sort_keys=True))
                 for ordinal, item in enumerate(report[:2]):
                     label = 'short' if ordinal == 0 else 'long'
                     print('CKE_NUMERICAL_CASE ' + json.dumps({

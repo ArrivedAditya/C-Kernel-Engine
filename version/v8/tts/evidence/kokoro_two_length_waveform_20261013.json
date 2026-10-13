@@ -2,7 +2,7 @@
   "schema": "cke.kokoro.two_length_waveform_diagnostic.v1",
   "execution_status": "pass",
   "numerical_status": "fail",
-  "scope": "two precompiled exact-length graphs loaded in one process; captured oracle Gaussian; no text frontend or bucket padding",
+  "scope": "two precompiled exact-length graphs loaded in one process; captured Gaussian oracle replay plus seeded short standalone replay; no text frontend or bucket padding",
   "model_revision": "e8a90b41091c3c5b70375c47cc959799920fa4d6",
   "reference_revision": "dfb907a02bba8152ca444717ca5d78747ccb4bec",
   "fixture_sha256": "3cc4cdea15e17760e3c571d93e57553734de0e0ca1a640396b1c9ff1e3d03c74",
@@ -24,7 +24,7 @@
       "bucket": "short",
       "tokens": 8,
       "sample_count": 32400,
-      "seconds": 55.162343923933804,
+      "seconds": 55.179713213816285,
       "oracle_max_abs": 0.010312862694263458,
       "oracle_rmse": 0.00033829447736022074,
       "oracle_numerical_status": "fail",
@@ -34,7 +34,7 @@
       "bucket": "long",
       "tokens": 36,
       "sample_count": 61800,
-      "seconds": 106.8864240758121,
+      "seconds": 106.88315133284777,
       "oracle_max_abs": 0.007651925086975098,
       "oracle_rmse": 0.00024222997700931208,
       "oracle_numerical_status": "fail"
@@ -43,20 +43,28 @@
       "bucket": "short",
       "tokens": 8,
       "sample_count": 32400,
-      "seconds": 55.17858728393912,
+      "seconds": 55.198575352318585,
       "oracle_max_abs": 0.010312862694263458,
       "oracle_rmse": 0.00033829447736022074,
       "oracle_numerical_status": "fail"
     }
   ],
   "artifact_scope": "Generated libraries were built in a temporary directory; SHA-256 values identify those files, not embedded runtime build identities.",
-  "test_result": "PASS: one optional asset-backed unittest through standard nightly; execution and safety gates pass, connected numerical parity fails separately.",
-  "standalone_wav_scope": "8-ID native host WAV checked against generated FP32 output after PCM16 conversion; WAV file is temporary, hash retained.",
+  "test_result": "PASS: opt-in asset-backed generated replay and seeded short native host PCM equality; connected PyTorch waveform parity remains FAIL.",
+  "standalone_wav_scope": "8-ID native host captured-noise and seeded-noise WAVs checked against the matching generated FP32 outputs after PCM16 conversion; optional listening copies are retained only when CKE_TTS_RETAIN_DIR is set.",
   "nightly_result": {
     "suite_status": "pass",
-    "sub_tests_passed": 1,
+    "sub_tests_passed": 2,
     "sub_tests_failed": 2,
     "numerical_cases": [
+      {
+        "case_id": "kokoro.waveform.exact-bucket-short-native-noise-v1",
+        "status": "pass",
+        "max_diff": 0,
+        "tolerance": 0,
+        "oracle": "same-seed generated-entry PCM",
+        "pytorch_noise_parity": "NOT_TESTED"
+      },
       {
         "case_id": "kokoro.waveform.exact-bucket-short-diagnostic-v1",
         "status": "fail",
@@ -78,5 +86,12 @@
     "comparison": "exact rows 5 and 33 against captured decoder and predictor style vectors",
     "production_selection": "NOT_TESTED; host/fixture supplies already-selected styles",
     "reproduction_command": "CKE_KOKORO_MODEL_DIR=<pinned-assets> <pinned-oracle-python> -m unittest tests.test_v8_kokoro_waveform_two_lengths.KokoroWaveformTwoLengthsTest.test_selected_voice_styles_match_pinned_bank"
+  },
+  "native_noise_short": {
+    "seed": 7,
+    "status": "pass",
+    "wav_sha256": "8f88a076382944cfd26826d964cf12f378ebc8c16f7ce98ea5ed24e98667eda1",
+    "pcm_matches_generated_seeded_output": true,
+    "pytorch_noise_parity": "NOT_TESTED"
   }
 }
