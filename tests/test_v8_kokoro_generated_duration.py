@@ -185,6 +185,61 @@ class KokoroGeneratedDurationTest(unittest.TestCase):
         # arena slot is not a second output until lowering binds a consumer.
         self.assertEqual(int(self.duration['expanded_frames'][0]),103)
 
+    def test_second_compiled_phoneme_geometry_executes_and_recovers(self):
+        # This proves circuit specialization and generated execution at a
+        # different input geometry. It is not a runtime-variable WAV entry or
+        # an independent model oracle for this eight-token sequence.
+        tokens = 8
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            circuit = root / 'duration-eight-tokens.json'
+            circuit.write_text(json.dumps(author.build_circuit(tokens)))
+            fixture = prepare_duration_fixture(root, circuit)
+            layout, calls, _, _, fn = compile_native_graph(
+                root, fixture.source, circuit)
+            self.assertEqual(calls['errors'], [])
+            fn.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t,
+                           ctypes.POINTER(ctypes.c_int32)]
+            buffers = {item['name']: item for item in
+                       layout['memory']['activations']['buffers']}
+            ids = self.encoder['word_ids'][:tokens].copy()
+
+            def run(word_ids):
+                arena = populated_duration_arena(
+                    layout, fixture.entries, fixture.bump, fixture.encoder,
+                    fixture.duration, word_ids=word_ids)
+                frames = ctypes.c_int32(-999)
+                self.assertEqual(fn(arena, len(arena), ctypes.byref(frames)), 0)
+                durations = np.ndarray((tokens,), np.int32, buffer=arena,
+                    offset=buffers['runtime_values']['abs_offset']).copy()
+                logits = np.ndarray((tokens, 50), np.float32, buffer=arena,
+                    offset=buffers['duration_logits']['abs_offset']).copy()
+                self.assertTrue(np.isfinite(logits).all())
+                self.assertGreater(frames.value, 0)
+                self.assertLessEqual(frames.value, 128)
+                self.assertEqual(int(durations.sum(dtype=np.int64)), frames.value)
+                return logits, durations, frames.value
+
+            first = run(ids)
+            alternate = ids.copy()
+            alternate[1] = (int(alternate[1]) + 1) % 178
+            second = run(alternate)
+            self.assertFalse(np.array_equal(first[0], second[0]))
+            third = run(ids)
+            np.testing.assert_array_equal(first[0], third[0])
+            np.testing.assert_array_equal(first[1], third[1])
+            self.assertEqual(first[2], third[2])
+
+            arena = populated_duration_arena(
+                layout, fixture.entries, fixture.bump, fixture.encoder,
+                fixture.duration, word_ids=ids)
+            frames = ctypes.c_int32(-999)
+            untouched = np.ndarray((tokens,), np.int32, buffer=arena,
+                offset=buffers['runtime_values']['abs_offset'])
+            self.assertNotEqual(fn(arena, len(arena)-1, ctypes.byref(frames)), 0)
+            self.assertEqual(frames.value, -999)
+            np.testing.assert_array_equal(untouched, np.full(tokens, -999, np.int32))
+
     def verify_xray(self, arena, pairs):
         builder, xray = first_layer.xray_builder, first_layer.xray
         identity=builder.capture_runtime_library_identity(self.loaded,'ck_kokoro_duration_predictor')

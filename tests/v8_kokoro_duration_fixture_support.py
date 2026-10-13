@@ -58,12 +58,13 @@ def prepare_duration_fixture(root, circuit, extra_tensors=None):
     fixture.bump = (root / 'weights.bump').read_bytes()
     fixture.entries = {entry['name']: entry for entry in fixture.bundle['entries']}
     template = json.loads(Path(circuit).read_text())
+    tokens = template['runtime_constants']['phoneme_count']
     fixture.source = {'config': {
         'model': template['name'], 'arch': template['name'],
         'num_layers': 1, 'embed_dim': 128, 'num_heads': 1,
         'num_kv_heads': 1, 'head_dim': 128, 'intermediate_size': 256,
-        'context_length': 36, 'max_seq_len': 36, 'vocab_size': 178,
-        'T': 36, 'C': 128, 'epsilon': 1e-12, 'speed': 1.0,
+        'context_length': tokens, 'max_seq_len': tokens, 'vocab_size': 178,
+        'T': tokens, 'C': 128, 'epsilon': 1e-12, 'speed': 1.0,
         'activation_buffer_dtypes': {
             'word_ids': 'i32', 'type_ids': 'i32',
             'runtime_values': 'i32', 'runtime_valid_extent': 'i32'}},
@@ -72,7 +73,8 @@ def prepare_duration_fixture(root, circuit, extra_tensors=None):
     return fixture
 
 
-def populated_duration_arena(layout, entries, bump, encoder, duration):
+def populated_duration_arena(layout, entries, bump, encoder, duration,
+                             word_ids=None):
     size = layout['memory']['arena']['total_size']
     raw = (ctypes.c_uint8 * (size + 63))()
     arena = (ctypes.c_uint8 * size).from_buffer(raw,
@@ -92,9 +94,13 @@ def populated_duration_arena(layout, entries, bump, encoder, duration):
             else np.float32)
         np.ndarray((item['size']//4,), dtype, buffer=arena,
                    offset=item['abs_offset'])[:] = -999 if dtype == np.int32 else -777.
+    ids = encoder['word_ids'] if word_ids is None else np.asarray(word_ids, np.int32)
+    expected_tokens = buffers['word_ids']['size'] // np.dtype(np.int32).itemsize
+    if ids.ndim != 1 or len(ids) != expected_tokens:
+        raise ValueError(f'expected {expected_tokens} phoneme IDs')
     for name, value, dtype in (
-            ('word_ids', encoder['word_ids'], np.int32),
-            ('type_ids', np.zeros(36, np.int32), np.int32),
+            ('word_ids', ids, np.int32),
+            ('type_ids', np.zeros(expected_tokens, np.int32), np.int32),
             ('predictor_style', duration['predictor_style'], np.float32)):
         np.ndarray((len(value),), dtype, buffer=arena,
                    offset=buffers[name]['abs_offset'])[:] = value
