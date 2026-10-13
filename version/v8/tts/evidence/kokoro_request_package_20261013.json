@@ -1,0 +1,46 @@
+{
+  "schema": "cke.kokoro.request_package_evidence.v1",
+  "observed_at_utc": "2026-10-13",
+  "base_revision": "c298816d79d421c3a7cc0a0ea96b446a3071b050",
+  "host": {
+    "cpu": "Intel Core i7-14700T",
+    "architecture": "x86_64",
+    "compiler": "Ubuntu GCC 15.2.0",
+    "host_c_flags": "-std=c11 -O2 -Wall -Wextra -Werror -pedantic"
+  },
+  "import_identity": {
+    "pinned_bump_sha256": "556a82f8116091d386ccab9d8218030d124ff286e0fb8e2ebc8d0cc8a5598148",
+    "pinned_bump_manifest_sha256": "4b1efaf94191ab30e5a5e88a44a9e6a82ba295e6eeae8b639604b2855cc51d82",
+    "bindings_sha256": "c4e3fa692fcd0b33fd14b543d7fce9a681da997b1a4c9895f58bdc271ad740ea",
+    "af_heart_ckvoice_sha256": "50a2b7d543cc5a9bdefb3217e3bf1a8d87e947dd5b4e8babf685c0bc4b3b4177"
+  },
+  "execution_status": "pass",
+  "cases": [
+    {
+      "phoneme_ids": 8,
+      "voice_row": 5,
+      "seed": 7,
+      "samples": 32400,
+      "sample_rate_hz": 24000,
+      "package_sha256": "65a3c038e6a6dca4b12e2f494bf6e1640145c8d79e0a5ac3d36dce08b37538d2",
+      "generated_library_artifact_sha256": "3b65084882ec4e459842d44a8c3bce92680eb7adcd6e522b390789a247425c4e",
+      "wav_sha256": "8f88a076382944cfd26826d964cf12f378ebc8c16f7ce98ea5ed24e98667eda1",
+      "same_seed_fixture_package_wav_match": true
+    },
+    {
+      "phoneme_ids": 36,
+      "voice_row": 33,
+      "seed": 7,
+      "samples": 61800,
+      "sample_rate_hz": 24000,
+      "package_sha256": "2151b981da83d3db8fba6ef8195a701fbd8e8bff5853dd1077a14916109ff5e5",
+      "generated_library_artifact_sha256": "7cae5e23ec616ee8ae90d95b8fb66d750f2983b2776892d3b62c74a56c4f97ea",
+      "wav_sha256": "187e777636f7071776968bb7a7c4ced52f3d0438bedc281b84416562c844015e",
+      "same_seed_fixture_package_wav_match": true
+    }
+  ],
+  "runtime_loaded_library_identity": "NOT_VERIFIED",
+  "connected_pytorch_waveform_parity": "FAIL: established 8-ID and 36-ID diagnostic differences remain; package identity does not change model arithmetic",
+  "scope": "Pinned BUMP to static CKTTS003 package to generated native WAV. Circuit compilation still uses fixture-assisted development tooling; no native text frontend, length dispatcher, playback or cancellation.",
+  "reproduction_command": "CKE_TTS_RUN_REQUEST_PACKAGE_FULL=1 CKE_TTS_NATIVE_BUMP_DIR=<pinned-bump-dir> CKE_TTS_NATIVE_VOICE_BANK=<pinned-ckvoice> python3 -m unittest tests.test_v8_kokoro_request_package.KokoroRequestPackageTest.test_pinned_bump_package_runs_complete_generated_waveform"
+}
