@@ -35,13 +35,17 @@ class KokoroNativeDispatchTest(unittest.TestCase):
             directory = self.root / str(count)
             directory.mkdir()
             host = directory / "native-kokoro-wav"
-            host.write_text("#!/bin/sh\nprintf '%s\\n' \"$3:$4\" > \"$2\"\n")
+            host.write_text(
+                "#!/bin/sh\n"
+                f"printf 'bucket={count}:%s:%s\\n' \"$3\" \"$4\" > \"$2\"\n"
+            )
             host.chmod(0o755)
             library = directory / "generated.so"
             library.write_bytes(f"synthetic library {count}".encode())
             package = directory / "request.cktts"
             package.write_bytes(f"synthetic package {count}".encode())
             records.append((count, _hash(host), _hash(library), _hash(package)))
+        self.assertNotEqual(records[0][1], records[1][1])
         header = [
             "#ifndef CKE_KOKORO_BUNDLE_IDENTITY_H",
             "#define CKE_KOKORO_BUNDLE_IDENTITY_H",
@@ -85,7 +89,7 @@ class KokoroNativeDispatchTest(unittest.TestCase):
             ids = ",".join(map(str, [0] + [4] * (count - 2) + [0]))
             result, output = self.invoke(ids, f"{count}.wav")
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(output.read_text().strip(), f"7:{ids}")
+            self.assertEqual(output.read_text().strip(), f"bucket={count}:7:{ids}")
         for count in (7, 9, 35, 37, 40):
             ids = ",".join(map(str, [0] + [4] * (count - 2) + [0]))
             result, output = self.invoke(ids, f"unsupported-{count}.wav")
@@ -96,6 +100,26 @@ class KokoroNativeDispatchTest(unittest.TestCase):
             result, output = self.invoke(ids, "invalid.wav")
             self.assertEqual(result.returncode, 2)
             self.assertFalse(output.exists())
+
+    def test_wrong_host_route_is_rejected_before_execution(self):
+        original_call = 'joined(host, sizeof(host), argv[1], count, "native-kokoro-wav")'
+        wrong_call = 'joined(host, sizeof(host), argv[1], 8u, "native-kokoro-wav")'
+        source = SOURCE.read_text()
+        self.assertEqual(source.count(original_call), 1)
+        mutant = self.root / "wrong-route.c"
+        mutant.write_text(source.replace(original_call, wrong_call, 1))
+        wrong_dispatch = self.root / "wrong-route-dispatch"
+        subprocess.run(["cc", "-std=c11", "-O2", "-Wall", "-Wextra",
+            "-Werror", "-pedantic", "-I", str(self.root), str(mutant),
+            "-lcrypto", "-o", str(wrong_dispatch)], check=True,
+            capture_output=True, text=True)
+        ids = ",".join(map(str, [0] + [4] * 34 + [0]))
+        output = self.root / "wrong-route.wav"
+        result = subprocess.run([str(wrong_dispatch), str(self.root), str(output),
+            "7", ids], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 4, result.stderr)
+        self.assertIn("artifact identity mismatch", result.stderr)
+        self.assertFalse(output.exists())
 
     def test_tampered_package_library_host_or_voice_fails_before_execution(self):
         ids = ",".join(map(str, [0] + [4] * 6 + [0]))
