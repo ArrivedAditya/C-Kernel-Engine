@@ -24,6 +24,7 @@ KOKORO_ASSET_COMMIT = "e8a90b41091c3c5b70375c47cc959799920fa4d6"
 MISAKI_US_GOLD_SHA256 = "dc414872a49a28ae6c141463d502fd945f3b2fde040484fdc47d00cc4612686f"
 KOKORO_CONFIG_SHA256 = "5abb01e2403b072bf03d04fde160443e209d7a0dad49a423be15196b9b43c17f"
 SOURCE = ROOT / "version/v8/tts/native_kokoro_lexicon_text.c"
+SESSION_SOURCE = ROOT / "version/v8/tts/native_kokoro_speech_session.c"
 WORD = re.compile(r"[a-z]+(?:'[a-z]+)*\Z")
 
 
@@ -89,6 +90,13 @@ def build_frontend(config_path: Path, lexicon_path: Path, output: Path,
         result = subprocess.run(command, capture_output=True, text=True)
         if result.returncode:
             raise RuntimeError(f"native frontend compilation failed: {result.stderr}")
+        session_binary = stage / "native-kokoro-session"
+        session_command = ["cc", "-std=c11", "-O2", "-Wall", "-Wextra",
+                           "-Werror", "-pedantic", str(SESSION_SOURCE), "-o",
+                           str(session_binary)]
+        session_result = subprocess.run(session_command, capture_output=True, text=True)
+        if session_result.returncode:
+            raise RuntimeError(f"native session compilation failed: {session_result.stderr}")
         report = {
             "schema": "cke.kokoro.native_lexicon_text.v1",
             "source_misaki_commit": MISAKI_COMMIT,
@@ -100,6 +108,7 @@ def build_frontend(config_path: Path, lexicon_path: Path, output: Path,
             "source_config_sha256": config_sha256,
             "exported_lexicon_sha256": sidecar_hash,
             "frontend_binary_sha256": sha256(binary),
+            "session_binary_sha256": sha256(session_binary),
             "word_count": len(entries),
             "scope": "US gold DEFAULT pronunciation, ASCII words and basic punctuation; "
                      "unsupported words/forms rejected; model supports only bundled ID counts",

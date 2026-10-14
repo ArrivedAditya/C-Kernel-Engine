@@ -994,6 +994,10 @@ TEST_SUITES = {
         "Kokoro Native Dictionary Text Preparation and Dispatch", "inference",
         ROOT / "tests" / "test_v8_kokoro_native_lexicon_text.py",
     ),
+    "tts_kokoro_native_speech_session": TestSuite(
+        "Kokoro Native Speech Stop, Replace and Recovery", "inference",
+        ROOT / "tests" / "test_v8_kokoro_native_speech_session.py",
+    ),
     "tts_audio_harmonic_source_generated": TestSuite(
         "Checked Harmonic Source Normal-Compiler Generated Graph", "inference",
         ROOT / "tests" / "test_v8_audio_harmonic_source_generated.py",
