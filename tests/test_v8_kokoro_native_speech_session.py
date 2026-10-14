@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import time
 import unittest
+import wave
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "version/v8/tts/native_kokoro_speech_session.c"
@@ -61,9 +62,10 @@ with wave.open(sys.argv[3], 'wb') as audio:
             process.stdin.close()
             process.stderr.close()
 
-    def start(self, player=False):
-        args = [str(self.binary), str(self.frontend), str(self.root),
-                str(self.root / "lexicon.cklex"), str(self.root)]
+    def start(self, player=False, *, frontend=None, bundle=None, lexicon=None):
+        args = [str(self.binary), str(frontend or self.frontend),
+                str(bundle or self.root),
+                str(lexicon or self.root / "lexicon.cklex"), str(self.root)]
         if player:
             args.append(str(self.player))
         process = subprocess.Popen(args, stdin=subprocess.PIPE,
@@ -211,6 +213,79 @@ with wave.open(sys.argv[3], 'wb') as audio:
             "configuration": "one 36-ID request cancelled; one 8-ID request completed, seed 7",
             "reproduction_command": "CKE_TTS_RUN_SESSION_FULL=1 "
                 "python3 -m unittest tests.test_v8_kokoro_native_speech_session",
+        }, sort_keys=True))
+
+    @unittest.skipUnless(os.environ.get("CKE_TTS_RUN_THIRD_LENGTH_FULL"),
+                         "three-length generated bundle not requested")
+    def test_real_generated_short_third_short_session(self):
+        bundle = Path(os.environ["CKE_TTS_THIRD_LENGTH_BUNDLE_DIR"])
+        native_frontend = Path(os.environ["CKE_TTS_TEXT_FRONTEND"])
+        lexicon = Path(os.environ["CKE_TTS_TEXT_LEXICON"])
+        manifest = json.loads((bundle / "bundle_manifest.json").read_text())
+        self.assertEqual(manifest["supported_phoneme_counts"], [8, 12, 36])
+        self.assertEqual(manifest["experimental_phoneme_counts"], [12])
+        probe = self.root / "phoneme-probe"
+        probe.mkdir()
+        dispatch = probe / "native-kokoro-dispatch"
+        dispatch.write_text("#!/bin/sh\nprintf '%s\\n' \"$4\" > \"$2\"\n")
+        dispatch.chmod(0o755)
+        ids_path = self.root / "hello-there-ids.txt"
+        encoded = subprocess.run([str(native_frontend), str(probe),
+            str(lexicon), str(ids_path), "7", "Hello there."],
+            capture_output=True, text=True)
+        self.assertEqual(encoded.returncode, 0, encoded.stderr)
+        self.assertEqual(ids_path.read_text().strip(),
+            "0,50,83,54,156,31,16,81,86,123,4,0")
+        process, directory = self.start(
+            frontend=native_frontend, bundle=bundle, lexicon=lexicon)
+        expected = (
+            (1, "Hello.", 32400,
+             "8f88a076382944cfd26826d964cf12f378ebc8c16f7ce98ea5ed24e98667eda1"),
+            (2, "Hello there.", 36000,
+             "53dc2fa85f9cf190bc59e51689e45206ca213daad87a71f9024c1bc8b5cafa13"),
+            (4, "Hello.", 32400,
+             "8f88a076382944cfd26826d964cf12f378ebc8c16f7ce98ea5ed24e98667eda1"),
+        )
+        for request_id, phrase, frames, digest in expected:
+            self.send(process, f"SPEAK\t7\t{phrase}")
+            self.assertEqual(self.line(process), f"EVENT\t{request_id}\tSTARTED")
+            wav = directory / f"{request_id}.wav"
+            self.assertEqual(self.line(process, timeout=180),
+                             f"EVENT\t{request_id}\tWAV_READY\t{wav}")
+            self.assertEqual(self.line(process), f"EVENT\t{request_id}\tCOMPLETED")
+            self.assertEqual(hashlib.sha256(wav.read_bytes()).hexdigest(), digest)
+            with wave.open(str(wav), "rb") as audio:
+                self.assertEqual((audio.getnchannels(), audio.getsampwidth(),
+                                  audio.getframerate(), audio.getnframes()),
+                                 (1, 2, 24000, frames))
+                samples = audio.readframes(frames)
+                self.assertNotEqual(samples, b"\0" * len(samples))
+            if request_id == 2:
+                self.send(process, "SPEAK\t7\tHello there there.")
+                self.assertEqual(self.line(process), "EVENT\t3\tSTARTED")
+                self.assertEqual(self.line(process),
+                                 "EVENT\t3\tERROR\tnative child failed")
+                self.assertFalse((directory / "3.wav").exists())
+        print("CKE_NUMERICAL_CASE " + json.dumps({
+            "case_id": "kokoro.native-speech-session.three-length-routing-v1",
+            "name": "Native session 8-ID to experimental 12-ID to 8-ID recovery",
+            "provider": "native_kokoro_speech_session+generated_kokoro_waveform",
+            "dtype": "pcm16", "direction": "inference",
+            "oracle": "retained CKE seeded WAV hashes, not independent PyTorch",
+            "status": "pass", "gate": "session", "blocking": True,
+            "max_diff": 0, "tolerance": 0, "metric": "replay WAV hash mismatches",
+            "configuration": "8/12/8 IDs; unsupported 16-ID request rejected; seed 7; one session",
+            "reproduction_command": "CKE_TTS_RUN_THIRD_LENGTH_FULL=1 "
+                "python3 -m unittest tests.test_v8_kokoro_native_speech_session",
+        }, sort_keys=True))
+        print("CKE_NUMERICAL_CASE " + json.dumps({
+            "case_id": "kokoro.native-speech-session.third-length-oracle-parity-v1",
+            "name": "Experimental 12-ID connected waveform versus pinned Kokoro",
+            "provider": "generated_kokoro_waveform", "dtype": "fp32",
+            "direction": "inference", "oracle": "pinned Kokoro full model",
+            "status": "not_tested", "gate": "diagnostic", "blocking": False,
+            "configuration": "Hello there.; no direct 12-ID full-model capture yet",
+            "reason": "pinned-reference waveform capture not yet available",
         }, sort_keys=True))
 
 
