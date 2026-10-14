@@ -1513,7 +1513,10 @@ void gemma4_per_layer_embed_forward(float *hidden,
                                     int num_layers,
                                     int embed_dim,
                                     int per_layer_dim,
-                                    float eps);
+                                    float eps,
+                                    const int *segment_lengths,
+                                    int num_segments,
+                                    int singleton_tail);
 
 void assistant_layer_scale_forward(float *hidden,
                                    const float *scale,

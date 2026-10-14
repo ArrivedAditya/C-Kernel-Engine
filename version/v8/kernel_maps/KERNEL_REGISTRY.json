@@ -39961,8 +39961,10 @@
       "operation_interface": "per_layer_input.apply.fp32.v1",
       "provider_numerical_contract_schema": 1,
       "numerical_contract": {
-        "id": "gemma4_embed_llama_cpu_fp16_table_gelu_v1",
+        "id": "gemma4_embed_llama_cpu_segmented_projection_norm_v2",
         "activation": "gelu_fp16_table_input_output_rne_with_signed_10_clamps",
+        "projection_reduction": "llama_production_output_range_segmented_row_group",
+        "normalization": "rmsnorm_forward_llama_production",
         "circuit_binding_required": true,
         "oracle_revision": "19e28a27702117d8f2eb16b825b9a308111f67d9",
         "oracle_build": "ggml-cpu GGML_GELU_FP16 enabled"
@@ -40114,9 +40116,11 @@
       ],
       "impl": {
         "function": "gemma4_per_layer_embed_forward",
-        "c_declaration": "void gemma4_per_layer_embed_forward(float *hidden, const float *per_layer_input, const float *inp_gate, const float *proj, const float *post_norm, const float *out_scale, int tokens, int layer, int num_layers, int embed_dim, int per_layer_dim, float eps);",
+        "c_declaration": "void gemma4_per_layer_embed_forward(float *hidden, const float *per_layer_input, const float *inp_gate, const float *proj, const float *post_norm, const float *out_scale, int tokens, int layer, int num_layers, int embed_dim, int per_layer_dim, float eps, const int *segment_lengths, int num_segments, int singleton_tail);",
         "sources": [
-          "src/kernels/gemma4_per_layer_embed.c"
+          "src/kernels/gemma4_per_layer_embed.c",
+          "src/kernels/gemm_kernels.c",
+          "src/kernels/rmsnorm_kernels.c"
         ]
       },
       "call_abi": {
@@ -40190,10 +40194,22 @@
           {
             "name": "eps",
             "source": "dim:rms_eps"
+          },
+          {
+            "name": "segment_lengths",
+            "source": "runtime:multimodal_segment_lengths"
+          },
+          {
+            "name": "num_segments",
+            "source": "runtime:multimodal_num_segments"
+          },
+          {
+            "name": "singleton_tail",
+            "source": "runtime:multimodal_singleton_tail"
           }
         ]
       },
-      "notes": "Gemma4 per-layer embedding branch with dynamic independent-token scheduling for prefill. GELU uses FP16-rounded input and output at the selected oracle contract, while each token retains its projection and RMSNorm reduction order.",
+      "notes": "Per-layer embedding with caller-declared multimodal row groups. Gate and branch projections reuse the selected FP32 llama-production reduction; trailing singleton rows use the one-row reduction. GELU uses FP16-rounded input and output at the selected oracle contract.",
       "name": "gemma4_per_layer_embed_forward",
       "_source_file": "gemma4_per_layer_embed_forward.json"
     },

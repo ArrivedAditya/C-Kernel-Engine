@@ -11,6 +11,13 @@
 #include "ckernel_quant.h"
 #include "bf16_utils.h"
 
+void gemm_nt_f32_llama_production_output_range(
+    const float *A, const float *B, const float *bias, float *C,
+    int M, int N, int K, int output_begin, int output_end);
+void rmsnorm_forward_llama_production(
+    const float *input, const float *gamma, float *output, float *rstd_cache,
+    int tokens, int d_model, int aligned_embed_dim, float eps);
+
 typedef struct {
     ck_half d;
     ck_half dmin;
@@ -349,8 +356,29 @@ typedef struct {
     int num_layers;
     int embed_dim;
     int per_layer_dim;
+    int tokens;
     float eps;
+    const int *segment_lengths;
+    int num_segments;
+    int singleton_tail;
 } ck_gemma4_embed_args_t;
+
+static int ck_gemma4_embed_row_group(const ck_gemma4_embed_args_t *args, int token, int tokens)
+{
+    if (!args->segment_lengths) return tokens > 1 ? 2 : 1;
+    int start = 0;
+    for (int segment = 0; segment < args->num_segments; ++segment) {
+        const int length = args->segment_lengths[segment];
+        if (token < start + length) {
+            if (length == 1 || (args->singleton_tail && segment == args->num_segments - 1)) {
+                return 1;
+            }
+            return 2;
+        }
+        start += length;
+    }
+    return 1;
+}
 
 static void ck_gemma4_embed_range(int begin, int end, void *opaque)
 {
@@ -365,28 +393,20 @@ static void ck_gemma4_embed_range(int begin, int end, void *opaque)
             ((size_t)t * (size_t)args->num_layers + (size_t)args->layer) *
                 (size_t)args->per_layer_dim;
 
+        const int row_group = ck_gemma4_embed_row_group(args, t, args->tokens);
+        gemm_nt_f32_llama_production_output_range(
+            h, args->inp_gate, NULL, gate_vec, row_group,
+            args->per_layer_dim, args->embed_dim, 0, args->per_layer_dim);
         for (int i = 0; i < args->per_layer_dim; ++i) {
-            const float *row = args->inp_gate +
-                (size_t)i * (size_t)args->embed_dim;
-            float acc = 0.0f;
-            for (int j = 0; j < args->embed_dim; ++j) {
-                acc += row[j] * h[j];
-            }
-            gate_vec[i] = ck_gemma4_gelu(acc) * inp_vec[i];
+            gate_vec[i] = ck_gemma4_gelu(gate_vec[i]) * inp_vec[i];
         }
 
-        for (int j = 0; j < args->embed_dim; ++j) {
-            const float *row = args->proj +
-                (size_t)j * (size_t)args->per_layer_dim;
-            float acc = 0.0f;
-            for (int i = 0; i < args->per_layer_dim; ++i) {
-                acc += row[i] * gate_vec[i];
-            }
-            branch[j] = acc;
-        }
-        ck_gemma4_rmsnorm_tmp(
-            branch, args->post_norm, branch_normed,
-            args->embed_dim, args->eps);
+        gemm_nt_f32_llama_production_output_range(
+            gate_vec, args->proj, NULL, branch, row_group,
+            args->embed_dim, args->per_layer_dim, 0, args->embed_dim);
+        rmsnorm_forward_llama_production(
+            branch, args->post_norm, branch_normed, NULL,
+            1, args->embed_dim, args->embed_dim, args->eps);
         const float layer_scale = args->out_scale ? args->out_scale[0] : 1.0f;
         for (int j = 0; j < args->embed_dim; ++j) {
             h[j] = (h[j] + branch_normed[j]) * layer_scale;
@@ -405,12 +425,25 @@ void gemma4_per_layer_embed_forward(float *hidden,
                                     int num_layers,
                                     int embed_dim,
                                     int per_layer_dim,
-                                    float eps)
+                                    float eps,
+                                    const int *segment_lengths,
+                                    int num_segments,
+                                    int singleton_tail)
 {
     if (!hidden || !per_layer_input || !inp_gate || !proj || !post_norm ||
         tokens <= 0 || layer < 0 || layer >= num_layers || embed_dim <= 0 ||
-        per_layer_dim != QK_K || embed_dim > 4096) {
+        per_layer_dim != QK_K || embed_dim > 4096 ||
+        (segment_lengths == NULL) != (num_segments == 0) ||
+        (singleton_tail != 0 && singleton_tail != 1)) {
         return;
+    }
+    if (segment_lengths) {
+        int remaining = tokens;
+        for (int i = 0; i < num_segments; ++i) {
+            if (segment_lengths[i] < 0 || segment_lengths[i] > remaining) return;
+            remaining -= segment_lengths[i];
+        }
+        if (remaining != 0) return;
     }
 
     ck_gemma4_embed_args_t args = {
@@ -424,7 +457,11 @@ void gemma4_per_layer_embed_forward(float *hidden,
         .num_layers = num_layers,
         .embed_dim = embed_dim,
         .per_layer_dim = per_layer_dim,
+        .tokens = tokens,
         .eps = eps,
+        .segment_lengths = segment_lengths,
+        .num_segments = num_segments,
+        .singleton_tail = singleton_tail,
     };
     ck_threadpool_t *pool = ck_threadpool_global();
     int active = pool ? ck_threadpool_n_threads(pool) : 1;
