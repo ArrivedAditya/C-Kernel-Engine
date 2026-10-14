@@ -31,6 +31,43 @@ codegen_prefill_v8 = _load_module("codegen_prefill_v8_tests", CODEGEN_PREFILL_PA
 
 
 class TestV8PrefillCodegen(unittest.TestCase):
+    def test_composite_embedding_receives_declared_segment_plan(self):
+        provider = json.loads((ROOT / "version/v8/kernel_maps/gemma4_per_layer_embed_forward.json").read_text())
+        op = {
+            "function": provider["impl"]["function"],
+            "op": provider["op"],
+            "layer": 0,
+            "args": [
+                {"name": arg["name"], "source": arg["source"], "expr": arg["name"]}
+                for arg in provider["call_abi"]["params"]
+            ],
+        }
+        config = {
+            "multimodal_bridge_contract": {
+                "prefill_schedule": {
+                    "projection_row_group_boundaries": {
+                        "policy": "restart_each_segment",
+                        "operations": [provider["op"]],
+                        "text_after_row_group": "single_token",
+                    },
+                },
+            },
+        }
+        emitted = codegen_prefill_v8.emit_prefill_op(
+            op, 0, config, segment_plan_available=True
+        )
+        self.assertIn("g_multimodal_prefill_segment_lengths", emitted)
+        self.assertIn("g_multimodal_prefill_num_segments", emitted)
+        self.assertIn("? g_multimodal_prefill_num_segments : 0", emitted)
+        self.assertIn("\n        1\n    );", emitted)
+        config["multimodal_bridge_contract"]["prefill_schedule"][
+            "projection_row_group_boundaries"
+        ]["operations"] = []
+        with self.assertRaisesRegex(RuntimeError, "without a declared segment policy"):
+            codegen_prefill_v8.emit_prefill_op(
+                op, 0, config, segment_plan_available=True
+            )
+
     def test_gemma4_mixed_bridge_emits_segmented_attention_schedule(self):
         path = ROOT / "version/v8/kernel_maps/attention_forward_causal_head_major_gqa_prefill_append_f16cache_sliding_gemma4.json"
         provider = json.loads(path.read_text(encoding="utf-8"))

@@ -16,7 +16,7 @@ from audit_kernel_map_interfaces_v8 import _validate_provider_constraints
 
 
 PREPARE_CONTRACT = "gemma4_prepare_llama_cpu_bf16_input_rne_v2"
-EMBED_CONTRACT = "gemma4_embed_llama_cpu_fp16_table_gelu_v1"
+EMBED_CONTRACT = "gemma4_embed_llama_cpu_segmented_projection_norm_v2"
 
 
 def _manifest(kernel: str, op: str, contract: str, embed_dim: int) -> dict:
@@ -74,6 +74,10 @@ class Gemma4ProviderContractTests(unittest.TestCase):
                 self.assertEqual(contract["id"], EMBED_CONTRACT)
                 self.assertEqual(contract["activation"],
                                  "gelu_fp16_table_input_output_rne_with_signed_10_clamps")
+                self.assertEqual(contract["projection_reduction"],
+                                 "llama_production_output_range_segmented_row_group")
+                self.assertEqual(contract["normalization"],
+                                 "rmsnorm_forward_llama_production")
 
     def test_missing_and_malformed_circuit_requirements_fail_in_lowering(self) -> None:
         manifest = _manifest("gemma4_per_layer_prepare_bf16_forward",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import importlib.util
 import math
 import os
 import shlex
@@ -222,6 +223,9 @@ class PrefillIndependentRowParallelTests(unittest.TestCase):
             ctypes.c_int,
             ctypes.c_int,
             ctypes.c_float,
+            INT32_PTR,
+            ctypes.c_int,
+            ctypes.c_int,
         ]
         cls.gemma4_embed = cls.engine.gemma4_per_layer_embed_forward
         cls.gemma4_embed.argtypes = gemma4_embed_args
@@ -844,6 +848,7 @@ class PrefillIndependentRowParallelTests(unittest.TestCase):
             embed_dim,
             per_layer_dim,
             ctypes.c_float(1.0e-6),
+            None, 0, 0,
         )
         os.environ["CK_DISABLE_GEMMA4_EMBED_PARALLEL"] = "1"
         try:
@@ -852,6 +857,124 @@ class PrefillIndependentRowParallelTests(unittest.TestCase):
             os.environ.pop("CK_DISABLE_GEMMA4_EMBED_PARALLEL", None)
         self.gemma4_embed(parallel.ctypes.data_as(FLOAT_PTR), *common)
         np.testing.assert_array_equal(parallel.view(np.uint32), serial.view(np.uint32))
+
+    def test_gemma4_embed_segment_tail_uses_single_row_contract(self) -> None:
+        tokens, width = 3, 256
+        rng = np.random.default_rng(20261014)
+        hidden = rng.standard_normal((tokens, width), dtype=np.float32) * 0.1
+        stream = rng.standard_normal((tokens, 1, width), dtype=np.float32)
+        gate = rng.standard_normal((width, width), dtype=np.float32) * 0.1
+        projection = rng.standard_normal((width, width), dtype=np.float32) * 0.1
+        norm = np.ones(width, dtype=np.float32)
+        scale = np.ones(1, dtype=np.float32)
+        segments = np.asarray([2, 1], dtype=np.int32)
+
+        def run(source: np.ndarray, inp: np.ndarray, lengths: np.ndarray | None,
+                singleton_tail: int = 0) -> np.ndarray:
+            result = source.copy()
+            self.gemma4_embed(
+                result.ctypes.data_as(FLOAT_PTR),
+                inp.ctypes.data_as(FLOAT_PTR),
+                gate.ctypes.data_as(FLOAT_PTR),
+                projection.ctypes.data_as(FLOAT_PTR),
+                norm.ctypes.data_as(FLOAT_PTR),
+                scale.ctypes.data_as(FLOAT_PTR),
+                len(result), 0, 1, width, width, ctypes.c_float(1.0e-6),
+                None if lengths is None else lengths.ctypes.data_as(INT32_PTR),
+                0 if lengths is None else len(lengths), singleton_tail,
+            )
+            return result
+
+        segmented = run(hidden, stream, segments, 1)
+        grouped = run(hidden, stream, None)
+        singleton = run(hidden[2:], stream[2:], None)
+        np.testing.assert_array_equal(segmented[:2].view(np.uint32),
+                                      grouped[:2].view(np.uint32))
+        np.testing.assert_array_equal(segmented[2:].view(np.uint32),
+                                      singleton.view(np.uint32))
+        with_empty = run(hidden, stream, np.asarray([0, 2, 1], dtype=np.int32), 1)
+        np.testing.assert_array_equal(with_empty.view(np.uint32),
+                                      segmented.view(np.uint32))
+
+        trailing_text = run(hidden, stream, np.asarray([1, 0, 2], dtype=np.int32), 1)
+        for row in range(tokens):
+            one = run(hidden[row:row + 1], stream[row:row + 1], None)
+            np.testing.assert_array_equal(trailing_text[row].view(np.uint32),
+                                          one[0].view(np.uint32))
+        np.testing.assert_array_equal(run(hidden, stream, None).view(np.uint32),
+                                      grouped.view(np.uint32))
+
+        bad = hidden.copy()
+        invalid = np.asarray([2, 2], dtype=np.int32)
+        self.gemma4_embed(
+            bad.ctypes.data_as(FLOAT_PTR), stream.ctypes.data_as(FLOAT_PTR),
+            gate.ctypes.data_as(FLOAT_PTR), projection.ctypes.data_as(FLOAT_PTR),
+            norm.ctypes.data_as(FLOAT_PTR), scale.ctypes.data_as(FLOAT_PTR),
+            tokens, 0, 1, width, width, ctypes.c_float(1.0e-6),
+            invalid.ctypes.data_as(INT32_PTR), len(invalid), 1,
+        )
+        np.testing.assert_array_equal(bad.view(np.uint32), hidden.view(np.uint32))
+
+    def test_gemma4_benchmark_binding_calls_current_abi(self) -> None:
+        path = ROOT / "benchmarks/bench_final_logits_q4k_q8k.py"
+        spec = importlib.util.spec_from_file_location("gemma4_final_logit_bench", path)
+        self.assertIsNotNone(spec)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        bind = module._bind_gemma4_embed(self.engine)
+        self.assertEqual(len(bind.argtypes), 15)
+
+        width, branch_width = 8, 256
+        hidden = np.ones(width, dtype=np.float32)
+        stream = np.ones(branch_width, dtype=np.float32)
+        gate = np.zeros((branch_width, width), dtype=np.float32)
+        gate[0, 0] = 1.0
+        projection = np.zeros((width, branch_width), dtype=np.float32)
+        projection[0, 0] = 1.0
+        norm = np.ones(width, dtype=np.float32)
+        scale = np.ones(1, dtype=np.float32)
+        module._call_gemma4_embed_one(
+            bind, hidden, stream, gate, projection, norm, scale,
+            1, width, branch_width, 1.0e-6,
+        )
+        self.assertGreater(hidden[0], 1.0)
+
+    def test_gemma4_embed_uses_llama_rmsnorm_reduction(self) -> None:
+        width = 2560
+        branch_width = 256
+        hidden = np.random.default_rng(47).standard_normal((1, width), dtype=np.float32)
+        hidden[0, 0] = 10.0
+        stream = np.zeros((1, 1, branch_width), dtype=np.float32)
+        stream[0, 0, 0] = 0.1
+        gate = np.zeros((branch_width, width), dtype=np.float32)
+        gate[0, 0] = 1.0
+        projection = np.zeros((width, branch_width), dtype=np.float32)
+        projection[:, 0] = (np.random.default_rng(458).standard_normal(
+            width, dtype=np.float32) * np.float32(20))
+        norm = np.ones(width, dtype=np.float32)
+        scale = np.ones(1, dtype=np.float32)
+        branch = projection[:, 0].copy()
+        expected_norm = np.empty(width, dtype=np.float32)
+        rmsnorm = self.engine.rmsnorm_forward_llama_production
+        rmsnorm.argtypes = [FLOAT_PTR, FLOAT_PTR, FLOAT_PTR, FLOAT_PTR,
+                            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_float]
+        rmsnorm(branch.ctypes.data_as(FLOAT_PTR), norm.ctypes.data_as(FLOAT_PTR),
+                expected_norm.ctypes.data_as(FLOAT_PTR), None,
+                1, width, width, ctypes.c_float(1.0e-6))
+        old_scale = np.float32(1.0 / math.sqrt(float(np.float32(
+            sum(float(x) * float(x) for x in branch) / width
+        ) + np.float32(1.0e-6))))
+        self.assertFalse(np.array_equal(expected_norm.view(np.uint32),
+                                        (branch * old_scale).view(np.uint32)))
+        expected = hidden + expected_norm
+        actual = hidden.copy()
+        self.gemma4_embed(
+            actual.ctypes.data_as(FLOAT_PTR), stream.ctypes.data_as(FLOAT_PTR),
+            gate.ctypes.data_as(FLOAT_PTR), projection.ctypes.data_as(FLOAT_PTR),
+            norm.ctypes.data_as(FLOAT_PTR), scale.ctypes.data_as(FLOAT_PTR),
+            1, 0, 1, width, branch_width, ctypes.c_float(1.0e-6), None, 0, 0,
+        )
+        np.testing.assert_array_equal(actual.view(np.uint32), expected.view(np.uint32))
 
     def test_gemma4_embed_matches_half_rounded_gelu_oracle(self) -> None:
         hidden = np.asarray([[0.13, 0.7, -0.1, 0.2]], dtype=np.float32)
@@ -892,7 +1015,7 @@ class PrefillIndependentRowParallelTests(unittest.TestCase):
             projection.ctypes.data_as(FLOAT_PTR),
             post_norm.ctypes.data_as(FLOAT_PTR),
             out_scale.ctypes.data_as(FLOAT_PTR),
-            1, 0, 1, 4, 256, ctypes.c_float(1.0e-6),
+            1, 0, 1, 4, 256, ctypes.c_float(1.0e-6), None, 0, 0,
         )
         np.testing.assert_allclose(actual[0], half_oracle, atol=1.0e-6, rtol=0)
 
@@ -931,7 +1054,7 @@ class PrefillIndependentRowParallelTests(unittest.TestCase):
             projection.ctypes.data_as(FLOAT_PTR),
             post_norm.ctypes.data_as(FLOAT_PTR),
             out_scale.ctypes.data_as(FLOAT_PTR),
-            1, 0, 1, dim, 256, ctypes.c_float(1.0e-6),
+            1, 0, 1, dim, 256, ctypes.c_float(1.0e-6), None, 0, 0,
         )
         np.testing.assert_allclose(actual[0], expected, rtol=0, atol=3.0e-6)
 

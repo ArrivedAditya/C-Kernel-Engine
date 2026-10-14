@@ -36,7 +36,7 @@
   "contract": {
     "provider_numerical_requirements": {
       "gemma4_per_layer_prepare": "gemma4_prepare_llama_cpu_bf16_input_rne_v2",
-      "gemma4_per_layer_embed": "gemma4_embed_llama_cpu_fp16_table_gelu_v1"
+      "gemma4_per_layer_embed": "gemma4_embed_llama_cpu_segmented_projection_norm_v2"
     },
     "tokenizer_contract": {
       "tokenizer_type": "sentencepiece",
@@ -154,7 +154,7 @@
           "position_transition": "runtime_offset",
           "projection_row_group_boundaries": {
             "policy": "restart_each_segment",
-            "operations": ["q_proj", "k_proj", "v_proj", "out_proj", "mlp_gate_up", "mlp_down"],
+            "operations": ["q_proj", "k_proj", "v_proj", "out_proj", "mlp_gate_up", "mlp_down", "gemma4_per_layer_embed"],
             "text_after_row_group": "single_token"
           }
         }

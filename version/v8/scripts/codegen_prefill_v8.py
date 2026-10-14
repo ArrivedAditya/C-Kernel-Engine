@@ -611,6 +611,27 @@ def emit_prefill_op(
         # runtime token count.
         if source == "dim:seq_len":
             expr = "num_tokens"
+        elif source in {
+            "runtime:multimodal_segment_lengths",
+            "runtime:multimodal_num_segments",
+            "runtime:multimodal_singleton_tail",
+        } and segment_plan_available:
+            if op_type not in _segment_preserving_projection_operations(config):
+                raise RuntimeError(
+                    f"operation {op_type!r} requests multimodal row groups without a declared segment policy"
+                )
+            if source == "runtime:multimodal_segment_lengths":
+                expr = "ck_multimodal_prefill_has_segment_plan(num_tokens) ? " \
+                    "g_multimodal_prefill_segment_lengths : NULL"
+            elif source == "runtime:multimodal_num_segments":
+                expr = "ck_multimodal_prefill_has_segment_plan(num_tokens) ? " \
+                    "g_multimodal_prefill_num_segments : 0"
+            else:
+                boundaries = config["multimodal_bridge_contract"]["prefill_schedule"]["projection_row_group_boundaries"]
+                policy = boundaries.get("text_after_row_group", "segment")
+                if policy not in {"single_token", "segment"}:
+                    raise RuntimeError(f"unsupported text-after row group policy {policy!r}")
+                expr = "1" if policy == "single_token" else "0"
         elif source in ("param:seq_len", "runtime:seq_len"):
             expr = "num_tokens"
         elif source == "runtime:query_tokens":

@@ -17120,6 +17120,10 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
                         expr = "model->pos"
                 elif key == "layer":
                     expr = str(layer)
+                elif key == "multimodal_segment_lengths":
+                    expr = "NULL"
+                elif key in ("multimodal_num_segments", "multimodal_singleton_tail"):
+                    expr = "0"
                 else:
                     op_errors.append(f"{func}.{name}: unknown runtime '{key}'")
                     expr = "0"
