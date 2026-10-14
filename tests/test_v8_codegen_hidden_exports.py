@@ -50,6 +50,95 @@ def _arg(name: str, expr: str) -> dict[str, str]:
 
 
 class HiddenExportExtentTests(unittest.TestCase):
+    def test_v_norm_parity_capture_uses_resolved_head_major_geometry(self) -> None:
+        op = {
+            "op": "v_norm",
+            "function": "gemma4_v_norm_forward_parallel_dispatch",
+            "layer": 1,
+            "args": [
+                _arg("input", "V_INPUT"),
+                _arg("output", "V_OUTPUT"),
+                _arg("tokens", "3"),
+                _arg("num_kv_heads", "2"),
+                _arg("head_dim", "4"),
+                _arg("eps", "0.000001f"),
+            ],
+        }
+        for emitted, rows in (
+            (codegen.emit_op(op, dump=True), "3"),
+            (prefill_codegen.emit_prefill_op(op, 0, {}, dump=True), "num_tokens"),
+        ):
+            self.assertIn(
+                'ck_dump_tensor_head_major_token_major((float*)V_OUTPUT, 1, '
+                f'"Vcur_normed", 2, {rows}, 4);',
+                emitted,
+            )
+
+    def test_v_norm_prefill_capture_executes_all_rows_without_overrun(self) -> None:
+        compiler = shutil.which("cc")
+        if compiler is None:
+            self.skipTest("C compiler unavailable")
+        op = {
+            "op": "v_norm",
+            "function": "gemma4_v_norm_forward_parallel_dispatch",
+            "layer": 1,
+            "args": [
+                _arg("input", "input"),
+                _arg("output", "output"),
+                _arg("rstd_cache", "NULL"),
+                _arg("tokens", "3"),
+                _arg("num_kv_heads", "2"),
+                _arg("head_dim", "4"),
+                _arg("eps", "0.000001f"),
+            ],
+        }
+        emitted = prefill_codegen.emit_prefill_op(op, 0, {}, dump=True)
+        source = r'''
+#include <stddef.h>
+#include <string.h>
+static float captured[24];
+static int capture_ok;
+static void gemma4_v_norm_forward_parallel_dispatch(const float *input, float *output,
+        float *rstd_cache, int tokens, int heads, int dim, float eps) {
+    (void)rstd_cache; (void)eps;
+    for (int i = 0; i < tokens * heads * dim; ++i) output[i] = input[i] + 1.0f;
+}
+static void ck_dump_tensor_head_major_token_major(const float *src, int layer,
+        const char *name, int heads, int tokens, int dim) {
+    capture_ok = layer == 1 && strcmp(name, "Vcur_normed") == 0
+            && heads == 2 && tokens == 3 && dim == 4;
+    for (int t = 0; t < tokens; ++t)
+        for (int h = 0; h < heads; ++h)
+            for (int d = 0; d < dim; ++d)
+                captured[(t * heads + h) * dim + d] = src[(h * tokens + t) * dim + d];
+}
+int main(void) {
+    float input[24], output[26] = {0};
+    int num_tokens = 3;
+    output[24] = 12345.0f;
+    output[25] = -12345.0f;
+    for (int h = 0; h < 2; ++h)
+        for (int t = 0; t < 3; ++t)
+            for (int d = 0; d < 4; ++d)
+                input[(h * 3 + t) * 4 + d] = (float)(100 * h + 10 * t + d);
+''' + emitted + r'''
+    if (!capture_ok || output[24] != 12345.0f || output[25] != -12345.0f) return 1;
+    for (int t = 0; t < 3; ++t)
+        for (int h = 0; h < 2; ++h)
+            for (int d = 0; d < 4; ++d)
+                if (captured[(t * 2 + h) * 4 + d] != (float)(100 * h + 10 * t + d + 1)) return 2;
+    return 0;
+}
+'''
+        with tempfile.TemporaryDirectory(prefix="v_norm_capture_") as tmpdir:
+            path = Path(tmpdir)
+            (path / "fixture.c").write_text(source, encoding="utf-8")
+            subprocess.run(
+                [compiler, "-std=c11", "-DCK_PARITY_DUMP", str(path / "fixture.c"),
+                 "-o", str(path / "fixture")], check=True, capture_output=True,
+            )
+            subprocess.run([str(path / "fixture")], check=True, capture_output=True)
+
     def test_compact_kv_export_executes_with_mixed_head_widths(self) -> None:
         compiler = shutil.which("cc")
         if compiler is None:
