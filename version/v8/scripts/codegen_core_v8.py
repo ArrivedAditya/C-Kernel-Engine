@@ -2796,7 +2796,17 @@ def emit_op(
                 _emit_dump(_get_arg("output", "out", "c", "y"), "vision_output", size_expr)
                 return _return_lines(append_stop=True)
 
-        if op_name == "qk_norm":
+        if op_name == "v_norm":
+            out_expr = _get_arg("output", "out", "y")
+            if out_expr and tokens and num_kv_heads and head_dim:
+                raw_v = out_expr.replace("(float*)", "").replace("(void*)", "").strip()
+                lines.append("    #ifdef CK_PARITY_DUMP")
+                lines.append(
+                    f'    ck_dump_tensor_head_major_token_major((float*){raw_v}, {layer}, '
+                    f'"Vcur_normed", {num_kv_heads}, {tokens}, {head_dim});'
+                )
+                lines.append("    #endif")
+        elif op_name == "qk_norm":
             q_expr = _get_arg("q")
             k_expr = _get_arg("k")
             q_size = _mul_expr(_get_arg("num_tokens", "tokens") or tokens, num_heads, head_dim)

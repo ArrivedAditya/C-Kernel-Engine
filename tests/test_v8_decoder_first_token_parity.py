@@ -416,6 +416,24 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
             "post_attn_norm-0,attn_post_norm-0,mlp_down-0,down_proj-0",
         )
 
+    def test_oracle_positional_rope_names_select_and_compare_generated_rope(self) -> None:
+        self.assertEqual(
+            decoder_parity_v8._ck_dump_filter_names("Qcur_pos-1,Kcur_pos-1"),
+            "Qcur_pos-1,Qcur_rope-1,Kcur_pos-1,Kcur_rope-1",
+        )
+        dump = decoder_parity_v8.parity_test_v7.ParityDump
+        ck = [dump(1, "Qcur_rope", np.array([1.0, 2.0], dtype=np.float32), 0, "fp32")]
+        oracle = [dump(1, "Qcur_pos", np.array([1.0, 2.0], dtype=np.float32), 0, "fp32")]
+        aligned = decoder_parity_v8._compare_dump_sets(
+            ck, oracle, atol=0.0, rtol=0.0, pass_filter="all"
+        )
+        self.assertEqual(aligned["summary"]["pass"], 1)
+        oracle[0] = dump(1, "Qcur_pos", np.array([1.0, 3.0], dtype=np.float32), 0, "fp32")
+        divergent = decoder_parity_v8._compare_dump_sets(
+            ck, oracle, atol=0.0, rtol=0.0, pass_filter="all"
+        )
+        self.assertEqual(divergent["summary"]["fail"], 1)
+
     def test_resolve_llama_dump_names_expands_semantic_boundaries(self) -> None:
         self.assertEqual(
             decoder_parity_v8._resolve_llama_dump_names(

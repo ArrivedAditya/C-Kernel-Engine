@@ -773,6 +773,10 @@ def _canonical_dump_op_name(op_name: str) -> str:
         "qcur_full": "q_proj",
         "qcur_normed": "qk_norm_q",
         "kcur_normed": "qk_norm_k",
+        "qcur_pos": "qcur_rope",
+        "kcur_pos": "kcur_rope",
+        "qcur_rope": "qcur_rope",
+        "kcur_rope": "kcur_rope",
     }
     alias = aliases.get(name, aliases.get(name.lower()))
     if alias is not None:
@@ -1049,6 +1053,9 @@ def _ck_dump_filter_names(
                 f"{name}-{layer_id}" if layer_id >= 0 else name
                 for name in ("Kcur_normed", "kcur_normed", "Kcur_rope", "kcur_rope")
             )
+        elif canonical_name in {"Qcur_pos", "Kcur_pos"}:
+            rope_name = "Qcur_rope" if canonical_name == "Qcur_pos" else "Kcur_rope"
+            candidates.append(f"{rope_name}-{layer_id}" if layer_id >= 0 else rope_name)
         if canonical_name == "kqv_wo":
             candidates.append(f"attn_out-{layer_id}" if layer_id >= 0 else "attn_out")
         if canonical_name == "post_attn_norm":
@@ -1075,7 +1082,9 @@ def _ck_dump_filter_names(
     return ",".join(expanded)
 
 
-def _augment_legacy_kqv_aliases(dumps: list[Any]) -> list[Any]:
+def _augment_legacy_kqv_aliases(
+    dumps: list[Any], *, skip_rope_aliases: frozenset[str] = frozenset()
+) -> list[Any]:
     """
     Preserve modern native ``kqv_out`` dumps, but backfill a compatibility
     alias for older captures that only exposed attention output under
@@ -1110,7 +1119,7 @@ def _augment_legacy_kqv_aliases(dumps: list[Any]) -> list[Any]:
     }
     for dump in dumps:
         alias_name = rope_aliases.get(str(dump.op_name))
-        if not alias_name:
+        if not alias_name or alias_name in skip_rope_aliases:
             continue
         alias_key = (int(dump.layer_id), alias_name, int(getattr(dump, "token_id", 0)))
         if alias_key in seen:
@@ -1512,11 +1521,16 @@ def _compare_dump_sets(
     rtol: float,
     pass_filter: str,
 ) -> dict[str, Any]:
-    ck_filtered = _augment_legacy_kqv_aliases(
-        parity_test_v7._filter_by_pass(list(ck_dumps), pass_filter)
-    )
     llama_filtered = _augment_legacy_kqv_aliases(
         parity_test_v7._filter_by_pass(list(llama_dumps), pass_filter)
+    )
+    explicit_rope = frozenset(
+        alias for pos_name, alias in (("Qcur_pos", "Qcur"), ("Kcur_pos", "Kcur"))
+        if any(str(dump.op_name) == pos_name for dump in llama_filtered)
+    )
+    ck_filtered = _augment_legacy_kqv_aliases(
+        parity_test_v7._filter_by_pass(list(ck_dumps), pass_filter),
+        skip_rope_aliases=explicit_rope,
     )
 
     ck_by_key: dict[tuple[int, str], list[Any]] = {}

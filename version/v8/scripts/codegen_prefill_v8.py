@@ -1715,6 +1715,11 @@ def emit_prefill_op(
             k_size = _mul_expr(tokens, num_kv_heads, head_dim)
             _emit_dump(q_expr, "qcur_normed", q_size)
             _emit_dump(k_expr, "kcur_normed", k_size)
+        elif op_type == "v_norm":
+            _emit_head_major_dump(
+                _get_arg("output", "out", "y"), "Vcur_normed",
+                num_kv_heads, tokens, head_dim,
+            )
         elif op_type == "rope_qk":
             q_expr = _get_arg("q")
             k_expr = _get_arg("k")
