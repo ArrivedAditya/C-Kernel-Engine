@@ -57,6 +57,38 @@ int ck_kokoro_waveform_bounded(uint8_t *arena, size_t capacity,
     def tearDownClass(cls):
         cls.temp.cleanup()
 
+    def test_loaded_generated_library_identity_is_checked_before_package(self):
+        library = self.root / 'stub-generated.so'
+        subprocess.run(['cc', '-std=c11', '-O2', '-Wall', '-Wextra',
+            '-Werror', '-shared', '-fPIC', str(self.root / 'stub.c'),
+            '-o', str(library)], check=True, capture_output=True)
+        actual = hashlib.sha256(library.read_bytes()).hexdigest()
+        for label, expected, status in (
+                ('matching', actual, 3), ('mismatch', '0' * 64, 9)):
+            with self.subTest(label=label):
+                binary = self.root / f'identity-{label}'
+                subprocess.run(['cc', '-std=c11', '-O2', '-Wall', '-Wextra',
+                    '-Werror', '-pedantic', '-DCK_TTS_COMPILED_TOKEN_COUNT=8',
+                    f'-DCK_TTS_EXPECTED_LIBRARY_SHA256="{expected}"',
+                    '-I', str(ROOT / 'include'), '-I',
+                    str(ROOT / 'src/kernels'),
+                    str(ROOT / 'version/v8/tts/native_kokoro_wav_host.c'),
+                    str(ROOT / 'src/kernels/audio_noise_counter.c'),
+                    '-L', str(self.root), '-l:stub-generated.so',
+                    '-Wl,-rpath,$ORIGIN', '-lm', '-ldl', '-lcrypto',
+                    '-o', str(binary)], check=True, capture_output=True,
+                    text=True)
+                run = subprocess.run([str(binary),
+                    str(self.root / 'missing.cktts'),
+                    str(self.root / 'never.wav'), '7',
+                    '0,4,4,4,4,4,4,0', str(self.root / 'missing.ckvoice')],
+                    capture_output=True, text=True)
+                self.assertEqual(run.returncode, status, run.stderr)
+                self.assertIn('resolved generated symbol in' if label ==
+                    'matching' else 'generated library identity mismatch',
+                    run.stderr)
+                self.assertFalse((self.root / 'never.wav').exists())
+
     def package(self, name, gaussian_offset=0, gaussian_count=GAUSSIAN_COUNT,
                 waveform_offset=WAVEFORM_OFFSET):
         path = self.root / name
