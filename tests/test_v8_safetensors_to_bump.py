@@ -436,6 +436,108 @@ def test_safetensors_import_preserves_publisher_special_token_types(tmp_path: Pa
     assert by_name["vocab_types"][2] == 4  # EOS from tokenizer_config.json
     assert by_name["vocab_types"][3] == 1  # ordinary token
 
+
+def test_safetensors_import_resolves_stop_ids_without_added_tokens_decoder(tmp_path: Path) -> None:
+    converter = _load_converter()
+    checkpoint = tmp_path / "publisher_stops"
+    checkpoint.mkdir()
+    _write_tiny_bpe_tokenizer(checkpoint, vocab_size=32)
+    config_path = checkpoint / "tokenizer_config.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    del config["added_tokens_decoder"]
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    (checkpoint / "config.json").write_text(
+        json.dumps({"bos_token_id": 1, "eos_token_id": 2}), encoding="utf-8"
+    )
+    (checkpoint / "generation_config.json").write_text(
+        json.dumps({"eos_token_id": [2, 31]}), encoding="utf-8"
+    )
+
+    _payloads, _contract, special = converter._tokenizer_payloads_from_json(checkpoint, 32)
+    assert special["bos_token_id"] == 1
+    assert special["eos_token_id"] == 2
+    assert special["stop_token_ids"] == [2, 31]
+
+    (checkpoint / "generation_config.json").write_text(
+        json.dumps({"eos_token_id": [31, 2]}), encoding="utf-8"
+    )
+    _payloads, _contract, special = converter._tokenizer_payloads_from_json(checkpoint, 32)
+    assert special["eos_token_id"] == 2
+    assert special["stop_token_ids"] == [31, 2]
+
+    for invalid_id in (32, 0x80000000, 0x100000001):
+        (checkpoint / "generation_config.json").write_text(
+            json.dumps({"eos_token_id": [invalid_id, 2]}), encoding="utf-8"
+        )
+        with pytest.raises(ValueError, match="invalid eos_token_id token ID"):
+            converter._tokenizer_payloads_from_json(checkpoint, 32)
+
+    (checkpoint / "generation_config.json").write_text(
+        json.dumps({"eos_token_id": [0, 31]}), encoding="utf-8"
+    )
+    _payloads, _contract, special = converter._tokenizer_payloads_from_json(checkpoint, 32)
+    assert special["eos_token_id"] == 2
+    assert special["stop_token_ids"] == [0, 31]
+
+    (checkpoint / "generation_config.json").unlink()
+    (checkpoint / "config.json").write_text(
+        json.dumps({"bos_token_id": 1, "eos_token_id": [31, 2]}), encoding="utf-8"
+    )
+    _payloads, _contract, special = converter._tokenizer_payloads_from_json(checkpoint, 32)
+    assert special["eos_token_id"] == 2
+    assert special["stop_token_ids"] == [31, 2]
+
+    config["eos_token_id"] = 3
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    with pytest.raises(ValueError, match="EOS ID conflicts"):
+        converter._tokenizer_payloads_from_json(checkpoint, 32)
+
+
+def test_instella_style_zero_bos_and_one_eos_are_preserved(tmp_path: Path) -> None:
+    converter = _load_converter()
+    (tmp_path / "tokenizer.json").write_text(json.dumps({
+        "model": {"vocab": {"<bos>": 0, "<eos>": 1}},
+        "added_tokens": [
+            {"id": 0, "content": "<bos>"},
+            {"id": 1, "content": "<eos>"},
+        ],
+    }), encoding="utf-8")
+    (tmp_path / "tokenizer_config.json").write_text(json.dumps({
+        "bos_token": {"content": "<bos>"},
+        "eos_token": {"content": "<eos>"},
+        "pad_token": {"content": "<eos>"},
+    }), encoding="utf-8")
+    (tmp_path / "config.json").write_text(
+        json.dumps({"bos_token_id": 0, "eos_token_id": 1}), encoding="utf-8"
+    )
+    special = converter._special_tokens_from_tokenizer_config(tmp_path, "bpe")
+    assert special["bos_token_id"] == 0
+    assert special["eos_token_id"] == 1
+    assert special["pad_token_id"] == 1
+    assert special["stop_token_ids"] == [1]
+
+
+def test_muse_style_message_boundary_is_not_a_stop(tmp_path: Path) -> None:
+    converter = _load_converter()
+    (tmp_path / "tokenizer.json").write_text(json.dumps({
+        "model": {"vocab": {
+            "<|end_of_text|>": 200001,
+            "<|eom|>": 200007,
+            "<|eot|>": 200008,
+        }},
+        "added_tokens": [],
+    }), encoding="utf-8")
+    (tmp_path / "tokenizer_config.json").write_text(
+        json.dumps({"eos_token": "<|eot|>"}), encoding="utf-8"
+    )
+    (tmp_path / "generation_config.json").write_text(
+        json.dumps({"eos_token_id": [200001, 200008]}), encoding="utf-8"
+    )
+    special = converter._special_tokens_from_tokenizer_config(tmp_path, "bpe")
+    assert special["eos_token_id"] == 200008
+    assert special["stop_token_ids"] == [200001, 200008]
+    assert 200007 not in special["stop_token_ids"]
+
 def test_qwen3_safetensors_to_bump_smoke(tmp_path: Path) -> None:
     torch, st = _require_torch_safetensors()
     checkpoint = tmp_path / "qwen3"

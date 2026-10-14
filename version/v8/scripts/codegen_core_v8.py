@@ -3243,20 +3243,42 @@ def emit_model_and_api(
     stop_tokens_api = ""
 
     if init_call:
-        # Generate stop tokens API from special_tokens in init_call
-        # These come from GGUF metadata (tokenizer.ggml.eos_token_id, etc.)
+        # Generate stop tokens API from the resolved imported tokenizer and
+        # generation metadata, regardless of whether the source was GGUF or
+        # safetensors.
         special_tokens = init_call.get("special_tokens", {})
         if special_tokens:
-            eos_id = special_tokens.get("eos_token_id", -1)
-            bos_id = special_tokens.get("bos_token_id", -1)
-            # Build stop tokens array (for now just EOS, could add more)
-            stop_ids = []
-            if eos_id is not None and eos_id >= 0:
-                stop_ids.append(eos_id)
+            eos_id = special_tokens.get("eos_token_id")
+            bos_id = special_tokens.get("bos_token_id")
+            vocab_size = (config or {}).get("vocab_size")
+            if vocab_size is not None and (
+                type(vocab_size) is not int or vocab_size <= 0 or vocab_size > 0x7FFFFFFF
+            ):
+                raise ValueError(f"invalid model vocabulary size: {vocab_size!r}")
+
+            def checked_id(token_id: object, name: str, *, optional: bool = False) -> int:
+                if (type(token_id) is not int or token_id < (-1 if optional else 0)
+                    or token_id > 0x7FFFFFFF
+                    or (token_id >= 0 and vocab_size is not None
+                        and token_id >= vocab_size)):
+                    raise ValueError(f"invalid {name} token ID: {token_id!r}")
+                return token_id
+
+            eos_id = checked_id(-1 if eos_id is None else eos_id, "eos_token_id", optional=True)
+            bos_id = checked_id(-1 if bos_id is None else bos_id, "bos_token_id", optional=True)
+            declared_stops = special_tokens.get("stop_token_ids")
+            if declared_stops is not None:
+                if not isinstance(declared_stops, list):
+                    raise ValueError("invalid imported stop_token_ids")
+                stop_ids = list(dict.fromkeys(
+                    checked_id(token_id, "stop_token_ids") for token_id in declared_stops
+                ))
+            else:
+                stop_ids = [eos_id] if eos_id >= 0 else []
 
             stop_tokens_api = f"""
 /* ============================================================================
- * STOP TOKENS API - Extracted from GGUF metadata
+ * STOP TOKENS API - Resolved imported metadata
  * ============================================================================
  * These token IDs signal end-of-generation. Orchestrator should check if
  * sampled token matches any stop token and terminate the autoregressive loop.

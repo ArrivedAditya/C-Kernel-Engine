@@ -376,6 +376,7 @@ typedef struct {
     float temperature;
     float top_p;
     bool ignore_eos;
+    bool eos_explicit;
     bool stream;
     bool timing;
     bool verbose;
@@ -2024,6 +2025,12 @@ static char *apply_chat_template(const ChatTemplate *tmpl, const char *system, c
 
 static bool is_eos_token(const ModelAPI *api, const CLIOptions *opt, int token) {
     if (!opt || opt->ignore_eos) return false;
+    if (opt->eos_explicit) {
+        for (int i = 0; i < opt->eos_count; i++) {
+            if (opt->eos_ids[i] == token) return true;
+        }
+        return false;
+    }
     if (api && api->is_stop_token) {
         return api->is_stop_token((int32_t)token) != 0;
     }
@@ -2191,16 +2198,24 @@ static bool eos_pattern_process(const char *token_text, char *out_buf, size_t *o
 static bool parse_eos_ids(const char *arg, CLIOptions *opt) {
     if (!arg || !opt) return false;
     opt->eos_count = 0;
+    opt->eos_explicit = false;
     const char *p = arg;
-    while (*p && opt->eos_count < CK_CLI_EOS_MAX) {
+    while (*p) {
+        if (opt->eos_count >= CK_CLI_EOS_MAX) return false;
         char *end = NULL;
+        errno = 0;
         long v = strtol(p, &end, 10);
-        if (end == p) break;
+        if (end == p || errno == ERANGE || v < 0 || v > INT_MAX) return false;
+        if (*end != '\0' && *end != ',') return false;
         opt->eos_ids[opt->eos_count++] = (int)v;
         p = end;
-        if (*p == ',') p++;
+        if (*p == ',') {
+            p++;
+            if (!*p) return false;
+        }
     }
-    return opt->eos_count > 0;
+    opt->eos_explicit = opt->eos_count > 0;
+    return opt->eos_explicit;
 }
 
 static bool parse_token_id_list(const char *arg, int32_t **out_ids, int *out_count) {
@@ -2958,7 +2973,7 @@ static int run_bridge_report_with_prefix(
         return -1;
     }
 
-    if (spec.stop_token_count > 0) {
+    if (spec.stop_token_count > 0 && !opt->eos_explicit) {
         opt->eos_count = spec.stop_token_count > CK_CLI_EOS_MAX ? CK_CLI_EOS_MAX : spec.stop_token_count;
         for (int i = 0; i < opt->eos_count; i++) opt->eos_ids[i] = spec.stop_token_ids[i];
     }
@@ -5333,7 +5348,10 @@ static bool parse_args(int argc, char **argv, CLIOptions *opt) {
         } else if (!strcmp(arg, "--no-chat-template")) {
             opt->no_chat_template = true;
         } else if (!strcmp(arg, "--eos") && i + 1 < argc) {
-            parse_eos_ids(argv[++i], opt);
+            if (!parse_eos_ids(argv[++i], opt)) {
+                fprintf(stderr, "Error: --eos requires at least one token ID\n");
+                return false;
+            }
         } else if (!strcmp(arg, "--ignore-eos")) {
             opt->ignore_eos = true;
         } else if (!strcmp(arg, "--verbose") || !strcmp(arg, "-v")) {
@@ -5448,7 +5466,7 @@ static bool parse_args(int argc, char **argv, CLIOptions *opt) {
     opt->chat_template = detect_chat_template(name_for_template);
 
     /* Load EOS tokens from vocab.json if available */
-    if (load_eos_from_vocab_json(opt->weights_path, opt)) {
+    if (!opt->eos_explicit && load_eos_from_vocab_json(opt->weights_path, opt)) {
         if (opt->verbose) {
             printf("[DEBUG] Loaded %d EOS tokens: ", opt->eos_count);
             for (int i = 0; i < opt->eos_count; i++) {
@@ -6519,17 +6537,30 @@ int main(int argc, char **argv) {
     }
 
     int vocab_size = api.get_vocab_size ? api.get_vocab_size() : 0;
+    if (opt.eos_explicit) {
+        if (vocab_size <= 0) {
+            fprintf(stderr, "Error: cannot validate --eos without a model vocabulary\n");
+            return 1;
+        }
+        for (int i = 0; i < opt.eos_count; i++) {
+            if (opt.eos_ids[i] < 0 || opt.eos_ids[i] >= vocab_size) {
+                fprintf(stderr, "Error: --eos token ID %d is outside model vocabulary [0, %d)\n",
+                        opt.eos_ids[i], vocab_size);
+                return 1;
+            }
+        }
+    }
 
-    /* Generated stop-token metadata is authoritative. Only old artifacts use
-     * text-token probing as a compatibility fallback. */
-    if (api.get_num_stop_tokens && api.get_stop_tokens) {
+    /* Explicit caller stops take precedence. Generated metadata is the default;
+     * only old artifacts use text-token probing as a compatibility fallback. */
+    if (!opt.eos_explicit && api.get_num_stop_tokens && api.get_stop_tokens) {
         const int generated_count = api.get_num_stop_tokens();
         const int32_t *generated_stops = api.get_stop_tokens();
         if (generated_count > 0 && generated_stops) {
             opt.eos_count = generated_count < CK_CLI_EOS_MAX ? generated_count : CK_CLI_EOS_MAX;
             for (int i = 0; i < opt.eos_count; i++) opt.eos_ids[i] = generated_stops[i];
         }
-    } else if (has_decode_tokenizer && api.lookup_token) {
+    } else if (!opt.eos_explicit && has_decode_tokenizer && api.lookup_token) {
         static const char *eos_tokens[] = {
             "<|im_end|>", "<|endoftext|>", "<|im_start|>",  /* Qwen/ChatML */
             "<|eot_id|>", "<|end_of_text|>",  /* Llama 3 */
