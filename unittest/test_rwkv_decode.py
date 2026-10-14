@@ -17,6 +17,18 @@ lib.ck_rwkv7_token_shift_lerp.argtypes = [
 ]
 lib.ck_rwkv7_token_shift_lerp.restype = ctypes.c_int
 
+lib.ck_rwkv7_time_mix_shifts.argtypes = [
+    ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float),
+    ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float),
+    ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float),
+    ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float),
+    ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float),
+    ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float),
+    ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float),
+    ctypes.POINTER(ctypes.c_float), ctypes.c_int,
+]
+lib.ck_rwkv7_time_mix_shifts.restype = ctypes.c_int
+
 lib.ck_rwkv7_norm_kk.argtypes = [
     ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float),
     ctypes.c_int, ctypes.c_int,
@@ -91,6 +103,37 @@ lib.ck_rwkv7_state_readout.argtypes = [
 ]
 lib.ck_rwkv7_state_readout.restype = ctypes.c_int
 
+lib.ck_rwkv7_apply_kk_factor.argtypes = [
+    ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float),
+    ctypes.POINTER(ctypes.c_float), ctypes.c_int,
+]
+lib.ck_rwkv7_apply_kk_factor.restype = ctypes.c_int
+
+lib.ck_rwkv7_time_mix_scratch_elems.argtypes = [ctypes.c_int]
+lib.ck_rwkv7_time_mix_scratch_elems.restype = ctypes.c_size_t
+
+lib.ck_rwkv7_time_mix_tail.argtypes = [
+    ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float),
+    ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float),
+    ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float),
+    ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float),
+    ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float),
+    ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float),
+    ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float),
+    ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float),
+    ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float),
+    ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float),
+    ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float),
+    ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float),
+    ctypes.c_float,
+    ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float),
+    ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float),
+    ctypes.c_int, ctypes.c_int, ctypes.c_int,
+    ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+    ctypes.POINTER(ctypes.c_float), ctypes.c_size_t,
+]
+lib.ck_rwkv7_time_mix_tail.restype = ctypes.c_int
+
 INV_SQRT_E = 0.6065306597126334
 
 NORM_EPS = 1e-5
@@ -156,7 +199,7 @@ def run_case(H, N, seed):
     rc = lib.ck_rwkv7_scale_k(
         numpy_to_ptr(k_raw), numpy_to_ptr(a), numpy_to_ptr(k_a), numpy_to_ptr(k), C)
     assert rc == 0
-    ref_k = k_raw * (1 + (a - 1) * k_a)
+    ref_k = k_raw * (1 + (k_a - 1) * a)
     dk = float(np.max(np.abs(k - ref_k)))
 
     # full wkv step
@@ -297,7 +340,7 @@ def run_lora_case(H, N, Rd, Ra, Rg, Rv, seed):
     assert rc == 0
     t_kk = (t(kk_raw) * t(k_k)).view(H, N)
     t_kk = t_kk / torch.clamp(torch.sqrt((t_kk * t_kk).sum(dim=1, keepdim=True)), min=1e-12)
-    t_ks = (t(k_raw) * (1 + (t_a - 1) * t(k_a))).view(H, N)
+    t_ks = (t(k_raw) * (1 + (t(k_a) - 1) * t_a)).view(H, N)
     t_s, t_y = torch_step(t(r).view(H, N), t_w.view(H, N), t_ks,
                           t_v.view(H, N), t_kk, t_a.view(H, N),
                           t_g, t(rk), t(ln_w), t(ln_b), t(state))
@@ -463,6 +506,198 @@ def run_state_case(N, seed):
     return ok
 
 
+def run_shifts_case(dim, seed):
+    """Six-way shift bundle parity vs scalar lerp, carry, and guards."""
+    rng = np.random.default_rng(seed)
+    x = (rng.standard_normal(dim) * 0.5).astype(np.float32)
+    shift = (rng.standard_normal(dim) * 0.5).astype(np.float32)
+    mus = [(rng.random(dim).astype(np.float32) * 0.5 + 0.25).astype(np.float32)
+           for _ in range(6)]
+    outs = [np.zeros(dim, dtype=np.float32) for _ in range(6)]
+    carry = np.zeros(dim, dtype=np.float32)
+    p = numpy_to_ptr
+    rc = lib.ck_rwkv7_time_mix_shifts(
+        p(x), p(shift), *[p(m) for m in mus],
+        *[p(o) for o in outs], p(carry), dim)
+    assert rc == 0
+    ok = True
+    for o, m in zip(outs, mus):
+        ref = x + m * (shift - x)
+        ok &= float(np.max(np.abs(o - ref))) <= 1e-6
+    ok &= float(np.max(np.abs(carry - x))) == 0.0
+    # Matches six scalar lerps lane-for-lane.
+    for o, m in zip(outs, mus):
+        xm = np.zeros(dim, dtype=np.float32)
+        so = np.zeros(dim, dtype=np.float32)
+        assert lib.ck_rwkv7_token_shift_lerp(
+            p(x), p(shift), p(m), p(xm), p(so), dim) == 0
+        ok &= bool(np.array_equal(o, xm)) and bool(np.array_equal(carry, so))
+    # In-place carry (shift_out == shift_in) is supported.
+    buf = shift.copy()
+    outs2 = [np.zeros(dim, dtype=np.float32) for _ in range(6)]
+    rc = lib.ck_rwkv7_time_mix_shifts(
+        p(x), p(buf), *[p(m) for m in mus],
+        *[p(o) for o in outs2], p(buf), dim)
+    ok &= rc == 0 and float(np.max(np.abs(buf - x))) == 0.0
+    for o, o2 in zip(outs, outs2):
+        ok &= bool(np.array_equal(o, o2))
+    # Guards: output-output alias, output-input alias, null, bad dim.
+    g1 = lib.ck_rwkv7_time_mix_shifts(
+        p(x), p(shift), *[p(m) for m in mus],
+        p(outs[0]), p(outs[1]), p(outs[2]), p(outs[3]), p(outs[4]),
+        p(outs[0]), p(carry), dim)
+    g2 = lib.ck_rwkv7_time_mix_shifts(
+        p(x), p(shift), *[p(m) for m in mus],
+        p(x), p(outs[1]), p(outs[2]), p(outs[3]), p(outs[4]), p(outs[5]),
+        p(carry), dim)
+    g3 = lib.ck_rwkv7_time_mix_shifts(
+        None, p(shift), *[p(m) for m in mus],
+        *[p(o) for o in outs], p(carry), dim)
+    g4 = lib.ck_rwkv7_time_mix_shifts(
+        p(x), p(shift), *[p(m) for m in mus],
+        *[p(o) for o in outs], p(carry), 0)
+    print(f"shifts dim={dim}: guards={g1},{g2},{g3},{g4}")
+    ok &= (g1, g2, g3, g4) == (-1, -1, -1, -1)
+    print(f"shifts dim={dim}: -> {'PASS' if ok else 'FAIL'}")
+    return ok
+
+
+def run_kk_factor_case(dim, seed):
+    """kk_raw = k * k_k parity, including exact-alias (in-place) use."""
+    rng = np.random.default_rng(seed)
+    k = (rng.standard_normal(dim) * 0.5).astype(np.float32)
+    k_k = (1.0 + rng.standard_normal(dim) * 0.05).astype(np.float32)
+    out = np.zeros(dim, dtype=np.float32)
+    assert lib.ck_rwkv7_apply_kk_factor(
+        numpy_to_ptr(k), numpy_to_ptr(k_k), numpy_to_ptr(out), dim) == 0
+    ref = k * k_k
+    d = float(np.max(np.abs(out - ref)))
+    alias = k.copy()
+    assert lib.ck_rwkv7_apply_kk_factor(
+        numpy_to_ptr(alias), numpy_to_ptr(k_k), numpy_to_ptr(alias), dim) == 0
+    da = float(np.max(np.abs(alias - ref)))
+    print(f"kk_factor dim={dim}: out={d:.2e} alias={da:.2e}")
+    ok = d == 0.0 and da == 0.0
+    print("  ->", "PASS" if ok else "FAIL")
+    return ok
+
+
+def run_timemix_tail_case(H, N, Rd, Ra, Rg, Rv, seed, layer0):
+    """Full tail parity: lora -> vmix -> kk_factor -> norm -> scale -> wkv."""
+    rng = np.random.default_rng(seed)
+    C = H * N
+
+    def randn(*shape, scale=0.5):
+        return (rng.standard_normal(shape) * scale).astype(np.float32)
+
+    r = randn(C)
+    k_raw = randn(C)
+    v_in = randn(C)
+    v_first = randn(C)
+    xw, xa, xg = randn(C), randn(C), randn(C)
+    xv = None if layer0 else randn(C)
+    w1, w2 = randn(C, Rd, scale=0.4), randn(Rd, C, scale=0.2)
+    w0 = randn(C, scale=0.3)
+    a1, a2 = randn(C, Ra, scale=0.4), randn(Ra, C, scale=0.2)
+    a0 = randn(C, scale=0.3)
+    g1, g2 = randn(C, Rg, scale=0.4), randn(Rg, C, scale=0.2)
+    v1, v2 = (None, None) if layer0 else (randn(C, Rv, scale=0.4), randn(Rv, C, scale=0.2))
+    v0 = None if layer0 else randn(C, scale=0.3)
+    k_k = (1.0 + randn(C, scale=0.05)).astype(np.float32)
+    k_a = (np.full(C, 1.02, dtype=np.float32) + randn(C, scale=0.02)).astype(np.float32)
+    rk = np.full((H, N), -0.04, dtype=np.float32)
+    ln_w = np.ones(C, dtype=np.float32)
+    ln_b = np.zeros(C, dtype=np.float32)
+    state = randn(H, N, N, scale=0.25)
+
+    assert lib.ck_rwkv7_time_mix_scratch_elems(C) == 7 * C
+    assert lib.ck_rwkv7_time_mix_scratch_elems(0) == 0
+    scratch = np.zeros(7 * C, dtype=np.float32)
+    state_out = np.zeros_like(state)
+    y_out = np.zeros(C, dtype=np.float32)
+    vf_out = np.zeros(C, dtype=np.float32)
+    p = numpy_to_ptr
+    rc = lib.ck_rwkv7_time_mix_tail(
+        p(r), p(k_raw), p(v_in), None if layer0 else p(v_first),
+        p(xw), p(xa), p(xg), None if layer0 else p(xv),
+        p(w1), p(w2), p(w0), p(a1), p(a2), p(a0), p(g1), p(g2),
+        None if layer0 else p(v1), None if layer0 else p(v2), None if layer0 else p(v0),
+        p(k_k), p(k_a), p(rk), p(ln_w), p(ln_b), ctypes.c_float(NORM_EPS),
+        p(state), p(state_out), p(y_out), p(vf_out),
+        C, H, N, Rd, Ra, Rg, 1 if layer0 else Rv,
+        p(scratch), 7 * C)
+    assert rc == 0
+
+    t = lambda x: torch.from_numpy(x.copy())
+    t_w = -INV_SQRT_E * torch.sigmoid(torch.tanh(t(xw) @ t(w1)) @ t(w2) + t(w0))
+    t_a = torch.sigmoid((t(xa) @ t(a1)) @ t(a2) + t(a0))
+    t_g = torch.sigmoid(t(xg) @ t(g1)) @ t(g2)
+    if layer0:
+        t_v = t(v_in)
+        t_vf = t(v_in)
+    else:
+        t_gate = torch.sigmoid((t(xv) @ t(v1)) @ t(v2) + t(v0))
+        t_v = t(v_in) + (t(v_first) - t(v_in)) * t_gate
+        t_vf = t(v_first)
+    t_kk = (t(k_raw) * t(k_k)).view(H, N)
+    t_kk = t_kk / torch.clamp(torch.sqrt((t_kk * t_kk).sum(dim=1, keepdim=True)), min=1e-12)
+    t_ks = (t(k_raw) * (1 + (t(k_a) - 1) * t_a)).view(H, N)
+    t_s, t_y = torch_step(t(r).view(H, N), t_w.view(H, N), t_ks,
+                          t_v.view(H, N), t_kk, t_a.view(H, N),
+                          t_g, t(rk), t(ln_w), t(ln_b), t(state))
+    dy = float(torch.max(torch.abs(torch.from_numpy(y_out.copy()) - t_y)).item())
+    ds = float(torch.max(torch.abs(torch.from_numpy(state_out.copy()) - t_s)).item())
+    dvf = float(torch.max(torch.abs(torch.from_numpy(vf_out.copy()) - t_vf)).item())
+
+    # Guards: short scratch, null scratch, dim mismatch must fail.
+    short = lib.ck_rwkv7_time_mix_tail(
+        p(r), p(k_raw), p(v_in), None if layer0 else p(v_first),
+        p(xw), p(xa), p(xg), None if layer0 else p(xv),
+        p(w1), p(w2), p(w0), p(a1), p(a2), p(a0), p(g1), p(g2),
+        None if layer0 else p(v1), None if layer0 else p(v2), None if layer0 else p(v0),
+        p(k_k), p(k_a), p(rk), p(ln_w), p(ln_b), ctypes.c_float(NORM_EPS),
+        p(state), p(state_out), p(y_out), p(vf_out),
+        C, H, N, Rd, Ra, Rg, 1 if layer0 else Rv,
+        p(scratch), 7 * C - 1)
+    noscratch = lib.ck_rwkv7_time_mix_tail(
+        p(r), p(k_raw), p(v_in), None if layer0 else p(v_first),
+        p(xw), p(xa), p(xg), None if layer0 else p(xv),
+        p(w1), p(w2), p(w0), p(a1), p(a2), p(a0), p(g1), p(g2),
+        None if layer0 else p(v1), None if layer0 else p(v2), None if layer0 else p(v0),
+        p(k_k), p(k_a), p(rk), p(ln_w), p(ln_b), ctypes.c_float(NORM_EPS),
+        p(state), p(state_out), p(y_out), p(vf_out),
+        C, H, N, Rd, Ra, Rg, 1 if layer0 else Rv, None, 0)
+    bad_dim = lib.ck_rwkv7_time_mix_tail(
+        p(r), p(k_raw), p(v_in), None if layer0 else p(v_first),
+        p(xw), p(xa), p(xg), None if layer0 else p(xv),
+        p(w1), p(w2), p(w0), p(a1), p(a2), p(a0), p(g1), p(g2),
+        None if layer0 else p(v1), None if layer0 else p(v2), None if layer0 else p(v0),
+        p(k_k), p(k_a), p(rk), p(ln_w), p(ln_b), ctypes.c_float(NORM_EPS),
+        p(state), p(state_out), p(y_out), p(vf_out),
+        C + 1, H, N, Rd, Ra, Rg, 1 if layer0 else Rv,
+        p(scratch), 7 * C)
+    # Layer-0 strictness: stale residual v inputs with xv == NULL must fail.
+    if layer0:
+        stale = np.zeros(C, dtype=np.float32)
+        stale_l0 = lib.ck_rwkv7_time_mix_tail(
+            p(r), p(k_raw), p(v_in), p(stale),
+            p(xw), p(xa), p(xg), None,
+            p(w1), p(w2), p(w0), p(a1), p(a2), p(a0), p(g1), p(g2),
+            p(stale), p(stale), p(stale),
+            p(k_k), p(k_a), p(rk), p(ln_w), p(ln_b), ctypes.c_float(NORM_EPS),
+            p(state), p(state_out), p(y_out), p(vf_out),
+            C, H, N, Rd, Ra, Rg, 1,
+            p(scratch), 7 * C)
+    else:
+        stale_l0 = -1
+    print(f"tail H={H} N={N} layer0={int(layer0)}: y={dy:.2e} s={ds:.2e} vf={dvf:.2e} "
+          f"guards={short},{noscratch},{bad_dim},{stale_l0}")
+    ok = dy <= 5e-5 and ds <= 2e-5 and dvf <= 2e-6 \
+        and (short, noscratch, bad_dim, stale_l0) == (-1, -1, -1, -1)
+    print("  ->", "PASS" if ok else "FAIL")
+    return ok
+
+
 def run_alias_guards():
     # Invalid aliases must fail without changing any caller-owned storage.
     C, K = 4, 6
@@ -523,12 +758,18 @@ def main():
     if not args.quick:
         ok &= run_state_case(16, 202)
     ok &= run_shift_case(32, 401)
+    ok &= run_shifts_case(32, 402)
     ok &= run_channelmix_case(32, 48, 301)
     if not args.quick:
         ok &= run_channelmix_case(64, 96, 302)
     ok &= run_lora_case(4, 8, 6, 5, 4, 3, 101)
     if not args.quick:
         ok &= run_lora_case(4, 16, 8, 6, 5, 4, 102)
+    ok &= run_kk_factor_case(32, 501)
+    ok &= run_timemix_tail_case(4, 8, 6, 5, 4, 3, 601, False)
+    ok &= run_timemix_tail_case(4, 8, 6, 5, 4, 3, 602, True)
+    if not args.quick:
+        ok &= run_timemix_tail_case(4, 16, 8, 6, 5, 4, 603, False)
     z = np.zeros(4, dtype=np.float32)
     rc = lib.ck_rwkv7_wkv_decode(
         None, numpy_to_ptr(z), numpy_to_ptr(z), numpy_to_ptr(z),

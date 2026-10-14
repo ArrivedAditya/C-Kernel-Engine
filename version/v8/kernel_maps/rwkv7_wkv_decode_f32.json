@@ -1,0 +1,322 @@
+{
+  "arithmetic": {
+    "deterministic": true,
+    "merge_order": "none",
+    "partial_accumulator": "fp32",
+    "split_strategy": "serial",
+    "thread_count_changes_arithmetic_order": false
+  },
+  "call_abi": {
+    "params": [
+      { "name": "r", "source": "activation:r", "cast": "const float*", "ports": ["input:r"] },
+      { "name": "w_log", "source": "activation:w_log", "cast": "const float*", "ports": ["input:w_log"] },
+      { "name": "k", "source": "activation:k", "cast": "const float*", "ports": ["input:k"] },
+      { "name": "v", "source": "activation:v", "cast": "const float*", "ports": ["input:v"] },
+      { "name": "kk", "source": "activation:kk", "cast": "const float*", "ports": ["input:kk"] },
+      { "name": "a", "source": "activation:a", "cast": "const float*", "ports": ["input:a"] },
+      { "name": "g", "source": "activation:g", "cast": "const float*", "ports": ["input:g"] },
+      { "name": "rk", "source": "activation:rk", "cast": "const float*", "ports": ["input:rk"] },
+      { "name": "ln_w", "source": "weight:ln_w", "cast": "const float*", "ports": ["weight:ln_w"] },
+      { "name": "ln_b", "source": "weight:ln_b", "cast": "const float*", "ports": ["weight:ln_b"] },
+      { "name": "norm_eps", "source": "dim:normalization_epsilon" },
+      { "name": "state_in", "source": "activation:state_in", "cast": "const float*", "ports": ["input:state_in"] },
+      { "name": "state_out", "source": "output:state_out", "cast": "float*", "ports": ["output:state_out"] },
+      { "name": "y_out", "source": "output:y", "cast": "float*", "ports": ["output:y"] },
+      { "name": "num_heads", "source": "dim:num_heads" },
+      { "name": "head_dim", "source": "dim:head_dim" }
+    ],
+    "version": 1
+  },
+  "dims": ["C", "H", "N", "num_heads", "head_dim", "normalization_epsilon"],
+  "id": "rwkv7_wkv_decode_f32",
+  "provider_numerical_contract_schema": 1,
+  "numerical_contract": {
+    "id": "rwkv7_wkv_decode_fp32",
+    "circuit_binding_required": true
+  },
+  "constraints": {
+    "dimensions": {
+      "num_heads": { "min": 1, "max": 256 },
+      "head_dim": { "min": 1, "max": 512 }
+    }
+  },
+  "impl": {
+    "c_declaration": "int ck_rwkv7_wkv_decode(const float *r, const float *w_log, const float *k, const float *v, const float *kk, const float *a, const float *g, const float *rk, const float *ln_w, const float *ln_b, float norm_eps, const float *state_in, float *state_out, float *y_out, int num_heads, int head_dim);",
+    "function": "ck_rwkv7_wkv_decode",
+    "sources": ["src/kernels/rwkv7_decode.c"]
+  },
+  "inputs": [
+    {
+      "access": "read",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "r",
+      "placement": "local",
+      "shape": ["C"],
+      "storage_class": "activation"
+    },
+    {
+      "access": "read",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "w_log",
+      "placement": "local",
+      "shape": ["C"],
+      "storage_class": "activation"
+    },
+    {
+      "access": "read",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "k",
+      "placement": "local",
+      "shape": ["C"],
+      "storage_class": "activation"
+    },
+    {
+      "access": "read",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "v",
+      "placement": "local",
+      "shape": ["C"],
+      "storage_class": "activation"
+    },
+    {
+      "access": "read",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "kk",
+      "placement": "local",
+      "shape": ["C"],
+      "storage_class": "activation"
+    },
+    {
+      "access": "read",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "a",
+      "placement": "local",
+      "shape": ["C"],
+      "storage_class": "activation"
+    },
+    {
+      "access": "read",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "g",
+      "placement": "local",
+      "shape": ["C"],
+      "storage_class": "activation"
+    },
+    {
+      "access": "read",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "head_major_row_major",
+      "name": "rk",
+      "placement": "local",
+      "shape": ["H", "N"],
+      "storage_class": "activation"
+    },
+    {
+      "access": "read",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "head_major_row_major",
+      "name": "state_in",
+      "placement": "local",
+      "shape": ["H", "N", "N"],
+      "storage_class": "activation"
+    }
+  ],
+  "weights": [
+    {
+      "access": "read",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "ln_w",
+      "placement": "local",
+      "shape": ["C"],
+      "storage_class": "weight"
+    },
+    {
+      "access": "read",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "ln_b",
+      "placement": "local",
+      "shape": ["C"],
+      "storage_class": "weight"
+    }
+  ],
+  "outputs": [
+    {
+      "access": "write",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "y",
+      "placement": "local",
+      "shape": ["C"],
+      "storage_class": "activation"
+    },
+    {
+      "access": "write",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "head_major_row_major",
+      "may_alias": ["input:state_in"],
+      "name": "state_out",
+      "placement": "local",
+      "shape": ["H", "N", "N"],
+      "storage_class": "activation"
+    }
+  ],
+  "modes": { "backward": false, "inference": true, "training": false },
+  "notes": "RWKV-7 T=1 FP32 decode WKV: S_new=S*exp(w)-t*b+v@k^T, y=S_new@r, GroupNorm eps=norm_eps*N, per-head bonus s=sum(r*k*rk), y+=s*v, y*=g. Diagram-normative k*(1+(k_a-1)*a), kk=L2(k*k_k). C=H*N flat vectors [C]; rk [H,N] row per head; state [H,N,N] row-major head h at h*N*N. state_out may alias state_in; norm_kk permits in-place.",
+  "numerical_capabilities": [
+    {
+      "arithmetic": {
+        "deterministic": true,
+        "merge_order": "none",
+        "partial_accumulator": "fp32",
+        "split_strategy": "serial",
+        "thread_count_changes_arithmetic_order": false
+      },
+      "contract_id": "rwkv7_wkv_decode_fp32",
+      "explicit_selector": true,
+      "function": "ck_rwkv7_wkv_decode",
+      "implementation": {
+        "isa_dispatch": "scalar",
+        "threading": {
+          "dispatch": ["inline"],
+          "reduction_order_effect": "contract_defined",
+          "runtime": "serial",
+          "work_partition": ["serial"]
+        }
+      },
+      "phases": ["decode"],
+      "status": "validated"
+    }
+  ],
+  "op": "rwkv7_wkv_decode",
+  "operation_interface": "rwkv7.wkv_decode.token_major.fp32.v1",
+  "quant": { "activation": "fp32", "output": "fp32", "weight": "fp32" },
+  "selection": {
+    "equivalence_group": "rwkv7_wkv_decode_fp32",
+    "phases": ["decode"],
+    "priority": 100,
+    "status": "candidate"
+  },
+  "tests": {
+    "oracle": "Pinned torch FP32 CPU fixture tests/fixtures/rwkv7/decode_torch.json plus live torch; scalar (-O0) vs optimized (-O3) parity; all use existing nightly reporting.",
+    "unit": ["tests/test_v8_rwkv7_decode_oracle.py"]
+  },
+  "variant": "generalized_delta_rule_fp32",
+  "call_constant_contract": {
+    "shape_symbols": { "C": "num_heads * head_dim", "H": "num_heads", "N": "head_dim" },
+    "buffer_spans": [
+      {
+        "element_bytes": 4,
+        "elements": "C",
+        "pointer": "r",
+        "rows": 1,
+        "width": "C"
+      },
+      {
+        "element_bytes": 4,
+        "elements": "C",
+        "pointer": "w_log",
+        "rows": 1,
+        "width": "C"
+      },
+      {
+        "element_bytes": 4,
+        "elements": "C",
+        "pointer": "k",
+        "rows": 1,
+        "width": "C"
+      },
+      {
+        "element_bytes": 4,
+        "elements": "C",
+        "pointer": "v",
+        "rows": 1,
+        "width": "C"
+      },
+      {
+        "element_bytes": 4,
+        "elements": "C",
+        "pointer": "kk",
+        "rows": 1,
+        "width": "C"
+      },
+      {
+        "element_bytes": 4,
+        "elements": "C",
+        "pointer": "a",
+        "rows": 1,
+        "width": "C"
+      },
+      {
+        "element_bytes": 4,
+        "elements": "C",
+        "pointer": "g",
+        "rows": 1,
+        "width": "C"
+      },
+      {
+        "element_bytes": 4,
+        "elements": "C",
+        "pointer": "rk",
+        "rows": "H",
+        "width": "N"
+      },
+      {
+        "element_bytes": 4,
+        "elements": "C",
+        "pointer": "ln_w",
+        "rows": 1,
+        "width": "C"
+      },
+      {
+        "element_bytes": 4,
+        "elements": "C",
+        "pointer": "ln_b",
+        "rows": 1,
+        "width": "C"
+      },
+      {
+        "element_bytes": 4,
+        "elements": "C",
+        "pointer": "y_out",
+        "rows": 1,
+        "width": "C"
+      },
+      {
+        "element_bytes": 4,
+        "elements": "C*N",
+        "pointer": "state_in",
+        "rows": "H",
+        "width": "N*N"
+      },
+      {
+        "element_bytes": 4,
+        "elements": "C*N",
+        "pointer": "state_out",
+        "rows": "H",
+        "width": "N*N"
+      }
+    ]
+  }
+}

@@ -57,6 +57,7 @@
             "recurrent_silu",
             "recurrent_norm_gate",
             "gated_deltanet",
+            "rwkv7_wkv_decode",
             "attention",
             "attention_gate",
             "final_logit_scale",
