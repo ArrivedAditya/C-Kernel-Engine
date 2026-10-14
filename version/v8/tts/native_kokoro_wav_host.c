@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 #ifdef CK_TTS_EXPECTED_LIBRARY_SHA256
 #define _GNU_SOURCE
 #endif
@@ -6,12 +7,15 @@
  * fills request-local excitation, and writes WAV. */
 #include "ckernel_tts.h"
 #include <errno.h>
+#include <fcntl.h>
 #include <float.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #ifdef CK_TTS_EXPECTED_LIBRARY_SHA256
 #include <dlfcn.h>
 #include <openssl/evp.h>
@@ -147,8 +151,16 @@ static int write_u32(FILE *stream, uint32_t value) {
 
 static int write_wav(const char *path, const float *samples, size_t count) {
     if (count > (UINT32_MAX - 36u) / 2u) return 0;
-    FILE *stream = fopen(path, "wb");
-    if (!stream) return 0;
+    /* O_EXCL also rejects a symlink or hard link to an existing bundle asset.
+     * A preflight lstat in main gives an early error; this open closes the race. */
+    int descriptor = open(path, O_WRONLY | O_CREAT | O_EXCL, 0644);
+    if (descriptor < 0) return 0;
+    FILE *stream = fdopen(descriptor, "wb");
+    if (!stream) {
+        close(descriptor);
+        remove(path);
+        return 0;
+    }
     const uint32_t payload = (uint32_t)(count * 2u);
     int okay = fwrite("RIFF", 1, 4, stream) == 4 &&
         write_u32(stream, payload + 36u) &&
@@ -182,6 +194,11 @@ int main(int argc, char **argv) {
         fprintf(stderr, "usage: %s prepared-arena.cktts output.wav "
             "[seed [phoneme-ids-csv voice-bank.ckvoice]]\n", argv[0]);
         return 2;
+    }
+    struct stat existing_output;
+    if (lstat(argv[2], &existing_output) == 0 || errno != ENOENT) {
+        fprintf(stderr, "output path already exists or cannot be inspected\n");
+        return 10;
     }
     uint64_t seed = 0;
     if (argc >= 4) {

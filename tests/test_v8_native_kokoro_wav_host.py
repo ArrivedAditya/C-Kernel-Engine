@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import struct
 import subprocess
@@ -165,6 +166,36 @@ int ck_kokoro_waveform_bounded(uint8_t *arena, size_t capacity,
                                   capture_output=True)
         self.assertNotEqual(rejected.returncode, 0)
         self.assertFalse(wav.exists())
+
+    def test_existing_output_is_rejected_before_package_execution(self):
+        package = self.package('output-guard.cktts')
+        output = self.root / 'existing-output.wav'
+        output.write_bytes(b'keep this output')
+        original_package = package.read_bytes()
+        for label, path in (('ordinary', output), ('package', package)):
+            with self.subTest(label=label):
+                run = subprocess.run([str(self.binary), str(package),
+                    str(path), '7'], capture_output=True, text=True)
+                self.assertEqual(run.returncode, 10, run.stderr)
+        self.assertEqual(output.read_bytes(), b'keep this output')
+        self.assertEqual(package.read_bytes(), original_package)
+        for kind in ('symlink', 'hardlink'):
+            alias = self.root / f'host-{kind}-to-package.wav'
+            if kind == 'symlink':
+                alias.symlink_to(package)
+            else:
+                os.link(package, alias)
+            with self.subTest(alias=kind):
+                run = subprocess.run([str(self.binary), str(package),
+                    str(alias), '7'], capture_output=True, text=True)
+                self.assertEqual(run.returncode, 10, run.stderr)
+                self.assertEqual(package.read_bytes(), original_package)
+        fresh = self.root / 'fresh-after-output-guard.wav'
+        run = subprocess.run([str(self.binary), str(package), str(fresh),
+            '7'], capture_output=True, text=True)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        with wave.open(str(fresh), 'rb') as stream:
+            self.assertEqual(stream.getnframes(), 20)
 
     def test_native_request_ids_and_selected_voice_row(self):
         package = self.request_package('request.cktts')

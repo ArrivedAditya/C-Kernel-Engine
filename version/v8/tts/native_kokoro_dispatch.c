@@ -1,5 +1,6 @@
 /* Exact-length Kokoro request selector. The bundle builder emits the pinned
  * identities; each selected native host performs the generated model call. */
+#define _POSIX_C_SOURCE 200809L
 #include "bundle_identity.h"
 #include <errno.h>
 #include <openssl/evp.h>
@@ -7,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 static int digest_matches(const char *path, const char *expected) {
@@ -62,6 +64,11 @@ int main(int argc, char **argv) {
         fprintf(stderr, "usage: %s bundle-dir output.wav seed phoneme-ids-csv\n",
                 argv[0]);
         return 2;
+    }
+    struct stat existing_output;
+    if (lstat(argv[2], &existing_output) == 0 || errno != ENOENT) {
+        fprintf(stderr, "output path already exists or cannot be inspected\n");
+        return 6;
     }
     unsigned count = 0;
     if (!count_ids(argv[4], &count)) {

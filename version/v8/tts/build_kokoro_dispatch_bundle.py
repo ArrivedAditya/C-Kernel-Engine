@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import tempfile
 
 from build_kokoro_request_runtime import ROOT, build_runtime
 from export_kokoro_request_package import DEFAULT_BINDINGS, sha256_file
@@ -21,7 +22,8 @@ DISPATCH_SOURCE = ROOT / "version/v8/tts/native_kokoro_dispatch.c"
 
 
 def build_bundle(bump_dir: Path, voice_bank: Path, output: Path) -> dict:
-    if output.exists() and any(output.iterdir()):
+    if output.is_symlink() or (output.exists() and
+            (not output.is_dir() or any(output.iterdir()))):
         raise ValueError("output directory must be empty")
     bindings = json.loads(DEFAULT_BINDINGS.read_text())
     expected_voice = bindings["native_voice_sha256"]
@@ -32,7 +34,24 @@ def build_bundle(bump_dir: Path, voice_bank: Path, output: Path) -> dict:
     if header[:8] != b"CKVOICE1" or int.from_bytes(header[8:12], "little") < 34 or \
             int.from_bytes(header[12:16], "little") != 256:
         raise ValueError("unsupported native af_heart voice bank geometry")
-    output.mkdir(parents=True, exist_ok=True)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=f".{output.name}.staging-",
+                                     dir=output.parent) as temporary:
+        staging = Path(temporary) / "bundle"
+        report = _build_into(bump_dir, voice_bank, staging, bindings,
+                             expected_voice)
+        # The complete bundle becomes visible in one same-filesystem rename.
+        # Replacing an existing empty directory preserves the prior API.
+        if output.is_symlink() or (output.exists() and
+                (not output.is_dir() or any(output.iterdir()))):
+            raise ValueError("output directory must be empty")
+        staging.replace(output)
+    return report
+
+
+def _build_into(bump_dir: Path, voice_bank: Path, output: Path,
+                bindings: dict, expected_voice: str) -> dict:
+    output.mkdir()
     shutil.copy2(voice_bank, output / "af_heart.ckvoice")
     if sha256_file(output / "af_heart.ckvoice") != expected_voice:
         raise ValueError("copied native voice bank differs from pinned artifact")
