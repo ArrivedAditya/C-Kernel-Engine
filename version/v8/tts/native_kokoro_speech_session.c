@@ -62,6 +62,42 @@ static pid_t launch(char *const args[]) {
     return child;
 }
 
+static uint32_t little_u32(const unsigned char *bytes) {
+    return (uint32_t)bytes[0] | ((uint32_t)bytes[1] << 8) |
+           ((uint32_t)bytes[2] << 16) | ((uint32_t)bytes[3] << 24);
+}
+
+static unsigned little_u16(const unsigned char *bytes) {
+    return (unsigned)bytes[0] | ((unsigned)bytes[1] << 8);
+}
+
+/* The generated host writes a canonical, fixed-header PCM16 WAV. Reject an
+ * incomplete or mislabeled artifact before handing it to an audio player. */
+static int playable_wav(const char *path) {
+    struct stat info;
+    if (stat(path, &info) != 0 || !S_ISREG(info.st_mode) ||
+        info.st_size <= 44 || info.st_size > UINT32_MAX) return 0;
+    FILE *stream = fopen(path, "rb");
+    if (!stream) return 0;
+    unsigned char header[44];
+    const int read_ok = fread(header, 1, sizeof(header), stream) == sizeof(header);
+    const int close_ok = fclose(stream) == 0;
+    if (!read_ok || !close_ok) return 0;
+    return memcmp(header, "RIFF", 4) == 0 &&
+           little_u32(header + 4) == (uint32_t)info.st_size - 8 &&
+           memcmp(header + 8, "WAVEfmt ", 8) == 0 &&
+           little_u32(header + 16) == 16 &&
+           little_u16(header + 20) == 1 &&
+           little_u16(header + 22) == 1 &&
+           little_u32(header + 24) == 24000 &&
+           little_u32(header + 28) == 48000 &&
+           little_u16(header + 32) == 2 &&
+           little_u16(header + 34) == 16 &&
+           memcmp(header + 36, "data", 4) == 0 &&
+           little_u32(header + 40) == (uint32_t)info.st_size - 44 &&
+           ((info.st_size - 44) & 1) == 0;
+}
+
 static void reap(request *active, const char *player) {
     if (active->phase == IDLE) return;
     int status = 0;
@@ -83,10 +119,9 @@ static void reap(request *active, const char *player) {
         active->phase = IDLE;
         return;
     }
-    struct stat info;
-    if (stat(active->wav, &info) != 0 || !S_ISREG(info.st_mode) || info.st_size <= 44) {
+    if (!playable_wav(active->wav)) {
         unlink(active->wav);
-        event(active->id, "ERROR", "native WAV missing or empty");
+        event(active->id, "ERROR", "native WAV missing or invalid");
         active->phase = IDLE;
         return;
     }

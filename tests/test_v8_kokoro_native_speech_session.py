@@ -38,8 +38,14 @@ print('child diagnostics must stay off the session event channel')
 with wave.open(sys.argv[3], 'wb') as audio:
     audio.setnchannels(1)
     audio.setsampwidth(2)
-    audio.setframerate(24000)
+    audio.setframerate(16000 if sys.argv[5] == 'wrong-rate' else 24000)
     audio.writeframes(b'\\0\\0' * 4)
+if sys.argv[5] == 'bad-header':
+    with open(sys.argv[3], 'r+b') as output:
+        output.write(b'NOTW')
+if sys.argv[5] == 'trailing-bytes':
+    with open(sys.argv[3], 'ab') as output:
+        output.write(b'xx')
 """)
         self.frontend.chmod(0o755)
         self.player = self.root / "fake-player"
@@ -117,12 +123,29 @@ with wave.open(sys.argv[3], 'wb') as audio:
         self.assertFalse((directory / "4.wav").exists())
         self.send(process, "SPEAK\t10\tempty")
         self.assertEqual(self.line(process), "EVENT\t5\tSTARTED")
-        self.assertEqual(self.line(process), "EVENT\t5\tERROR\tnative WAV missing or empty")
+        self.assertEqual(self.line(process), "EVENT\t5\tERROR\tnative WAV missing or invalid")
         self.assertFalse((directory / "5.wav").exists())
         self.send(process, "SPEAK\t11\tfast")
         self.assertEqual(self.line(process), "EVENT\t6\tSTARTED")
         self.assertIn("EVENT\t6\tWAV_READY", self.line(process))
         self.assertEqual(self.line(process), "EVENT\t6\tCOMPLETED")
+
+    def test_invalid_wav_rejected_before_playback_then_recovers(self):
+        process, directory = self.start(player=True)
+        for request_id, kind in enumerate(("bad-header", "wrong-rate",
+                                           "trailing-bytes"), 1):
+            self.send(process, f"SPEAK\t7\t{kind}")
+            self.assertEqual(self.line(process), f"EVENT\t{request_id}\tSTARTED")
+            self.assertEqual(self.line(process),
+                             f"EVENT\t{request_id}\tERROR\tnative WAV missing or invalid")
+            self.assertFalse((directory / f"{request_id}.wav").exists())
+        self.send(process, "SPEAK\t7\tfast")
+        self.assertEqual(self.line(process), "EVENT\t4\tSTARTED")
+        self.assertEqual(self.line(process),
+                         f"EVENT\t4\tWAV_READY\t{directory / '4.wav'}")
+        self.assertEqual(self.line(process), "EVENT\t4\tPLAYING")
+        self.send(process, "STOP")
+        self.assertEqual(self.line(process), "EVENT\t4\tCANCELLED")
 
     def test_playback_stop_and_invalid_command_recovery(self):
         process, directory = self.start(player=True)
