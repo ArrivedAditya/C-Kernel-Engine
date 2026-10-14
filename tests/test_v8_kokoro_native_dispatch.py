@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -84,6 +85,39 @@ class KokoroNativeDispatchTest(unittest.TestCase):
                                         self.root / "af_heart.ckvoice", output)
         self.assertEqual(sentinel.read_text(), "keep")
 
+    def test_failed_build_does_not_publish_partial_bundle(self):
+        voice = self.root / "valid.ckvoice"
+        voice.write_bytes(b"CKVOICE1" + (34).to_bytes(4, "little") +
+                          (256).to_bytes(4, "little") +
+                          b"\0" * (34 * 256 * 4))
+        bindings = self.root / "bindings.json"
+        bindings.write_text(json.dumps({
+            "native_voice_sha256": _hash(voice),
+            "source_bump_sha256": "synthetic",
+        }))
+        output = self.root / "failed-build"
+        output.mkdir()
+
+        def fail_after_first_bucket(_bump, directory, count):
+            directory.mkdir()
+            (directory / "partial").write_text("not deployable")
+            if count == 36:
+                raise RuntimeError("second bucket build failed")
+            return {key: "synthetic" for key in (
+                "library_sha256", "host_sha256", "package_sha256",
+                "compiler_manifest_sha256", "generated_c_sha256",
+                "generated_operations")}
+
+        with mock.patch.object(bundle_builder, "DEFAULT_BINDINGS", bindings), \
+             mock.patch.object(bundle_builder, "build_runtime",
+                               side_effect=fail_after_first_bucket):
+            with self.assertRaisesRegex(RuntimeError,
+                                        "second bucket build failed"):
+                bundle_builder.build_bundle(self.root / "synthetic-bump",
+                                            voice, output)
+        self.assertEqual(list(output.iterdir()), [])
+        self.assertEqual(list(self.root.glob(".failed-build.staging-*")), [])
+
     def test_selects_exact_lengths_and_rejects_others(self):
         for count in (8, 36):
             ids = ",".join(map(str, [0] + [4] * (count - 2) + [0]))
@@ -120,6 +154,38 @@ class KokoroNativeDispatchTest(unittest.TestCase):
         self.assertEqual(result.returncode, 4, result.stderr)
         self.assertIn("artifact identity mismatch", result.stderr)
         self.assertFalse(output.exists())
+
+    def test_existing_output_and_asset_aliases_are_rejected(self):
+        ids = ",".join(map(str, [0] + [4] * 6 + [0]))
+        package = self.root / "8/request.cktts"
+        original = package.read_bytes()
+        for label, target in (
+                ("package", package),
+                ("voice", self.root / "af_heart.ckvoice"),
+                ("host", self.root / "8/native-kokoro-wav")):
+            with self.subTest(target=label):
+                result, _ = self.invoke(ids, str(target))
+                self.assertEqual(result.returncode, 6, result.stderr)
+                self.assertIn("output path already exists", result.stderr)
+        for kind in ("symlink", "hardlink"):
+            alias = self.root / f"{kind}-to-package.wav"
+            if kind == "symlink":
+                alias.symlink_to(package)
+            else:
+                os.link(package, alias)
+            with self.subTest(alias=kind):
+                result, _ = self.invoke(ids, str(alias))
+                self.assertEqual(result.returncode, 6, result.stderr)
+                self.assertEqual(package.read_bytes(), original)
+                self.assertEqual(alias.read_bytes(), original)
+        dangling = self.root / "dangling.wav"
+        dangling.symlink_to(self.root / "missing.wav")
+        result, _ = self.invoke(ids, str(dangling))
+        self.assertEqual(result.returncode, 6, result.stderr)
+        self.assertTrue(dangling.is_symlink())
+        result, output = self.invoke(ids, "fresh-after-alias.wav")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(output.read_text().strip(), f"bucket=8:7:{ids}")
 
     def test_tampered_package_library_host_or_voice_fails_before_execution(self):
         ids = ",".join(map(str, [0] + [4] * 6 + [0]))
