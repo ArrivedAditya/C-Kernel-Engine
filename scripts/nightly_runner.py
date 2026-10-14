@@ -990,6 +990,10 @@ TEST_SUITES = {
         "Kokoro Native Exact-Length Dispatch and Artifact Identity", "inference",
         ROOT / "tests" / "test_v8_kokoro_native_dispatch.py",
     ),
+    "tts_kokoro_native_lexicon_text": TestSuite(
+        "Kokoro Native Dictionary Text Preparation and Dispatch", "inference",
+        ROOT / "tests" / "test_v8_kokoro_native_lexicon_text.py",
+    ),
     "tts_audio_harmonic_source_generated": TestSuite(
         "Checked Harmonic Source Normal-Compiler Generated Graph", "inference",
         ROOT / "tests" / "test_v8_audio_harmonic_source_generated.py",
