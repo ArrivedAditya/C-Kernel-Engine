@@ -6911,7 +6911,7 @@ def apply_layer_attention_dims(op_name: str, params: Dict, layer: int, config: D
         config,
         "layer_attention_gate_dim",
         layer,
-        int(config.get("attn_gate_dim", num_heads) or num_heads),
+        int(config.get("attn_gate_dim", attention_output_dim) or attention_output_dim),
     )
     k_dim = num_kv_heads * k_head_dim
     v_dim = num_kv_heads * v_head_dim

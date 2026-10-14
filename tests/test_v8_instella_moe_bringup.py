@@ -370,6 +370,26 @@ class InstellaMoEBringupTests(unittest.TestCase):
                 ]
                 self.assertEqual(len(gate_outputs), 1, gate)
                 self.assertEqual(gate_outputs[0].get("buffer_ref"), "attn_gate")
+                gate_width = next(
+                    arg for arg in gate.get("args", []) if arg.get("name") == "N"
+                )
+                self.assertEqual(
+                    gate_width.get("expr"), "4",
+                    "the sigmoid gate needs one value per attention output channel",
+                )
+                gate_mul = next(
+                    op for op in ops
+                    if op.get("layer") == 0 and op.get("op") == "attn_gate_sigmoid_mul"
+                )
+                gate_mul_args = {
+                    arg.get("name"): int(arg["expr"])
+                    for arg in gate_mul.get("args", [])
+                    if arg.get("name") in {"num_heads", "state_dim"}
+                }
+                self.assertEqual(
+                    int(gate_width["expr"]),
+                    gate_mul_args["num_heads"] * gate_mul_args["state_dim"],
+                )
                 router = next(
                     op for op in ops
                     if op.get("layer") == 1 and op.get("op") == "moe_router"
