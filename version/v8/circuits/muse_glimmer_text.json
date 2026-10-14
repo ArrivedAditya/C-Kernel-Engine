@@ -48,9 +48,9 @@
         "reasoning_strength": "high",
         "tools": false
       },
-      "stop_text_markers": ["<|eot|>"],
-      "token_stop_markers": ["<|eot|>"],
-      "template_markers": ["<|start|>", "<|message|>", "<|eom|>", "<|eot|>"],
+      "stop_text_markers": ["<|eot|>", "<|end_of_text|>"],
+      "token_stop_markers": ["<|eot|>", "<|end_of_text|>"],
+      "template_markers": ["<|start|>", "<|message|>", "<|eom|>", "<|eot|>", "<|end_of_text|>"],
       "min_response_tokens": 1
     },
     "attention_contract": {

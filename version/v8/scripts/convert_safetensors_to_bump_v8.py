@@ -2991,7 +2991,7 @@ def _tokenizer_payloads_from_json(model_dir: Path, vocab_size: int) -> tuple[lis
                 "source": "tiktoken_model_sidecar",
                 "path": str(tiktoken_path),
             },
-            _special_tokens_from_tokenizer_config(model_dir, "tiktoken"),
+            _special_tokens_from_tokenizer_config(model_dir, "tiktoken", vocab_size),
         )
     info = inspect_tokenizer_json(str(tok_path))
     tok_type = str(info.get("model_type") or "").strip().lower()
@@ -3015,19 +3015,18 @@ def _tokenizer_payloads_from_json(model_dir: Path, vocab_size: int) -> tuple[lis
     pretokenizer = info.get("pretokenizer")
     if isinstance(pretokenizer, str) and pretokenizer:
         contract["pretokenizer"] = pretokenizer
-    special = _special_tokens_from_tokenizer_config(model_dir, tok_type)
+    special = _special_tokens_from_tokenizer_config(model_dir, tok_type, vocab_size)
     return payloads, contract, special
 
 
-def _special_tokens_from_tokenizer_config(model_dir: Path, tokenizer_type: str) -> dict[str, Any]:
+def _special_tokens_from_tokenizer_config(
+    model_dir: Path, tokenizer_type: str, vocab_size: int | None = None
+) -> dict[str, Any]:
     out: dict[str, Any] = {"tokenizer_model": tokenizer_type}
     cfg_path = model_dir / "tokenizer_config.json"
-    if not cfg_path.exists():
-        return out
-    try:
-        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-    except Exception:
-        return out
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8")) if cfg_path.exists() else {}
+    if not isinstance(cfg, dict):
+        raise ValueError(f"invalid tokenizer configuration: {cfg_path}")
 
     def _content(value: Any) -> str | None:
         if isinstance(value, str):
@@ -3038,6 +3037,19 @@ def _special_tokens_from_tokenizer_config(model_dir: Path, tokenizer_type: str) 
 
     added = cfg.get("added_tokens_decoder") if isinstance(cfg.get("added_tokens_decoder"), dict) else {}
     token_to_id: dict[str, int] = {}
+    tokenizer_path = model_dir / "tokenizer.json"
+    if tokenizer_path.exists():
+        tokenizer = json.loads(tokenizer_path.read_text(encoding="utf-8"))
+        vocab = tokenizer.get("model", {}).get("vocab", {})
+        if isinstance(vocab, dict):
+            token_to_id.update((token, int(token_id)) for token, token_id in vocab.items())
+        for row in tokenizer.get("added_tokens", []):
+            if isinstance(row, dict) and isinstance(row.get("content"), str):
+                token = row["content"]
+                token_id = int(row["id"])
+                if token in token_to_id and token_to_id[token] != token_id:
+                    raise ValueError(f"conflicting tokenizer ID for {token!r}")
+                token_to_id[token] = token_id
     for key, row in added.items():
         if not isinstance(row, dict):
             continue
@@ -3045,16 +3057,59 @@ def _special_tokens_from_tokenizer_config(model_dir: Path, tokenizer_type: str) 
         if not isinstance(content, str):
             continue
         try:
-            token_to_id[content] = int(key)
+            token_id = int(key)
         except Exception:
             continue
+        if content in token_to_id and token_to_id[content] != token_id:
+            raise ValueError(f"conflicting tokenizer ID for {content!r}")
+        token_to_id[content] = token_id
+
+    model_cfg_path = model_dir / "config.json"
+    generation_cfg_path = model_dir / "generation_config.json"
+    model_cfg = json.loads(model_cfg_path.read_text(encoding="utf-8")) if model_cfg_path.exists() else {}
+    generation_cfg = json.loads(generation_cfg_path.read_text(encoding="utf-8")) if generation_cfg_path.exists() else {}
+
+    def _ids(value: Any, source: str) -> list[int]:
+        values = value if isinstance(value, list) else [value]
+        if not values or any(
+            type(item) is not int or item < 0 or item > 0x7FFFFFFF
+            or (vocab_size is not None and item >= vocab_size)
+            for item in values
+        ):
+            raise ValueError(f"invalid {source} token ID")
+        return list(dict.fromkeys(values))
 
     for name, field in (("bos_token", "bos_token"), ("eos_token", "eos_token"), ("unk_token", "unk_token"), ("pad_token", "pad_token")):
         tok = _content(cfg.get(field))
         if tok is not None:
             out[name] = tok
             if tok in token_to_id:
-                out[f"{name}_id"] = token_to_id[tok]
+                out[f"{name}_id"] = _ids(token_to_id[tok], f"{name}_id")[0]
+        numeric = cfg.get(f"{name}_id")
+        if numeric is None and (name != "eos_token" or f"{name}_id" not in out):
+            numeric = model_cfg.get(f"{name}_id")
+        if numeric is not None:
+            numeric_ids = _ids(numeric, f"{name}_id")
+            if name != "eos_token" and len(numeric_ids) != 1:
+                raise ValueError(f"invalid {name}_id token ID")
+            token_id = numeric_ids[0]
+            if f"{name}_id" in out and out[f"{name}_id"] != token_id:
+                label = "EOS" if name == "eos_token" else name
+                raise ValueError(f"{label} ID conflicts with tokenizer vocabulary")
+            out[f"{name}_id"] = token_id
+    eos_source = generation_cfg.get("eos_token_id")
+    if eos_source is None:
+        eos_source = model_cfg.get("eos_token_id")
+    if eos_source is None:
+        eos_source = cfg.get("eos_token_id")
+    if eos_source is not None:
+        stop_ids = _ids(eos_source, "eos_token_id")
+        # The tokenizer's primary EOS controls encode-time EOS insertion.
+        # Generation may stop on additional IDs and in a different order.
+        out.setdefault("eos_token_id", stop_ids[0])
+        out["stop_token_ids"] = stop_ids
+    elif "eos_token_id" in out:
+        out["stop_token_ids"] = [out["eos_token_id"]]
     for key, out_key in (("add_bos_token", "add_bos_token"), ("add_eos_token", "add_eos_token"), ("add_prefix_space", "add_space_prefix")):
         if key in cfg:
             out[out_key] = bool(cfg.get(key))

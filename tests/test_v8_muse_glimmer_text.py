@@ -170,6 +170,9 @@ def test_muse_gate_lowering_uses_attention_width_instead_of_head_count() -> None
 def test_muse_circuit_preserves_ordered_text_numerics() -> None:
     circuit = builder._load_builtin_template_doc("muse_glimmer_text")
     assert circuit is not None
+    chat = circuit["contract"]["chat_contract"]
+    assert set(chat["token_stop_markers"]) == {"<|eot|>", "<|end_of_text|>"}
+    assert "<|eom|>" not in chat["token_stop_markers"]
     body = circuit["block_types"]["decoder"]["body"]["ops_by_kind"]
     sliding = [item if isinstance(item, str) else item["op"] for item in body["sliding_attention"]]
     full = [item if isinstance(item, str) else item["op"] for item in body["full_attention"]]

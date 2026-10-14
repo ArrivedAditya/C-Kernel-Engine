@@ -227,10 +227,16 @@ def _build_tiny_decoder_runtime(
     *,
     include_tokenizer_contract: bool = False,
     batched_prefill: bool = False,
+    stop_token_ids: list[int] | None = None,
+    special_token_overrides: dict[str, object] | None = None,
 ) -> tuple[Path, Path, Path]:
     manifest = _make_qwen3_decoder_manifest(
         include_tokenizer_contract=include_tokenizer_contract
     )
+    if stop_token_ids is not None:
+        manifest["special_tokens"]["stop_token_ids"] = stop_token_ids
+    if special_token_overrides is not None:
+        manifest["special_tokens"].update(special_token_overrides)
     manifest_path = workdir / "weights_manifest.json"
     bump_path = workdir / "weights.bump"
     manifest_map = workdir / "weights_manifest.map"
@@ -2049,7 +2055,7 @@ class V8NativeBridgeHostTests(unittest.TestCase):
     def test_generated_runtime_exports_circuit_chat_and_stop_contracts(self) -> None:
         with tempfile.TemporaryDirectory(prefix="v8_native_chat_contract_") as tmpdir:
             so_path, bump_path, manifest_map = _build_tiny_decoder_runtime(
-                Path(tmpdir), include_tokenizer_contract=True
+                Path(tmpdir), include_tokenizer_contract=True, stop_token_ids=[9, 10]
             )
             ctypes.CDLL(str(LIBCK), mode=ctypes.RTLD_GLOBAL)
             model = ctypes.CDLL(str(so_path))
@@ -2125,7 +2131,8 @@ class V8NativeBridgeHostTests(unittest.TestCase):
             eos = int(model.ck_model_get_eos_token_id())
             self.assertGreaterEqual(eos, 0)
             self.assertEqual(model.ck_model_is_stop_token(eos), 1)
-            self.assertEqual(model.ck_model_is_stop_token(eos + 1), 0)
+            self.assertEqual(model.ck_model_is_stop_token(eos + 1), 1)
+            self.assertEqual(model.ck_model_is_stop_token(eos + 2), 0)
 
             # The HTTP batch owner must read stop IDs from the loaded native
             # session, not from a possibly replaced bundle pathname.
@@ -2133,9 +2140,58 @@ class V8NativeBridgeHostTests(unittest.TestCase):
             from server.session_v8 import SessionV8
             session = SessionV8.open(Path(tmpdir), context_length=32, num_threads=2)
             try:
-                self.assertIn(eos, session.generated_stop_ids())
+                self.assertEqual(session.generated_stop_ids(), (eos, eos + 1))
             finally:
                 session.close()
+
+            # An explicit caller stop must work even when the generated
+            # library exports a different (nonempty) stop-token callback.
+            common_cli = [
+                str(CK_CLI_V8), "--lib", str(so_path), "--weights", str(bump_path),
+                "--manifest", str(manifest_map), "--prompt-tokens", "1,2,3",
+                "--context", "32", "--no-chat-template", "--quiet-output",
+            ]
+            (Path(tmpdir) / "vocab.json").write_text(
+                json.dumps({"special_tokens": {"eos": eos, "bos": eos + 1}}),
+                encoding="utf-8",
+            )
+            baseline_trace = Path(tmpdir) / "baseline.trace.json"
+            baseline = subprocess.run(
+                common_cli + ["--ignore-eos", "--max-tokens", "1", "--token-trace-json", str(baseline_trace)],
+                cwd=str(ROOT), capture_output=True, text=True,
+            )
+            self.assertEqual(baseline.returncode, 0, msg=baseline.stdout + baseline.stderr)
+            first_token = json.loads(baseline_trace.read_text())["token_ids"][0]
+            self.assertNotIn(first_token, (eos, eos + 1))
+            override_trace = Path(tmpdir) / "override.trace.json"
+            override = subprocess.run(
+                common_cli + ["--eos", str(first_token), "--max-tokens", "3", "--token-trace-json", str(override_trace)],
+                cwd=str(ROOT), capture_output=True, text=True,
+            )
+            self.assertEqual(override.returncode, 0, msg=override.stdout + override.stderr)
+            self.assertEqual(
+                json.loads(override_trace.read_text())["stop_reason"], "eos",
+                msg=f"baseline={baseline_trace.read_text()} override={override_trace.read_text()}",
+            )
+            ignored_trace = Path(tmpdir) / "ignored.trace.json"
+            ignored = subprocess.run(
+                common_cli + ["--eos", str(first_token), "--ignore-eos", "--max-tokens", "1",
+                              "--token-trace-json", str(ignored_trace)],
+                cwd=str(ROOT), capture_output=True, text=True,
+            )
+            self.assertEqual(ignored.returncode, 0, msg=ignored.stdout + ignored.stderr)
+            self.assertEqual(json.loads(ignored_trace.read_text())["stop_reason"], "token_limit")
+            valid_max = subprocess.run(
+                common_cli + ["--eos", "63", "--max-tokens", "1"],
+                cwd=str(ROOT), capture_output=True, text=True,
+            )
+            self.assertEqual(valid_max.returncode, 0, msg=valid_max.stdout + valid_max.stderr)
+            for invalid_ids in ("-1", "0junk", "1,", "64", "2147483648", "4294967297"):
+                invalid = subprocess.run(
+                    common_cli + ["--eos", invalid_ids, "--max-tokens", "1"],
+                    cwd=str(ROOT), capture_output=True, text=True,
+                )
+                self.assertNotEqual(invalid.returncode, 0, msg=invalid_ids)
 
             result = subprocess.run(
                 [
@@ -2163,6 +2219,55 @@ class V8NativeBridgeHostTests(unittest.TestCase):
                 result.returncode, 0, msg=result.stdout + result.stderr
             )
             self.assertIn("<|pad|>", result.stdout)
+
+    def test_generated_stop_ids_validate_bounds_and_preserve_encode_eos(self) -> None:
+        for name, override in (
+            ("stop_vocab", {"stop_token_ids": [64]}),
+            ("stop_int32", {"stop_token_ids": [0x80000000]}),
+            ("stop_wrap", {"stop_token_ids": [0x100000001]}),
+            ("bos_vocab", {"bos_token_id": 64}),
+            ("eos_wrap", {"eos_token_id": 0x100000001}),
+        ):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmpdir:
+                with self.assertRaisesRegex(AssertionError, "invalid .* token ID"):
+                    _build_tiny_decoder_runtime(
+                        Path(tmpdir), include_tokenizer_contract=True,
+                        special_token_overrides=override,
+                    )
+                self.assertFalse((Path(tmpdir) / "libdecoder_v8.so").exists())
+
+        with tempfile.TemporaryDirectory(prefix="v8_native_primary_eos_") as tmpdir:
+            tmp = Path(tmpdir)
+            (tmp / "tokenizer.json").write_text(json.dumps({
+                "model": {"vocab": {"<|pad|>": 0, "Hello": 1,
+                                    " world": 2, "<|im_start|>": 3}},
+                "added_tokens": [],
+            }), encoding="utf-8")
+            (tmp / "tokenizer_config.json").write_text(json.dumps({
+                "eos_token": " world", "add_eos_token": True,
+            }), encoding="utf-8")
+            (tmp / "generation_config.json").write_text(
+                json.dumps({"eos_token_id": [0, 3, 2, 63]}), encoding="utf-8"
+            )
+            converter = _load_module(
+                "convert_safetensors_to_bump_v8_native_stop_tests",
+                ROOT / "version" / "v8" / "scripts" / "convert_safetensors_to_bump_v8.py",
+            )
+            special = converter._special_tokens_from_tokenizer_config(tmp, "bpe", 64)
+            self.assertEqual(special["eos_token_id"], 2)
+            self.assertEqual(special["stop_token_ids"], [0, 3, 2, 63])
+            so_path, _bump_path, _manifest_map = _build_tiny_decoder_runtime(
+                tmp, include_tokenizer_contract=True,
+                special_token_overrides=special,
+            )
+            (tmp / "libmodel.so").symlink_to(so_path.name)
+            from server.session_v8 import SessionV8
+            session = SessionV8.open(tmp, context_length=32, num_threads=2)
+            try:
+                self.assertEqual(session.generated_stop_ids(), (0, 3, 2, 63))
+                self.assertEqual(session.encode_ids("Hello"), [1, 2])
+            finally:
+                session.close()
 
     def test_ck_cli_v8_replays_bridge_report_through_native_multimodal_entrypoint(self) -> None:
         with tempfile.TemporaryDirectory(prefix="v8_native_bridge_report_cli_") as tmpdir:
