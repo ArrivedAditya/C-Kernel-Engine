@@ -161,6 +161,8 @@ with wave.open(sys.argv[3], 'wb') as audio:
             "provider": "native_kokoro_speech_session", "dtype": "pcm16",
             "direction": "inference", "oracle": "synthetic native child and player",
             "status": "pass", "gate": "session", "blocking": True,
+            "max_diff": 0, "tolerance": 0,
+            "metric": "observed event and output-state mismatches",
             "configuration": "one active request; process-isolated synthesis; no audio after cancellation",
             "reproduction_command": "python3 -m unittest "
                 "tests.test_v8_kokoro_native_speech_session",
@@ -203,6 +205,8 @@ with wave.open(sys.argv[3], 'wb') as audio:
             "dtype": "pcm16", "direction": "inference",
             "oracle": "retained seeded 8-ID native WAV hash",
             "status": "pass", "gate": "session", "blocking": True,
+            "max_diff": 0, "tolerance": 0,
+            "metric": "retained WAV hash mismatches",
             "cancellation_seconds": cancellation_seconds, "wav_sha256": actual,
             "configuration": "one 36-ID request cancelled; one 8-ID request completed, seed 7",
             "reproduction_command": "CKE_TTS_RUN_SESSION_FULL=1 "
