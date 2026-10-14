@@ -2,6 +2,7 @@
   "schema": "cke.kokoro.request_weight_bindings.v1",
   "source_manifest_sha256": "4b1efaf94191ab30e5a5e88a44a9e6a82ba295e6eeae8b639604b2855cc51d82",
   "source_bump_sha256": "556a82f8116091d386ccab9d8218030d124ff286e0fb8e2ebc8d0cc8a5598148",
+  "native_voice_sha256": "50a2b7d543cc5a9bdefb3217e3bf1a8d87e947dd5b4e8babf685c0bc4b3b4177",
   "note": "Effective FP32 weights and compiler activations for the pinned Kokoro v1 waveform graph; recurrent directions concatenate forward then reverse.",
   "weights": {
     "acoustic_text_encoder.conv0.bias": {"sha256":"e918711c56d727997d0f27bba3f5f5c2a70f36648b563e750a52fe7fa98bd83b","source":["acoustic_text_encoder.cnn.0.0.bias"]},

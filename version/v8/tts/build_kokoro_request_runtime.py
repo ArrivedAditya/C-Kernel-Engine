@@ -141,6 +141,7 @@ def build_runtime(bump_dir: Path, output: Path, tokens: int,
         "-I", str(ROOT / "include"), "-lm", "-lpthread", "-ldl",
         "-o", str(library)]
     _run(compile_command, log=output / "compile.log")
+    library_sha256 = sha256_file(library)
     for source, name in ((HOST, "host.c"),
             (ROOT / "src/kernels/audio_noise_counter.c", "audio_noise_counter.c"),
             (ROOT / "src/kernels/checked_float_buffer.h", "checked_float_buffer.h"),
@@ -148,9 +149,10 @@ def build_runtime(bump_dir: Path, output: Path, tokens: int,
         shutil.copy2(source, output / name)
     host_command = ["cc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
         "-pedantic", f"-DCK_TTS_COMPILED_TOKEN_COUNT={tokens}",
+        f'-DCK_TTS_EXPECTED_LIBRARY_SHA256="{library_sha256}"',
         "-I", str(output), str(output / "host.c"),
         str(output / "audio_noise_counter.c"), "-L", str(output),
-        "-l:generated.so", "-Wl,-rpath,$ORIGIN", "-lm",
+        "-l:generated.so", "-Wl,-rpath,$ORIGIN", "-lm", "-ldl", "-lcrypto",
         "-o", str(output / "native-kokoro-wav")]
     _run(host_command, log=output / "host-compile.log")
     package = package_request(output / "layout.json", bump_dir,
@@ -161,7 +163,8 @@ def build_runtime(bump_dir: Path, output: Path, tokens: int,
                                             for op in calls["operations"]}),
               "compiler_manifest_sha256": sha256_file(manifest_path),
               "generated_c_sha256": sha256_file(generated),
-              "library_sha256": sha256_file(library),
+              "library_sha256": library_sha256,
+              "host_sha256": sha256_file(output / "native-kokoro-wav"),
               "package_sha256": package["package_sha256"],
               "source_sha256": {path: sha256_file(ROOT / path) for path in sources},
               "weight_offset_contract": "compiler-planning offsets only; verified "

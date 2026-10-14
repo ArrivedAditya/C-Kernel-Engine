@@ -986,6 +986,10 @@ TEST_SUITES = {
         "Kokoro Static Request Package BUMP and Bounds Contract", "inference",
         ROOT / "tests" / "test_v8_kokoro_request_package.py",
     ),
+    "tts_kokoro_native_dispatch": TestSuite(
+        "Kokoro Native Exact-Length Dispatch and Artifact Identity", "inference",
+        ROOT / "tests" / "test_v8_kokoro_native_dispatch.py",
+    ),
     "tts_audio_harmonic_source_generated": TestSuite(
         "Checked Harmonic Source Normal-Compiler Generated Graph", "inference",
         ROOT / "tests" / "test_v8_audio_harmonic_source_generated.py",

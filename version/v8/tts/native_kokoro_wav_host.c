@@ -1,3 +1,6 @@
+#ifdef CK_TTS_EXPECTED_LIBRARY_SHA256
+#define _GNU_SOURCE
+#endif
 /* Fixed-utterance native Kokoro diagnostic host. The generated model owns
  * every neural operation; this host loads caller-owned storage, optionally
  * fills request-local excitation, and writes WAV. */
@@ -9,6 +12,43 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef CK_TTS_EXPECTED_LIBRARY_SHA256
+#include <dlfcn.h>
+#include <openssl/evp.h>
+
+/* The resolved generated-entry symbol identifies the mapped library. The
+ * digest identifies its on-disk artifact at capture time; this is not an
+ * embedded build identity or proof against concurrent file replacement. */
+static int verify_loaded_library(void) {
+    void *symbol = dlsym(RTLD_DEFAULT, "ck_kokoro_waveform_bounded");
+    Dl_info info;
+    if (!symbol || !dladdr(symbol, &info) || !info.dli_fname) return 0;
+    FILE *stream = fopen(info.dli_fname, "rb");
+    if (!stream) return 0;
+    EVP_MD_CTX *context = EVP_MD_CTX_new();
+    unsigned char digest[EVP_MAX_MD_SIZE];
+    unsigned int count = 0;
+    unsigned char buffer[65536];
+    int okay = context && EVP_DigestInit_ex(context, EVP_sha256(), NULL) == 1;
+    size_t length;
+    while (okay && (length = fread(buffer, 1, sizeof(buffer), stream)) != 0)
+        okay = EVP_DigestUpdate(context, buffer, length) == 1;
+    if (ferror(stream)) okay = 0;
+    if (okay) okay = EVP_DigestFinal_ex(context, digest, &count) == 1;
+    if (fclose(stream) != 0) okay = 0;
+    EVP_MD_CTX_free(context);
+    const char *expected = CK_TTS_EXPECTED_LIBRARY_SHA256;
+    if (!okay || count != 32 || strlen(expected) != 64) return 0;
+    static const char hex[] = "0123456789abcdef";
+    for (unsigned int i = 0; i < count; ++i) {
+        if (expected[2 * i] != hex[digest[i] >> 4] ||
+            expected[2 * i + 1] != hex[digest[i] & 15]) return 0;
+    }
+    fprintf(stderr, "resolved generated symbol in %s; artifact SHA-256 verified\n",
+            info.dli_fname);
+    return 1;
+}
+#endif
 
 /* Exact-length generated libraries have different buffer layouts. The host
  * build must declare the graph's token count before accepting CKTTS003. */
@@ -132,6 +172,12 @@ static int write_wav(const char *path, const float *samples, size_t count) {
 }
 
 int main(int argc, char **argv) {
+#ifdef CK_TTS_EXPECTED_LIBRARY_SHA256
+    if (!verify_loaded_library()) {
+        fprintf(stderr, "generated library identity mismatch\n");
+        return 9;
+    }
+#endif
     if (argc != 3 && argc != 4 && argc != 6) {
         fprintf(stderr, "usage: %s prepared-arena.cktts output.wav "
             "[seed [phoneme-ids-csv voice-bank.ckvoice]]\n", argv[0]);
