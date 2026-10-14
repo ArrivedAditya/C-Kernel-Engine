@@ -17,6 +17,8 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "version/v8/tts/native_kokoro_dispatch.c"
 sys.path.insert(0, str(ROOT / "version/v8/tts"))
 import build_kokoro_dispatch_bundle as bundle_builder
+from build_kokoro_request_runtime import select_conv_provider
+from build_kokoro_waveform_circuit import build_circuit
 
 
 def _hash(path):
@@ -85,6 +87,29 @@ class KokoroNativeDispatchTest(unittest.TestCase):
                                         self.root / "af_heart.ckvoice", output)
         self.assertEqual(sentinel.read_text(), "keep")
 
+    def test_explicit_avx2_selection_preserves_graph_ownership(self):
+        scalar = build_circuit(8)
+        candidate = build_circuit(8)
+        self.assertEqual(select_conv_provider(scalar, "scalar"), 0)
+        self.assertEqual(select_conv_provider(candidate, "avx2_fma"), 88)
+        self.assertEqual(candidate["required_numerical_contracts"][
+            "audio_conv1d_checked"]["phases"]["prefill"]["contract_id"],
+            "audio_conv1d_checked_x86_avx2_fma_fp32")
+        selected = [op["kernel"] for block in candidate["block_types"].values()
+                    for op in block["header"] + block["body"]["ops"] +
+                    block["footer"] if op.get("kernel", "").endswith("_avx2_fma")]
+        self.assertEqual(len(selected), 88)
+        self.assertIn("audio_conv1d_checked_channel_major_f32_avx2_fma", selected)
+        self.assertIn("audio_conv1d_dilated_checked_channel_major_f32_avx2_fma", selected)
+        self.assertEqual(select_conv_provider(build_circuit(36), "avx2_fma"), 88)
+        with self.assertRaisesRegex(ValueError, "unsupported Kokoro Conv1D"):
+            select_conv_provider(build_circuit(8), "avx512_vnni")
+        with self.assertRaisesRegex(ValueError, "unsupported Kokoro Conv1D"):
+            bundle_builder.build_bundle(self.root / "missing", self.root /
+                "af_heart.ckvoice", self.root / "not-published",
+                conv_provider="avx512_vnni")
+        self.assertFalse((self.root / "not-published").exists())
+
     def test_failed_build_does_not_publish_partial_bundle(self):
         voice = self.root / "valid.ckvoice"
         voice.write_bytes(b"CKVOICE1" + (34).to_bytes(4, "little") +
@@ -98,7 +123,8 @@ class KokoroNativeDispatchTest(unittest.TestCase):
         output = self.root / "failed-build"
         output.mkdir()
 
-        def fail_after_first_bucket(_bump, directory, count):
+        def fail_after_first_bucket(_bump, directory, count, *, conv_provider):
+            self.assertEqual(conv_provider, "scalar")
             directory.mkdir()
             (directory / "partial").write_text("not deployable")
             if count == 36:
@@ -106,7 +132,7 @@ class KokoroNativeDispatchTest(unittest.TestCase):
             return {key: "synthetic" for key in (
                 "library_sha256", "host_sha256", "package_sha256",
                 "compiler_manifest_sha256", "generated_c_sha256",
-                "generated_operations")}
+                "generated_operations")} | {"selected_conv_calls": 0}
 
         with mock.patch.object(bundle_builder, "DEFAULT_BINDINGS", bindings), \
              mock.patch.object(bundle_builder, "build_runtime",
@@ -219,10 +245,17 @@ class KokoroNativeDispatchFullTest(unittest.TestCase):
     def test_pinned_bundle_routes_both_native_waveforms(self):
         with tempfile.TemporaryDirectory(dir=os.environ.get("CKE_TTS_BUILD_TMP_DIR")) as tmp:
             bundle = Path(tmp) / "bundle"
+            provider = os.environ.get("CKE_TTS_CONV_PROVIDER", "scalar")
             report = bundle_builder.build_bundle(
                 Path(os.environ["CKE_TTS_NATIVE_BUMP_DIR"]),
-                Path(os.environ["CKE_TTS_NATIVE_VOICE_BANK"]), bundle)
+                Path(os.environ["CKE_TTS_NATIVE_VOICE_BANK"]), bundle,
+                conv_provider=provider)
             self.assertEqual(report["supported_phoneme_counts"], [8, 36])
+            self.assertEqual(report["conv_provider"], provider)
+            if provider == "avx2_fma":
+                for count in (8, 36):
+                    self.assertEqual(report["buckets"][count][
+                        "selected_conv_calls"], 88)
             wav_hashes = {}
             for count, fixture, expected in (
                 (8, "kokoro_waveform_hello_8_pinned.npz",
@@ -257,10 +290,12 @@ class KokoroNativeDispatchFullTest(unittest.TestCase):
                 "status": "pass", "gate": "session", "blocking": True,
                 "max_diff": 0, "tolerance": 0,
                 "wav_sha256": wav_hashes,
+                "conv_provider": provider,
                 "configuration": "8 and 36 IDs, af_heart, seed 7; unsupported 7 IDs rejected",
                 "reproduction_command": "CKE_TTS_RUN_DISPATCH_FULL=1 "
                     "CKE_TTS_NATIVE_BUMP_DIR=<pinned-bump> "
                     "CKE_TTS_NATIVE_VOICE_BANK=<pinned-voice> "
+                    "CKE_TTS_CONV_PROVIDER=<scalar-or-avx2_fma> "
                     "python3 -m unittest tests.test_v8_kokoro_native_dispatch",
             }, sort_keys=True))
 

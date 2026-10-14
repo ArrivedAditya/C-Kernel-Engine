@@ -23,12 +23,41 @@ ROOT = Path(__file__).resolve().parents[3]
 COMPILER = ROOT / "version/v8/scripts/build_ir_v8.py"
 CODEGEN = ROOT / "version/v8/scripts/codegen_v8.py"
 HOST = ROOT / "version/v8/tts/native_kokoro_wav_host.c"
+CONV_PROVIDERS = ("scalar", "avx2_fma")
+
+
+def select_conv_provider(graph: dict, provider: str) -> int:
+    """Select a declared provider in Kokoro authoring, never in generic lowering."""
+    if provider not in CONV_PROVIDERS:
+        raise ValueError(f"unsupported Kokoro Conv1D provider: {provider}")
+    if provider == "scalar":
+        return 0
+    replacements = {
+        "audio_conv1d_checked_channel_major_f32":
+            "audio_conv1d_checked_channel_major_f32_avx2_fma",
+        "audio_conv1d_dilated_checked_channel_major_f32":
+            "audio_conv1d_dilated_checked_channel_major_f32_avx2_fma",
+    }
+    selected = 0
+    for block in graph["block_types"].values():
+        for op in block["header"] + block["body"]["ops"] + block["footer"]:
+            if op.get("kernel") in replacements:
+                op["kernel"] = replacements[op["kernel"]]
+                selected += 1
+    if selected == 0:
+        raise ValueError("Kokoro circuit contains no selectable Conv1D operations")
+    graph["required_numerical_contracts"]["audio_conv1d_checked"][
+        "phases"]["prefill"]["contract_id"] = (
+            "audio_conv1d_checked_x86_avx2_fma_fp32")
+    return selected
 
 
 def compiler_manifest(bump_dir: Path, tokens: int,
-                      bindings_path: Path = DEFAULT_BINDINGS) -> dict:
+                      bindings_path: Path = DEFAULT_BINDINGS,
+                      conv_provider: str = "scalar") -> dict:
     """Make virtual graph-weight metadata; payloads stay in the source BUMP."""
     graph = build_circuit(tokens)
+    selected_conv_calls = select_conv_provider(graph, conv_provider)
     bindings = json.loads(bindings_path.read_text())
     if bindings.get("schema") != "cke.kokoro.request_weight_bindings.v1":
         raise ValueError("unsupported request weight binding schema")
@@ -86,6 +115,8 @@ def compiler_manifest(bump_dir: Path, tokens: int,
             "runtime_values": "i32", "runtime_valid_extent": "i32",
         },
     }
+    config["kokoro_conv_provider"] = conv_provider
+    config["kokoro_selected_conv_calls"] = selected_conv_calls
     return {"config": config, "entries": entries, "quant_summary": {},
             "template": graph}
 
@@ -101,11 +132,13 @@ def _run(argv: list[str], *, log: Path | None = None) -> None:
 
 
 def build_runtime(bump_dir: Path, output: Path, tokens: int,
-                  bindings_path: Path = DEFAULT_BINDINGS) -> dict:
+                  bindings_path: Path = DEFAULT_BINDINGS,
+                  conv_provider: str = "scalar") -> dict:
     if output.exists() and any(output.iterdir()):
         raise ValueError("output directory must be empty")
     output.mkdir(parents=True, exist_ok=True)
-    manifest = compiler_manifest(bump_dir, tokens, bindings_path)
+    manifest = compiler_manifest(bump_dir, tokens, bindings_path,
+                                 conv_provider)
     manifest_path = output / "compiler_manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
     _run([sys.executable, str(COMPILER), "--manifest", str(manifest_path),
@@ -159,6 +192,8 @@ def build_runtime(bump_dir: Path, output: Path, tokens: int,
                               output / "request.cktts", bindings_path)
     report = {"schema": "cke.kokoro.native_request_build.v1",
               "phoneme_count": tokens, "generated_operations": len(calls["operations"]),
+              "conv_provider": conv_provider,
+              "selected_conv_calls": manifest["config"]["kokoro_selected_conv_calls"],
               "selected_providers": sorted({op["call_abi"]["kernel_id"]
                                             for op in calls["operations"]}),
               "compiler_manifest_sha256": sha256_file(manifest_path),
@@ -181,8 +216,11 @@ def main() -> None:
     parser.add_argument("--bump-dir", required=True, type=Path)
     parser.add_argument("--tokens", required=True, type=int)
     parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument("--conv-provider", choices=CONV_PROVIDERS,
+                        default="scalar")
     args = parser.parse_args()
-    print(json.dumps(build_runtime(args.bump_dir, args.output_dir, args.tokens), indent=2))
+    print(json.dumps(build_runtime(args.bump_dir, args.output_dir, args.tokens,
+                                   conv_provider=args.conv_provider), indent=2))
 
 
 if __name__ == "__main__":
