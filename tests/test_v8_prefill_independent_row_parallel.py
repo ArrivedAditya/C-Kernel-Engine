@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import importlib.util
 import math
 import os
 import shlex
@@ -891,8 +892,17 @@ class PrefillIndependentRowParallelTests(unittest.TestCase):
                                       grouped[:2].view(np.uint32))
         np.testing.assert_array_equal(segmented[2:].view(np.uint32),
                                       singleton.view(np.uint32))
-        self.assertFalse(np.array_equal(segmented[2].view(np.uint32),
-                                        grouped[2].view(np.uint32)))
+        with_empty = run(hidden, stream, np.asarray([0, 2, 1], dtype=np.int32), 1)
+        np.testing.assert_array_equal(with_empty.view(np.uint32),
+                                      segmented.view(np.uint32))
+
+        trailing_text = run(hidden, stream, np.asarray([1, 0, 2], dtype=np.int32), 1)
+        for row in range(tokens):
+            one = run(hidden[row:row + 1], stream[row:row + 1], None)
+            np.testing.assert_array_equal(trailing_text[row].view(np.uint32),
+                                          one[0].view(np.uint32))
+        np.testing.assert_array_equal(run(hidden, stream, None).view(np.uint32),
+                                      grouped.view(np.uint32))
 
         bad = hidden.copy()
         invalid = np.asarray([2, 2], dtype=np.int32)
@@ -904,6 +914,30 @@ class PrefillIndependentRowParallelTests(unittest.TestCase):
             invalid.ctypes.data_as(INT32_PTR), len(invalid), 1,
         )
         np.testing.assert_array_equal(bad.view(np.uint32), hidden.view(np.uint32))
+
+    def test_gemma4_benchmark_binding_calls_current_abi(self) -> None:
+        path = ROOT / "benchmarks/bench_final_logits_q4k_q8k.py"
+        spec = importlib.util.spec_from_file_location("gemma4_final_logit_bench", path)
+        self.assertIsNotNone(spec)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        bind = module._bind_gemma4_embed(self.engine)
+        self.assertEqual(len(bind.argtypes), 15)
+
+        width, branch_width = 8, 256
+        hidden = np.ones(width, dtype=np.float32)
+        stream = np.ones(branch_width, dtype=np.float32)
+        gate = np.zeros((branch_width, width), dtype=np.float32)
+        gate[0, 0] = 1.0
+        projection = np.zeros((width, branch_width), dtype=np.float32)
+        projection[0, 0] = 1.0
+        norm = np.ones(width, dtype=np.float32)
+        scale = np.ones(1, dtype=np.float32)
+        module._call_gemma4_embed_one(
+            bind, hidden, stream, gate, projection, norm, scale,
+            1, width, branch_width, 1.0e-6,
+        )
+        self.assertGreater(hidden[0], 1.0)
 
     def test_gemma4_embed_uses_llama_rmsnorm_reduction(self) -> None:
         width = 2560

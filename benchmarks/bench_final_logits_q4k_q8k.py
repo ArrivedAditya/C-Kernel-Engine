@@ -75,9 +75,30 @@ def _bind_gemma4_embed(lib: ctypes.CDLL):
         ctypes.c_int,
         ctypes.c_int,
         ctypes.c_float,
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.c_int,
+        ctypes.c_int,
     ]
     fn.restype = None
     return fn
+
+
+def _call_gemma4_embed_one(fn, hidden: np.ndarray, per_layer_input: np.ndarray,
+                           inp_gate: np.ndarray, proj: np.ndarray,
+                           post_norm: np.ndarray, out_scale: np.ndarray,
+                           num_layers: int, embed_dim: int,
+                           per_layer_dim: int, eps: float) -> None:
+    float_ptr = ctypes.POINTER(ctypes.c_float)
+    fn(
+        hidden.ctypes.data_as(float_ptr),
+        per_layer_input.ctypes.data_as(float_ptr),
+        inp_gate.ctypes.data_as(float_ptr),
+        proj.ctypes.data_as(float_ptr),
+        post_norm.ctypes.data_as(float_ptr),
+        out_scale.ctypes.data_as(float_ptr),
+        1, 0, num_layers, embed_dim, per_layer_dim, ctypes.c_float(eps),
+        None, 0, 0,
+    )
 
 
 def _bind_gemma4_prepare(lib: ctypes.CDLL):
@@ -257,19 +278,10 @@ def main() -> int:
 
             if embed_fn is not None:
                 def call_embed_one() -> None:
-                    embed_fn(
-                        hidden.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-                        per_layer_input.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-                        inp_gate.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-                        proj.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-                        post_norm.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-                        out_scale.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-                        ctypes.c_int(tokens),
-                        ctypes.c_int(0),
-                        ctypes.c_int(num_layers),
-                        ctypes.c_int(embed_dim),
-                        ctypes.c_int(per_layer_dim),
-                        ctypes.c_float(eps),
+                    _call_gemma4_embed_one(
+                        embed_fn, hidden, per_layer_input, inp_gate, proj,
+                        post_norm, out_scale, num_layers, embed_dim,
+                        per_layer_dim, eps,
                     )
 
                 ms = _time_ms(call_embed_one, args.warmup, args.iters)
