@@ -21,10 +21,25 @@ SUPPORTED_COUNTS = (8, 36)
 DISPATCH_SOURCE = ROOT / "version/v8/tts/native_kokoro_dispatch.c"
 
 
+def selected_counts(experimental_counts: tuple[int, ...]) -> tuple[int, ...]:
+    if len(experimental_counts) > 4:
+        raise ValueError("at most four experimental phoneme counts per bundle")
+    if any(isinstance(count, bool) or not isinstance(count, int) or
+           count < 3 or count > 40 or count in SUPPORTED_COUNTS
+           for count in experimental_counts):
+        raise ValueError("experimental phoneme counts must be distinct integers "
+                         "from 3 to 40 outside the 8/36 baseline")
+    if len(set(experimental_counts)) != len(experimental_counts):
+        raise ValueError("duplicate experimental phoneme count")
+    return tuple(sorted((*SUPPORTED_COUNTS, *experimental_counts)))
+
+
 def build_bundle(bump_dir: Path, voice_bank: Path, output: Path,
-                 *, conv_provider: str = "scalar") -> dict:
+                 *, conv_provider: str = "scalar",
+                 experimental_counts: tuple[int, ...] = ()) -> dict:
     if conv_provider not in CONV_PROVIDERS:
         raise ValueError(f"unsupported Kokoro Conv1D provider: {conv_provider}")
+    counts = selected_counts(experimental_counts)
     if output.is_symlink() or (output.exists() and
             (not output.is_dir() or any(output.iterdir()))):
         raise ValueError("output directory must be empty")
@@ -42,7 +57,8 @@ def build_bundle(bump_dir: Path, voice_bank: Path, output: Path,
                                      dir=output.parent) as temporary:
         staging = Path(temporary) / "bundle"
         report = _build_into(bump_dir, voice_bank, staging, bindings,
-                             expected_voice, conv_provider)
+                             expected_voice, conv_provider, counts,
+                             experimental_counts)
         # The complete bundle becomes visible in one same-filesystem rename.
         # Replacing an existing empty directory preserves the prior API.
         if output.is_symlink() or (output.exists() and
@@ -54,13 +70,14 @@ def build_bundle(bump_dir: Path, voice_bank: Path, output: Path,
 
 def _build_into(bump_dir: Path, voice_bank: Path, output: Path,
                 bindings: dict, expected_voice: str,
-                conv_provider: str) -> dict:
+                conv_provider: str, counts: tuple[int, ...],
+                experimental_counts: tuple[int, ...]) -> dict:
     output.mkdir()
     shutil.copy2(voice_bank, output / "af_heart.ckvoice")
     if sha256_file(output / "af_heart.ckvoice") != expected_voice:
         raise ValueError("copied native voice bank differs from pinned artifact")
     buckets = {}
-    for count in SUPPORTED_COUNTS:
+    for count in counts:
         report = build_runtime(bump_dir, output / str(count), count,
                                conv_provider=conv_provider)
         buckets[count] = {
@@ -81,7 +98,7 @@ def _build_into(bump_dir: Path, voice_bank: Path, output: Path,
         f'static const char ck_tts_voice_sha256[] = "{expected_voice}";',
         "static const ck_tts_bucket ck_tts_buckets[] = {",
     ]
-    for count in SUPPORTED_COUNTS:
+    for count in counts:
         item = buckets[count]
         lines.append(f'    {{{count}, "{item["host_sha256"]}", '
                      f'"{item["library_sha256"]}", '
@@ -98,7 +115,9 @@ def _build_into(bump_dir: Path, voice_bank: Path, output: Path,
     report = {
         "schema": "cke.kokoro.native_dispatch_bundle.v1",
         "conv_provider": conv_provider,
-        "supported_phoneme_counts": list(SUPPORTED_COUNTS),
+        "supported_phoneme_counts": list(counts),
+        "baseline_phoneme_counts": list(SUPPORTED_COUNTS),
+        "experimental_phoneme_counts": list(sorted(experimental_counts)),
         "voice_sha256": expected_voice,
         "source_bump_sha256": bindings["source_bump_sha256"],
         "binding_catalog_sha256": sha256_file(DEFAULT_BINDINGS),
@@ -106,7 +125,8 @@ def _build_into(bump_dir: Path, voice_bank: Path, output: Path,
         "bundle_identity_sha256": sha256_file(output / "bundle_identity.h"),
         "buckets": buckets,
         "dispatcher_compile_command": command,
-        "scope": "exact 8/36 phoneme IDs; experimental waveform, no text frontend",
+        "scope": "exact compiled phoneme counts only; additional counts require "
+                 "independent model-level evidence before numerical certification",
     }
     (output / "bundle_manifest.json").write_text(json.dumps(report, indent=2) + "\n")
     return report
@@ -119,9 +139,13 @@ def main() -> None:
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--conv-provider", choices=CONV_PROVIDERS,
                         default="scalar")
+    parser.add_argument("--experimental-count", type=int, action="append",
+                        default=[], help="add an exact-length experimental bucket "
+                        "(3..40, excluding baseline 8/36); no runtime recompilation")
     args = parser.parse_args()
     print(json.dumps(build_bundle(args.bump_dir, args.voice_bank,
-                                 args.output_dir, conv_provider=args.conv_provider),
+                                 args.output_dir, conv_provider=args.conv_provider,
+                                 experimental_counts=tuple(args.experimental_count)),
                      indent=2))
 
 

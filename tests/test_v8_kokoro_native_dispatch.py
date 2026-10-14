@@ -87,6 +87,74 @@ class KokoroNativeDispatchTest(unittest.TestCase):
                                         self.root / "af_heart.ckvoice", output)
         self.assertEqual(sentinel.read_text(), "keep")
 
+    def test_experimental_counts_validate_before_export(self):
+        self.assertEqual(bundle_builder.selected_counts(()), (8, 36))
+        self.assertEqual(bundle_builder.selected_counts((12,)), (8, 12, 36))
+        for counts in ((8,), (36,), (12, 12), (2,), (41,), (True,),
+                       (12.0,), (3, 4, 5, 6, 7)):
+            with self.subTest(counts=counts), self.assertRaises(ValueError):
+                bundle_builder.build_bundle(self.root / "missing-bump",
+                    self.root / "af_heart.ckvoice", self.root / "not-published",
+                    experimental_counts=counts)
+            self.assertFalse((self.root / "not-published").exists())
+
+    def test_opt_in_third_bucket_routes_distinguishable_native_host(self):
+        voice = self.root / "valid-voice.ckvoice"
+        voice.write_bytes(b"CKVOICE1" + (34).to_bytes(4, "little") +
+                          (256).to_bytes(4, "little") +
+                          b"\0" * (34 * 256 * 4))
+        bindings = self.root / "bindings.json"
+        bindings.write_text(json.dumps({
+            "native_voice_sha256": _hash(voice),
+            "source_bump_sha256": "synthetic",
+        }))
+        built = []
+
+        def fake_runtime(_bump, directory, count, *, conv_provider):
+            self.assertEqual(conv_provider, "scalar")
+            built.append(count)
+            directory.mkdir()
+            host = directory / "native-kokoro-wav"
+            host.write_text("#!/bin/sh\n" +
+                            f"printf 'bucket={count}:%s\\n' \"$4\" > \"$2\"\n")
+            host.chmod(0o755)
+            library = directory / "generated.so"
+            library.write_bytes(f"library {count}".encode())
+            package = directory / "request.cktts"
+            package.write_bytes(f"package {count}".encode())
+            return {
+                "host_sha256": _hash(host),
+                "library_sha256": _hash(library),
+                "package_sha256": _hash(package),
+                "compiler_manifest_sha256": "synthetic",
+                "generated_c_sha256": "synthetic",
+                "generated_operations": 1,
+                "selected_conv_calls": 0,
+            }
+
+        bundle = self.root / "three-bucket-bundle"
+        with mock.patch.object(bundle_builder, "DEFAULT_BINDINGS", bindings), \
+             mock.patch.object(bundle_builder, "build_runtime",
+                               side_effect=fake_runtime):
+            report = bundle_builder.build_bundle(self.root / "synthetic-bump",
+                voice, bundle, experimental_counts=(12,))
+        self.assertEqual(built, [8, 12, 36])
+        self.assertEqual(report["supported_phoneme_counts"], [8, 12, 36])
+        self.assertEqual(report["baseline_phoneme_counts"], [8, 36])
+        self.assertEqual(report["experimental_phoneme_counts"], [12])
+        ids = ",".join(map(str, [0] + [4] * 10 + [0]))
+        output = self.root / "third-bucket.wav"
+        result = subprocess.run([str(bundle / "native-kokoro-dispatch"),
+            str(bundle), str(output), "7", ids], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(output.read_text().strip(), f"bucket=12:{ids}")
+        unsupported = self.root / "unsupported-third.wav"
+        result = subprocess.run([str(bundle / "native-kokoro-dispatch"),
+            str(bundle), str(unsupported), "7", ids + ",0"],
+            capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2)
+        self.assertFalse(unsupported.exists())
+
     def test_explicit_avx2_selection_preserves_graph_ownership(self):
         scalar = build_circuit(8)
         candidate = build_circuit(8)
