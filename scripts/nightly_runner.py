@@ -721,6 +721,7 @@ TEST_SUITES = {
     "moe_relu2_expert": TestSuite("MoE ReLU2 Expert", "kernels", UNITTEST_DIR / "test_moe_relu2_expert.py"),
     "mamba2_reference": TestSuite("Mamba2 Reference Kernels", "kernels", UNITTEST_DIR / "test_mamba2_reference.py"),
     "rwkv7_reference": TestSuite("RWKV-7 FP32 Decode Reference", "kernels", UNITTEST_DIR / "test_rwkv_decode.py"),
+    "rwkv7_block": TestSuite("RWKV-7 Composite Block versus PyTorch", "kernels", UNITTEST_DIR / "test_rwkv7_block.py"),
     "gemma4_assistant": TestSuite("Gemma4 Assistant/MTP Kernels", "kernels", UNITTEST_DIR / "test_gemma4_assistant_kernels.py"),
     "gemma4_bf16_reduction": TestSuite(
         "Gemma4 BF16 Projection Reduction Oracle", "parity",
@@ -1178,6 +1179,21 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_audio_adaptive_layer_norm_oracle.py",
         unittest_targets=("tests.test_v8_audio_adaptive_layer_norm_oracle.AdaptiveLayerNormOracleTest.test_fixture_vs_live_oracle",),
         explicit_only=True,
+    ),
+    "rwkv7_decode_oracle": TestSuite(
+        "RWKV-7 Decode Pinned Fixture and Robustness", "kernels",
+        ROOT / "tests" / "test_v8_rwkv7_decode_oracle.py",
+        unittest_targets=tuple("tests.test_v8_rwkv7_decode_oracle.Rwkv7DecodeOracleTest." + name for name in (
+            "test_tail_alias_contract",
+            "test_committed_torch_fixture", "test_optimized_matches_scalar",
+            "test_finite_overflow", "test_boundary_odd_dims",
+            "test_saturation_zero_norms", "test_long_recurrence_changing_inputs",
+            "test_inplace_state_allowed")),
+    ),
+    "rwkv7_decode_live": TestSuite(
+        "RWKV-7 Decode Native versus Live PyTorch", "kernels",
+        ROOT / "tests" / "test_v8_rwkv7_decode_oracle.py",
+        unittest_targets=("tests.test_v8_rwkv7_decode_oracle.Rwkv7DecodeOracleTest.test_live_torch_oracle",),
     ),
     "tts_kokoro_bump_export": TestSuite(
         "Kokoro BUMP Export Contract", "kernels",
