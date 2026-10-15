@@ -1,0 +1,14 @@
+{
+  "schema": "cke.serving_profile.v1",
+  "id": "muse-glimmer-v1",
+  "renderer": "jinja-chat-v1",
+  "input_modalities": ["text"],
+  "variants": {
+    "publisher": {
+      "chat": {"source": "publisher", "variant": "default"},
+      "tools": {"source": "publisher", "variant": "default"},
+      "output_protocol": "muse_atem_v1",
+      "stop_text": ["<|eot|>", "<|end_of_text|>"]
+    }
+  }
+}
