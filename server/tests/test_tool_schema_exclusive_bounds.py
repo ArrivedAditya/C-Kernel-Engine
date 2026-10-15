@@ -97,22 +97,54 @@ def test_opencode_schema_reaches_undeclared_protocol_without_model_work(monkeypa
 
 
 @pytest.mark.parametrize("stream", [False, True])
-def test_large_integer_tool_bound_is_structured_not_server_error(stream):
-    class NoModelWork:
-        def generate(self, *args, **kwargs):
-            raise AssertionError("undeclared tools must be rejected before generation")
+@pytest.mark.parametrize("bound_key", ["minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"])
+@pytest.mark.parametrize("bound", [10**400, -(10**400)])
+def test_large_integer_tool_bound_rejects_before_model_work_and_recovers(
+    monkeypatch, stream, bound_key, bound,
+):
+    import server.live as live
+
+    render_calls = []
+    real_render = live._render_with_chat_templates
+
+    def track_render(*args, **kwargs):
+        render_calls.append(True)
+        return real_render(*args, **kwargs)
+
+    monkeypatch.setattr(live, "_render_with_chat_templates", track_render)
+
+    class RecordingSession:
+        generation_calls = 0
+
+        def generate(self, *args, on_token, **kwargs):
+            self.generation_calls += 1
+            on_token(1, "OK")
+            return {"prompt_tokens": 1, "generated_tokens": 1, "stop_reason": 1}
+
+    session = RecordingSession()
 
     client = TestClient(create_app(
-        NoModelWork(), model="instella-test", chat_template="{{ messages[-1].content }}",
+        session, model="instella-test", chat_template="{{ messages[-1].content }}",
         tool_protocol=None, extra_route_registrar=add_chat_completions_route,
     ))
     response = client.post("/v1/chat/completions", json={
         "model": "instella-test", "messages": [{"role": "user", "content": "read a file"}],
         "tools": [{"type": "function", "function": {"name": "bash", "parameters": {
             "type": "object", "properties": {"limit": {
-                "type": "integer", "exclusiveMaximum": 10**400,
+                "type": "integer", bound_key: bound,
             }},
         }}}], "stream": stream,
     })
     assert response.status_code == 501
     assert response.json()["error"]["code"] == "tool_protocol_undeclared"
+    assert not render_calls
+    assert session.generation_calls == 0
+
+    follow_up = client.post("/v1/chat/completions", json={
+        "model": "instella-test", "messages": [{"role": "user", "content": "say OK"}],
+        "stream": False,
+    })
+    assert follow_up.status_code == 200
+    assert follow_up.json()["choices"][0]["message"]["content"] == "OK"
+    assert render_calls
+    assert session.generation_calls == 1
