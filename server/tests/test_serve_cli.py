@@ -46,6 +46,14 @@ def test_parser_exposes_serve_command():
     assert ns.no_build is False
 
 
+def test_parser_accepts_every_declared_serving_protocol():
+    from server.serving_bundle import PROTOCOLS
+
+    parser = _build_arg_parser()
+    for protocol in PROTOCOLS:
+        assert parser.parse_args(["model", "--tool-protocol", protocol]).tool_protocol == protocol
+
+
 def test_parser_flag_defaults():
     parser = _build_arg_parser()
     ns = parser.parse_args(["model", "--host", "0.0.0.0", "--port", "9000"])
