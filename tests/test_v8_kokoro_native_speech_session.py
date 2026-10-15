@@ -5,6 +5,7 @@ import hashlib
 import os
 from pathlib import Path
 import select
+import shlex
 import subprocess
 import tempfile
 import time
@@ -26,7 +27,7 @@ class NativeSpeechSessionTest(unittest.TestCase):
                         str(self.binary)], check=True, capture_output=True, text=True)
         self.frontend = self.root / "fake-native-frontend"
         self.frontend.write_text("""#!/usr/bin/env python3
-import sys, time, wave
+import struct, sys, time, wave
 if sys.argv[5] == 'slow':
     time.sleep(10)
 if sys.argv[5] == 'fail':
@@ -38,12 +39,44 @@ print('child diagnostics must stay off the session event channel')
 with wave.open(sys.argv[3], 'wb') as audio:
     audio.setnchannels(1)
     audio.setsampwidth(2)
-    audio.setframerate(24000)
+    audio.setframerate(16000 if sys.argv[5] == 'wrong-rate' else 24000)
     audio.writeframes(b'\\0\\0' * 4)
+kind = sys.argv[5]
+data = bytearray(open(sys.argv[3], 'rb').read())
+fields = {
+    'bad-header': (0, b'NOTW'),
+    'bad-riff-size': (4, struct.pack('<I', 0)),
+    'bad-wave': (8, b'NOPE'),
+    'bad-fmt': (12, b'NOPE'),
+    'bad-fmt-size': (16, struct.pack('<I', 18)),
+    'bad-pcm-format': (20, struct.pack('<H', 3)),
+    'bad-channels': (22, struct.pack('<H', 2)),
+    'bad-byte-rate': (28, struct.pack('<I', 16000)),
+    'bad-block-align': (32, struct.pack('<H', 4)),
+    'bad-bit-depth': (34, struct.pack('<H', 8)),
+    'bad-data-tag': (36, b'NOPE'),
+    'bad-data-size': (40, struct.pack('<I', 0)),
+}
+if kind in fields:
+    offset, replacement = fields[kind]
+    data[offset:offset + len(replacement)] = replacement
+elif kind == 'short-header':
+    data = data[:43]
+elif kind == 'empty-data':
+    data = data[:44]
+elif kind == 'trailing-bytes':
+    data.extend(b'xx')
+elif kind == 'odd-data':
+    data.extend(b'x')
+if kind in fields or kind in ('short-header', 'empty-data',
+                              'trailing-bytes', 'odd-data'):
+    open(sys.argv[3], 'wb').write(data)
 """)
         self.frontend.chmod(0o755)
         self.player = self.root / "fake-player"
-        self.player.write_text("#!/bin/sh\nsleep 10\n")
+        self.player_log = self.root / "player-invocations.txt"
+        self.player.write_text("#!/bin/sh\nprintf '%s\\n' \"$1\" >> "
+                               + shlex.quote(str(self.player_log)) + "\nsleep 10\n")
         self.player.chmod(0o755)
         self.processes = []
         self.addCleanup(self._cleanup_processes)
@@ -117,12 +150,42 @@ with wave.open(sys.argv[3], 'wb') as audio:
         self.assertFalse((directory / "4.wav").exists())
         self.send(process, "SPEAK\t10\tempty")
         self.assertEqual(self.line(process), "EVENT\t5\tSTARTED")
-        self.assertEqual(self.line(process), "EVENT\t5\tERROR\tnative WAV missing or empty")
+        self.assertEqual(self.line(process), "EVENT\t5\tERROR\tnative WAV missing or invalid")
         self.assertFalse((directory / "5.wav").exists())
         self.send(process, "SPEAK\t11\tfast")
         self.assertEqual(self.line(process), "EVENT\t6\tSTARTED")
         self.assertIn("EVENT\t6\tWAV_READY", self.line(process))
         self.assertEqual(self.line(process), "EVENT\t6\tCOMPLETED")
+
+    def test_invalid_wav_rejected_before_playback_then_recovers(self):
+        process, directory = self.start(player=True)
+        invalid = ("short-header", "empty-data", "bad-header", "bad-riff-size",
+                   "bad-wave", "bad-fmt", "bad-fmt-size", "bad-pcm-format",
+                   "bad-channels", "wrong-rate", "bad-byte-rate",
+                   "bad-block-align", "bad-bit-depth", "bad-data-tag",
+                   "bad-data-size", "trailing-bytes", "odd-data")
+        for request_id, kind in enumerate(invalid, 1):
+            with self.subTest(kind=kind):
+                self.send(process, f"SPEAK\t7\t{kind}")
+                self.assertEqual(self.line(process), f"EVENT\t{request_id}\tSTARTED")
+                self.assertEqual(self.line(process),
+                                 f"EVENT\t{request_id}\tERROR\tnative WAV missing or invalid")
+                self.assertFalse((directory / f"{request_id}.wav").exists())
+                self.assertFalse(self.player_log.exists(),
+                                 "invalid WAV unexpectedly launched the player")
+        valid_id = len(invalid) + 1
+        self.send(process, "SPEAK\t7\tfast")
+        self.assertEqual(self.line(process), f"EVENT\t{valid_id}\tSTARTED")
+        self.assertEqual(self.line(process),
+                         f"EVENT\t{valid_id}\tWAV_READY\t{directory / f'{valid_id}.wav'}")
+        self.assertEqual(self.line(process), f"EVENT\t{valid_id}\tPLAYING")
+        deadline = time.monotonic() + 2
+        while not self.player_log.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertEqual(self.player_log.read_text().splitlines(),
+                         [str(directory / f"{valid_id}.wav")])
+        self.send(process, "STOP")
+        self.assertEqual(self.line(process), f"EVENT\t{valid_id}\tCANCELLED")
 
     def test_playback_stop_and_invalid_command_recovery(self):
         process, directory = self.start(player=True)
