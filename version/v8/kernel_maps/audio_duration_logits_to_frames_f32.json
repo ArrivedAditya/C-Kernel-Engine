@@ -33,17 +33,24 @@
   }],
   "call_abi": {"version": 1, "params": [
     {"name": "logits", "source": "activation:logits", "cast": "const float*", "ports": ["input:logits"]},
-    {"name": "input_elements", "source": "runtime:logit_elements"},
-    {"name": "tokens", "source": "runtime:phoneme_count"},
+    {"name": "input_elements", "source": "runtime:logit_elements", "value_type": "size_t"},
+    {"name": "tokens", "source": "runtime:phoneme_count", "value_type": "size_t"},
     {"name": "bins", "source": "dim:bins"},
-    {"name": "input_stride", "source": "runtime:logit_stride"},
+    {"name": "input_stride", "source": "runtime:logit_stride", "value_type": "size_t"},
     {"name": "speed", "source": "config:speed"},
     {"name": "durations", "source": "output:durations", "cast": "int32_t*", "ports": ["output:durations"]},
-    {"name": "duration_capacity", "source": "runtime:duration_capacity"},
-    {"name": "max_duration_per_token", "source": "runtime:max_duration"},
-    {"name": "max_expanded_frames", "source": "runtime:expanded_capacity"},
+    {"name": "duration_capacity", "source": "runtime:duration_capacity", "value_type": "size_t"},
+    {"name": "max_duration_per_token", "source": "runtime:max_duration", "value_type": "size_t"},
+    {"name": "max_expanded_frames", "source": "runtime:expanded_capacity", "value_type": "size_t"},
     {"name": "expanded_frames", "source": "output:expanded_frames", "cast": "int32_t*", "ports": ["output:expanded_frames"]}
   ]},
-  "tests": {"unit": ["tests/test_v8_audio_duration_logits_oracle.py", "tests/test_v8_audio_duration_logits_live.py", "tests/test_v8_kokoro_generated_duration.py"], "oracle": "Pinned Kokoro 0.9.4 PyTorch 2.8.0+cpu predictor duration logits and exact int32 result; separately classified live PyTorch recomputation"},
-  "notes": "Caller-owned nonaliasing buffers. Inference only. The first fixed-utterance circuit declares speed in config; a per-request speed setting requires a separate generic scalar-entry binding. Expanded-frames output is a named runtime valid length, not an allocation. Actual model-graph composition remains NOT_TESTED."
+  "call_constant_contract": {
+    "shape_symbols": {"T": "phoneme_count"},
+    "buffer_spans": [
+      {"pointer": "logits", "elements": "logit_elements", "rows": "phoneme_count", "width": 1, "stride": "logit_stride", "physical_row_stride": true, "element_bytes": 4},
+      {"pointer": "durations", "elements": "duration_capacity", "rows": "phoneme_count", "width": 1, "element_bytes": 4}
+    ]
+  },
+  "tests": {"unit": ["tests/test_v8_audio_duration_logits_oracle.py", "tests/test_v8_audio_duration_logits_live.py", "tests/test_v8_kokoro_generated_duration.py", "tests/test_v8_kokoro_runtime_duration.py"], "oracle": "Pinned Kokoro 0.9.4 PyTorch 2.8.0+cpu predictor duration logits and exact int32 result; separately classified live PyTorch recomputation"},
+  "notes": "Caller-owned nonaliasing buffers. Inference only. The checked ABI binds valid tokens independently of logits/duration capacities. The first fixed-utterance circuit declares speed in config; a per-request speed setting requires a separate generic scalar-entry binding. Expanded-frames output is a named runtime valid length, not an allocation."
 }

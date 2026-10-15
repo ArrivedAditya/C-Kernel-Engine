@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from build_kokoro_encoder_circuit import build_circuit as encoder_circuit
+from build_kokoro_runtime_encoder_circuit import build_circuit as runtime_encoder_circuit
 
 ROOT = Path(__file__).resolve().parents[3]
 OUTPUT = ROOT / 'version/v8/circuits/kokoro_duration_predictor_bounded.json'
@@ -84,33 +85,49 @@ def norm_op(index, tokens):
                         'outputs': {'output': f'norm{index}_output'}}}
 
 
-def build_circuit(tokens=TOKENS):
+def build_circuit(tokens=TOKENS, *, runtime_tokens=False):
     if isinstance(tokens, bool) or not isinstance(tokens, int) or not 2 <= tokens <= 512:
         raise ValueError('duration tokens must be an integer between 2 and 512')
-    graph = encoder_circuit(tokens)
-    graph['name'] = 'kokoro_duration_predictor_bounded'
-    graph['native_entry'] = {'function': 'ck_kokoro_duration_predictor',
-        'params': [{'c_type': 'uint8_t *', 'name': 'arena'},
-                   {'c_type': 'size_t', 'name': 'arena_bytes'},
-                   {'c_type': 'int32_t *', 'name': 'out_frames'}],
-        'arena': {'pointer': 'arena', 'bytes': 'arena_bytes'},
-        'runtime_length_outputs': {'expanded_frames': 'out_frames'}}
+    if runtime_tokens and tokens != 64:
+        raise ValueError('runtime duration circuit uses capacity 64')
+    graph = runtime_encoder_circuit() if runtime_tokens else encoder_circuit(tokens)
+    graph['name'] = ('kokoro_runtime_duration_predictor' if runtime_tokens else
+                     'kokoro_duration_predictor_bounded')
+    if runtime_tokens:
+        graph['native_entry']['function'] = 'ck_kokoro_runtime_duration_predictor'
+        graph['native_entry']['params'].append(
+            {'c_type': 'int32_t *', 'name': 'out_frames'})
+        graph['native_entry']['runtime_length_outputs']['expanded_frames'] = 'out_frames'
+    else:
+        graph['native_entry'] = {'function': 'ck_kokoro_duration_predictor',
+            'params': [{'c_type': 'uint8_t *', 'name': 'arena'},
+                       {'c_type': 'size_t', 'name': 'arena_bytes'},
+                       {'c_type': 'int32_t *', 'name': 'out_frames'}],
+            'arena': {'pointer': 'arena', 'bytes': 'arena_bytes'},
+            'runtime_length_outputs': {'expanded_frames': 'out_frames'}}
+    frame_capacity = tokens * BINS if runtime_tokens else 128
     graph['contract']['runtime_invariants'].update(
         generated_duration_predictor=True, complete_waveform=False,
         all_tokens_valid=True, fixed_voice='af_heart',
-        max_expanded_frames=128)
+        max_expanded_frames=frame_capacity)
     graph['activation_buffers']['predictor_style'] = {'shape': [STYLE]}
     graph['activation_buffers']['duration_logits'] = {'shape': [tokens, BINS]}
     graph['activation_buffers']['runtime_values'] = {'shape': [tokens]}
     graph['activation_buffers']['runtime_valid_extent'] = {'shape': [1]}
     graph['activation_bindings'].update({name: name for name in
         ('predictor_style', 'duration_logits', 'runtime_values', 'runtime_valid_extent')})
-    graph['runtime_lengths'] = {'expanded_frames': {'producer': 'duration_frames',
-        'result': 'expanded_frames', 'capacity': 128, 'allow_zero': False}}
-    graph['runtime_constants'].update({
-        'logit_elements': tokens * BINS, 'phoneme_count': tokens,
-        'logit_stride': BINS, 'duration_capacity': tokens,
-        'max_duration': BINS, 'expanded_capacity': 128})
+    graph.setdefault('runtime_lengths', {})['expanded_frames'] = {
+        'producer': 'duration_frames', 'result': 'expanded_frames',
+        'capacity': frame_capacity, 'allow_zero': False}
+    if runtime_tokens:
+        graph['runtime_constants'].update({
+            'logit_elements': tokens * BINS, 'logit_stride': BINS,
+            'duration_capacity': tokens})
+    else:
+        graph['runtime_constants'].update({
+            'logit_elements': tokens * BINS, 'phoneme_count': tokens,
+            'logit_stride': BINS, 'duration_capacity': tokens,
+            'max_duration': BINS, 'expanded_capacity': frame_capacity})
     header = [concat_op(0, 'phoneme_features', tokens)]
     body = []
     for i in range(3):
@@ -148,6 +165,27 @@ def build_circuit(tokens=TOKENS):
                         'outputs': {'durations': 'runtime_values',
                                     'expanded_frames': 'runtime_valid_extent'}}}
     footer = [scan_op(3, 'predictor_features', tokens, final=True), projection, frames]
+    if runtime_tokens:
+        for op in header + body + footer:
+            kind = op['op']
+            binding = {
+                'feature_concat_broadcast_rows': 'concat_rows',
+                'audio_lstm_bidirectional_scan': 'tokens',
+                'audio_adaptive_layer_norm': 'tokens',
+                'linear_rows_checked': 'linear_rows',
+                'audio_duration_logits_to_frames': 'phoneme_count',
+            }[kind]
+            op['consumes_runtime_lengths'] = ['valid_tokens']
+            op['runtime_scalar_bindings'] = {binding: 'valid_tokens'}
+            op['params'].get('call_constants', {}).pop(binding, None)
+            if kind == 'audio_duration_logits_to_frames':
+                op['params']['call_constants'] = {
+                    'logit_elements': tokens * BINS,
+                    'logit_stride': BINS,
+                    'duration_capacity': tokens,
+                    'max_duration': BINS,
+                    'expanded_capacity': frame_capacity,
+                }
     graph['sequence'].append('duration_predictor')
     graph['block_types']['duration_predictor'] = {'sequence': ['header', 'body', 'footer'],
         'header': header, 'body': {'type': 'dense', 'ops': body}, 'footer': footer}
