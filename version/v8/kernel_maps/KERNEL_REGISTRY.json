@@ -11555,7 +11555,8 @@
           "tests/test_v8_kokoro_generated_attention_context.py",
           "tests/test_v8_kokoro_generated_encoder.py",
           "tests/test_v8_kokoro_generated_prosody_complete.py",
-          "tests/test_v8_kokoro_runtime_albert_layer.py"
+          "tests/test_v8_kokoro_runtime_albert_layer.py",
+          "tests/test_v8_kokoro_runtime_encoder.py"
         ],
         "oracle": "Independent PyTorch matmul/softmax/matmul on small and pinned first Kokoro ALBERT eager attention-context shapes; model-neutral generated-C graph; direct full-model SDPA checkpoint comparison is a separate diagnostic"
       },
@@ -23620,7 +23621,8 @@
         "unit": [
           "unittest/test_audio_encoder.py",
           "tests/test_v8_kokoro_generated_encoder.py",
-          "tests/test_v8_kokoro_runtime_albert_layer.py"
+          "tests/test_v8_kokoro_runtime_albert_layer.py",
+          "tests/test_v8_kokoro_runtime_encoder.py"
         ],
         "oracle": "Independent NumPy FP32 multiply then FP32 add for the reused arithmetic; pinned PyTorch 2.8 first-layer capture at 36 tokens; fixed8 CKE graph is a distinct stitching control, not an independent oracle"
       },
@@ -30707,7 +30709,8 @@
           "tests/test_v8_bert_embedding_live.py",
           "tests/test_v8_kokoro_generated_encoder.py",
           "tests/test_v8_kokoro_runtime_header.py",
-          "tests/test_v8_kokoro_runtime_albert_layer.py"
+          "tests/test_v8_kokoro_runtime_albert_layer.py",
+          "tests/test_v8_kokoro_runtime_encoder.py"
         ],
         "oracle": "Pinned Kokoro/Transformers PyTorch ALBERT embedding module output at 36x128; independent committed fixture and optional live pinned-model recomputation"
       },
@@ -35201,7 +35204,8 @@
           "tests/test_v8_normalization_checked_generated.py",
           "tests/test_v8_kokoro_generated_albert_layer.py",
           "tests/test_v8_kokoro_generated_encoder.py",
-          "tests/test_v8_kokoro_runtime_albert_layer.py"
+          "tests/test_v8_kokoro_runtime_albert_layer.py",
+          "tests/test_v8_kokoro_runtime_encoder.py"
         ],
         "oracle": "Pinned independent Kokoro/PyTorch 2.8 first-layer operation captures; live PyTorch at small widths and SIMD tails; bounds, padding, rejection and repeated calls"
       },
@@ -47613,7 +47617,8 @@
           "tests/test_v8_normalization_checked_generated.py",
           "tests/test_v8_kokoro_generated_albert_layer.py",
           "tests/test_v8_kokoro_generated_encoder.py",
-          "tests/test_v8_kokoro_runtime_albert_layer.py"
+          "tests/test_v8_kokoro_runtime_albert_layer.py",
+          "tests/test_v8_kokoro_runtime_encoder.py"
         ],
         "oracle": "Pinned independent Kokoro/PyTorch 2.8 first-layer operation captures; live PyTorch at small widths and SIMD tails; bounds, padding, rejection and repeated calls"
       },
@@ -48545,7 +48550,8 @@
           "tests/test_v8_kokoro_source_residual_prefix.py",
           "tests/test_v8_kokoro_source_residual_first_pair.py",
           "tests/test_v8_kokoro_source_residual_block0.py",
-          "tests/test_v8_kokoro_runtime_albert_layer.py"
+          "tests/test_v8_kokoro_runtime_albert_layer.py",
+          "tests/test_v8_kokoro_runtime_encoder.py"
         ],
         "oracle": "Independent PyTorch torch.nn.functional.linear at small, pinned Kokoro projection and Q/K/V shapes, and direct full-model decoder style and source hooks; checked strided rows, bounded per-call capacities, and connected generated graphs"
       },
@@ -76279,7 +76285,8 @@
           "tests/test_v8_kokoro_generated_prosody_complete.py",
           "tests/test_v8_kokoro_generated_generator_stage0.py",
           "tests/test_v8_kokoro_generated_source_stft_conv.py",
-          "tests/test_v8_kokoro_runtime_albert_layer.py"
+          "tests/test_v8_kokoro_runtime_albert_layer.py",
+          "tests/test_v8_kokoro_runtime_encoder.py"
         ],
         "oracle": "Python arbitrary-precision multiplication and generated producer-to-consumer circuit"
       },
@@ -76443,7 +76450,8 @@
           "tests/test_v8_runtime_extent_kernel.py",
           "tests/test_v8_checked_op_constants.py",
           "tests/test_v8_kokoro_runtime_header.py",
-          "tests/test_v8_kokoro_runtime_albert_layer.py"
+          "tests/test_v8_kokoro_runtime_albert_layer.py",
+          "tests/test_v8_kokoro_runtime_encoder.py"
         ],
         "oracle": "Python arbitrary-precision integer sum and checked boundary cases"
       },
