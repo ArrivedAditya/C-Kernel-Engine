@@ -2,6 +2,11 @@
   "version": 2,
   "name": "instella_moe",
   "family": "instella_moe",
+  "serving": {
+    "schema": "cke.circuit_serving.v1",
+    "profile_ref": "serving_profiles/publisher_chat_v1.json",
+    "default_variant": "publisher"
+  },
   "projection_inputs": {
     "q_proj": {"x": "normalized_stream"}
   },
