@@ -208,8 +208,49 @@ def test_muse_circuit_resolves_publisher_atem_and_turn_stops(setup):
     )
     assert doc["output_protocol"] == "muse_atem_v1"
     assert doc["stop_text"] == ["<|eot|>", "<|end_of_text|>"]
+    assert doc["message_role_map"] == {"developer": "system"}
     assert "<|eom|>" not in doc["stop_text"]
     assert load_resolved_serving(run)["identity"] == doc["identity"]
+    # The generic CLI path consumes the resolved bundle, not a model-name rule.
+    from server.serving_bundle import resolved_templates
+    chat, _, contract = resolved_templates(run, load_resolved_serving(run))
+    from server.live import _render_with_chat_templates
+    body = type("Body", (), {"instructions": "System policy", "tools": None, "tool_choice": None})()
+    rendered = _render_with_chat_templates(
+        chat, None, [{"role": "developer", "content": "Developer policy"},
+                     {"role": "user", "content": "Hello"}], body, contract,
+        renderer_tokens={"bos_token": "<|begin_of_text|>"},
+    )
+    assert "Developer policy" in rendered
+    assert rendered.index("System policy") < rendered.index("Developer policy") < rendered.index("Hello")
+    session = RecordingSession(["Hello back."])
+    client = TestClient(create_app(
+        session, model="test", chat_template=chat,
+        chat_contract=contract, renderer_tokens={"bos_token": "<|begin_of_text|>"},
+        tool_protocol="muse_atem_v1",
+    ))
+    response = client.post("/v1/responses", json={
+        "model": "test", "instructions": "System policy",
+        "input": [{"role": "developer", "content": "Developer policy"},
+                  {"role": "user", "content": "Hello"}],
+        "max_output_tokens": 16,
+    })
+    assert response.status_code == 200
+    assert "Developer policy" in session.prompts[0]
+    tampered = dict(doc, message_role_map={})
+    tampered["identity"] = contract_identity(tampered)
+    with pytest.raises(ValueError, match="message-role policy mismatch"):
+        load_resolved_serving(run, document=tampered)
+
+
+def test_invalid_message_role_mapping_fails_bundle_resolution(setup):
+    _, _, source = setup
+    profile_path = source / "serving_profiles/qwen_tools_v1.json"
+    profile = json.loads(profile_path.read_text())
+    profile["variants"]["publisher"]["message_role_map"] = {"user": "system"}
+    profile_path.write_text(json.dumps(profile))
+    with pytest.raises(ValueError, match="invalid serving message_role_map"):
+        resolve(setup)
 
 
 def test_publisher_special_tokens_feed_strict_jinja_from_verified_bundle(setup):

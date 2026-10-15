@@ -133,6 +133,12 @@ def resolve_serving_bundle(run_dir: Path, circuit_path: Path, *, variant: str | 
     if (not isinstance(stop_text, list) or any(not isinstance(item, str) or not item for item in stop_text)
             or len(set(stop_text)) != len(stop_text)):
         raise ValueError(f"invalid serving stop_text for variant: {selected}")
+    message_role_map = spec.get("message_role_map", {})
+    if not isinstance(message_role_map, dict) or any(
+        source != "developer" or target != "system"
+        for source, target in message_role_map.items()
+    ):
+        raise ValueError(f"invalid serving message_role_map for variant: {selected}")
     config = _json(run_dir / "config.json")
     # GGUF conversion uses model_type/model_name; only some runtime configs
     # declare a canonical model key. The retained compiled manifest and its
@@ -187,6 +193,7 @@ def resolve_serving_bundle(run_dir: Path, circuit_path: Path, *, variant: str | 
     document = {"schema": SCHEMA, "profile_id": profile.get("id"), "profile_ref": profile_ref, "variant": selected,
                 "renderer": profile["renderer"], "output_protocol": spec["output_protocol"],
                 "stop_text": stop_text,
+                "message_role_map": message_role_map,
                 "input_modalities": profile["input_modalities"], "context_capacity": capacity,
                 "assets": assets, "compilation_lineage": lineage, "certification": "NOT_TESTED"}
     document["identity"] = contract_identity(document)

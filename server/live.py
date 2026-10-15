@@ -855,6 +855,12 @@ def _render_with_chat_templates(
         instructions = getattr(body, "instructions", None) if body is not None else None
         if isinstance(instructions, str) and instructions.strip():
             messages = [{"role": "system", "content": instructions}, *messages]
+        role_map = (chat_contract or {}).get("message_role_map", {})
+        if role_map:
+            messages = [
+                {**message, "role": role_map.get(message.get("role"), message.get("role"))}
+                for message in messages
+            ]
         tools = None
         if body is not None and getattr(body, "tools", None):
             if tool_protocol == _TOOL_SYNTAX_GEMMA4_DSL_V1:
