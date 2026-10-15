@@ -47,6 +47,14 @@ def test_exclusive_numeric_bounds_accept_opencode_timeout_and_enforce_it():
     assert not _tool_value_matches_schema(2.5, maximum)
 
 
+@pytest.mark.parametrize("bound", [10**400, -(10**400)])
+def test_large_integer_bounds_do_not_overflow_float_finiteness_check(bound):
+    schema = {"type": "integer", "exclusiveMinimum": bound}
+    _validate_tool_schema_subset(schema)
+    assert not _tool_value_matches_schema(bound, schema)
+    assert _tool_value_matches_schema(bound + 1, schema)
+
+
 @pytest.mark.parametrize("bound", [True, float("inf"), "0"])
 def test_invalid_exclusive_bounds_rejected(bound):
     with pytest.raises(ValueError, match="finite number"):
@@ -62,7 +70,13 @@ def test_contradictory_mixed_bounds_rejected(schema):
         _validate_tool_schema_subset(schema)
 
 
-def test_opencode_schema_reaches_undeclared_protocol_without_model_work():
+@pytest.mark.parametrize("stream", [False, True])
+def test_opencode_schema_reaches_undeclared_protocol_without_model_work(monkeypatch, stream):
+    def unexpected_render(*args, **kwargs):
+        raise AssertionError("undeclared tools must be rejected before rendering")
+
+    monkeypatch.setattr("server.live._render_with_chat_templates", unexpected_render)
+
     class NoModelWork:
         def generate(self, *args, **kwargs):
             raise AssertionError("undeclared tools must be rejected before generation")
@@ -71,13 +85,34 @@ def test_opencode_schema_reaches_undeclared_protocol_without_model_work():
         NoModelWork(), model="instella-test", chat_template="{{ messages[-1].content }}",
         tool_protocol=None, extra_route_registrar=add_chat_completions_route,
     ))
-    tool = {"type": "function", "function": {
-        "name": "bash", "parameters": {"$schema": "https://json-schema.org/draft/2020-12/schema",
-                                      "type": "object", "properties": {"timeout": TIMEOUT}},
-    }}
+    captured = json.loads(FIXTURE.read_text())
+    tools = [{"type": "function", "function": {"name": name, "parameters": schema}}
+             for name, schema in captured["tool_schemas"].items()]
     response = client.post("/v1/chat/completions", json={
         "model": "instella-test", "messages": [{"role": "user", "content": "read a file"}],
-        "tools": [tool], "stream": True,
+        "tools": tools, "stream": stream,
+    })
+    assert response.status_code == 501
+    assert response.json()["error"]["code"] == "tool_protocol_undeclared"
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_large_integer_tool_bound_is_structured_not_server_error(stream):
+    class NoModelWork:
+        def generate(self, *args, **kwargs):
+            raise AssertionError("undeclared tools must be rejected before generation")
+
+    client = TestClient(create_app(
+        NoModelWork(), model="instella-test", chat_template="{{ messages[-1].content }}",
+        tool_protocol=None, extra_route_registrar=add_chat_completions_route,
+    ))
+    response = client.post("/v1/chat/completions", json={
+        "model": "instella-test", "messages": [{"role": "user", "content": "read a file"}],
+        "tools": [{"type": "function", "function": {"name": "bash", "parameters": {
+            "type": "object", "properties": {"limit": {
+                "type": "integer", "exclusiveMaximum": 10**400,
+            }},
+        }}}], "stream": stream,
     })
     assert response.status_code == 501
     assert response.json()["error"]["code"] == "tool_protocol_undeclared"

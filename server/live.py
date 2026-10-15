@@ -940,7 +940,7 @@ def _validate_tool_schema_subset(schema: Any, path: str = "parameters") -> None:
             value = schema[bound]
             if kind is None or not ({"integer", "number"} & set(kinds)):
                 raise ValueError(f"{path}.{bound} requires a numeric type")
-            if type(value) not in (int, float) or not math.isfinite(value):
+            if type(value) not in (int, float) or (type(value) is float and not math.isfinite(value)):
                 raise ValueError(f"{path}.{bound} must be a finite number")
     if "minimum" in schema and "maximum" in schema and schema["minimum"] > schema["maximum"]:
         raise ValueError(f"{path}.minimum exceeds maximum")
