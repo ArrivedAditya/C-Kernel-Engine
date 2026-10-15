@@ -188,6 +188,30 @@ def test_publisher_chat_profile_rejects_tools_before_generation(setup):
     assert session.prompts == prompts_before_tools
 
 
+def test_muse_circuit_resolves_publisher_atem_and_turn_stops(setup):
+    run, circuit_path, source = setup
+    muse_circuit = json.loads((ROOT / "version/v8/circuits/muse_glimmer_text.json").read_text())
+    declaration = muse_circuit["serving"]
+    assert declaration["profile_ref"] == "serving_profiles/muse_glimmer_v1.json"
+    shutil.copyfile(
+        ROOT / "version/v8" / declaration["profile_ref"],
+        source / declaration["profile_ref"],
+    )
+    circuit = json.loads(circuit_path.read_text())
+    circuit["serving"] = declaration
+    circuit_path.write_text(json.dumps(circuit))
+    (run / "chat_template.jinja").write_bytes(
+        (ROOT / "server/tests/fixtures/muse_glimmer_publisher_chat_template.jinja").read_bytes()
+    )
+    doc = resolver.resolve_serving_bundle(
+        run, circuit_path, v8_root=source, allow_serving_update=True,
+    )
+    assert doc["output_protocol"] == "muse_atem_v1"
+    assert doc["stop_text"] == ["<|eot|>", "<|end_of_text|>"]
+    assert "<|eom|>" not in doc["stop_text"]
+    assert load_resolved_serving(run)["identity"] == doc["identity"]
+
+
 def test_publisher_special_tokens_feed_strict_jinja_from_verified_bundle(setup):
     from server.live import TemplateRenderError, _render_with_chat_templates
 

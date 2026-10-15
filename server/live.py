@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Any
 
 from .gemma_tool_protocol import GemmaToolSyntaxError, parse_gemma_tool_calls
+from .muse_atem_protocol import MuseSyntaxError, parse_muse_turn
 
 import anyio
 from fastapi import APIRouter, FastAPI, HTTPException, Request
@@ -722,7 +723,7 @@ def _has_tool_support(
         and any(isinstance(value, str) and value.strip() for value in chat_templates.values())
     )
     return has_template and tool_protocol in {
-        "tagged_json", "bare_json", "qwen_xml", "qwen_code_xml", "qwen_code_xml_raw_v2", "gemma4_dsl_v1",
+        "tagged_json", "bare_json", "qwen_xml", "qwen_code_xml", "qwen_code_xml_raw_v2", "gemma4_dsl_v1", "muse_atem_v1",
     }
 
 
@@ -735,6 +736,7 @@ _TOOL_SYNTAX_QWEN_XML = "qwen_xml"
 _TOOL_SYNTAX_QWEN_CODE_XML = "qwen_code_xml"
 _TOOL_SYNTAX_QWEN_CODE_XML_RAW_V2 = "qwen_code_xml_raw_v2"
 _TOOL_SYNTAX_GEMMA4_DSL_V1 = "gemma4_dsl_v1"
+_TOOL_SYNTAX_MUSE_ATEM_V1 = "muse_atem_v1"
 _TOOL_SYNTAX_NONE = "none"
 
 
@@ -757,6 +759,8 @@ def _tool_syntax_for_protocol(protocol: str | None) -> str:
         return _TOOL_SYNTAX_QWEN_CODE_XML_RAW_V2
     if protocol == "gemma4_dsl_v1":
         return _TOOL_SYNTAX_GEMMA4_DSL_V1
+    if protocol == "muse_atem_v1":
+        return _TOOL_SYNTAX_MUSE_ATEM_V1
     raise ValueError(f"unsupported tool protocol {protocol!r}")
 
 
@@ -1094,6 +1098,11 @@ def _extract_tool_calls_from_text(
             candidates = parse_gemma_tool_calls(text)
         except GemmaToolSyntaxError as exc:
             return [], "malformed", f"malformed Gemma tool call: {exc}"
+    if tool_syntax == _TOOL_SYNTAX_MUSE_ATEM_V1:
+        try:
+            candidates = parse_muse_turn(text).tool_calls
+        except MuseSyntaxError as exc:
+            return [], "malformed", f"malformed Muse turn: {exc}"
     if tool_syntax == _TOOL_SYNTAX_QWEN_CODE_XML and stripped.startswith("<function_calls"):
         try:
             if "<!" in stripped:
@@ -2076,7 +2085,7 @@ def create_app(
     def _parse_tool_result(
         text: str, body
     ) -> tuple[list[dict[str, Any]] | None, str | None, str | None]:
-        if not _has_function_tools(body):
+        if not _has_function_tools(body) and tool_syntax != _TOOL_SYNTAX_MUSE_ATEM_V1:
             return None, None, None
         allowed = {t.name for t in _effective_tools(body) if getattr(t, "name", None)}
         parameter_schemas = {}
@@ -2106,6 +2115,13 @@ def create_app(
         if tool_calls == [] and code is None:
             return None, None, None
         return tool_calls, code, msg
+
+    def _muse_channels(raw: str) -> tuple[str, str, str | None]:
+        try:
+            turn = parse_muse_turn(raw)
+        except MuseSyntaxError as exc:
+            return "", "", f"malformed Muse turn: {exc}"
+        return turn.reasoning, turn.final_text, None
 
     def stream_events(
         body,
@@ -2156,7 +2172,7 @@ def create_app(
         worker_finished = threading.Event()
         splitter = (
             _StreamThinkSplitter(start_thinking=_prompt_opens_thinking(generation_prefix))
-            if think_enabled
+            if think_enabled and tool_syntax != _TOOL_SYNTAX_MUSE_ATEM_V1
             else None
         )
         # Tool-bearing output is buffered until the complete protocol
@@ -2165,7 +2181,9 @@ def create_app(
         def on_token(_tid, text):
             if text:
                 complete.append(text)
-                if splitter is not None:
+                if tool_syntax == _TOOL_SYNTAX_MUSE_ATEM_V1:
+                    pass  # Channel scope is known only after the complete turn.
+                elif splitter is not None:
                     for state, delta in splitter.feed(text):
                         if state == "thinking":
                             events.put(("reasoning_text", delta))
@@ -2271,6 +2289,19 @@ def create_app(
         def emit_reasoning_lifecycle(thinking, is_cancelled):
             nonlocal reasoning_started
             status_value = "incomplete" if is_cancelled else "completed"
+            if thinking is not None and not reasoning_started:
+                yield from emit(
+                    "response.output_item.added",
+                    {"type": "response.output_item.added", "output_index": 0,
+                     "item": ReasoningItem(id=reasoning_item_id, status="in_progress",
+                                           content=[], summary=[]).model_dump()},
+                )
+                reasoning_started = True
+                yield from emit(
+                    "response.reasoning_text.delta",
+                    {"type": "response.reasoning_text.delta", "item_id": reasoning_item_id,
+                     "output_index": 0, "content_index": 0, "delta": thinking},
+                )
             if reasoning_started:
                 if thinking is not None:
                     yield from emit(
@@ -2420,17 +2451,24 @@ def create_app(
                     result = payload or {}
                     stop_reason_val = int(result.get("stop_reason") or 0)
                     is_cancelled = cancelled.is_set() or stop_reason_val == 3
-                    text = truncate_stop_markers("".join(complete), all_stop_markers)
+                    raw_text = truncate_stop_markers("".join(complete), all_stop_markers)
+                    text = raw_text
                     thinking = None
-                    if think_enabled:
+                    channel_error = None
+                    if tool_syntax == _TOOL_SYNTAX_MUSE_ATEM_V1:
+                        muse_reasoning, text, channel_error = _muse_channels(raw_text)
+                        thinking = muse_reasoning or None if think_enabled else None
+                    elif think_enabled:
                         thinking, text = _split_generated_thinking(text, generation_prefix)
                         thinking = thinking or None
                     input_tokens = int(result.get("prompt_tokens") or 0)
                     output_tokens = int(result.get("generated_tokens") or len(complete))
                     message_index = 1 if think_enabled else 0
                     tool_calls, tool_error_code, tool_error_msg = _parse_tool_result(
-                        text, body
+                        raw_text if tool_syntax == _TOOL_SYNTAX_MUSE_ATEM_V1 else text, body
                     )
+                    if channel_error is not None:
+                        tool_calls, tool_error_code, tool_error_msg = None, "malformed", channel_error
                     if tool_error_code is None:
                         choice_error, drop = _enforce_tool_choice(
                             tool_calls,
@@ -2491,7 +2529,7 @@ def create_app(
                     incomplete_details = None
                     remaining_text = (
                         _strip_tool_json_from_text(text, tool_calls, tool_syntax=tool_syntax)
-                        if tool_calls
+                        if tool_calls and tool_syntax != _TOOL_SYNTAX_MUSE_ATEM_V1
                         else text
                     )
                     if is_cancelled:
@@ -2674,7 +2712,7 @@ def create_app(
                             message_content_part_added = True
                         # Tool-bearing responses buffer model text until the
                         # whole response is validated.
-                        if _has_function_tools(body) and remaining_text:
+                        if (_has_function_tools(body) or tool_syntax == _TOOL_SYNTAX_MUSE_ATEM_V1) and remaining_text:
                             yield from emit(
                                 "response.output_text.delta",
                                 {
@@ -3052,15 +3090,24 @@ def create_app(
             lease.release()
             if batch_http is not None:
                 lease.delivery_done()
-        text = truncate_stop_markers("".join(chunks), all_stop_markers)
+        raw_text = truncate_stop_markers("".join(chunks), all_stop_markers)
+        text = raw_text
         thinking = None
         reasoning_tokens = 0
-        if think_enabled:
+        channel_error = None
+        if tool_syntax == _TOOL_SYNTAX_MUSE_ATEM_V1:
+            muse_reasoning, text, channel_error = _muse_channels(raw_text)
+            thinking = (muse_reasoning or None) if think_enabled else None
+        elif think_enabled:
             thinking, text = _split_generated_thinking(text, generation_prefix)
             thinking = thinking or None
-            if thinking is not None:
-                reasoning_tokens = max(0, len(thinking) // 4)
-        tool_calls, tool_error_code, tool_error_msg = _parse_tool_result(text, body)
+        if thinking is not None:
+            reasoning_tokens = max(0, len(thinking) // 4)
+        tool_calls, tool_error_code, tool_error_msg = _parse_tool_result(
+            raw_text if tool_syntax == _TOOL_SYNTAX_MUSE_ATEM_V1 else text, body
+        )
+        if channel_error is not None:
+            tool_calls, tool_error_code, tool_error_msg = None, "malformed", channel_error
         if tool_error_code is None:
             choice_error, drop = _enforce_tool_choice(
                 tool_calls, tool_choice=getattr(body, "tool_choice", None)
@@ -3071,7 +3118,7 @@ def create_app(
                 tool_calls = None
         remaining_text = (
             _strip_tool_json_from_text(text, tool_calls, tool_syntax=tool_syntax)
-            if tool_calls
+            if tool_calls and tool_syntax != _TOOL_SYNTAX_MUSE_ATEM_V1
             else text
         )
         input_tokens = int(result.get("prompt_tokens") or 0) if result else 0
