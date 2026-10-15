@@ -40,7 +40,7 @@
   "call_abi": {"version": 1, "params": [
     {"name": "word_ids", "source": "activation:word_ids", "cast": "const int32_t*", "ports": ["input:word_ids"]},
     {"name": "type_ids", "source": "activation:type_ids", "cast": "const int32_t*", "ports": ["input:type_ids"]},
-    {"name": "id_elements", "source": "runtime:id_elements"},
+    {"name": "id_elements", "source": "runtime:id_elements", "value_type": "size_t"},
     {"name": "word", "source": "weight:word", "cast": "const float*", "ports": ["weight:word"]},
     {"name": "word_elements", "source": "runtime:word_elements"},
     {"name": "vocab_size", "source": "runtime:vocab_size"},
@@ -54,13 +54,21 @@
     {"name": "beta", "source": "weight:beta", "cast": "const float*", "ports": ["weight:beta"]},
     {"name": "norm_elements", "source": "runtime:norm_elements"},
     {"name": "output", "source": "output:output", "cast": "float*", "ports": ["output:output"]},
-    {"name": "output_elements", "source": "runtime:output_elements"},
+    {"name": "output_elements", "source": "runtime:output_elements", "value_type": "size_t"},
     {"name": "tokens", "source": "runtime:tokens"},
-    {"name": "channels", "source": "runtime:channels"},
+    {"name": "channels", "source": "runtime:channels", "value_type": "size_t"},
     {"name": "weight_stride", "source": "runtime:weight_stride"},
-    {"name": "output_stride", "source": "runtime:output_stride"},
+    {"name": "output_stride", "source": "runtime:output_stride", "value_type": "size_t"},
     {"name": "epsilon", "source": "config:epsilon"}
   ]},
-  "tests": {"unit": ["tests/test_v8_bert_embedding_oracle.py", "tests/test_v8_bert_embedding_live.py", "tests/test_v8_kokoro_generated_encoder.py"], "oracle": "Pinned Kokoro/Transformers PyTorch ALBERT embedding module output at 36x128; independent committed fixture and optional live pinned-model recomputation"},
+  "call_constant_contract": {
+    "shape_symbols": {"T": "tokens", "C": "channels"},
+    "buffer_spans": [
+      {"pointer": "word_ids", "elements": "id_elements", "rows": "tokens", "width": 1, "element_bytes": 4},
+      {"pointer": "type_ids", "elements": "id_elements", "rows": "tokens", "width": 1, "element_bytes": 4},
+      {"pointer": "output", "elements": "output_elements", "rows": "tokens", "width": "channels", "stride": "output_stride", "physical_row_stride": true, "element_bytes": 4}
+    ]
+  },
+  "tests": {"unit": ["tests/test_v8_bert_embedding_oracle.py", "tests/test_v8_bert_embedding_live.py", "tests/test_v8_kokoro_generated_encoder.py", "tests/test_v8_kokoro_runtime_header.py"], "oracle": "Pinned Kokoro/Transformers PyTorch ALBERT embedding module output at 36x128; independent committed fixture and optional live pinned-model recomputation"},
   "notes": "Reusable three-table embedding and LayerNorm; Kokoro is one consumer. This provider only certifies the embedding boundary, not the full encoder or waveform. Inference only."
 }

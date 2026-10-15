@@ -171,6 +171,100 @@ class CheckedOpConstantsTest(unittest.TestCase):
         self.assertNotEqual(fn(arena, len(arena)), 0)
         self.assertTrue(np.all(output == -777))
 
+    def test_runtime_input_length_reuses_planned_linear_capacity(self):
+        def add_length_contract(template):
+            template["activation_buffers"].update(
+                request_length={"shape": [1]}, valid_length={"shape": [1]})
+            template["activation_bindings"].update(
+                request_length="request_length", valid_length="valid_length")
+            template["runtime_constants"] = {
+                "value_elements": 1, "phoneme_count": 1,
+                "max_duration": 2, "expanded_capacity": 2}
+            template["runtime_lengths"] = {"valid_rows": {
+                "producer": "check_length", "result": "valid_extent",
+                "capacity": 2, "allow_zero": False}}
+            template["native_entry"]["params"].append(
+                {"c_type": "int32_t *", "name": "out_rows"})
+            template["native_entry"]["runtime_length_outputs"] = {
+                "valid_rows": "out_rows"}
+            ops = template["block_types"]["component"]["body"]["ops"]
+            ops.insert(0, {
+                "id": "check_length", "op": "runtime_extent_sum",
+                "kernel": "runtime_extent_sum_i32", "returns_status": True,
+                "produces_runtime_lengths": {"valid_rows": "valid_extent"},
+                "graph_slots": {
+                    "inputs": {"values": "external:request_length"},
+                    "outputs": {"valid_extent": "valid_length"}}})
+            for op in ops[1:]:
+                op["consumes_runtime_lengths"] = ["valid_rows"]
+                op["runtime_scalar_bindings"] = {"linear_rows": "valid_rows"}
+                del op["params"]["call_constants"]["linear_rows"]
+
+        root, bundle, tensors, layout, call_ir = self.compile_graph(
+            mutate=add_length_contract)
+        self.assertEqual(call_ir["errors"], [])
+        self.assertEqual([op["function"] for op in call_ir["operations"]],
+                         ["ck_runtime_sum_i32_checked", "linear_rows_checked_f32",
+                          "linear_rows_checked_f32"])
+        (root / "layout.json").write_text(json.dumps(layout))
+        (root / "call.json").write_text(json.dumps(call_ir))
+        generated = root / "generated.c"
+        subprocess.run([sys.executable, str(ROOT / "version/v8/scripts/codegen_v8.py"),
+                        "--ir", str(root / "call.json"), "--layout", str(root / "layout.json"),
+                        "--output", str(generated)], check=True, capture_output=True, text=True)
+        library = root / "generated.so"
+        subprocess.run(["cc", "-std=c11", "-O2", "-shared", "-fPIC", str(generated),
+                        str(ROOT / "src/kernels/runtime_extent.c"),
+                        str(ROOT / "src/kernels/linear_rows_checked.c"),
+                        "-I", str(ROOT / "include"), "-lm", "-o", str(library)],
+                       check=True, capture_output=True, text=True)
+        fn = ctypes.CDLL(str(library)).ck_two_linears
+        fn.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t,
+                       ctypes.POINTER(ctypes.c_int32)]
+        fn.restype = ctypes.c_int
+        size = layout["memory"]["arena"]["total_size"]
+        raw = (ctypes.c_uint8 * (size + 63))()
+        arena = (ctypes.c_uint8 * size).from_buffer(raw, (-ctypes.addressof(raw)) & 63)
+        bump = (root / "weights.fixture").read_bytes()
+        entries = {entry["name"]: entry for entry in bundle["entries"]}
+        for planned in layout["memory"]["weights"]["entries"]:
+            entry = entries[planned["name"]]
+            arena[planned["abs_offset"]:planned["abs_offset"] + entry["size"]] = bump[
+                entry["file_offset"]:entry["file_offset"] + entry["size"]]
+        activations = {item["name"]: item for item in
+                       layout["memory"]["activations"]["buffers"]}
+        def view(name, shape, dtype=np.float32):
+            return np.ndarray(shape, dtype=dtype, buffer=arena,
+                              offset=activations[name]["abs_offset"])
+        values = np.array([[1, 2, 3], [4, 5, 6]], dtype=np.float32)
+        view("input", (2, 3))[:] = values
+        expected = values @ tensors["fixture.first.weight"].T
+        expected += tensors["fixture.first.bias"]
+        expected = expected @ tensors["fixture.second.weight"].T
+        expected += tensors["fixture.second.bias"]
+        request = view("request_length", (1,), np.int32)
+        output = view("output", (2, 2))
+        middle = view("middle", (2, 5))
+        out_rows = ctypes.c_int32(-1)
+        for count in (1, 2, 1):
+            request[0] = count
+            output[:] = -777
+            middle[:] = -888
+            out_rows.value = -1
+            self.assertEqual(fn(arena, size, ctypes.byref(out_rows)), 0)
+            self.assertEqual(out_rows.value, count)
+            np.testing.assert_allclose(output[:count], expected[:count], atol=1e-6)
+            self.assertTrue(np.all(output[count:] == -777))
+            self.assertTrue(np.all(middle[count:] == -888))
+            self.assertTrue(np.all(middle[:count, 4] == -888))
+        for count in (0, 3, 2147483647):
+            request[0] = count
+            output[:] = -777
+            out_rows.value = -1
+            self.assertNotEqual(fn(arena, size, ctypes.byref(out_rows)), 0)
+            self.assertEqual(out_rows.value, -1)
+            self.assertTrue(np.all(output == -777))
+
     def test_invalid_per_call_constant_rejected_before_codegen(self):
         for value in (True, -1, "4;abort()", 1 << 64):
             with self.subTest(value=value):

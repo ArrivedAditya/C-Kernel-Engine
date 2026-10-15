@@ -30375,7 +30375,8 @@
           },
           {
             "name": "id_elements",
-            "source": "runtime:id_elements"
+            "source": "runtime:id_elements",
+            "value_type": "size_t"
           },
           {
             "name": "word",
@@ -30455,7 +30456,8 @@
           },
           {
             "name": "output_elements",
-            "source": "runtime:output_elements"
+            "source": "runtime:output_elements",
+            "value_type": "size_t"
           },
           {
             "name": "tokens",
@@ -30463,7 +30465,8 @@
           },
           {
             "name": "channels",
-            "source": "runtime:channels"
+            "source": "runtime:channels",
+            "value_type": "size_t"
           },
           {
             "name": "weight_stride",
@@ -30471,7 +30474,8 @@
           },
           {
             "name": "output_stride",
-            "source": "runtime:output_stride"
+            "source": "runtime:output_stride",
+            "value_type": "size_t"
           },
           {
             "name": "epsilon",
@@ -30479,11 +30483,43 @@
           }
         ]
       },
+      "call_constant_contract": {
+        "shape_symbols": {
+          "T": "tokens",
+          "C": "channels"
+        },
+        "buffer_spans": [
+          {
+            "pointer": "word_ids",
+            "elements": "id_elements",
+            "rows": "tokens",
+            "width": 1,
+            "element_bytes": 4
+          },
+          {
+            "pointer": "type_ids",
+            "elements": "id_elements",
+            "rows": "tokens",
+            "width": 1,
+            "element_bytes": 4
+          },
+          {
+            "pointer": "output",
+            "elements": "output_elements",
+            "rows": "tokens",
+            "width": "channels",
+            "stride": "output_stride",
+            "physical_row_stride": true,
+            "element_bytes": 4
+          }
+        ]
+      },
       "tests": {
         "unit": [
           "tests/test_v8_bert_embedding_oracle.py",
           "tests/test_v8_bert_embedding_live.py",
-          "tests/test_v8_kokoro_generated_encoder.py"
+          "tests/test_v8_kokoro_generated_encoder.py",
+          "tests/test_v8_kokoro_runtime_header.py"
         ],
         "oracle": "Pinned Kokoro/Transformers PyTorch ALBERT embedding module output at 36x128; independent committed fixture and optional live pinned-model recomputation"
       },
@@ -48307,6 +48343,7 @@
         "unit": [
           "tests/test_v8_linear_rows_oracle.py",
           "tests/test_v8_kokoro_generated_projection.py",
+          "tests/test_v8_kokoro_runtime_header.py",
           "tests/test_v8_checked_op_constants.py",
           "tests/test_v8_kokoro_generated_qkv.py",
           "tests/test_v8_kokoro_generated_albert_layer.py",
@@ -76211,7 +76248,9 @@
       },
       "tests": {
         "unit": [
-          "tests/test_v8_runtime_extent_kernel.py"
+          "tests/test_v8_runtime_extent_kernel.py",
+          "tests/test_v8_checked_op_constants.py",
+          "tests/test_v8_kokoro_runtime_header.py"
         ],
         "oracle": "Python arbitrary-precision integer sum and checked boundary cases"
       },

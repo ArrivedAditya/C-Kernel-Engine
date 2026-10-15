@@ -24,6 +24,6 @@
     {"name": "valid_extent", "source": "output:valid_extent", "cast": "int32_t*", "ports": ["output:valid_extent"]}
   ]},
   "constraints": {"notes": "Capacity is bounded by INT32_MAX. Zero count and zero result are supported. Return status must be checked before any consumer executes."},
-  "tests": {"unit": ["tests/test_v8_runtime_extent_kernel.py"], "oracle": "Python arbitrary-precision integer sum and checked boundary cases"},
+  "tests": {"unit": ["tests/test_v8_runtime_extent_kernel.py", "tests/test_v8_checked_op_constants.py", "tests/test_v8_kokoro_runtime_header.py"], "oracle": "Python arbitrary-precision integer sum and checked boundary cases"},
   "notes": "Caller-owned scalar output is untouched on failure. No allocation. Inference only."
 }
