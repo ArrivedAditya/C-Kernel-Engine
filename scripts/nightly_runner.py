@@ -770,6 +770,10 @@ TEST_SUITES = {
         "TTS Kokoro Generated Embedding and Projection X-Ray Oracle", "kernels",
         ROOT / "tests" / "test_v8_kokoro_generated_projection.py",
     ),
+    "tts_kokoro_runtime_header": TestSuite(
+        "TTS Kokoro Runtime-Length Embedding and Projection", "kernels",
+        ROOT / "tests" / "test_v8_kokoro_runtime_header.py",
+    ),
     "tts_checked_op_constants": TestSuite(
         "Checked Per-Operation ABI Constants Generated Graph", "kernels",
         ROOT / "tests" / "test_v8_checked_op_constants.py",
