@@ -133,6 +133,12 @@ def load_resolved_serving(run_dir: Path, *, document: dict[str, Any] | None = No
             raise ValueError("serving variant/protocol mismatch")
         if doc.get("stop_text", []) != variant.get("stop_text", []):
             raise ValueError("serving variant/stop policy mismatch")
+        message_role_map = doc.get("message_role_map", {})
+        if (message_role_map != variant.get("message_role_map", {})
+                or not isinstance(message_role_map, dict)
+                or any(source != "developer" or target != "system"
+                       for source, target in message_role_map.items())):
+            raise ValueError("serving variant/message-role policy mismatch")
         stop_text = doc.get("stop_text", [])
         if (not isinstance(stop_text, list) or any(not isinstance(item, str) or not item for item in stop_text)
                 or len(set(stop_text)) != len(stop_text)):
@@ -150,11 +156,11 @@ def load_resolved_serving(run_dir: Path, *, document: dict[str, Any] | None = No
         raise ValueError(f"invalid resolved serving bundle {sidecar}: {exc}") from exc
 
 
-def resolved_templates(run_dir: Path, doc: dict[str, Any]) -> tuple[str, dict[str, str], None]:
+def resolved_templates(run_dir: Path, doc: dict[str, Any]) -> tuple[str, dict[str, str], dict[str, Any]]:
     assets = doc["assets"]
     chat = bundle_path(run_dir, assets["chat"]["path"]).read_bytes().decode("utf-8")
     tools = bundle_path(run_dir, assets["tools"]["path"]).read_bytes().decode("utf-8")
-    return chat, {"tool_use": tools}, None
+    return chat, {"tool_use": tools}, {"message_role_map": doc.get("message_role_map", {})}
 
 
 def resolved_renderer_tokens(run_dir: Path, doc: dict[str, Any]) -> dict[str, str]:

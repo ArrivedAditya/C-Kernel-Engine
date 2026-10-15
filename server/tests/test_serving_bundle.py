@@ -208,8 +208,128 @@ def test_muse_circuit_resolves_publisher_atem_and_turn_stops(setup):
     )
     assert doc["output_protocol"] == "muse_atem_v1"
     assert doc["stop_text"] == ["<|eot|>", "<|end_of_text|>"]
+    assert doc["message_role_map"] == {"developer": "system"}
     assert "<|eom|>" not in doc["stop_text"]
     assert load_resolved_serving(run)["identity"] == doc["identity"]
+    # The generic CLI path consumes the resolved bundle, not a model-name rule.
+    from server.serving_bundle import resolved_templates
+    chat, _, contract = resolved_templates(run, load_resolved_serving(run))
+    from server.live import _render_with_chat_templates
+    body = type("Body", (), {"instructions": "System policy", "tools": None, "tool_choice": None})()
+    rendered = _render_with_chat_templates(
+        chat, None, [{"role": "developer", "content": "Developer policy"},
+                     {"role": "user", "content": "Hello"}], body, contract,
+        renderer_tokens={"bos_token": "<|begin_of_text|>"},
+    )
+    assert "Developer policy" in rendered
+    assert rendered.index("System policy") < rendered.index("Developer policy") < rendered.index("Hello")
+    session = RecordingSession(["Hello back."])
+    client = TestClient(create_app(
+        session, model="test", chat_template=chat,
+        chat_contract=contract, renderer_tokens={"bos_token": "<|begin_of_text|>"},
+        tool_protocol="muse_atem_v1",
+    ))
+    response = client.post("/v1/responses", json={
+        "model": "test", "instructions": "System policy",
+        "input": [{"role": "developer", "content": "Developer policy"},
+                  {"role": "user", "content": "Hello"}],
+        "max_output_tokens": 16,
+    })
+    assert response.status_code == 200
+    assert "Developer policy" in session.prompts[0]
+    tampered = dict(doc, message_role_map={})
+    tampered["identity"] = contract_identity(tampered)
+    with pytest.raises(ValueError, match="message-role policy mismatch"):
+        load_resolved_serving(run, document=tampered)
+
+
+def test_message_role_policy_changes_identity_without_changing_publisher_jinja(setup):
+    run, _, source = setup
+    profile_path = source / "serving_profiles/qwen_tools_v1.json"
+    before = resolve(setup)
+    assert before["message_role_map"] == {}
+    chat_hash = before["assets"]["chat"]["sha256"]
+    publisher_hash = hashlib.sha256((run / "chat_template.jinja").read_bytes()).hexdigest()
+
+    profile = json.loads(profile_path.read_text())
+    profile["variants"]["publisher"]["message_role_map"] = {"developer": "system"}
+    profile_path.write_text(json.dumps(profile))
+    after = resolve(setup)
+    assert after["identity"] != before["identity"]
+    assert after["assets"]["chat"]["sha256"] == chat_hash == publisher_hash
+    assert (run / "chat_template.jinja").read_bytes() == b"{% for message in messages %}{{ message.role }}:{{ message.content }}\r\n{% endfor %}assistant:"
+
+
+def test_muse_role_policy_through_normal_bundle_entry_and_streamed_continuation(setup, monkeypatch):
+    import server.live as live
+    import server.serving_bundle as bundle
+    from server.tests.test_muse_http_protocol import CALL, FINAL, TOOL, _Session, _events
+
+    run, circuit_path, source = setup
+    declaration = json.loads((ROOT / "version/v8/circuits/muse_glimmer_text.json").read_text())["serving"]
+    shutil.copyfile(ROOT / "version/v8" / declaration["profile_ref"], source / declaration["profile_ref"])
+    circuit = json.loads(circuit_path.read_text())
+    circuit["serving"] = declaration
+    circuit_path.write_text(json.dumps(circuit))
+    (run / "chat_template.jinja").write_bytes(
+        (ROOT / "server/tests/fixtures/muse_glimmer_publisher_chat_template.jinja").read_bytes()
+    )
+    (run / "tokenizer_config.json").write_text(json.dumps({
+        "bos_token": "<|begin_of_text|>", "eos_token": "<|end_of_text|>",
+    }))
+    resolve(setup, allow_serving_update=True)
+
+    session = _Session([CALL, FINAL])
+    session.lib = _session_library(run / "libck_session_v8.so")
+    session.close = lambda: None
+    monkeypatch.setattr(live, "open_live_session", lambda *_args, **_kwargs: (session, 128, {}))
+    # This synthetic bundle uses placeholder model/engine/tokenizer bytes; their
+    # loaded-mapping check is exercised separately with real shared libraries.
+    monkeypatch.setattr(bundle, "verify_loaded_libraries", lambda *_args: None)
+    client = TestClient(live.create_live_app_from_run_dir(run, model="muse-test"))
+    request = {
+        "model": "muse-test", "instructions": "SYSTEM_SENTINEL",
+        "input": [{"role": "developer", "content": "DEV_FIRST_SENTINEL"},
+                  {"role": "user", "content": "USER_QUERY_SENTINEL"},
+                  {"role": "developer", "content": "DEV_SECOND_SENTINEL"}],
+        "tools": [TOOL], "stream": True, "max_output_tokens": 16,
+    }
+    original = json.loads(json.dumps(request))
+    first = client.post("/v1/responses", json=request)
+    assert first.status_code == 200, first.text
+    assert request == original
+    events = _events(first)
+    assert any(event["type"] == "response.completed" for event in events)
+    call = next(event["item"] for event in events
+                if event["type"] == "response.output_item.done"
+                and event.get("item", {}).get("type") == "function_call")
+    response_id = next(event["response"]["id"] for event in events
+                       if event["type"] == "response.completed")
+    prompt = session.prompts[0]
+    for sentinel in ("SYSTEM_SENTINEL", "DEV_FIRST_SENTINEL", "DEV_SECOND_SENTINEL"):
+        assert prompt.count(sentinel) == 1
+    assert prompt.index("SYSTEM_SENTINEL") < prompt.index("DEV_FIRST_SENTINEL") < prompt.index("USER_QUERY_SENTINEL") < prompt.index("DEV_SECOND_SENTINEL")
+
+    second = client.post("/v1/responses", json={
+        "model": "muse-test", "previous_response_id": response_id,
+        "input": [{"type": "function_call_output", "call_id": call["call_id"], "output": "cobalt"}],
+        "tools": [TOOL], "stream": True, "max_output_tokens": 16,
+    })
+    assert second.status_code == 200, second.text
+    assert any(event["type"] == "response.completed" for event in _events(second))
+    assert "cobalt" in session.prompts[1]
+    assert session.prompts[1].count("DEV_FIRST_SENTINEL") == 1
+    assert session.prompts[1].count("DEV_SECOND_SENTINEL") == 1
+
+
+def test_invalid_message_role_mapping_fails_bundle_resolution(setup):
+    _, _, source = setup
+    profile_path = source / "serving_profiles/qwen_tools_v1.json"
+    profile = json.loads(profile_path.read_text())
+    profile["variants"]["publisher"]["message_role_map"] = {"user": "system"}
+    profile_path.write_text(json.dumps(profile))
+    with pytest.raises(ValueError, match="invalid serving message_role_map"):
+        resolve(setup)
 
 
 def test_publisher_special_tokens_feed_strict_jinja_from_verified_bundle(setup):

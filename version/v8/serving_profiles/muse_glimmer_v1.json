@@ -7,6 +7,7 @@
     "publisher": {
       "chat": {"source": "publisher", "variant": "default"},
       "tools": {"source": "publisher", "variant": "default"},
+      "message_role_map": {"developer": "system"},
       "output_protocol": "muse_atem_v1",
       "stop_text": ["<|eot|>", "<|end_of_text|>"]
     }
