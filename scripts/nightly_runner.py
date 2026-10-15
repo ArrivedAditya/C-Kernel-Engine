@@ -778,6 +778,10 @@ TEST_SUITES = {
         "TTS Kokoro Runtime-Length First ALBERT Layer", "kernels",
         ROOT / "tests" / "test_v8_kokoro_runtime_albert_layer.py",
     ),
+    "tts_kokoro_runtime_encoder": TestSuite(
+        "TTS Kokoro Runtime-Length Complete Phoneme Encoder", "kernels",
+        ROOT / "tests" / "test_v8_kokoro_runtime_encoder.py",
+    ),
     "tts_checked_op_constants": TestSuite(
         "Checked Per-Operation ABI Constants Generated Graph", "kernels",
         ROOT / "tests" / "test_v8_checked_op_constants.py",

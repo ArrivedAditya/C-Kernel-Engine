@@ -5,22 +5,28 @@ import json
 from build_kokoro_albert_circuit import build_circuit as fixed_layer
 
 
-def build_circuit():
-    graph = fixed_layer(36)
-    graph['name'] = 'kokoro_runtime_first_albert_layer'
+def bind_runtime_tokens(graph, *, name, entry_function):
+    """Bind one checked token extent through a declared encoder graph."""
+    graph['name'] = name
     graph['required_numerical_contracts']['audio_scaled_residual_add'][
         'phases']['prefill']['contract_id'] = (
             'audio_scaled_residual_add_separate_fp32_runtime_extent')
+    capacity = graph['activation_buffers']['word_ids']['shape'][0]
+    if capacity < 2:
+        raise ValueError('encoder capacity must hold at least two tokens')
     graph['contract']['runtime_invariants'].update(
-        supported_tokens='2..36', all_tokens_valid=True,
+        supported_tokens=f'1..{capacity}', all_tokens_valid=True,
         complete_waveform=False)
     block = graph['block_types']['phoneme_encoder']
-    residual_ops = [op for op in block['body']['ops']
+    operations = block['header'] + block['body']['ops'] + block['footer']
+    residual_ops = [op for op in operations
                     if op['op'] == 'audio_scaled_residual_add']
-    widths = {graph['activation_buffers'][op['graph_slots']['outputs']['output']]
-              ['shape'][1] for op in residual_ops}
-    if len(residual_ops) != 2 or len(widths) != 1:
-        raise ValueError('first ALBERT residual geometry changed')
+    widths = {graph['activation_buffers'][tensor]['shape'][1]
+              for op in residual_ops
+              for tensor in (*op['graph_slots']['inputs'].values(),
+                             *op['graph_slots']['outputs'].values())}
+    if not residual_ops or len(widths) != 1:
+        raise ValueError('ALBERT residual geometry changed')
     width = widths.pop()
     graph['activation_buffers'].update({
         'request_length': {'shape': [1]},
@@ -31,21 +37,21 @@ def build_circuit():
         name: name for name in
         ('request_length', 'valid_length', 'valid_residual_elements')})
     entry = graph['native_entry']
-    entry['function'] = 'ck_kokoro_runtime_first_albert_layer'
+    entry['function'] = entry_function
     entry['params'].append({'c_type': 'int32_t *', 'name': 'out_tokens'})
     entry['params'].append({'c_type': 'int32_t *', 'name': 'out_residual_elements'})
     entry['runtime_length_outputs'] = {
         'valid_tokens': 'out_tokens',
         'valid_residual_elements': 'out_residual_elements'}
     graph['runtime_constants'].update(
-        value_elements=1, phoneme_count=1, max_duration=36,
-        expanded_capacity=36)
+        value_elements=1, phoneme_count=1, max_duration=capacity,
+        expanded_capacity=capacity)
     graph['runtime_lengths'] = {
         'valid_tokens': {'producer': 'check_tokens', 'result': 'valid_extent',
-                         'capacity': 36, 'allow_zero': False},
+                         'capacity': capacity, 'allow_zero': False},
         'valid_residual_elements': {
             'producer': 'check_residual_elements', 'result': 'valid_extent',
-            'capacity': 36 * width, 'allow_zero': False},
+            'capacity': capacity * width, 'allow_zero': False},
     }
     block['header'].insert(0, {
         'id': 'check_tokens', 'op': 'runtime_extent_sum',
@@ -63,7 +69,7 @@ def build_circuit():
         'runtime_scalar_bindings': {'extent_scale_source': 'valid_tokens'},
         'params': {'call_constants': {
             'extent_scale_factor': width,
-            'extent_scale_capacity': 36 * width}},
+            'extent_scale_capacity': capacity * width}},
         'graph_slots': {'inputs': {}, 'outputs': {
             'valid_extent': 'valid_residual_elements'}},
     })
@@ -72,9 +78,11 @@ def build_circuit():
         if kind == 'embedding_three_table_layer_norm':
             op['consumes_runtime_lengths'] = ['valid_tokens']
             op['runtime_scalar_bindings'] = {'tokens': 'valid_tokens'}
-            op['params'] = {'T': 36, 'C': 128, 'call_constants': {
-                'id_elements': 36, 'output_elements': 36 * 128,
-                'channels': 128, 'output_stride': 128}}
+            channels = graph['activation_buffers']['embedding_output']['shape'][1]
+            op['params'] = {'T': capacity, 'C': channels, 'call_constants': {
+                'id_elements': capacity,
+                'output_elements': capacity * channels,
+                'channels': channels, 'output_stride': channels}}
         elif kind == 'linear_rows_checked':
             op['consumes_runtime_lengths'] = ['valid_tokens']
             op['runtime_scalar_bindings'] = {'linear_rows': 'valid_tokens'}
@@ -96,6 +104,12 @@ def build_circuit():
         elif kind not in ('runtime_extent_sum', 'runtime_extent_scale'):
             raise ValueError('undeclared runtime token semantics: ' + kind)
     return graph
+
+
+def build_circuit():
+    return bind_runtime_tokens(
+        fixed_layer(36), name='kokoro_runtime_first_albert_layer',
+        entry_function='ck_kokoro_runtime_first_albert_layer')
 
 
 if __name__ == '__main__':

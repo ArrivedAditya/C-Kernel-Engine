@@ -148,7 +148,8 @@
     "unit": [
       "unittest/test_audio_encoder.py",
       "tests/test_v8_kokoro_generated_encoder.py",
-      "tests/test_v8_kokoro_runtime_albert_layer.py"],
+      "tests/test_v8_kokoro_runtime_albert_layer.py",
+      "tests/test_v8_kokoro_runtime_encoder.py"],
     "oracle": "Independent NumPy FP32 multiply then FP32 add for the reused arithmetic; pinned PyTorch 2.8 first-layer capture at 36 tokens; fixed8 CKE graph is a distinct stitching control, not an independent oracle"
   },
   "call_constant_contract": {
