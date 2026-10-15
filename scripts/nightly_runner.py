@@ -774,6 +774,10 @@ TEST_SUITES = {
         "TTS Kokoro Runtime-Length Embedding and Projection", "kernels",
         ROOT / "tests" / "test_v8_kokoro_runtime_header.py",
     ),
+    "tts_kokoro_runtime_albert_layer": TestSuite(
+        "TTS Kokoro Runtime-Length First ALBERT Layer", "kernels",
+        ROOT / "tests" / "test_v8_kokoro_runtime_albert_layer.py",
+    ),
     "tts_checked_op_constants": TestSuite(
         "Checked Per-Operation ABI Constants Generated Graph", "kernels",
         ROOT / "tests" / "test_v8_checked_op_constants.py",

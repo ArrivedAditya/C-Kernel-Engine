@@ -118,8 +118,8 @@
       "tests/test_v8_prosody_upsample_generated.py",
       "tests/test_v8_kokoro_generated_prosody_complete.py",
       "tests/test_v8_kokoro_generated_generator_stage0.py",
-      "tests/test_v8_kokoro_generated_source_stft_conv.py"
-    ],
+      "tests/test_v8_kokoro_generated_source_stft_conv.py",
+      "tests/test_v8_kokoro_runtime_albert_layer.py"],
     "oracle": "Python arbitrary-precision multiplication and generated producer-to-consumer circuit"
   },
   "notes": "Generic checked value-dependent extent producer. Caller-owned output scalar, no allocation or scratch. Inference only.",

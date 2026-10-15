@@ -223,8 +223,8 @@
     "unit": [
       "tests/test_v8_normalization_checked_oracle.py",
       "tests/test_v8_normalization_checked_generated.py",
-      "tests/test_v8_kokoro_generated_albert_layer.py", "tests/test_v8_kokoro_generated_encoder.py"
-    ],
+      "tests/test_v8_kokoro_generated_albert_layer.py", "tests/test_v8_kokoro_generated_encoder.py",
+      "tests/test_v8_kokoro_runtime_albert_layer.py"],
     "oracle": "Pinned independent Kokoro/PyTorch 2.8 first-layer operation captures; live PyTorch at small widths and SIMD tails; bounds, padding, rejection and repeated calls"
   },
   "notes": "Checked adapter preserves the existing arithmetic. Independent native-versus-PyTorch contract uses a 1e-6 elementwise absolute bound for tanh GELU. The legacy function named gelu_exact_inplace implements tanh; erf is a different provider. Backward support is explicitly uncertified. Complete native model remains NOT_TESTED."
