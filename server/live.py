@@ -909,6 +909,7 @@ _TOOL_SCHEMA_TYPES = {"string", "integer", "number", "boolean", "object", "array
 _TOOL_SCHEMA_KEYS = {
     "type", "properties", "required", "additionalProperties", "items",
     "enum", "description", "title", "default", "minimum", "maximum",
+    "exclusiveMinimum", "exclusiveMaximum",
     "minLength", "maxLength", "$schema",
 }
 
@@ -934,7 +935,7 @@ def _validate_tool_schema_subset(schema: Any, path: str = "parameters") -> None:
         raise ValueError(f"{path} has unsupported type {kind!r}")
     if "enum" in schema and not isinstance(schema["enum"], list):
         raise ValueError(f"{path}.enum must be an array")
-    for bound in ("minimum", "maximum"):
+    for bound in ("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"):
         if bound in schema:
             value = schema[bound]
             if kind is None or not ({"integer", "number"} & set(kinds)):
@@ -943,6 +944,18 @@ def _validate_tool_schema_subset(schema: Any, path: str = "parameters") -> None:
                 raise ValueError(f"{path}.{bound} must be a finite number")
     if "minimum" in schema and "maximum" in schema and schema["minimum"] > schema["maximum"]:
         raise ValueError(f"{path}.minimum exceeds maximum")
+    lowers = [(schema[key], key == "exclusiveMinimum") for key in
+              ("minimum", "exclusiveMinimum") if key in schema]
+    uppers = [(schema[key], key == "exclusiveMaximum") for key in
+              ("maximum", "exclusiveMaximum") if key in schema]
+    if lowers and uppers:
+        lower = max(value for value, _ in lowers)
+        upper = min(value for value, _ in uppers)
+        if lower > upper or (lower == upper and (
+            any(value == lower and exclusive for value, exclusive in lowers)
+            or any(value == upper and exclusive for value, exclusive in uppers)
+        )):
+            raise ValueError(f"{path} numeric lower bound exceeds upper bound")
     for bound in ("minLength", "maxLength"):
         if bound in schema:
             value = schema[bound]
@@ -993,6 +1006,10 @@ def _tool_value_matches_schema(value: Any, schema: dict[str, Any]) -> bool:
         if "minimum" in schema and value < schema["minimum"]:
             return False
         if "maximum" in schema and value > schema["maximum"]:
+            return False
+        if "exclusiveMinimum" in schema and value <= schema["exclusiveMinimum"]:
+            return False
+        if "exclusiveMaximum" in schema and value >= schema["exclusiveMaximum"]:
             return False
     if isinstance(value, str):
         if "minLength" in schema and len(value) < schema["minLength"]:
