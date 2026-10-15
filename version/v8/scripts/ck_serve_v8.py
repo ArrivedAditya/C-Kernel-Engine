@@ -93,6 +93,7 @@ from server.live import (
     create_app as _live_create_app,
     split_thinking,
 )
+from server.serving_bundle import PROTOCOLS
 from server.runtime import load_manifest_templates, load_tool_protocol, resolve_runtime_context_length, resolve_runtime_vision_capability
 from server.session_v8 import (
     CK_SESSION_REQUEST_RAW_PROMPT,
@@ -282,9 +283,9 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                         help="Explicit circuit-linked serving variant to resolve during bundle build")
     parser.add_argument(
         "--tool-protocol",
-        choices=("none", "tagged_json", "bare_json", "qwen_xml", "qwen_code_xml", "qwen_code_xml_raw_v2", "gemma4_dsl_v1"),
+        choices=sorted(PROTOCOLS),
         default=None,
-        help="Explicit tool output protocol; defaults to a hash-bound tool_protocol.json sidecar or disabled",
+        help="Explicit tool output protocol; defaults to the resolved bundle or hash-bound legacy sidecar",
     )
     parser.add_argument(
         "--request-output-cap", type=int, default=None,
