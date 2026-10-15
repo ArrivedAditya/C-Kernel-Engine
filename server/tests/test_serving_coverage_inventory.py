@@ -26,6 +26,11 @@ def test_site_inventory_is_current_and_does_not_promote_declarations():
                and row["output_protocol"] == "muse_atem_v1"
                and row["evidence"]["harness_task"] == "not_assessed"
                for row in report["rows"])
+    assert any(row["circuit"] == "instella_moe"
+               and row["chat_scope"] == "linked_chat_declaration"
+               and row["output_protocol"] == "none"
+               and row["evidence"]["harness_task"] == "not_assessed"
+               for row in report["rows"])
     assert any(row["circuit"] == "gemma4_vision"
                and row["chat_scope"] == "component" for row in report["rows"])
     assert any(row["circuit"] == "qwen38"
