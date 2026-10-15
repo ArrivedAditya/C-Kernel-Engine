@@ -864,6 +864,13 @@ def _render_with_chat_templates(
         env = jinja2.sandbox.SandboxedEnvironment(
             undefined=jinja2.StrictUndefined, autoescape=False
         )
+        # Transformers' chat renderer uses JSON text here. Jinja's built-in
+        # tojson HTML-escapes quotes even with autoescape disabled, changing
+        # publisher tool schemas and their token IDs.
+        env.filters["tojson"] = lambda value, ensure_ascii=False, indent=None, separators=None, sort_keys=False: json.dumps(
+            value, ensure_ascii=ensure_ascii, indent=indent,
+            separators=separators, sort_keys=sort_keys,
+        )
         captured_time = render_time if render_time is not None else datetime.now()
         env.globals["strftime_now"] = lambda format: captured_time.strftime(format)
         tmpl = env.from_string(tmpl_str)
