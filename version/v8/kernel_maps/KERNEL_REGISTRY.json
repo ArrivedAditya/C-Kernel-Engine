@@ -14402,6 +14402,7 @@
           "tests/test_v8_kokoro_text_primitives.py",
           "tests/test_v8_checked_text_ops_generated.py",
           "tests/test_v8_kokoro_generated_text_encoder.py",
+          "tests/test_v8_kokoro_runtime_text_expansion.py",
           "tests/test_v8_kokoro_generated_prosody_first_block.py",
           "tests/test_v8_kokoro_generated_prosody_complete.py",
           "tests/test_v8_kokoro_generated_decoder_ingress.py",
@@ -18207,7 +18208,8 @@
       "tests": {
         "unit": [
           "tests/test_v8_audio_duration_expand_token_major_oracle.py",
-          "tests/test_v8_kokoro_generated_expansion.py"
+          "tests/test_v8_kokoro_generated_expansion.py",
+          "tests/test_v8_kokoro_runtime_text_expansion.py"
         ],
         "oracle": "Pinned Kokoro/PyTorch duration feature expansion; optional live PyTorch repeat_interleave"
       },
@@ -18452,7 +18454,8 @@
           "tests/test_v8_audio_duration_logits_oracle.py",
           "tests/test_v8_audio_duration_logits_live.py",
           "tests/test_v8_kokoro_generated_duration.py",
-          "tests/test_v8_kokoro_runtime_duration.py"
+          "tests/test_v8_kokoro_runtime_duration.py",
+          "tests/test_v8_kokoro_runtime_text_expansion.py"
         ],
         "oracle": "Pinned Kokoro 0.9.4 PyTorch 2.8.0+cpu predictor duration logits and exact int32 result; separately classified live PyTorch recomputation"
       },
@@ -21680,7 +21683,8 @@
         "unit": [
           "tests/test_v8_audio_lstm_scan_oracle.py",
           "tests/test_v8_kokoro_generated_duration.py",
-          "tests/test_v8_kokoro_generated_prosody_shared.py"
+          "tests/test_v8_kokoro_generated_prosody_shared.py",
+          "tests/test_v8_kokoro_runtime_text_expansion.py"
         ],
         "oracle": "torch.nn.LSTM bidirectional FP32 CPU; committed reference outputs plus live PyTorch reconstruction"
       },
@@ -25748,7 +25752,8 @@
         "unit": [
           "tests/test_v8_audio_text_embedding_oracle.py",
           "tests/test_v8_audio_text_embedding_generated.py",
-          "tests/test_v8_kokoro_generated_text_embedding.py"
+          "tests/test_v8_kokoro_generated_text_embedding.py",
+          "tests/test_v8_kokoro_runtime_text_expansion.py"
         ],
         "oracle": "Pinned Kokoro/PyTorch 2.8 embedding capture and optional live PyTorch embedding"
       },
@@ -47954,7 +47959,8 @@
           "tests/test_v8_normalization_checked_generated.py",
           "tests/test_v8_kokoro_generated_albert_layer.py",
           "tests/test_v8_kokoro_generated_encoder.py",
-          "tests/test_v8_kokoro_generated_text_encoder.py"
+          "tests/test_v8_kokoro_generated_text_encoder.py",
+          "tests/test_v8_kokoro_runtime_text_expansion.py"
         ],
         "oracle": "Pinned independent Kokoro/PyTorch 2.8 first-layer operation captures; live PyTorch at small widths and SIMD tails; bounds, padding, rejection and repeated calls"
       },
@@ -48263,6 +48269,7 @@
           "tests/test_v8_kokoro_text_primitives.py",
           "tests/test_v8_checked_text_ops_generated.py",
           "tests/test_v8_kokoro_generated_text_encoder.py",
+          "tests/test_v8_kokoro_runtime_text_expansion.py",
           "tests/test_v8_kokoro_generated_prosody_first_block.py",
           "tests/test_v8_kokoro_generated_prosody_complete.py",
           "tests/test_v8_kokoro_generated_decoder_encode.py",
@@ -79750,6 +79757,7 @@
           "tests/test_v8_kokoro_text_primitives.py",
           "tests/test_v8_checked_text_ops_generated.py",
           "tests/test_v8_kokoro_generated_text_encoder.py",
+          "tests/test_v8_kokoro_runtime_text_expansion.py",
           "tests/test_v8_kokoro_generated_prosody_shared.py"
         ],
         "oracle": "Pinned PyTorch 2.8 text encoder, independent NumPy/PyTorch primitives"

@@ -54,7 +54,7 @@
   ]},
   "tests": {"unit": ["tests/test_v8_audio_text_embedding_oracle.py",
                       "tests/test_v8_audio_text_embedding_generated.py",
-                      "tests/test_v8_kokoro_generated_text_embedding.py"],
+                      "tests/test_v8_kokoro_generated_text_embedding.py", "tests/test_v8_kokoro_runtime_text_expansion.py"],
     "oracle": "Pinned Kokoro/PyTorch 2.8 embedding capture and optional live PyTorch embedding"},
   "notes": "Checked exact FP32 table lookup. Caller owns nonoverlapping ID, table and output buffers; physical strides and capacities are explicit. Output is untouched on rejection. No scratch, heap, reduction, or backward support.",
   "call_constant_contract": {
