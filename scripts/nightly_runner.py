@@ -786,6 +786,10 @@ TEST_SUITES = {
         "TTS Kokoro Runtime-Length Encoder and Duration", "kernels",
         ROOT / "tests" / "test_v8_kokoro_runtime_duration.py",
     ),
+    "tts_kokoro_runtime_text_expansion": TestSuite(
+        "TTS Kokoro Runtime-Length Acoustic Text and Expansion", "kernels",
+        ROOT / "tests" / "test_v8_kokoro_runtime_text_expansion.py",
+    ),
     "tts_checked_op_constants": TestSuite(
         "Checked Per-Operation ABI Constants Generated Graph", "kernels",
         ROOT / "tests" / "test_v8_checked_op_constants.py",

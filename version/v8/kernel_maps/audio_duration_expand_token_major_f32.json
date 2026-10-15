@@ -177,7 +177,7 @@
   "tests": {
     "unit": [
       "tests/test_v8_audio_duration_expand_token_major_oracle.py",
-      "tests/test_v8_kokoro_generated_expansion.py"
+      "tests/test_v8_kokoro_generated_expansion.py", "tests/test_v8_kokoro_runtime_text_expansion.py"
     ],
     "oracle": "Pinned Kokoro/PyTorch duration feature expansion; optional live PyTorch repeat_interleave"
   },

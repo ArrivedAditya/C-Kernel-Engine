@@ -158,7 +158,7 @@
     "unit": [
       "tests/test_v8_kokoro_text_primitives.py",
       "tests/test_v8_checked_text_ops_generated.py",
-      "tests/test_v8_kokoro_generated_text_encoder.py",
+      "tests/test_v8_kokoro_generated_text_encoder.py", "tests/test_v8_kokoro_runtime_text_expansion.py",
       "tests/test_v8_kokoro_generated_prosody_first_block.py",
       "tests/test_v8_kokoro_generated_prosody_complete.py",
       "tests/test_v8_kokoro_generated_decoder_encode.py",
