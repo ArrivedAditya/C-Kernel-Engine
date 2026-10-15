@@ -974,9 +974,10 @@ def _tokenizer_pretokenizer_profile(data: dict) -> Optional[str]:
         if isinstance(pattern, dict) and isinstance(pattern.get("Regex"), str):
             split_patterns.append(pattern["Regex"])
 
-    # This profile isolates punctuation from adjacent words and emits number
-    # boundaries before byte-level BPE. It is used by multiple modern
-    # tokenizer.json checkpoints and is distinct from the GPT-2 regex policy.
+    # This profile isolates the Split regex's matches (including its optional
+    # punctuation prefix on words) and groups 1–3 digits before byte-level BPE.
+    # It is used by multiple modern tokenizer.json checkpoints and is distinct
+    # from the GPT-2 regex policy.
     if (
         has_byte_level
         and any("\\p{N}{1,3}" in pattern for pattern in split_patterns)

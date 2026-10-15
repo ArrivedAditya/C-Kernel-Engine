@@ -223,8 +223,8 @@ def test_late_spm_space_prefix_detection():
         lib.ck_true_bpe_free(bpe)
 
 
-def test_unicode_isolated_pretokenizer_keeps_punctuation_out_of_word_merges():
-    print("\nTest: Unicode Isolated Pretokenizer Boundaries")
+def test_unicode_isolated_pretokenizer_preserves_optional_word_prefix():
+    print("\nTest: Unicode Isolated Optional Word Prefix")
     print("-" * 60)
     bpe = lib.ck_true_bpe_create()
     if not bpe:
@@ -239,10 +239,97 @@ def test_unicode_isolated_pretokenizer_keeps_punctuation_out_of_word_merges():
                           CK_BPE_PRETOKENIZER_UNICODE_SPLIT_ISOLATED)
         lib.ck_true_bpe_set_config(bpe, ctypes.byref(cfg))
         ids = encode_c(bpe, "_a")
-        if ids != [0, 1]:
-            print(f"FAIL: Expected isolated '_' and 'a', got {ids}")
+        if ids != [2]:
+            print(f"FAIL: Expected the imported regex to join '_a', got {ids}")
             return False
-        print("PASS: Punctuation cannot merge across the declared split boundary")
+        print("PASS: Optional punctuation prefix follows the imported split regex")
+        return True
+    finally:
+        lib.ck_true_bpe_free(bpe)
+
+
+def test_unicode_isolated_pretokenizer_groups_three_digits():
+    """A Split regex with number width 1–3 must not tokenize each digit alone."""
+    bpe = lib.ck_true_bpe_create()
+    if not bpe:
+        return False
+    try:
+        tokens = (("1", 1), ("2", 2), ("3", 3), ("4", 4),
+                  ("12", 5), ("123", 6), ("1234", 7), ("Ġ", 8))
+        for token, token_id in tokens:
+            if lib.ck_true_bpe_add_token(bpe, token.encode("utf-8"), token_id, 0.0) != 0:
+                return False
+        for left, right, merged, rank in ((1, 2, 5, 0), (5, 3, 6, 1), (6, 4, 7, 2)):
+            if lib.ck_true_bpe_add_merge(bpe, left, right, merged, rank) != 0:
+                return False
+        cfg = CKBPEConfig(False, False, True, CK_SPACE_PREFIX_GPT2,
+                          CK_BPE_PRETOKENIZER_UNICODE_SPLIT_ISOLATED)
+        lib.ck_true_bpe_set_config(bpe, ctypes.byref(cfg))
+        isolated = encode_c(bpe, "1234")
+        spaced = encode_c(bpe, " 1234")
+        cfg.pretokenizer = 0  # GPT-2 retains single-digit boundaries.
+        lib.ck_true_bpe_set_config(bpe, ctypes.byref(cfg))
+        gpt2 = encode_c(bpe, "1234")
+        if isolated != [6, 4] or spaced != [8, 6, 4] or gpt2 != [1, 2, 3, 4]:
+            print(f"FAIL: isolated={isolated}, spaced={spaced}, gpt2={gpt2}")
+            return False
+        return True
+    finally:
+        lib.ck_true_bpe_free(bpe)
+
+
+def test_unicode_isolated_pretokenizer_keeps_word_contractions():
+    """The imported Split pattern includes a contraction at the end of a word."""
+    bpe = lib.ck_true_bpe_create()
+    if not bpe:
+        return False
+    try:
+        for token, token_id in (("a", 1), ("'", 2), ("s", 3), ("a'", 4), ("a's", 5)):
+            if lib.ck_true_bpe_add_token(bpe, token.encode(), token_id, 0.0) != 0:
+                return False
+        if lib.ck_true_bpe_add_merge(bpe, 1, 2, 4, 0) != 0:
+            return False
+        if lib.ck_true_bpe_add_merge(bpe, 4, 3, 5, 1) != 0:
+            return False
+        cfg = CKBPEConfig(False, False, True, CK_SPACE_PREFIX_GPT2,
+                          CK_BPE_PRETOKENIZER_UNICODE_SPLIT_ISOLATED)
+        lib.ck_true_bpe_set_config(bpe, ctypes.byref(cfg))
+        isolated = encode_c(bpe, "a's")
+        cfg.pretokenizer = 0
+        lib.ck_true_bpe_set_config(bpe, ctypes.byref(cfg))
+        gpt2 = encode_c(bpe, "a's")
+        if isolated != [5] or gpt2 == [5]:
+            print(f"FAIL: isolated={isolated}, gpt2={gpt2}")
+            return False
+        return True
+    finally:
+        lib.ck_true_bpe_free(bpe)
+
+
+def test_unicode_isolated_pretokenizer_punctuation_line_slashes():
+    """The Split regex permits slashes after a punctuation line break."""
+    bpe = lib.ck_true_bpe_create()
+    if not bpe:
+        return False
+    try:
+        tokens = ((":", 1), ("Ċ", 2), ("/", 3), (":Ċ", 4),
+                  (":Ċ/", 5), (":Ċ//", 6))
+        for token, token_id in tokens:
+            if lib.ck_true_bpe_add_token(bpe, token.encode(), token_id, 0.0) != 0:
+                return False
+        for left, right, merged, rank in ((1, 2, 4, 0), (4, 3, 5, 1), (5, 3, 6, 2)):
+            if lib.ck_true_bpe_add_merge(bpe, left, right, merged, rank) != 0:
+                return False
+        cfg = CKBPEConfig(False, False, True, CK_SPACE_PREFIX_GPT2,
+                          CK_BPE_PRETOKENIZER_UNICODE_SPLIT_ISOLATED)
+        lib.ck_true_bpe_set_config(bpe, ctypes.byref(cfg))
+        isolated = encode_c(bpe, ":\n//")
+        cfg.pretokenizer = 0
+        lib.ck_true_bpe_set_config(bpe, ctypes.byref(cfg))
+        gpt2 = encode_c(bpe, ":\n//")
+        if isolated != [6] or gpt2 == [6]:
+            print(f"FAIL: isolated={isolated}, gpt2={gpt2}")
+            return False
         return True
     finally:
         lib.ck_true_bpe_free(bpe)
@@ -709,7 +796,10 @@ def main():
     results.append(("GPT-2 Byte Decoding", test_gpt2_byte_decoding()))
     results.append(("Exhaustive GPT-2 Byte Table", test_exhaustive_gpt2_byte_table()))
     results.append(("Late SPM Space Prefix Detection", test_late_spm_space_prefix_detection()))
-    results.append(("Unicode Isolated Pretokenizer", test_unicode_isolated_pretokenizer_keeps_punctuation_out_of_word_merges()))
+    results.append(("Unicode Isolated Pretokenizer", test_unicode_isolated_pretokenizer_preserves_optional_word_prefix()))
+    results.append(("Unicode Isolated Numeric Width", test_unicode_isolated_pretokenizer_groups_three_digits()))
+    results.append(("Unicode Isolated Contractions", test_unicode_isolated_pretokenizer_keeps_word_contractions()))
+    results.append(("Unicode Isolated Punctuation Line Slashes", test_unicode_isolated_pretokenizer_punctuation_line_slashes()))
     results.append(("Long Prompt Completeness", test_long_prompt_completeness()))
     results.append(("Chat Template Encoding", test_chat_template_encoding()))
 

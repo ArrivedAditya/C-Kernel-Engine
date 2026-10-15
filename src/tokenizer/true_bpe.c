@@ -895,6 +895,29 @@ static bool is_bpe_digit(const char *s, int len) {
     return false;
 }
 
+/* The isolated Unicode Split profile keeps a contraction on the end of its
+ * word match. GPT-2 instead gives contractions their own pretokenizer chunk. */
+static int isolated_contraction_len(const char *s, int available) {
+    static const char *suffixes[] = {"s", "t", "re", "ve", "m", "ll", "d"};
+    if (available < 2 || s[0] != '\'') return 0;
+    for (size_t i = 0; i < sizeof(suffixes) / sizeof(suffixes[0]); ++i) {
+        const char *suffix = suffixes[i];
+        size_t length = strlen(suffix);
+        if ((size_t)available < length + 1) continue;
+        bool matches = true;
+        for (size_t j = 0; j < length; ++j) {
+            unsigned char c = (unsigned char)s[j + 1];
+            if (c >= 'A' && c <= 'Z') c = (unsigned char)(c + ('a' - 'A'));
+            if (c != (unsigned char)suffix[j]) {
+                matches = false;
+                break;
+            }
+        }
+        if (matches) return (int)length + 1;
+    }
+    return 0;
+}
+
 /* Pretokenizer chunk types */
 typedef enum {
     CHUNK_WORD,        /* Letters (with optional leading space) */
@@ -980,8 +1003,7 @@ static int gpt2_pretokenize(const char *text, int text_len, PretokChunk *chunks,
         if (is_bpe_letter(text + pos, char_len)) {
             /* Word without prefix */
             is_word = true;
-        } else if (pretokenizer == CK_BPE_PRETOKENIZER_GPT2 &&
-                   is_word_prefix_char(text + pos, char_len) &&
+        } else if (is_word_prefix_char(text + pos, char_len) &&
                    !is_gpt2_space(text + pos, text_len - pos)) {
             /* Check if punctuation is followed by a letter */
             int after = pos + char_len;
@@ -1006,6 +1028,8 @@ static int gpt2_pretokenize(const char *text, int text_len, PretokChunk *chunks,
                     break;
                 }
             }
+            if (pretokenizer == CK_BPE_PRETOKENIZER_UNICODE_SPLIT_ISOLATED)
+                pos += isolated_contraction_len(text + pos, text_len - pos);
             chunks[num_chunks].start = text + chunk_start;
             chunks[num_chunks].len = pos - chunk_start;
             chunks[num_chunks].type = CHUNK_WORD;
@@ -1016,6 +1040,15 @@ static int gpt2_pretokenize(const char *text, int text_len, PretokChunk *chunks,
         /* Pattern 3: \p{N} - Single digit */
         if (is_bpe_digit(text + pos, char_len)) {
             pos += char_len;
+            /* The isolated Split regex groups up to three digits; GPT-2 does not. */
+            if (pretokenizer == CK_BPE_PRETOKENIZER_UNICODE_SPLIT_ISOLATED) {
+                for (int digits = 1; digits < 3 && pos < text_len; ++digits) {
+                    int next_len = utf8_char_len((unsigned char)text[pos]);
+                    if (pos + next_len > text_len ||
+                        !is_bpe_digit(text + pos, next_len)) break;
+                    pos += next_len;
+                }
+            }
             chunks[num_chunks].start = text + chunk_start;
             chunks[num_chunks].len = pos - chunk_start;
             chunks[num_chunks].type = CHUNK_NUMBER;
@@ -1049,9 +1082,17 @@ static int gpt2_pretokenize(const char *text, int text_len, PretokChunk *chunks,
                         break;
                     }
                 }
-                /* Include trailing newlines */
-                while (pos < text_len && is_bpe_newline(text + pos, text_len - pos)) {
-                    pos += 2;
+                /* The isolated Split pattern allows slashes after line breaks;
+                 * GPT-2's punctuation branch only includes line breaks. */
+                while (pos < text_len) {
+                    if (is_bpe_newline(text + pos, text_len - pos)) {
+                        pos += 2;
+                    } else if (pretokenizer == CK_BPE_PRETOKENIZER_UNICODE_SPLIT_ISOLATED &&
+                               text[pos] == '/') {
+                        pos++;
+                    } else {
+                        break;
+                    }
                 }
                 chunks[num_chunks].start = text + chunk_start;
                 chunks[num_chunks].len = pos - chunk_start;
@@ -1120,12 +1161,15 @@ static int gpt2_pretokenize(const char *text, int text_len, PretokChunk *chunks,
                             break;
                         }
                     }
+                    if (pretokenizer == CK_BPE_PRETOKENIZER_UNICODE_SPLIT_ISOLATED)
+                        pos += isolated_contraction_len(text + pos, text_len - pos);
                     chunks[num_chunks].start = text + chunk_start;
                     chunks[num_chunks].len = pos - chunk_start;
                     chunks[num_chunks].type = CHUNK_WORD;
                     num_chunks++;
                     continue;
-                } else if (is_bpe_digit(text + space_end, next_len)) {
+                } else if (pretokenizer == CK_BPE_PRETOKENIZER_GPT2 &&
+                           is_bpe_digit(text + space_end, next_len)) {
                     /* Digit follows - output (n-1) spaces, then space+digit */
                     if (space_count > 1) {
                         chunks[num_chunks].start = text + pos;
