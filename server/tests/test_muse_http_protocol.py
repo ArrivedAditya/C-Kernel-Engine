@@ -35,11 +35,13 @@ class _Session:
         self.outputs = iter(outputs)
         self.prompts: list[str] = []
         self.stops: list[tuple[str, ...]] = []
+        self.max_tokens_seen: list[int] = []
 
     def generate(self, system, user, *, max_tokens, temperature, top_p, on_token,
                  flags=0, stop_on_text=(), stop_at_eos=False):
         self.prompts.append(user)
         self.stops.append(tuple(stop_on_text))
+        self.max_tokens_seen.append(max_tokens)
         output = next(self.outputs)
         for index, part in enumerate((output[:7], output[7:29], output[29:])):
             on_token(index, part)
@@ -49,12 +51,13 @@ class _Session:
         pass
 
 
-def _client(outputs: list[str]) -> tuple[TestClient, _Session]:
+def _client(outputs: list[str], *, request_output_cap: int | None = None) -> tuple[TestClient, _Session]:
     session = _Session(outputs)
     return TestClient(create_app(
         session, model="muse-test", chat_template=TEMPLATE,
         tool_protocol="muse_atem_v1", renderer_tokens=TOKENS,
         stop_on_text=["<|eot|>", "<|end_of_text|>"],
+        context_length=32768, request_output_cap=request_output_cap,
     )), session
 
 
@@ -195,6 +198,17 @@ def test_explicit_namespaced_call_history_renders_qualified_tool() -> None:
     })
     assert response.status_code == 200, response.text
     assert '<tool_output name="muse.read_file">' in session.prompts[0]
+
+
+def test_muse_code_large_requested_budget_uses_explicit_server_cap() -> None:
+    client, session = _client([FINAL], request_output_cap=256)
+    response = client.post("/v1/responses", json={
+        "model": "muse-test", "input": "Say hello", "tools": [NAMESPACE_TOOL],
+        "max_output_tokens": 128000,
+    })
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "completed"
+    assert session.max_tokens_seen == [256]
 
 
 @pytest.mark.parametrize("stream", [False, True])
