@@ -293,6 +293,7 @@ def _run_llama_capture(
     prefix_row_dim: int | None = None,
     prefix_text_pos: int | None = None,
     prefix_decode_mode: str = "batched",
+    prefix_decode_policy: str = "causal_mixed_prefix",
     decode_mode: str = "batched",
     dump_dir: Path | None = None,
     dump_names: str | None = None,
@@ -319,6 +320,8 @@ def _run_llama_capture(
             str(int(top_k)),
             "--prefix-decode-mode",
             str(prefix_decode_mode),
+            "--prefix-decode-policy",
+            str(prefix_decode_policy),
             "--decode-mode",
             str(decode_mode),
             "--flash-attn",
@@ -365,6 +368,11 @@ def _run_llama_capture(
         meta = json.loads(payload)
         if not isinstance(meta, dict) or not meta.get("ok"):
             raise RuntimeError(f"llama_token_replay returned invalid payload: {payload}")
+        if meta.get("prefix_decode_policy") != prefix_decode_policy:
+            raise RuntimeError(
+                "llama.cpp prefix decode policy mismatch: "
+                f"requested={prefix_decode_policy!r} actual={meta.get('prefix_decode_policy')!r}"
+            )
         if flash_attention == "enabled" and meta.get("flash_attention_mode") != "enabled":
             raise RuntimeError(
                 "llama.cpp did not execute requested flash attention; "
@@ -1998,6 +2006,7 @@ def _capture_dump_compare(
         prefix_row_dim=int(prefix_row_dim),
         prefix_text_pos=prefix_text_pos,
         prefix_decode_mode=str(llama_prefix_decode_mode),
+        prefix_decode_policy=prefix_decode_policy,
         decode_mode=str(llama_decode_mode),
         flash_attention=str(llama_flash_attention),
         dump_dir=llama_dump_dir,
@@ -2341,6 +2350,7 @@ def main(argv: list[str] | None = None) -> int:
         prefix_grid=resolved_prefix_grid,
         prefix_row_dim=int(prefix_row_dim),
         prefix_text_pos=resolved_prefix_text_pos,
+        prefix_decode_policy=prefix_decode_policy,
         flash_attention=str(args.llama_flash_attention),
     )
     if separate_prefixes and hashlib.sha256(llama_prefix_path.read_bytes()).hexdigest() != llama_prefix_sha256:

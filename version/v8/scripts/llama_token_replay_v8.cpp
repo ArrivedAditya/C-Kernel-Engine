@@ -33,6 +33,7 @@ struct Args {
     std::vector<std::string> dump_names;
     std::string decode_mode = "batched";
     std::string prefix_decode_mode = "batched";
+    std::string prefix_decode_policy = "causal_mixed_prefix";
     std::string flash_attention_mode = "disabled";
     int ctx_len = 256;
     int top_k = 16;
@@ -285,6 +286,17 @@ static bool parse_args(int argc, char ** argv, Args & args, std::string & err) {
             }
             continue;
         }
+        if (a == "--prefix-decode-policy") {
+            const char * v = need_value("--prefix-decode-policy");
+            if (!v) return false;
+            args.prefix_decode_policy = v;
+            if (args.prefix_decode_policy != "causal_mixed_prefix" &&
+                args.prefix_decode_policy != "non_causal_visual_chunk") {
+                err = "invalid --prefix-decode-policy";
+                return false;
+            }
+            continue;
+        }
         if (a == "--flash-attn") {
             const char * v = need_value("--flash-attn");
             if (!v) return false;
@@ -308,6 +320,7 @@ static bool parse_args(int argc, char ** argv, Args & args, std::string & err) {
                 << "--logits-out <path.bin> [--logits-seq-out <path.bin> --greedy-steps N] [--embeddings-out <path.f32>] [--prefix-f32 <path.f32>] "
                 << "[--prefix-grid-x N --prefix-grid-y N] [--prefix-row-dim N] [--prefix-text-pos N] [--ctx N] [--top-k K] [--threads N] "
                 << "[--decode-mode batched|sequential] [--prefix-decode-mode batched|sequential] "
+                << "[--prefix-decode-policy causal_mixed_prefix|non_causal_visual_chunk] "
                 << "[--flash-attn disabled|auto|enabled] "
                 << "[--dump-dir dir --dump-names a,b,matmul_weight:WEIGHT] [--dump-greedy-decode-step N] "
                 << "[--profile-layers-out path.csv] "
@@ -347,6 +360,10 @@ static bool parse_args(int argc, char ** argv, Args & args, std::string & err) {
     }
     if (args.prefix_text_pos < -1) {
         err = "prefix text position must be >= -1";
+        return false;
+    }
+    if (args.prefix_decode_policy == "non_causal_visual_chunk" && args.prefix_decode_mode != "batched") {
+        err = "non-causal visual prefix requires batched prefix decode";
         return false;
     }
     if (args.dump_greedy_decode_step < -1) {
@@ -985,6 +1002,7 @@ static int32_t decode_prefix_embeddings(
     int32_t prefix_pos0,
     int32_t prefix_text_pos,
     const std::string & prefix_decode_mode,
+    const std::string & prefix_decode_policy,
     DumpState * dump_state,
     int32_t * prefix_text_pos_out
 ) {
@@ -994,6 +1012,18 @@ static int32_t decode_prefix_embeddings(
     if (prefix_tokens <= 0) {
         return 0;
     }
+
+    const bool non_causal = prefix_decode_policy == "non_causal_visual_chunk";
+    if (non_causal) {
+        llama_set_causal_attn(ctx, false);
+    }
+    struct RestoreCausalAttention {
+        llama_context * ctx;
+        bool enabled;
+        ~RestoreCausalAttention() {
+            if (enabled) llama_set_causal_attn(ctx, true);
+        }
+    } restore_causal{ctx, non_causal};
 
     const bool use_mrope_2d = prefix_grid_x > 0 && prefix_grid_y > 0;
     const bool use_mrope_1d = !use_mrope_2d && prefix_grid_x == 0 && prefix_grid_y == 0;
@@ -1259,6 +1289,7 @@ int main(int argc, char ** argv) {
             static_cast<int32_t>(tokens_before.size()),
             args.prefix_text_pos,
             args.prefix_decode_mode,
+            args.prefix_decode_policy,
             capture_active ? &dump_state : nullptr,
             &prefix_text_pos
         );
@@ -1512,6 +1543,7 @@ int main(int argc, char ** argv) {
     std::cout << "\"prefix_position_count\":" << std::max<int32_t>(0, prefix_text_pos - static_cast<int32_t>(tokens_before.size())) << ",";
     std::cout << "\"prefix_start_pos\":" << tokens_before.size() << ",";
     std::cout << "\"prefix_text_pos\":" << prefix_text_pos << ",";
+    std::cout << "\"prefix_decode_policy\":\"" << args.prefix_decode_policy << "\",";
     std::cout << "\"n_embd_out\":" << n_embd_out << ",";
     std::cout << "\"tokens\":[";
     for (size_t i = 0; i < tokens_before.size(); ++i) {

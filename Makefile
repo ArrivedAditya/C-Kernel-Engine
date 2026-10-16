@@ -1765,7 +1765,10 @@ test-v8-qwen38-dense-contracts:
 
 .PHONY: test-v8-multimodal-ocr-contracts
 test-v8-multimodal-ocr-contracts:
-	@$(PYTHON) -m unittest -q tests.test_v8_multimodal_ocr_corpus_certification
+	@$(PYTHON) -m unittest -q \
+		tests.test_v8_multimodal_ocr_corpus_certification \
+		tests.test_v8_decoder_first_token_parity \
+		tests.test_v8_multitoken_eos_contract
 
 .PHONY: test-v8-routed-moe-contracts
 test-v8-routed-moe-contracts:
