@@ -794,6 +794,10 @@ TEST_SUITES = {
         "TTS Kokoro Runtime-Length Shared Prosody Scan", "kernels",
         ROOT / "tests" / "test_v8_kokoro_runtime_prosody_shared.py",
     ),
+    "tts_kokoro_runtime_prosody_norm": TestSuite(
+        "TTS Kokoro Runtime-Length F0 and Noise Entry", "kernels",
+        ROOT / "tests" / "test_v8_kokoro_runtime_prosody_norm.py",
+    ),
     "tts_checked_op_constants": TestSuite(
         "Checked Per-Operation ABI Constants Generated Graph", "kernels",
         ROOT / "tests" / "test_v8_checked_op_constants.py",
