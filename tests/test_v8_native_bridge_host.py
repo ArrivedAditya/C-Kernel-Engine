@@ -620,19 +620,57 @@ class V8NativeBridgeHostTests(unittest.TestCase):
             196,
         )
 
-    def test_vision_prefix_decode_policy_marks_gemma_visual_chunk_non_causal(self) -> None:
+    def test_vision_prefix_decode_policy_respects_gemma_variant(self) -> None:
         self.assertEqual(
             bridge_runner_v8._vision_prefix_decode_policy({"model": "qwen3_vl_vision"}),
             "causal_mixed_prefix",
         )
         self.assertEqual(
-            bridge_runner_v8._vision_prefix_decode_policy({"model": "gemma4_vision"}),
+            bridge_runner_v8._vision_prefix_decode_policy({
+                "model": "gemma4_vision",
+                "projector_out_dim": 4096,
+                "contract": {"multimodal_bridge": {"decode_policy": "non_causal_visual_chunk"}},
+            }),
             "non_causal_visual_chunk",
         )
         self.assertEqual(
             bridge_runner_v8._vision_prefix_decode_policy({"model": "gemma3_vision"}),
             "non_causal_visual_chunk",
         )
+
+    def test_gemma4_e4b_rejects_stale_noncausal_encoder_bundle(self) -> None:
+        with self.assertRaisesRegex(ValueError, "requires a positive projector_out_dim"):
+            bridge_runner_v8._vision_prefix_decode_policy({"model": "gemma4_vision"})
+        for width in (1536, 2560):
+            layout_cfg = {
+                "model": "gemma4_vision",
+                "projector_out_dim": width,
+                "contract": {"multimodal_bridge": {"decode_policy": "non_causal_visual_chunk"}},
+            }
+            with self.subTest(width=width), self.assertRaisesRegex(ValueError, "missing or stale visual decode policy"):
+                bridge_runner_v8._vision_prefix_decode_policy(layout_cfg)
+            del layout_cfg["contract"]["multimodal_bridge"]["decode_policy"]
+            with self.subTest(width=width, policy="missing"), self.assertRaisesRegex(ValueError, "missing or stale"):
+                bridge_runner_v8._vision_prefix_decode_policy(layout_cfg)
+            layout_cfg["contract"]["multimodal_bridge"]["decode_policy"] = "causal_mixed_prefix"
+            self.assertEqual(
+                bridge_runner_v8._vision_prefix_decode_policy(layout_cfg),
+                "causal_mixed_prefix",
+            )
+
+    def test_gemma4_stale_decode_policy_rejected_before_encoder_load(self) -> None:
+        layout = {
+            "config": {
+                "model": "gemma4_vision",
+                "projector_out_dim": 2560,
+                "contract": {"multimodal_bridge": {"decode_policy": "non_causal_visual_chunk"}},
+            }
+        }
+        with mock.patch.object(bridge_runner_v8, "_load_layout", return_value=layout), \
+             mock.patch.object(bridge_runner_v8, "_load_encoder_lib") as load_lib:
+            with self.assertRaisesRegex(ValueError, "missing or stale visual decode policy"):
+                bridge_runner_v8._run_encoder({"layout_path": "unused"}, "default")
+            load_lib.assert_not_called()
 
     def test_composition_policy_outranks_encoder_standalone_fallback(self) -> None:
         encoder_report = {

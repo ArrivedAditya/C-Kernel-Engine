@@ -1866,6 +1866,18 @@ def gemma4_layer_produces_kv(plan: Dict[str, object], layer: int) -> bool:
     return policy == "produce"
 
 
+def gemma4_vision_prefix_decode_policy(projector_out_dim: int) -> str:
+    if projector_out_dim <= 0:
+        raise GGUFError("Gemma4 vision projector output width must be positive")
+    # The pinned MTMD path keeps E2B/E4B image chunks causal. Larger Gemma4
+    # variants enable bidirectional attention only for sliding-window layers.
+    return (
+        "causal_mixed_prefix"
+        if projector_out_dim in {1536, 2560}
+        else "non_causal_visual_chunk"
+    )
+
+
 def build_gemma4_attention_plan(meta: Dict[str, object], num_layers: int) -> Dict[str, object]:
     """Resolve Gemma4 attention/cache policy from GGUF metadata.
 
@@ -4191,6 +4203,16 @@ def main() -> None:
             template_data = load_template_for_arch(vision_arch)
             if isinstance(template_data.get("contract"), dict):
                 vision_config["contract"] = copy.deepcopy(template_data["contract"])
+            if vision_arch == "gemma4_vision":
+                text_dim = meta_int("gemma4.embedding_length")
+                if text_dim is not None and int(text_dim) != projector_out_dim:
+                    raise GGUFError(
+                        "Gemma4 vision projector output width disagrees with text embedding width: "
+                        f"projector={projector_out_dim} text={text_dim}"
+                    )
+                vision_config["contract"]["multimodal_bridge"]["decode_policy"] = (
+                    gemma4_vision_prefix_decode_policy(projector_out_dim)
+                )
 
             if args.config_out:
                 os.makedirs(os.path.dirname(args.config_out) or ".", exist_ok=True)
