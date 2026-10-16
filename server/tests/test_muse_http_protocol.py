@@ -138,6 +138,53 @@ def test_muse_code_namespace_tool_round_trip(stream: bool) -> None:
     assert '<tool_output name="muse.read_file">' in session.prompts[1]
 
 
+@pytest.mark.parametrize("stream", [False, True])
+def test_muse_code_explicit_reasoning_and_tool_history_is_preserved(
+    stream: bool,
+) -> None:
+    client, session = _client([FINAL])
+    response = client.post("/v1/responses", json={
+        "model": "muse-test", "stream": stream, "tools": [NAMESPACE_TOOL],
+        "input": [
+            {"type": "message", "role": "user", "content": "Read /tmp/a"},
+            {"type": "reasoning", "content": [{
+                "type": "reasoning_text", "text": "I should read the file."
+            }]},
+            {"type": "function_call", "namespace": "muse", "name": "read_file",
+             "call_id": "call_1", "arguments": '{"path":"/tmp/a"}'},
+            {"type": "function_call_output", "call_id": "call_1", "output": "cobalt"},
+        ],
+    })
+    assert response.status_code == 200, response.text
+    if stream:
+        assert any(event["type"] == "response.completed" for event in _events(response))
+    else:
+        assert response.json()["output_text"] == "The file says cobalt."
+    assert len(session.prompts) == 1
+    prompt = session.prompts[0]
+    assert (
+        "<|start|>assistant to=self<|message|>I should read the file.<|eom|>"
+        "<|start|>assistant to=muse.read_file<|message|>"
+    ) in prompt
+    assert '<tool_output name="muse.read_file">\ncobalt\n</tool_output>' in prompt
+
+
+def test_muse_code_unrenderable_reasoning_history_fails_before_generation() -> None:
+    client, session = _client([FINAL])
+    rejected = client.post("/v1/responses", json={
+        "model": "muse-test", "input": [{
+            "type": "reasoning", "encrypted_content": "unavailable"
+        }],
+    })
+    assert rejected.status_code == 400, rejected.text
+    assert session.prompts == []
+    recovered = client.post("/v1/responses", json={
+        "model": "muse-test", "input": "Hello",
+    })
+    assert recovered.status_code == 200, recovered.text
+    assert len(session.prompts) == 1
+
+
 @pytest.mark.parametrize("variant", [
     {"type": "namespace", "name": "bad.name", "tools": [TOOL]},
     {"type": "namespace", "name": "muse", "tools": []},

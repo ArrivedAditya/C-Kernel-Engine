@@ -312,7 +312,9 @@ def _select_template(
     return None
 
 
-def _input_chat_messages(value: Any) -> list[dict[str, Any]]:
+def _input_chat_messages(
+    value: Any, *, preserve_reasoning: bool = False,
+) -> list[dict[str, Any]]:
     if value is None:
         return []
     if isinstance(value, str):
@@ -320,6 +322,22 @@ def _input_chat_messages(value: Any) -> list[dict[str, Any]]:
     messages: list[dict[str, Any]] = []
     for item in value:
         item_type = getattr(item, "type", None)
+        if item_type == "reasoning" and preserve_reasoning:
+            # A Muse Responses client replays visible reasoning as a separate
+            # input item. The publisher template represents it as the
+            # assistant's self channel before the following tool/final turn.
+            # Dropping it changes the prompt on every tool continuation.
+            parts = getattr(item, "content", None)
+            reasoning = "".join(part.text for part in parts) if parts else ""
+            if not reasoning:
+                raise ValueError(
+                    "Muse reasoning history requires visible reasoning text"
+                )
+            messages.append({
+                "role": "assistant", "recipient": "self", "content": reasoning,
+                "end_turn": False, "tool_calls": [],
+            })
+            continue
         if item_type == "message" or (
             item_type is None and getattr(item, "role", None) is not None
         ):
@@ -1858,7 +1876,10 @@ def create_app(
                 )
             messages.extend(dict(m) for m in previous)
         try:
-            current = _input_chat_messages(body.input)
+            current = _input_chat_messages(
+                body.input,
+                preserve_reasoning=(tool_syntax == _TOOL_SYNTAX_MUSE_ATEM_V1),
+            )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         known_call_ids = {
