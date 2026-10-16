@@ -1750,6 +1750,9 @@ test-v8-xeon-family-contracts:
 	@echo "Running Xeon/high-memory family compiler and circuit contracts..."
 	@$(PYTHON) -m unittest \
 		tests.test_v8_gemma4_scaffold \
+		tests.test_v8_native_bridge_host.V8NativeBridgeHostTests.test_vision_prefix_decode_policy_respects_gemma_variant \
+		tests.test_v8_native_bridge_host.V8NativeBridgeHostTests.test_gemma4_e4b_rejects_stale_noncausal_encoder_bundle \
+		tests.test_v8_native_bridge_host.V8NativeBridgeHostTests.test_gemma4_stale_decode_policy_rejected_before_encoder_load \
 		tests.test_v8_glm4_template \
 		tests.test_v8_kimi_template \
 		tests.test_v8_qwen36_contract \

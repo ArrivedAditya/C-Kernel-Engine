@@ -18,6 +18,7 @@ from convert_gguf_to_bump_v8 import (  # type: ignore
     build_gemma3_rope_plan,
     build_gemma4_attention_plan,
     gemma4_layer_produces_kv,
+    gemma4_vision_prefix_decode_policy,
     validate_gemma4_attention_plan,
     classify_layer_contract,
     describe_layer_contract,
@@ -36,6 +37,15 @@ from build_ir_v8 import (  # type: ignore
 
 
 class Gemma3RopeMetadataTests(unittest.TestCase):
+    def test_gemma4_vision_decode_policy_depends_on_text_width(self):
+        for width in (1536, 2560):
+            self.assertEqual(gemma4_vision_prefix_decode_policy(width), "causal_mixed_prefix")
+        self.assertEqual(
+            gemma4_vision_prefix_decode_policy(4096), "non_causal_visual_chunk"
+        )
+        with self.assertRaises(GGUFError):
+            gemma4_vision_prefix_decode_policy(0)
+
     def test_gemma3_and_gemma4_select_ggml_geglu_contract(self):
         gemma3 = _load_builtin_template_doc("gemma3")
         self.assertEqual(gemma3["kernels"]["attn_norm"], "rmsnorm_forward_llama_production")

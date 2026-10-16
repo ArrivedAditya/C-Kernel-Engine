@@ -308,10 +308,23 @@ def _vision_prefix_decode_policy(layout_cfg: dict[str, Any]) -> str:
     """Return how decoder should replay encoder-produced visual prefix rows."""
     bridge = _vision_bridge_contract(layout_cfg)
     policy = str(bridge.get("decode_policy") or "").strip().lower()
+    model = str(layout_cfg.get("model", layout_cfg.get("arch", "")) or "").lower()
+    if model == "gemma4_vision":
+        projector_out_dim = layout_cfg.get("projector_out_dim")
+        if type(projector_out_dim) is not int or projector_out_dim <= 0:
+            raise ValueError("Gemma4 vision artifact requires a positive projector_out_dim")
+        expected = convert_gguf_to_bump_v8.gemma4_vision_prefix_decode_policy(
+            projector_out_dim
+        )
+        if policy != expected:
+            raise ValueError(
+                "Gemma4 vision artifact has missing or stale visual decode policy; "
+                "regenerate the encoder bundle"
+            )
+        return expected
     if policy:
         return policy
-    model = str(layout_cfg.get("model", layout_cfg.get("arch", "")) or "").lower()
-    if model in {"gemma3_vision", "gemma4_vision"}:
+    if model == "gemma3_vision":
         return "non_causal_visual_chunk"
     return "causal_mixed_prefix"
 
@@ -3415,6 +3428,7 @@ def _run_encoder(
     encoder_t0 = time.perf_counter()
     layout = _load_layout(Path(runtime["layout_path"]))
     layout_cfg = dict(layout.get("config", {}) or {})
+    _vision_prefix_decode_policy(layout_cfg)
     if str(layout_cfg.get("model") or layout_cfg.get("arch") or "").lower() == "qwen3_vl_vision":
         _qwen_vl_resize_rounding_policy(layout_cfg)
     memory_evidence = {"before_load": _memory_snapshot()}
