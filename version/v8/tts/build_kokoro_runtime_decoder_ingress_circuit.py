@@ -1,0 +1,39 @@
+#!/usr/bin/env python3
+"""Declare checked decoder ingress behind variable-length Kokoro prosody."""
+import argparse
+import json
+from pathlib import Path
+
+from build_kokoro_runtime_prosody_complete_circuit import (
+    build_circuit as prosody_circuit, FRAMES, DOUBLED_FRAMES)
+from build_kokoro_decoder_ingress_circuit import add_decoder_ingress
+
+ROOT = Path(__file__).resolve().parents[3]
+OUTPUT = ROOT / 'version/v8/circuits/kokoro_runtime_decoder_ingress_bounded.json'
+
+
+def build_circuit():
+    graph = prosody_circuit()
+    graph['name'] = 'kokoro_runtime_decoder_ingress_bounded'
+    graph['native_entry']['function'] = 'ck_kokoro_runtime_decoder_ingress_bounded'
+    graph['contract']['runtime_invariants'].update(
+        generated_decoder_ingress=True, complete_decoder=False,
+        complete_waveform=False)
+    return add_decoder_ingress(graph, FRAMES, DOUBLED_FRAMES)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--output', type=Path, default=OUTPUT)
+    parser.add_argument('--check', action='store_true')
+    args = parser.parse_args()
+    content = json.dumps(build_circuit(), indent=2) + '\n'
+    if args.check:
+        if args.output.read_text() != content:
+            raise SystemExit('runtime decoder ingress differs from authoring')
+    else:
+        args.output.write_text(content)
+
+
+if __name__ == '__main__':
+    main()

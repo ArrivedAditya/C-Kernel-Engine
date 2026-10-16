@@ -271,6 +271,7 @@
       "tests/test_v8_kokoro_generated_prosody_first_block.py",
       "tests/test_v8_kokoro_generated_prosody_complete.py",
       "tests/test_v8_kokoro_runtime_prosody_complete.py",
+      "tests/test_v8_kokoro_runtime_decoder_ingress.py",
       "tests/test_v8_kokoro_generated_decoder_ingress.py",
       "tests/test_v8_kokoro_generated_decoder_encode.py",
       "tests/test_v8_kokoro_generated_decoder_complete.py",

@@ -51,7 +51,8 @@ def convolution(name, source, prefix, channels_in, channels_out,
     }
 
 
-def concat(name, left, right, left_channels, right_channels):
+def concat(name, left, right, left_channels, right_channels,
+           frame_capacity=FRAME_CAPACITY):
     output_channels = left_channels + right_channels
     return {
         'id': name, 'op': 'audio_concat_channels_checked',
@@ -60,14 +61,14 @@ def concat(name, left, right, left_channels, right_channels):
         'consumes_runtime_lengths': ['expanded_frames'],
         'runtime_scalar_bindings': {'concat_frames': 'expanded_frames'},
         'params': {'L': left_channels, 'R': right_channels,
-            'O': output_channels, 'T': FRAME_CAPACITY,
+            'O': output_channels, 'T': frame_capacity,
             'call_constants': {
-                'concat_left_elements': left_channels * FRAME_CAPACITY,
-                'concat_left_stride': FRAME_CAPACITY,
-                'concat_right_elements': right_channels * FRAME_CAPACITY,
-                'concat_right_stride': FRAME_CAPACITY,
-                'concat_output_elements': output_channels * FRAME_CAPACITY,
-                'concat_output_stride': FRAME_CAPACITY,
+                'concat_left_elements': left_channels * frame_capacity,
+                'concat_left_stride': frame_capacity,
+                'concat_right_elements': right_channels * frame_capacity,
+                'concat_right_stride': frame_capacity,
+                'concat_output_elements': output_channels * frame_capacity,
+                'concat_output_stride': frame_capacity,
                 'concat_left_channels': left_channels,
                 'concat_right_channels': right_channels,
                 'concat_output_channels': output_channels}},
@@ -76,34 +77,34 @@ def concat(name, left, right, left_channels, right_channels):
     }
 
 
-def build_circuit(tokens=36):
-    graph = prosody_circuit(tokens)
-    graph['name'] = 'kokoro_decoder_ingress_bounded'
-    graph['native_entry']['function'] = 'ck_kokoro_decoder_ingress_bounded'
-    graph['contract']['runtime_invariants'].update(
-        generated_decoder_ingress=True, complete_decoder=False,
-        complete_waveform=False)
-    operations = [
+def decoder_ingress_ops(frame_capacity=FRAME_CAPACITY,
+                        upsampled_capacity=UPSAMPLED_CAPACITY):
+    return [
         convolution('decoder_f0_downsample', 'f0_output',
-            'waveform_decoder.F0_conv', 1, 1, UPSAMPLED_CAPACITY,
-            FRAME_CAPACITY, 3, 2, 1, 'upsampled_frames', 'expanded_frames'),
+            'waveform_decoder.F0_conv', 1, 1, upsampled_capacity,
+            frame_capacity, 3, 2, 1, 'upsampled_frames', 'expanded_frames'),
         convolution('decoder_n_downsample', 'n_output',
-            'waveform_decoder.N_conv', 1, 1, UPSAMPLED_CAPACITY,
-            FRAME_CAPACITY, 3, 2, 1, 'upsampled_frames', 'expanded_frames'),
+            'waveform_decoder.N_conv', 1, 1, upsampled_capacity,
+            frame_capacity, 3, 2, 1, 'upsampled_frames', 'expanded_frames'),
         concat('decoder_text_f0', 'text_expanded',
-               'decoder_f0_downsample', 512, 1),
+               'decoder_f0_downsample', 512, 1, frame_capacity),
         concat('decoder_joined', 'decoder_text_f0',
-               'decoder_n_downsample', 513, 1),
+               'decoder_n_downsample', 513, 1, frame_capacity),
         convolution('decoder_asr_res', 'text_expanded',
-            'waveform_decoder.asr_res.0', 512, 64, FRAME_CAPACITY,
-            FRAME_CAPACITY, 1, 1, 0, 'expanded_frames', 'expanded_frames'),
+            'waveform_decoder.asr_res.0', 512, 64, frame_capacity,
+            frame_capacity, 1, 1, 0, 'expanded_frames', 'expanded_frames'),
     ]
+
+
+def add_decoder_ingress(graph, frame_capacity=FRAME_CAPACITY,
+                        upsampled_capacity=UPSAMPLED_CAPACITY):
+    operations = decoder_ingress_ops(frame_capacity, upsampled_capacity)
     for operation in operations:
         name = operation['id']
         channels = {'decoder_text_f0': 513, 'decoder_joined': 514,
                     'decoder_asr_res': 64}.get(name, 1)
         graph['activation_buffers'][name] = {
-            'shape': [channels, FRAME_CAPACITY]}
+            'shape': [channels, frame_capacity]}
         graph['activation_bindings'][name] = name
         graph['semantic_checkpoints']['exports'][name] = {
             'section': 'body', 'template_op_id': name,
@@ -130,6 +131,16 @@ def build_circuit(tokens=36):
             'logical_layout': 'channel_major',
             'axis_names': ['channel', 'frame']}}
     return graph
+
+
+def build_circuit(tokens=36):
+    graph = prosody_circuit(tokens)
+    graph['name'] = 'kokoro_decoder_ingress_bounded'
+    graph['native_entry']['function'] = 'ck_kokoro_decoder_ingress_bounded'
+    graph['contract']['runtime_invariants'].update(
+        generated_decoder_ingress=True, complete_decoder=False,
+        complete_waveform=False)
+    return add_decoder_ingress(graph)
 
 
 def main():
