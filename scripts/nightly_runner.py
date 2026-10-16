@@ -802,6 +802,11 @@ TEST_SUITES = {
         "TTS Kokoro Runtime-Length Complete F0 and Noise", "kernels",
         ROOT / "tests" / "test_v8_kokoro_runtime_prosody_complete.py",
     ),
+    "tts_kokoro_runtime_decoder_ingress": TestSuite(
+        "TTS Kokoro Runtime-Length Decoder Ingress", "inference",
+        ROOT / "tests" / "test_v8_kokoro_runtime_decoder_ingress.py",
+        timeout_sec=300,
+    ),
     "tts_checked_op_constants": TestSuite(
         "Checked Per-Operation ABI Constants Generated Graph", "kernels",
         ROOT / "tests" / "test_v8_checked_op_constants.py",
