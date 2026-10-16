@@ -140,6 +140,20 @@ class V8KernelCallABITests(unittest.TestCase):
                 self.assertIn(kernel_id, registry)
                 self.assertEqual(registry[kernel_id].get("call_abi"), entry["call_abi"])
 
+    def test_mla_prefill_history_scope_is_map_owned_and_validated(self) -> None:
+        kernel_id = "deepseek_mla_attention_f32"
+        provider = load_json(MAPS / f"{kernel_id}.json")
+        self.assertEqual(provider["prefill_history_scope"], "current_chunk")
+        self.assertEqual(
+            build_ir_v8.load_kernel_call_abis()[kernel_id]["prefill_history_scope"],
+            "current_chunk",
+        )
+        provider["prefill_history_scope"] = "unverified_history"
+        with tempfile.TemporaryDirectory() as temp:
+            Path(temp, f"{kernel_id}.json").write_text(json.dumps(provider))
+            with self.assertRaisesRegex(RuntimeError, "unsupported prefill_history_scope"):
+                build_ir_v8.load_kernel_call_abis(Path(temp), legacy_bindings={})
+
     def test_quantized_prefill_weight_preparation_is_map_owned_and_registered(self) -> None:
         preparations = build_ir_v8.load_kernel_weight_preparations()
         self.assertEqual(
