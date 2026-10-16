@@ -280,6 +280,13 @@ class InstellaMoEBringupTests(unittest.TestCase):
                 )
                 self.assertTrue(any(op.get("op") == "residual_add" for op in joined))
                 ops = call_ir.get("operations", call_ir.get("ops", []))
+                if mode == "prefill":
+                    attention = [op for op in ops if op.get("op") == "mla_attention"]
+                    self.assertEqual(len(attention), 2)
+                    self.assertTrue(all(
+                        op.get("prefill_history_scope") == "current_chunk"
+                        for op in attention
+                    ))
                 final_norm = next(op for op in ops if op.get("op") == "final_rmsnorm")
                 self.assertEqual(
                     final_norm.get("call_abi", {}).get("kernel_id"),
@@ -477,6 +484,10 @@ class InstellaMoEBringupTests(unittest.TestCase):
                 text=True,
             )
             self.assertEqual(codegen.returncode, 0, codegen.stdout + codegen.stderr)
+            self.assertIn(
+                "if (consumed > 0 || start_pos > 0)",
+                generated_c.read_text(encoding="utf-8"),
+            )
             source = generated_c.read_text(encoding="utf-8")
             self.assertIn("farskip_swiglu_shared_combine_bf16", source)
             self.assertIn("yarn_rope_cache_contiguous_positions_f32(", source)

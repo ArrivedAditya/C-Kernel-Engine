@@ -27840,6 +27840,7 @@
       "id": "deepseek_mla_attention_f32",
       "op": "mla_attention",
       "variant": "prefill_ref_f32",
+      "prefill_history_scope": "current_chunk",
       "quant": {
         "weight": "none",
         "activation": "fp32",
@@ -27988,7 +27989,7 @@
           }
         ]
       },
-      "notes": "Reference causal MLA prefill attention over the current token sequence. Workers dynamically claim complete token rows to balance both increasing causal-history cost and asymmetric core throughput. Query/head rows remain independent and retain their original reduction order; planner-owned score rows prevent cross-worker aliasing. The model-derived softmax scale is explicit.",
+      "notes": "Reference causal MLA prefill attention over the current token sequence. Workers dynamically claim complete token rows to balance both increasing causal-history cost and asymmetric core throughput. Query/head rows remain independent and retain their original reduction order; planner-owned score rows prevent cross-worker aliasing. The model-derived softmax scale is explicit. This provider does not read persistent KV history, so appended prefill rows must use a history-aware provider or decode replay.",
       "name": "deepseek_mla_attention_f32",
       "_source_file": "deepseek_mla_attention_f32.json"
     },
