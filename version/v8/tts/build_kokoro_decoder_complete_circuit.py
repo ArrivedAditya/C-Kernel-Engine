@@ -22,19 +22,23 @@ INPUT_CHANNELS = 1090
 OUTPUT_CHANNELS = 512
 
 
-def decoder_join(index, source):
+def decoder_join(index, source, frame_capacity=INPUT_FRAMES):
     stem = f'decoder_decode{index}'
     return [
         (concat(f'{stem}_join_asr', source,
-                'decoder_asr_res', 1024, 64), [1088, INPUT_FRAMES]),
+                'decoder_asr_res', 1024, 64, frame_capacity),
+         [1088, frame_capacity]),
         (concat(f'{stem}_join_f0', f'{stem}_join_asr',
-                'decoder_f0_downsample', 1088, 1), [1089, INPUT_FRAMES]),
+                'decoder_f0_downsample', 1088, 1, frame_capacity),
+         [1089, frame_capacity]),
         (concat(f'{stem}_input', f'{stem}_join_f0',
-                'decoder_n_downsample', 1089, 1), [1090, INPUT_FRAMES]),
+                'decoder_n_downsample', 1089, 1, frame_capacity),
+         [1090, frame_capacity]),
     ]
 
 
-def upsampling_block_ops():
+def upsampling_block_ops(frame_capacity=INPUT_FRAMES,
+                         upsampled_capacity=OUTPUT_FRAMES):
     stem = 'decoder_decode3'
     source = f'{stem}_input'
     prefix = 'waveform_decoder.decode.3'
@@ -42,24 +46,24 @@ def upsampling_block_ops():
     add = ops.append
     add(style(f'{stem}_norm0_style', f'{prefix}.norm1', INPUT_CHANNELS))
     add(norm(f'{stem}_norm0', source, f'{stem}_norm0_style',
-        f'{prefix}.norm1', INPUT_CHANNELS, INPUT_FRAMES, 'expanded_frames'))
+        f'{prefix}.norm1', INPUT_CHANNELS, frame_capacity, 'expanded_frames'))
     add(activation(f'{stem}_act0', f'{stem}_norm0',
-        INPUT_CHANNELS, INPUT_FRAMES, 'expanded_frames'))
+        INPUT_CHANNELS, frame_capacity, 'expanded_frames'))
     add(declared(f'{stem}_pool',
         'audio_conv_transpose1d_depthwise_checked',
         'audio_conv_transpose1d_depthwise_channel_major_f32_checked',
         {'input': f'{stem}_act0'}, f'{stem}_pool',
-        [INPUT_CHANNELS, OUTPUT_FRAMES],
-        {'C': INPUT_CHANNELS, 'T': INPUT_FRAMES, 'K': 3,
-         'U': OUTPUT_FRAMES, 'Q': INPUT_CHANNELS * OUTPUT_FRAMES,
+        [INPUT_CHANNELS, upsampled_capacity],
+        {'C': INPUT_CHANNELS, 'T': frame_capacity, 'K': 3,
+         'U': upsampled_capacity, 'Q': INPUT_CHANNELS * upsampled_capacity,
          'call_constants': {
-            'deconv_input_elements': INPUT_CHANNELS * INPUT_FRAMES,
-            'deconv_input_stride': INPUT_FRAMES,
+            'deconv_input_elements': INPUT_CHANNELS * frame_capacity,
+            'deconv_input_stride': frame_capacity,
             'deconv_weight_elements': INPUT_CHANNELS * 3,
             'deconv_bias_elements': INPUT_CHANNELS,
-            'deconv_output_elements': INPUT_CHANNELS * OUTPUT_FRAMES,
-            'deconv_output_stride': OUTPUT_FRAMES,
-            'deconv_scratch_elements': INPUT_CHANNELS * OUTPUT_FRAMES,
+            'deconv_output_elements': INPUT_CHANNELS * upsampled_capacity,
+            'deconv_output_stride': upsampled_capacity,
+            'deconv_scratch_elements': INPUT_CHANNELS * upsampled_capacity,
             'deconv_channels': INPUT_CHANNELS, 'deconv_kernel_size': 3,
             'deconv_stride': 2, 'deconv_padding': 1,
             'deconv_output_padding': 1}},
@@ -70,47 +74,47 @@ def upsampling_block_ops():
          'deconv_output_frames': 'upsampled_frames'}))
     add(convolution(f'{stem}_conv0', f'{stem}_pool',
         f'{prefix}.conv1', INPUT_CHANNELS, OUTPUT_CHANNELS,
-        OUTPUT_FRAMES, 3, 'upsampled_frames'))
+        upsampled_capacity, 3, 'upsampled_frames'))
     add(style(f'{stem}_norm1_style', f'{prefix}.norm2', OUTPUT_CHANNELS))
     add(norm(f'{stem}_norm1', f'{stem}_conv0', f'{stem}_norm1_style',
-        f'{prefix}.norm2', OUTPUT_CHANNELS, OUTPUT_FRAMES,
+        f'{prefix}.norm2', OUTPUT_CHANNELS, upsampled_capacity,
         'upsampled_frames'))
     add(activation(f'{stem}_act1', f'{stem}_norm1',
-        OUTPUT_CHANNELS, OUTPUT_FRAMES, 'upsampled_frames'))
+        OUTPUT_CHANNELS, upsampled_capacity, 'upsampled_frames'))
     add(convolution(f'{stem}_conv1', f'{stem}_act1',
         f'{prefix}.conv2', OUTPUT_CHANNELS, OUTPUT_CHANNELS,
-        OUTPUT_FRAMES, 3, 'upsampled_frames'))
+        upsampled_capacity, 3, 'upsampled_frames'))
     add(declared(f'{stem}_shortcut_upsample',
         'audio_upsample_nearest_checked',
         'audio_upsample_nearest_channel_major_f32_checked',
         {'input': source}, f'{stem}_shortcut_upsample',
-        [INPUT_CHANNELS, OUTPUT_FRAMES],
-        {'C': INPUT_CHANNELS, 'T': INPUT_FRAMES, 'U': OUTPUT_FRAMES,
+        [INPUT_CHANNELS, upsampled_capacity],
+        {'C': INPUT_CHANNELS, 'T': frame_capacity, 'U': upsampled_capacity,
          'call_constants': {
-            'nearest_input_elements': INPUT_CHANNELS * INPUT_FRAMES,
-            'nearest_input_stride': INPUT_FRAMES,
-            'nearest_output_elements': INPUT_CHANNELS * OUTPUT_FRAMES,
-            'nearest_output_stride': OUTPUT_FRAMES,
+            'nearest_input_elements': INPUT_CHANNELS * frame_capacity,
+            'nearest_input_stride': frame_capacity,
+            'nearest_output_elements': INPUT_CHANNELS * upsampled_capacity,
+            'nearest_output_stride': upsampled_capacity,
             'nearest_channels': INPUT_CHANNELS, 'nearest_factor': 2}},
         None, ('expanded_frames', 'upsampled_frames'),
         {'nearest_input_frames': 'expanded_frames',
          'nearest_output_frames': 'upsampled_frames'}))
     add(convolution(f'{stem}_shortcut', f'{stem}_shortcut_upsample',
         f'{prefix}.conv1x1', INPUT_CHANNELS, OUTPUT_CHANNELS,
-        OUTPUT_FRAMES, 1, 'upsampled_frames', zero_bias=True))
+        upsampled_capacity, 1, 'upsampled_frames', zero_bias=True))
     add(declared(f'{stem}_output',
         'audio_scaled_sum_strided_checked',
         'audio_scaled_sum_strided_f32_checked',
         {'left': f'{stem}_conv1', 'right': f'{stem}_shortcut'},
-        f'{stem}_output', [OUTPUT_CHANNELS, OUTPUT_FRAMES],
-        {'R': OUTPUT_CHANNELS, 'C': OUTPUT_FRAMES,
+        f'{stem}_output', [OUTPUT_CHANNELS, upsampled_capacity],
+        {'R': OUTPUT_CHANNELS, 'C': upsampled_capacity,
          'scale': 1.0 / math.sqrt(2.0), 'call_constants': {
-            'sum_left_elements': OUTPUT_CHANNELS * OUTPUT_FRAMES,
-            'sum_left_stride': OUTPUT_FRAMES,
-            'sum_right_elements': OUTPUT_CHANNELS * OUTPUT_FRAMES,
-            'sum_right_stride': OUTPUT_FRAMES,
-            'sum_output_elements': OUTPUT_CHANNELS * OUTPUT_FRAMES,
-            'sum_output_stride': OUTPUT_FRAMES,
+            'sum_left_elements': OUTPUT_CHANNELS * upsampled_capacity,
+            'sum_left_stride': upsampled_capacity,
+            'sum_right_elements': OUTPUT_CHANNELS * upsampled_capacity,
+            'sum_right_stride': upsampled_capacity,
+            'sum_output_elements': OUTPUT_CHANNELS * upsampled_capacity,
+            'sum_output_stride': upsampled_capacity,
             'sum_rows': OUTPUT_CHANNELS}},
         None, ('upsampled_frames',),
         {'sum_columns': 'upsampled_frames'}))

@@ -1,0 +1,37 @@
+{
+  "schema": "cke.kokoro.runtime_decoder_hello_8.v1",
+  "scope": "direct pinned full-model eight-ID decoder outputs and styles",
+  "model_pin": "e8a90b41091c3c5b70375c47cc959799920fa4d6",
+  "code_pin": "dfb907a02bba8152ca444717ca5d78747ccb4bec",
+  "asset_sha256": {
+    "config.json": "5abb01e2403b072bf03d04fde160443e209d7a0dad49a423be15196b9b43c17f",
+    "kokoro-v1_0.pth": "496dba118d1a58f5f3db2efc88dbdc216e0483fc89fe6e47ee1f2c53f18ad1e4",
+    "voices/af_heart.pt": "0ab5709b8ffab19bfd849cd11d98f75b60af7733253ad0d67b12382a102cb4ff"
+  },
+  "environment": {
+    "kokoro": "0.9.4",
+    "misaki": "0.9.4",
+    "torch": "2.8.0+cpu",
+    "transformers": "5.17.0",
+    "spacy": "3.8.16",
+    "num2words": "0.5.14",
+    "phonemizer-fork": "3.3.2",
+    "espeakng-loader": "0.2.4"
+  },
+  "voice_row_index": 5,
+  "valid_frames": 54,
+  "upsampled_frames": 108,
+  "source_manifest_sha256": "943a03ab690591592356c0a3814d42bc214060a14c783782504b3cfeaae173b5",
+  "array_sha256": {
+    "word_ids": "2a606d5913632c1632924d9bf0f91e6b2b3ca753273d21b6fe751248e1c67054",
+    "predictor_style": "64604a72576059ed1428e7a3118746066a1c03fa908d998a9767a5dab530cd75",
+    "decoder_style": "d576e14b06f81b99f33372a30584724f6ec71bde7f982f33cfdb5e5791041eba",
+    "predicted_duration": "55eab1d288de866f5d036c5f3aa32f290b18ccf32e2a340ce3ef6e761f3ca2ec",
+    "decoder_decode_0": "b85f25b55031cb491c1d63fa848631ce15cbe04d42a3362118437a78904eb063",
+    "decoder_decode_1": "f467989f18bfa6e8ea42c39232dd8d5640fd52c0ea8cd85c3c2a91095a2c6680",
+    "decoder_decode_2": "91a61b93df5508d2c1abb3a0db9fb320b2f953f9be6cc02a34980145813fb7bb",
+    "decoder_decode_3": "30c0d6dfcde0780341cbae6c8a448d855e5c5c1576145eca6bc8ab6f124fe46b"
+  },
+  "fixture_sha256": "cda08375224daa0382c7f8e15272479184fd22a0eb0ec9fc2dfeae4fce29628a",
+  "reproduction_command": "python version/v8/tts/reference/capture_kokoro_v1.py --model-dir /path/to/pinned/kokoro --output-dir /tmp/hello --text 'Hello.'; python version/v8/tts/reference/build_kokoro_runtime_decoder_hello_fixture.py --capture /tmp/hello"
+}
