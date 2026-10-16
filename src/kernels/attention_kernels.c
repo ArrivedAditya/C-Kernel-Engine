@@ -6823,6 +6823,11 @@ static ck_attention_status_t ck_attention_forward_decode_f16cache_gemma4(
         head_dim <= 0 || aligned_head_dim < head_dim || sliding_window < 0) {
         return CK_ATTENTION_STATUS_INVALID_ARGUMENT;
     }
+    if (reduction == CK_ATTN_REDUCTION_F16_REGULAR_NOSCALE) {
+        return attention_forward_decode_head_major_gqa_f16cache_regular_noscale(
+            q_token, k_cache, v_cache, out_token, num_heads, num_kv_heads,
+            kv_tokens, cache_capacity, head_dim, aligned_head_dim, sliding_window);
+    }
     if (reduction != CK_ATTN_REDUCTION_F16_ONLINE_SINGLE_RANGE) {
         return CK_ATTENTION_STATUS_UNSUPPORTED_CONTRACT;
     }
@@ -6833,6 +6838,72 @@ static ck_attention_status_t ck_attention_forward_decode_f16cache_gemma4(
         q_token, k_cache, v_cache, out_token,
         num_heads, num_kv_heads, kv_tokens, cache_capacity,
         head_dim, aligned_head_dim, 1, live_tokens, kv_start, 1.0f);
+    return CK_ATTENTION_STATUS_OK;
+}
+
+ck_attention_status_t attention_forward_decode_head_major_gqa_f16cache_regular_noscale(
+    const float *q_token,
+    const uint16_t *k_cache,
+    const uint16_t *v_cache,
+    float *out_token,
+    int num_heads,
+    int num_kv_heads,
+    int kv_tokens,
+    int cache_capacity,
+    int head_dim,
+    int aligned_head_dim,
+    int sliding_window)
+{
+    if (!q_token || !k_cache || !v_cache || !out_token ||
+        num_heads <= 0 || num_kv_heads <= 0 || num_heads % num_kv_heads != 0 ||
+        kv_tokens <= 0 || cache_capacity <= 0 || kv_tokens > cache_capacity ||
+        head_dim <= 0 || head_dim > 4096 || aligned_head_dim < head_dim ||
+        sliding_window < 0 ||
+        (size_t) cache_capacity > SIZE_MAX / (size_t) aligned_head_dim) {
+        return CK_ATTENTION_STATUS_INVALID_ARGUMENT;
+    }
+
+    const size_t cache_head_stride = (size_t) cache_capacity * (size_t) aligned_head_dim;
+    const int first_token = sliding_window > 0 && kv_tokens > sliding_window
+        ? kv_tokens - sliding_window : 0;
+    uint16_t *q_half = (uint16_t *) alloca((size_t) head_dim * sizeof(uint16_t));
+    for (int h = 0; h < num_heads; ++h) {
+        const int kv_head = h / (num_heads / num_kv_heads);
+        const float *q_head = q_token + (size_t) h * (size_t) aligned_head_dim;
+        const uint16_t *k_head = k_cache + (size_t) kv_head * cache_head_stride;
+        const uint16_t *v_head = v_cache + (size_t) kv_head * cache_head_stride;
+        float *out_head = out_token + (size_t) h * (size_t) aligned_head_dim;
+        for (int d = 0; d < head_dim; ++d) q_half[d] = CK_FP32_TO_FP16(q_head[d]);
+
+        float maximum = -INFINITY;
+        for (int token = first_token; token < kv_tokens; ++token) {
+            const float score = ck_attention_dot_f16_llama(
+                q_half, k_head + (size_t) token * (size_t) aligned_head_dim, head_dim);
+            if (score > maximum) maximum = score;
+        }
+        if (!isfinite(maximum)) return CK_ATTENTION_STATUS_INVALID_ARGUMENT;
+
+        double total = 0.0;
+        for (int token = first_token; token < kv_tokens; ++token) {
+            const float score = ck_attention_dot_f16_llama(
+                q_half, k_head + (size_t) token * (size_t) aligned_head_dim, head_dim);
+            total += (double) ck_attention_reference_expf(score - maximum);
+        }
+        if (!(total > 0.0) || !isfinite(total)) return CK_ATTENTION_STATUS_INVALID_ARGUMENT;
+
+        for (int d = 0; d < head_dim; ++d) out_head[d] = 0.0f;
+        for (int token = first_token; token < kv_tokens; ++token) {
+            const float score = ck_attention_dot_f16_llama(
+                q_half, k_head + (size_t) token * (size_t) aligned_head_dim, head_dim);
+            const float probability = ck_attention_reference_expf(score - maximum) / (float) total;
+            const float rounded_probability = CK_FP16_TO_FP32(CK_FP32_TO_FP16(probability));
+            const uint16_t *v_row = v_head + (size_t) token * (size_t) aligned_head_dim;
+            for (int d = 0; d < head_dim; ++d) {
+                out_head[d] = fmaf(rounded_probability, CK_FP16_TO_FP32(v_row[d]), out_head[d]);
+            }
+        }
+        for (int d = head_dim; d < aligned_head_dim; ++d) out_head[d] = 0.0f;
+    }
     return CK_ATTENTION_STATUS_OK;
 }
 
@@ -7837,7 +7908,8 @@ static ck_attention_status_t ck_attention_prefill_append_f16cache_gemma4_workspa
     for (int s = 0; s < num_segments; ++s) {
         const int rows = segment_lengths[s];
         if (rows == 0) continue;
-        if (reduction == CK_ATTN_REDUCTION_F16_FLASH_AUTO_QTILE64 &&
+        if ((reduction == CK_ATTN_REDUCTION_F16_FLASH_AUTO_QTILE64 ||
+             reduction == CK_ATTN_REDUCTION_F16_FLASH_AUTO_QTILE64_REGULAR_TAIL_NOSCALE) &&
             rows >= CK_GGML_FA_TILE_Q &&
             (sliding_window == 0 || past_tokens + row_offset + rows <= sliding_window)) {
             const ck_attention_status_t status = ck_attention_f16_prefill_qtile64_dispatch(
@@ -7855,7 +7927,9 @@ static ck_attention_status_t ck_attention_prefill_append_f16cache_gemma4_workspa
         }
         const ck_attention_reduction_t selected =
             reduction == CK_ATTN_REDUCTION_F16_FLASH_AUTO_QTILE64
-                ? CK_ATTN_REDUCTION_F16_ONLINE_SINGLE_RANGE : reduction;
+                ? CK_ATTN_REDUCTION_F16_ONLINE_SINGLE_RANGE :
+            reduction == CK_ATTN_REDUCTION_F16_FLASH_AUTO_QTILE64_REGULAR_TAIL_NOSCALE
+                ? CK_ATTN_REDUCTION_F16_REGULAR_NOSCALE : reduction;
         for (int local_row = 0; local_row < rows; ++local_row) {
             const int t = row_offset + local_row;
             for (int h = 0; h < num_heads; ++h) {
