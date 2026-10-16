@@ -14,6 +14,83 @@
       "position_transform": null,
       "description": "Single-token RWKV7 state update/readout, per-head normalization and gated bonus. Pinned and live PyTorch tests certify tolerance-based FP32 arithmetic, not cross-compiler bit identity or complete model inference."
     },
+    "rwkv7_time_mix_shifts_fp32": {
+      "operator_family": "rwkv7_time_mix_shifts",
+      "status": "observed",
+      "storage": {"input": "fp32", "weight": "fp32", "output": "fp32"},
+      "compute": {"input": "fp32", "weight": "fp32", "accumulator": "fp32", "contraction": "enabled", "evaluation_order": "serial_channel_ascending"},
+      "rounding": {"mode": "rne", "points": ["input_load", "reduction_update", "output_store"]},
+      "reduction": {"kind": "none", "order": "ascending_k", "partial_accumulator": "fp32", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "RWKV-7 six-lane token-shift lerp bundle out=x+mu*(shift-x) with shift_out=x. Fused per-index loop reads x/shift once; shared shift written once. Observed vs six scalar lerps; promotion to validated pending oracle entry."
+    },
+    "rwkv7_lora_gates_fp32": {
+      "operator_family": "rwkv7_lora_gates",
+      "status": "observed",
+      "storage": {"input": "fp32", "weight": "fp32", "output": "fp32"},
+      "compute": {"input": "fp32", "weight": "fp32", "accumulator": "fp32", "contraction": "enabled", "evaluation_order": "serial_channel_ascending"},
+      "rounding": {"mode": "rne", "points": ["input_load", "reduction_update", "output_store"]},
+      "reduction": {"kind": "dot_product", "order": "ascending_k", "partial_accumulator": "fp32", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "RWKV-7 unfused FP32 LoRA chains w_log/a/g. Observed vs torch e2e; promotion to validated pending oracle entry."
+    },
+    "rwkv7_vgate_vmix_fp32": {
+      "operator_family": "rwkv7_vgate_vmix",
+      "status": "observed",
+      "storage": {"input": "fp32", "weight": "fp32", "output": "fp32"},
+      "compute": {"input": "fp32", "weight": "fp32", "accumulator": "fp32", "contraction": "enabled", "evaluation_order": "serial_channel_ascending"},
+      "rounding": {"mode": "rne", "points": ["input_load", "reduction_update", "output_store"]},
+      "reduction": {"kind": "dot_product", "order": "ascending_k", "partial_accumulator": "fp32", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "RWKV-7 value-residual gate and mix. Layer 0 produce path (optional ports omitted, NULL-bound in lowering); layer>0 consume path. Observed; promotion pending."
+    },
+    "rwkv7_kk_factor_fp32": {
+      "operator_family": "rwkv7_kk_factor",
+      "status": "observed",
+      "storage": {"input": "fp32", "weight": "fp32", "output": "fp32"},
+      "compute": {"input": "fp32", "weight": "fp32", "accumulator": "fp32", "contraction": "enabled", "evaluation_order": "serial_channel_ascending"},
+      "rounding": {"mode": "rne", "points": ["input_load", "reduction_update", "output_store"]},
+      "reduction": {"kind": "none", "order": "ascending_k", "partial_accumulator": "fp32", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "RWKV-7 kk_raw = k .* k_k elementwise over [C]; exact input alias allowed. Observed exact + alias parity."
+    },
+    "rwkv7_norm_kk_fp32": {
+      "operator_family": "rwkv7_norm_kk",
+      "status": "observed",
+      "storage": {"input": "fp32", "weight": "fp32", "output": "fp32"},
+      "compute": {"input": "fp32", "weight": "fp32", "accumulator": "fp32", "contraction": "enabled", "evaluation_order": "serial_head_row_column"},
+      "rounding": {"mode": "rne", "points": ["input_load", "reduction_update", "output_store"]},
+      "reduction": {"kind": "normalization", "order": "ascending_k", "partial_accumulator": "fp32", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "RWKV-7 per-head L2 normalize of kk, divisor max(norm,1e-12); kk=0 stays zero. Observed; promotion pending."
+    },
+    "rwkv7_scale_k_fp32": {
+      "operator_family": "rwkv7_scale_k",
+      "status": "observed",
+      "storage": {"input": "fp32", "weight": "fp32", "output": "fp32"},
+      "compute": {"input": "fp32", "weight": "fp32", "accumulator": "fp32", "contraction": "enabled", "evaluation_order": "serial_channel_ascending"},
+      "rounding": {"mode": "rne", "points": ["input_load", "reduction_update", "output_store"]},
+      "reduction": {"kind": "none", "order": "ascending_k", "partial_accumulator": "fp32", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "RWKV-7 diagram-normative k*(1+(k_a-1)*a) elementwise; intentionally differs from modeling_rwkv7.py:501. Observed."
+    },
+    "rwkv7_channelmix_decode_fp32": {
+      "operator_family": "rwkv7_channelmix_decode",
+      "status": "observed",
+      "storage": {"input": "fp32", "weight": "fp32", "output": "fp32"},
+      "compute": {"input": "fp32", "weight": "fp32", "accumulator": "fp32", "contraction": "enabled", "evaluation_order": "serial_channel_ascending"},
+      "rounding": {"mode": "rne", "points": ["input_load", "reduction_update", "output_store"]},
+      "reduction": {"kind": "dot_product", "order": "ascending_k", "partial_accumulator": "fp32", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "RWKV-7 squared-ReLU feedforward decode step with caller scratch; shift_out or out may alias x. Observed full-block wiring parity; boundary dims pending."
+    },
     "audio_conv1d_checked_scalar_fma_fp32": {
       "operator_family": "audio_conv1d",
       "status": "validated",

@@ -1,0 +1,263 @@
+{
+  "arithmetic": {
+    "deterministic": true,
+    "merge_order": "none",
+    "partial_accumulator": "fp32",
+    "split_strategy": "serial",
+    "thread_count_changes_arithmetic_order": false
+  },
+  "call_abi": {
+    "params": [
+      {
+        "name": "x",
+        "source": "activation:x",
+        "cast": "const float*",
+        "ports": [
+          "input:x"
+        ]
+      },
+      {
+        "name": "shift_in",
+        "source": "activation:shift_in",
+        "cast": "const float*",
+        "ports": [
+          "input:shift_in"
+        ]
+      },
+      {
+        "name": "mu",
+        "source": "weight:mu",
+        "cast": "const float*",
+        "ports": [
+          "weight:mu"
+        ]
+      },
+      {
+        "name": "Wk",
+        "source": "weight:Wk",
+        "cast": "const float*",
+        "ports": [
+          "weight:Wk"
+        ]
+      },
+      {
+        "name": "Wv",
+        "source": "weight:Wv",
+        "cast": "const float*",
+        "ports": [
+          "weight:Wv"
+        ]
+      },
+      {
+        "name": "shift_out",
+        "source": "output:shift_out",
+        "cast": "float*",
+        "ports": [
+          "output:shift_out"
+        ]
+      },
+      {
+        "name": "out",
+        "source": "output:out",
+        "cast": "float*",
+        "ports": [
+          "output:out"
+        ]
+      },
+      {
+        "name": "dim",
+        "source": "dim:dim"
+      },
+      {
+        "name": "hidden_dim",
+        "source": "dim:hidden_dim"
+      },
+      {
+        "name": "scratch",
+        "source": "scratch:scratch",
+        "cast": "float*"
+      },
+      {
+        "name": "scratch_elems",
+        "source": "runtime:scratch_elems"
+      }
+    ],
+    "version": 1
+  },
+  "dims": [
+    "C",
+    "dim",
+    "hidden_dim",
+    "scratch_elems"
+  ],
+  "id": "rwkv7_channelmix_decode_f32",
+  "provider_numerical_contract_schema": 1,
+  "numerical_contract": {
+    "id": "rwkv7_channelmix_decode_fp32",
+    "circuit_binding_required": true
+  },
+  "constraints": {},
+  "impl": {
+    "c_declaration": "int ck_rwkv7_channelmix_decode(const float *x, const float *shift_in, const float *mu, const float *Wk, const float *Wv, float *shift_out, float *out, int dim, int hidden_dim, float *scratch, size_t scratch_elems);",
+    "function": "ck_rwkv7_channelmix_decode",
+    "sources": [
+      "src/kernels/rwkv7_decode.c"
+    ]
+  },
+  "inputs": [
+    {
+      "access": "read",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "x",
+      "placement": "local",
+      "shape": [
+        "C"
+      ],
+      "storage_class": "activation"
+    },
+    {
+      "access": "read",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "shift_in",
+      "placement": "local",
+      "shape": [
+        "C"
+      ],
+      "storage_class": "activation"
+    }
+  ],
+  "weights": [
+    {
+      "access": "read",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "mu",
+      "placement": "local",
+      "shape": [
+        "C"
+      ],
+      "storage_class": "weight"
+    },
+    {
+      "access": "read",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "Wk",
+      "placement": "local",
+      "shape": [
+        "hidden_dim",
+        "C"
+      ],
+      "storage_class": "weight"
+    },
+    {
+      "access": "read",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "Wv",
+      "placement": "local",
+      "shape": [
+        "C",
+        "hidden_dim"
+      ],
+      "storage_class": "weight"
+    }
+  ],
+  "outputs": [
+    {
+      "access": "write",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "shift_out",
+      "placement": "local",
+      "shape": [
+        "C"
+      ],
+      "storage_class": "activation",
+      "may_alias": [
+        "input:shift_in"
+      ]
+    },
+    {
+      "access": "write",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "out",
+      "placement": "local",
+      "shape": [
+        "C"
+      ],
+      "storage_class": "activation"
+    }
+  ],
+  "modes": {
+    "backward": false,
+    "inference": true,
+    "training": false
+  },
+  "notes": "RWKV-7 squared-ReLU feedforward decode: xk=x+mu*(shift_in-x), hidden=relu(Wk@xk)^2, out=Wv@hidden, shift_out=x. shift_out may alias shift_in; scratch caller-owned disjoint.",
+  "numerical_capabilities": [
+    {
+      "arithmetic": {
+        "deterministic": true,
+        "merge_order": "none",
+        "partial_accumulator": "fp32",
+        "split_strategy": "serial",
+        "thread_count_changes_arithmetic_order": false
+      },
+      "contract_id": "rwkv7_channelmix_decode_fp32",
+      "explicit_selector": true,
+      "function": "ck_rwkv7_channelmix_decode",
+      "implementation": {
+        "isa_dispatch": "scalar",
+        "threading": {
+          "runtime": "serial",
+          "work_partition": [
+            "serial"
+          ],
+          "dispatch": [
+            "inline"
+          ],
+          "reduction_order_effect": "contract_defined"
+        }
+      },
+      "phases": [
+        "decode",
+        "prefill"
+      ],
+      "status": "observed"
+    }
+  ],
+  "op": "rwkv7_channelmix_decode",
+  "operation_interface": "rwkv7.channelmix_decode.token_major.fp32.v1",
+  "quant": {
+    "activation": "fp32",
+    "output": "fp32",
+    "weight": "fp32"
+  },
+  "selection": {
+    "equivalence_group": "rwkv7_channelmix_decode_f32",
+    "phases": [
+      "decode",
+      "prefill"
+    ],
+    "priority": 100,
+    "status": "candidate"
+  },
+  "tests": {
+    "oracle": "unittest/test_rwkv_decode.py and unittest/test_rwkv7_block.py vs torch reference; scalar serial contract.",
+    "unit": [
+      "unittest/test_rwkv7_block.py"
+    ]
+  },
+  "variant": "squared_relu_feedforward_fp32"
+}

@@ -1,0 +1,166 @@
+{
+  "arithmetic": {
+    "deterministic": true,
+    "merge_order": "none",
+    "partial_accumulator": "fp32",
+    "split_strategy": "serial",
+    "thread_count_changes_arithmetic_order": false
+  },
+  "call_abi": {
+    "params": [
+      {
+        "name": "k",
+        "source": "activation:k",
+        "cast": "const float*",
+        "ports": [
+          "input:k"
+        ]
+      },
+      {
+        "name": "k_k",
+        "source": "weight:k_k",
+        "cast": "const float*",
+        "ports": [
+          "weight:k_k"
+        ]
+      },
+      {
+        "name": "kk_raw",
+        "source": "output:kk_raw",
+        "cast": "float*",
+        "ports": [
+          "output:kk_raw"
+        ]
+      },
+      {
+        "name": "dim",
+        "source": "dim:dim"
+      }
+    ],
+    "version": 1
+  },
+  "dims": [
+    "C",
+    "dim"
+  ],
+  "id": "rwkv7_kk_factor_f32",
+  "provider_numerical_contract_schema": 1,
+  "numerical_contract": {
+    "id": "rwkv7_kk_factor_fp32",
+    "circuit_binding_required": true
+  },
+  "constraints": {},
+  "impl": {
+    "c_declaration": "int ck_rwkv7_apply_kk_factor(const float *k, const float *k_k, float *kk_raw, int dim);",
+    "function": "ck_rwkv7_apply_kk_factor",
+    "sources": [
+      "src/kernels/rwkv7_decode.c"
+    ]
+  },
+  "inputs": [
+    {
+      "access": "read",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "k",
+      "placement": "local",
+      "shape": [
+        "C"
+      ],
+      "storage_class": "activation"
+    }
+  ],
+  "weights": [
+    {
+      "access": "read",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "k_k",
+      "placement": "local",
+      "shape": [
+        "C"
+      ],
+      "storage_class": "weight"
+    }
+  ],
+  "outputs": [
+    {
+      "access": "write",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "kk_raw",
+      "placement": "local",
+      "shape": [
+        "C"
+      ],
+      "storage_class": "activation",
+      "may_alias": [
+        "input:k"
+      ]
+    }
+  ],
+  "modes": {
+    "backward": false,
+    "inference": true,
+    "training": false
+  },
+  "notes": "RWKV-7 kk_raw = k .* k_k over [C]. kk_raw may exactly alias k or k_k (per-element read-before-write).",
+  "numerical_capabilities": [
+    {
+      "arithmetic": {
+        "deterministic": true,
+        "merge_order": "none",
+        "partial_accumulator": "fp32",
+        "split_strategy": "serial",
+        "thread_count_changes_arithmetic_order": false
+      },
+      "contract_id": "rwkv7_kk_factor_fp32",
+      "explicit_selector": true,
+      "function": "ck_rwkv7_apply_kk_factor",
+      "implementation": {
+        "isa_dispatch": "scalar",
+        "threading": {
+          "runtime": "serial",
+          "work_partition": [
+            "serial"
+          ],
+          "dispatch": [
+            "inline"
+          ],
+          "reduction_order_effect": "contract_defined"
+        }
+      },
+      "phases": [
+        "decode",
+        "prefill"
+      ],
+      "status": "observed"
+    }
+  ],
+  "op": "rwkv7_kk_factor",
+  "operation_interface": "rwkv7.kk_factor.token_major.fp32.v1",
+  "quant": {
+    "activation": "fp32",
+    "output": "fp32",
+    "weight": "fp32"
+  },
+  "selection": {
+    "equivalence_group": "rwkv7_kk_factor_f32",
+    "phases": [
+      "decode",
+      "prefill"
+    ],
+    "priority": 100,
+    "status": "candidate"
+  },
+  "tests": {
+    "oracle": "unittest/test_rwkv_decode.py and unittest/test_rwkv7_block.py vs torch reference; scalar serial contract.",
+    "unit": [
+      "unittest/test_rwkv_decode.py"
+    ]
+  },
+  "variant": "elementwise_multiply_fp32"
+}

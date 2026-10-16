@@ -1,0 +1,183 @@
+{
+  "arithmetic": {
+    "deterministic": true,
+    "merge_order": "none",
+    "partial_accumulator": "fp32",
+    "split_strategy": "serial",
+    "thread_count_changes_arithmetic_order": false
+  },
+  "call_abi": {
+    "params": [
+      {
+        "name": "k_in",
+        "source": "activation:k_in",
+        "cast": "const float*",
+        "ports": [
+          "input:k_in"
+        ]
+      },
+      {
+        "name": "a",
+        "source": "activation:a",
+        "cast": "const float*",
+        "ports": [
+          "input:a"
+        ]
+      },
+      {
+        "name": "k_a",
+        "source": "weight:k_a",
+        "cast": "const float*",
+        "ports": [
+          "weight:k_a"
+        ]
+      },
+      {
+        "name": "k_out",
+        "source": "output:k_out",
+        "cast": "float*",
+        "ports": [
+          "output:k_out"
+        ]
+      },
+      {
+        "name": "dim",
+        "source": "dim:dim"
+      }
+    ],
+    "version": 1
+  },
+  "dims": [
+    "C",
+    "dim"
+  ],
+  "id": "rwkv7_scale_k_f32",
+  "provider_numerical_contract_schema": 1,
+  "numerical_contract": {
+    "id": "rwkv7_scale_k_fp32",
+    "circuit_binding_required": true
+  },
+  "constraints": {},
+  "impl": {
+    "c_declaration": "int ck_rwkv7_scale_k(const float *k_in, const float *a, const float *k_a, float *k_out, int dim);",
+    "function": "ck_rwkv7_scale_k",
+    "sources": [
+      "src/kernels/rwkv7_decode.c"
+    ]
+  },
+  "inputs": [
+    {
+      "access": "read",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "k_in",
+      "placement": "local",
+      "shape": [
+        "C"
+      ],
+      "storage_class": "activation"
+    },
+    {
+      "access": "read",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "a",
+      "placement": "local",
+      "shape": [
+        "C"
+      ],
+      "storage_class": "activation"
+    }
+  ],
+  "weights": [
+    {
+      "access": "read",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "k_a",
+      "placement": "local",
+      "shape": [
+        "C"
+      ],
+      "storage_class": "weight"
+    }
+  ],
+  "outputs": [
+    {
+      "access": "write",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "k_out",
+      "placement": "local",
+      "shape": [
+        "C"
+      ],
+      "storage_class": "activation"
+    }
+  ],
+  "modes": {
+    "backward": false,
+    "inference": true,
+    "training": false
+  },
+  "notes": "RWKV-7 diagram-normative k_out = k_in * (1 + (k_a-1) * a) over [C]; intentionally differs from modeling_rwkv7.py:501.",
+  "numerical_capabilities": [
+    {
+      "arithmetic": {
+        "deterministic": true,
+        "merge_order": "none",
+        "partial_accumulator": "fp32",
+        "split_strategy": "serial",
+        "thread_count_changes_arithmetic_order": false
+      },
+      "contract_id": "rwkv7_scale_k_fp32",
+      "explicit_selector": true,
+      "function": "ck_rwkv7_scale_k",
+      "implementation": {
+        "isa_dispatch": "scalar",
+        "threading": {
+          "runtime": "serial",
+          "work_partition": [
+            "serial"
+          ],
+          "dispatch": [
+            "inline"
+          ],
+          "reduction_order_effect": "contract_defined"
+        }
+      },
+      "phases": [
+        "decode",
+        "prefill"
+      ],
+      "status": "observed"
+    }
+  ],
+  "op": "rwkv7_scale_k",
+  "operation_interface": "rwkv7.scale_k.token_major.fp32.v1",
+  "quant": {
+    "activation": "fp32",
+    "output": "fp32",
+    "weight": "fp32"
+  },
+  "selection": {
+    "equivalence_group": "rwkv7_scale_k_f32",
+    "phases": [
+      "decode",
+      "prefill"
+    ],
+    "priority": 100,
+    "status": "candidate"
+  },
+  "tests": {
+    "oracle": "unittest/test_rwkv_decode.py and unittest/test_rwkv7_block.py vs torch reference; scalar serial contract.",
+    "unit": [
+      "unittest/test_rwkv_decode.py"
+    ]
+  },
+  "variant": "diagram_lerp_fp32"
+}

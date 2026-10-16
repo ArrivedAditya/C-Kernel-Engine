@@ -1,0 +1,371 @@
+{
+  "version": 2,
+  "name": "rwkv7",
+  "family": "rwkv7",
+  "projection_inputs": {
+    "rwkv7_r_proj": {"x": "normalized_stream"},
+    "rwkv7_k_proj": {"x": "normalized_stream"},
+    "rwkv7_v_proj": {"x": "normalized_stream"},
+    "rwkv7_out_proj": {"x": "wkv_out"},
+    "rwkv7_channelmix_decode": {"x": "normalized_stream"}
+  },
+  "flags": {
+    "use_qkv_bias": false,
+    "has_qk_norm": false,
+    "activation": "squared_relu",
+    "rope": "none",
+    "tokenizer": "rwkv_world_trie",
+    "prefill_policy": "sequential_scan",
+    "hybrid_block_pattern": "config.layer_kinds"
+  },
+  "activation_bindings": {
+    "main_stream": "embedded_input",
+    "normalized_stream": "layer_input",
+    "post_attention_stream": "embedded_input",
+    "channelmix_output": "layer_output"
+  },
+  "contract": {
+    "tokenizer_contract": {
+      "tokenizer_type": "rwkv_world_trie",
+      "tokenizer_class": "Rwkv7Tokenizer",
+      "backend": "rwkv_world_trie",
+      "vocab_size": 65536,
+      "bos_policy": "model_defined",
+      "eos_policy": "model_defined",
+      "bos_id": 0,
+      "eos_id": 0,
+      "pad_id": 0,
+      "unk_id": 0,
+      "stop_ids": [0],
+      "special_tokens": {
+        "source": "inline",
+        "ids": {
+          "0": "<|endoftext|>"
+        }
+      }
+    },
+    "chat_contract": {
+      "version": 1,
+      "name": "rwkv7_g1j",
+      "raw_prompt_allowed": false,
+      "conversation_prefix": "<|endoftext|>",
+      "turn_prefix": "User: ",
+      "turn_suffix": "\n\n",
+      "assistant_generation_prefix": "Assistant:",
+      "thinking_mode_default": "visible",
+      "assistant_generation_prefix_by_thinking_mode": {
+        "visible": "Assistant:",
+        "suppressed": "Assistant: <think>\n</think>"
+      },
+      "system_prompt_mode": "dedicated_turn",
+      "system_prompt_separator": "\n\n",
+      "default_system_prompt": "",
+      "token_stop_markers": ["<|endoftext|>"],
+      "stop_text_markers": [],
+      "template_markers": ["User:", "Assistant:", "System:", "<think>", "</think>"],
+      "min_response_tokens": 1
+    },
+    "attention_contract": {
+      "attn_variant": "rwkv7_wkv",
+      "rope_layout": "none",
+      "rope_type": "none",
+      "qk_norm": false,
+      "kv_layout": "recurrent_rwkv7_state",
+      "causal": true,
+      "layer_policy_config_key": "layer_kinds",
+      "layer_kind_config_key": "layer_kinds",
+      "state_policy_config_key": "layer_state_policy",
+      "recurrent_policy_config_key": "layer_recurrent_policy"
+    },
+    "block_contract": {
+      "norm_type": "layernorm",
+      "body_type": "rwkv7_dense",
+      "block_norm": "pre_norm_then_residual_add",
+      "attention_formula": "shift_lerp(x,att_shift) -> r/k/v proj -> lora_gates -> vgate -> kk_factor -> norm_kk -> scale_k(diagram) -> wkv_decode -> out_proj",
+      "mlp_formula": "shift_lerp(x,ffn_shift) -> channelmix_decode -> residual",
+      "activation": "squared_relu",
+      "qkv_bias": false,
+      "tail_order": "lora_gates -> vgate -> kk_factor -> norm_kk -> scale_k -> wkv_decode",
+      "bonus_weights": "rk, k_k, k_a are per-layer time-mix weights sourced from the manifest; rk reaches wkv_decode via an external slot"
+    },
+    "logits_contract": {
+      "final_norm": "layernorm",
+      "lm_head": "output_weight",
+      "logits_layout": "auto"
+    },
+    "quant_contract": {
+      "kernel_select": "weight_dtype_registry",
+      "activation_dtype": "fp32",
+      "per_tensor_mixed_quant": false
+    },
+    "runtime_invariants": {
+      "required_call_args": {}
+    },
+    "decode_state_contract": {
+      "type": "rwkv7_recurrent",
+      "state_writes": {
+        "att_shift": {"source": "att_shift_out", "index": "runtime.layer"},
+        "ffn_shift": {"source": "ffn_shift_out", "index": "runtime.layer"},
+        "wkv": {"source": "wkv_out_state", "index": "runtime.layer"},
+        "v_first": {"source": "v_first_out", "index": "runtime.layer"}
+      },
+      "state_reads": {
+        "att_shift": {"range": "full"},
+        "ffn_shift": {"range": "full"},
+        "wkv": {"range": "full"},
+        "v_first": {"range": "full"}
+      },
+      "params": {
+        "C": "num_heads * head_dim",
+        "H": "num_heads",
+        "N": "head_dim"
+      }
+    }
+  },
+  "required_numerical_contracts": {
+    "decoder.rwkv7_shifts": {
+      "op": "rwkv7_time_mix_shifts",
+      "template_ops": ["rwkv7_time_mix_shifts"],
+      "operation_interface": "rwkv7.time_mix_shifts.token_major.fp32.v1",
+      "phases": {
+        "prefill": {
+          "contract_id": "rwkv7_time_mix_shifts_fp32",
+          "validation": "observed",
+          "evidence": "Fused per-index loop reads x/shift once; shared shift written once (shift-bundle entry)."
+        },
+        "decode": {
+          "contract_id": "rwkv7_time_mix_shifts_fp32",
+          "validation": "observed",
+          "evidence": "unittest/test_rwkv_decode.py run_shifts_case: bundle parity, lane agreement, in-place carry."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.rwkv7_shifts.output",
+        "producer": "rwkv7_time_mix_shifts",
+        "logical_layout": "token_major",
+        "axis_names": ["token", "channel"]
+      }
+    },
+    "decoder.rwkv7_lora": {
+      "op": "rwkv7_lora_gates",
+      "template_ops": ["rwkv7_lora_gates"],
+      "operation_interface": "rwkv7.lora_gates.token_major.fp32.v1",
+      "phases": {
+        "prefill": {
+          "contract_id": "rwkv7_lora_gates_fp32",
+          "validation": "observed",
+          "evidence": "Token-serial reuse of decode LoRA chains."
+        },
+        "decode": {
+          "contract_id": "rwkv7_lora_gates_fp32",
+          "validation": "observed",
+          "evidence": "unittest/test_rwkv_decode.py run_lora_case e2e."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.rwkv7_lora.output",
+        "producer": "rwkv7_lora_gates",
+        "logical_layout": "token_major",
+        "axis_names": ["token", "channel"]
+      }
+    },
+    "decoder.rwkv7_vgate": {
+      "op": "rwkv7_vgate_vmix",
+      "template_ops": ["rwkv7_vgate_produce", "rwkv7_vgate_vmix"],
+      "operation_interface": "rwkv7.vgate_vmix.token_major.fp32.v1",
+      "phases": {
+        "prefill": {
+          "contract_id": "rwkv7_vgate_vmix_fp32",
+          "validation": "observed",
+          "evidence": "Layer-0 produce path selected by omitting optional xv/v_first ports; strict NULL rule enforced in C."
+        },
+        "decode": {
+          "contract_id": "rwkv7_vgate_vmix_fp32",
+          "validation": "observed",
+          "evidence": "unittest/test_rwkv7_block.py layer-0 produce-only vs layer>0 consume wiring."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.rwkv7_vgate.output",
+        "producer": "rwkv7_vgate_vmix",
+        "logical_layout": "token_major",
+        "axis_names": ["token", "channel"]
+      }
+    },
+    "decoder.rwkv7_kk_factor": {
+      "op": "rwkv7_kk_factor",
+      "template_ops": ["rwkv7_kk_factor"],
+      "operation_interface": "rwkv7.kk_factor.token_major.fp32.v1",
+      "phases": {
+        "prefill": {
+          "contract_id": "rwkv7_kk_factor_fp32",
+          "validation": "observed",
+          "evidence": "kk_raw = k .* k_k elementwise; exact input alias allowed."
+        },
+        "decode": {
+          "contract_id": "rwkv7_kk_factor_fp32",
+          "validation": "observed",
+          "evidence": "unittest/test_rwkv_decode.py run_kk_factor_case exact + alias parity."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.rwkv7_kk_factor.output",
+        "producer": "rwkv7_kk_factor",
+        "logical_layout": "token_major",
+        "axis_names": ["token", "channel"]
+      }
+    },
+    "decoder.rwkv7_norm_kk": {
+      "op": "rwkv7_norm_kk",
+      "template_ops": ["rwkv7_norm_kk"],
+      "operation_interface": "rwkv7.norm_kk.head_major.fp32.v1",
+      "phases": {
+        "prefill": {
+          "contract_id": "rwkv7_norm_kk_fp32",
+          "validation": "observed",
+          "evidence": "Per-head L2 normalize, divisor max(norm,1e-12); kk=0 stays zero."
+        },
+        "decode": {
+          "contract_id": "rwkv7_norm_kk_fp32",
+          "validation": "observed",
+          "evidence": "tests/test_v8_rwkv7_decode_oracle.py saturation cases."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.rwkv7_norm_kk.output",
+        "producer": "rwkv7_norm_kk",
+        "logical_layout": "token_head_feature",
+        "axis_names": ["token", "head", "feature"]
+      }
+    },
+    "decoder.rwkv7_scale_k": {
+      "op": "rwkv7_scale_k",
+      "template_ops": ["rwkv7_scale_k"],
+      "operation_interface": "rwkv7.scale_k.token_major.fp32.v1",
+      "phases": {
+        "prefill": {
+          "contract_id": "rwkv7_scale_k_fp32",
+          "validation": "observed",
+          "evidence": "Diagram Lerp(k_a,1) box; intentionally differs from modeling_rwkv7.py:501."
+        },
+        "decode": {
+          "contract_id": "rwkv7_scale_k_fp32",
+          "validation": "observed",
+          "evidence": "unittest/test_rwkv_decode.py run_timemix_tail_case with diagram formula."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.rwkv7_scale_k.output",
+        "producer": "rwkv7_scale_k",
+        "logical_layout": "token_major",
+        "axis_names": ["token", "channel"]
+      }
+    },
+    "decoder.rwkv7_wkv": {
+      "op": "rwkv7_wkv_decode",
+      "template_ops": ["rwkv7_wkv_decode"],
+      "operation_interface": "rwkv7.wkv_decode.token_major.fp32.v1",
+      "phases": {
+        "prefill": {
+          "contract_id": "rwkv7_wkv_decode_fp32",
+          "validation": "observed",
+          "evidence": "Pinned fixture tests/fixtures/rwkv7/decode_torch.json; prefill reuses one-step math token-serially."
+        },
+        "decode": {
+          "contract_id": "rwkv7_wkv_decode_fp32",
+          "validation": "observed",
+          "evidence": "tests/test_v8_rwkv7_decode_oracle.py 8 tests; 64-step recurrence 2.38e-07; -O0 vs -O3 bit-exact."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.rwkv7_wkv_decode.output",
+        "producer": "rwkv7_wkv_decode",
+        "logical_layout": "token_major",
+        "axis_names": ["token", "channel"]
+      }
+    },
+    "decoder.rwkv7_channelmix": {
+      "op": "rwkv7_channelmix_decode",
+      "template_ops": ["rwkv7_channelmix_decode"],
+      "operation_interface": "rwkv7.channelmix_decode.token_major.fp32.v1",
+      "phases": {
+        "prefill": {
+          "contract_id": "rwkv7_channelmix_decode_fp32",
+          "validation": "observed",
+          "evidence": "Token-serial reuse of decode squared-ReLU feedforward."
+        },
+        "decode": {
+          "contract_id": "rwkv7_channelmix_decode_fp32",
+          "validation": "observed",
+          "evidence": "unittest/test_rwkv7_block.py full-block caller wiring parity."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.rwkv7_channelmix_decode.output",
+        "producer": "rwkv7_channelmix_decode",
+        "logical_layout": "token_major",
+        "axis_names": ["token", "channel"]
+      }
+    }
+  },
+  "kernels": {
+    "rwkv7_wkv_decode": "rwkv7_wkv_decode_f32"
+  },
+  "sequence": ["decoder"],
+  "block_types": {
+    "decoder": {
+      "sequence": ["header", "body", "footer"],
+      "header": [
+        "rwkv7_trie_tokenizer",
+        "dense_embedding_lookup"
+      ],
+      "body": {
+        "type": "rwkv7_dense",
+        "kind_config_key": "layer_kinds",
+        "ops_by_kind": {
+          "layer_0": [
+            {"op": "layernorm", "graph_slots": {"inputs": {"input": "main_stream"}, "outputs": {"output": "normalized_stream"}}},
+            {"op": "rwkv7_time_mix_shifts", "graph_slots": {"inputs": {"x": "normalized_stream", "shift_in": "att_shift"}, "outputs": {"xr": "xr_lane", "xw": "xw_lane", "xk": "xk_lane", "xv": "xv_lane", "xa": "xa_lane", "xg": "xg_lane", "shift_out": "att_shift"}}},
+            {"op": "rwkv7_r_proj", "graph_slots": {"inputs": {"x": "xr_lane"}, "outputs": {"y": "r_vec"}}},
+            {"op": "rwkv7_k_proj", "graph_slots": {"inputs": {"x": "xk_lane"}, "outputs": {"y": "k_raw_vec"}}},
+            {"op": "rwkv7_v_proj", "graph_slots": {"inputs": {"x": "xv_lane"}, "outputs": {"y": "v_in_vec"}}},
+            {"op": "rwkv7_lora_gates", "graph_slots": {"inputs": {"xw": "xw_lane", "xa": "xa_lane", "xg": "xg_lane"}, "outputs": {"w_log": "w_log_vec", "a_out": "a_vec", "g_out": "g_vec"}}},
+            {"op": "rwkv7_vgate_produce", "graph_slots": {"inputs": {"v_in": "v_in_vec"}, "outputs": {"v_out": "v_mix_vec", "v_first_out": "v_first"}}},
+            {"op": "rwkv7_kk_factor", "graph_slots": {"inputs": {"k": "k_raw_vec"}, "outputs": {"kk_raw": "kk_raw_vec"}}},
+            {"op": "rwkv7_norm_kk", "graph_slots": {"inputs": {"kk_in": "kk_raw_vec"}, "outputs": {"kk_out": "kk_vec"}}},
+            {"op": "rwkv7_scale_k", "graph_slots": {"inputs": {"k_in": "k_raw_vec", "a": "a_vec"}, "outputs": {"k_out": "k_scaled_vec"}}},
+            {"op": "rwkv7_wkv_decode", "graph_slots": {"inputs": {"r": "r_vec", "w_log": "w_log_vec", "k": "k_scaled_vec", "v": "v_mix_vec", "kk": "kk_vec", "a": "a_vec", "g": "g_vec", "rk": "external:rwkv7_time_mix_rk", "state_in": "wkv"}, "outputs": {"y": "wkv_out", "state_out": "wkv"}}},
+            {"op": "rwkv7_out_proj", "graph_slots": {"inputs": {"x": "wkv_out"}, "outputs": {"y": "post_attention_stream"}}},
+            {"op": "residual_add", "graph_slots": {"inputs": {"a": "post_attention_stream", "b": "main_stream"}, "outputs": {"out": "main_stream"}}},
+            {"op": "layernorm", "graph_slots": {"inputs": {"input": "main_stream"}, "outputs": {"output": "normalized_stream"}}},
+            {"op": "rwkv7_channelmix_decode", "graph_slots": {"inputs": {"x": "normalized_stream", "shift_in": "ffn_shift"}, "outputs": {"shift_out": "ffn_shift", "out": "channelmix_output"}}},
+            {"op": "residual_add", "graph_slots": {"inputs": {"a": "channelmix_output", "b": "main_stream"}, "outputs": {"out": "main_stream"}}}
+          ],
+          "layer_gt0": [
+            {"op": "layernorm", "graph_slots": {"inputs": {"input": "main_stream"}, "outputs": {"output": "normalized_stream"}}},
+            {"op": "rwkv7_time_mix_shifts", "graph_slots": {"inputs": {"x": "normalized_stream", "shift_in": "att_shift"}, "outputs": {"xr": "xr_lane", "xw": "xw_lane", "xk": "xk_lane", "xv": "xv_lane", "xa": "xa_lane", "xg": "xg_lane", "shift_out": "att_shift"}}},
+            {"op": "rwkv7_r_proj", "graph_slots": {"inputs": {"x": "xr_lane"}, "outputs": {"y": "r_vec"}}},
+            {"op": "rwkv7_k_proj", "graph_slots": {"inputs": {"x": "xk_lane"}, "outputs": {"y": "k_raw_vec"}}},
+            {"op": "rwkv7_v_proj", "graph_slots": {"inputs": {"x": "xv_lane"}, "outputs": {"y": "v_in_vec"}}},
+            {"op": "rwkv7_lora_gates", "graph_slots": {"inputs": {"xw": "xw_lane", "xa": "xa_lane", "xg": "xg_lane"}, "outputs": {"w_log": "w_log_vec", "a_out": "a_vec", "g_out": "g_vec"}}},
+            {"op": "rwkv7_vgate_vmix", "graph_slots": {"inputs": {"v_in": "v_in_vec", "v_first": "v_first", "xv": "xv_lane"}, "outputs": {"v_out": "v_mix_vec", "v_first_out": "v_first"}}},
+            {"op": "rwkv7_kk_factor", "graph_slots": {"inputs": {"k": "k_raw_vec"}, "outputs": {"kk_raw": "kk_raw_vec"}}},
+            {"op": "rwkv7_norm_kk", "graph_slots": {"inputs": {"kk_in": "kk_raw_vec"}, "outputs": {"kk_out": "kk_vec"}}},
+            {"op": "rwkv7_scale_k", "graph_slots": {"inputs": {"k_in": "k_raw_vec", "a": "a_vec"}, "outputs": {"k_out": "k_scaled_vec"}}},
+            {"op": "rwkv7_wkv_decode", "graph_slots": {"inputs": {"r": "r_vec", "w_log": "w_log_vec", "k": "k_scaled_vec", "v": "v_mix_vec", "kk": "kk_vec", "a": "a_vec", "g": "g_vec", "rk": "external:rwkv7_time_mix_rk", "state_in": "wkv"}, "outputs": {"y": "wkv_out", "state_out": "wkv"}}},
+            {"op": "rwkv7_out_proj", "graph_slots": {"inputs": {"x": "wkv_out"}, "outputs": {"y": "post_attention_stream"}}},
+            {"op": "residual_add", "graph_slots": {"inputs": {"a": "post_attention_stream", "b": "main_stream"}, "outputs": {"out": "main_stream"}}},
+            {"op": "layernorm", "graph_slots": {"inputs": {"input": "main_stream"}, "outputs": {"output": "normalized_stream"}}},
+            {"op": "rwkv7_channelmix_decode", "graph_slots": {"inputs": {"x": "normalized_stream", "shift_in": "ffn_shift"}, "outputs": {"shift_out": "ffn_shift", "out": "channelmix_output"}}},
+            {"op": "residual_add", "graph_slots": {"inputs": {"a": "channelmix_output", "b": "main_stream"}, "outputs": {"out": "main_stream"}}}
+          ]
+        }
+      },
+      "footer": [
+        "layernorm",
+        "lm_head",
+        {"op": "logits", "graph_slots": {"inputs": {"x": "main_stream"}}}
+      ]
+    }
+  }
+}
