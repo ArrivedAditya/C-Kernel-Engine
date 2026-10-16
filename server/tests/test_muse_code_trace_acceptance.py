@@ -87,6 +87,8 @@ def test_correlated_tool_result_replay_and_identity_pass():
      "request_1_reasoning_replay_mismatch"),
     (lambda g: g[1]["request"]["input"][2].update(arguments='{"command":"ls"}'),
      "request_1_call_replay_mismatch"),
+    (lambda g: g[0]["events"][2]["response"]["output"][1].update(
+        arguments='{"command":"pwd","n":1e999}'), "request_0_malformed_call"),
     (lambda g: g[0]["events"].append({"type": "response.output_item.done", "item": CALL}),
      "request_0_terminal_not_completed_once"),
 ])

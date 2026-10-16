@@ -39,7 +39,8 @@ def _call(item: dict[str, Any]) -> tuple[str, str, str]:
         parsed = json.loads(arguments, parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
         if not isinstance(parsed, dict):
             raise ValueError("function call arguments must be an object")
-        normalized = json.dumps(parsed, sort_keys=True, separators=(",", ":"))
+        normalized = json.dumps(parsed, sort_keys=True, separators=(",", ":"),
+                                allow_nan=False)
     except (json.JSONDecodeError, ValueError) as exc:
         raise ValueError("malformed function call arguments") from exc
     return call_id, name, normalized
@@ -121,7 +122,8 @@ def evaluate(raw: bytes, stdout: str, *, model: str, tool_name: str,
     seen_calls: dict[str, tuple[str, str]] = {}
     seen_outputs: dict[str, str] = {}
     prior_items: list[dict[str, Any]] = []
-    expected_args = json.dumps(expected_arguments, sort_keys=True, separators=(",", ":"))
+    expected_args = json.dumps(expected_arguments, sort_keys=True, separators=(",", ":"),
+                               allow_nan=False)
     tool_count = 0
     for index, group in enumerate(groups):
         request = group["request"]
