@@ -329,10 +329,19 @@ def _input_chat_messages(
             # Dropping it changes the prompt on every tool continuation.
             parts = getattr(item, "content", None)
             reasoning = "".join(part.text for part in parts) if parts else ""
-            if not reasoning:
+            if not reasoning and (
+                getattr(item, "encrypted_content", None)
+                or getattr(item, "summary", None)
+                or parts
+            ):
                 raise ValueError(
                     "Muse reasoning history requires visible reasoning text"
                 )
+            if not reasoning:
+                # The Responses API may emit an empty reasoning item when a
+                # visible-reasoning request goes directly to a final answer.
+                # It carries no conversation state to replay.
+                continue
             messages.append({
                 "role": "assistant", "recipient": "self", "content": reasoning,
                 "end_turn": False, "tool_calls": [],
@@ -2196,6 +2205,11 @@ def create_app(
                     }
                     for call in tool_calls
                 ]
+            if tool_syntax == _TOOL_SYNTAX_MUSE_ATEM_V1 and thinking:
+                history.append({
+                    "role": "assistant", "recipient": "self", "content": thinking,
+                    "end_turn": False, "tool_calls": [],
+                })
             _store_response(response_id, resp, [*history, assistant])
         return resp
 

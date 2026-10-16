@@ -66,6 +66,13 @@ def _events(response) -> list[dict]:
             if line.startswith("data: ")]
 
 
+def _completed_payload(response, stream: bool) -> dict:
+    if stream:
+        return next(event["response"] for event in _events(response)
+                    if event["type"] == "response.completed")
+    return response.json()
+
+
 @pytest.mark.parametrize("stream", [False, True])
 def test_muse_tool_round_trip_and_channel_isolation(stream: bool) -> None:
     client, session = _client([CALL, FINAL])
@@ -183,6 +190,62 @@ def test_muse_code_unrenderable_reasoning_history_fails_before_generation() -> N
     })
     assert recovered.status_code == 200, recovered.text
     assert len(session.prompts) == 1
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_muse_response_reasoning_replay_matches_stored_continuation(stream: bool) -> None:
+    client, session = _client([NAMESPACE_CALL, FINAL, FINAL])
+    first = client.post("/v1/responses", json={
+        "model": "muse-test", "input": "Read /tmp/a", "tools": [NAMESPACE_TOOL],
+        "reasoning": {"effort": "high"}, "stream": stream,
+    })
+    assert first.status_code == 200, first.text
+    payload = _completed_payload(first, stream)
+    assert [item["type"] for item in payload["output"]] == ["reasoning", "function_call"]
+    call = payload["output"][1]
+    result = {"type": "function_call_output", "call_id": call["call_id"],
+              "output": "cobalt"}
+    common = {"model": "muse-test", "tools": [NAMESPACE_TOOL],
+              "reasoning": {"effort": "high"}, "stream": stream}
+    explicit = client.post("/v1/responses", json={
+        **common, "input": [
+            {"type": "message", "role": "user", "content": "Read /tmp/a"},
+            *payload["output"], result,
+        ],
+    })
+    stored = client.post("/v1/responses", json={
+        **common, "previous_response_id": payload["id"], "input": [result],
+    })
+    assert explicit.status_code == stored.status_code == 200
+    assert "Read it first." in session.prompts[1]
+    assert session.prompts[1] == session.prompts[2]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_muse_empty_response_reasoning_can_be_replayed(stream: bool) -> None:
+    client, session = _client([FINAL, FINAL, FINAL])
+    first = client.post("/v1/responses", json={
+        "model": "muse-test", "input": "Hello", "reasoning": {"effort": "high"},
+        "stream": stream,
+    })
+    assert first.status_code == 200, first.text
+    payload = _completed_payload(first, stream)
+    assert payload["output"][0]["type"] == "reasoning"
+    assert payload["output"][0]["content"] == []
+    common = {"model": "muse-test", "reasoning": {"effort": "high"},
+              "stream": stream}
+    explicit = client.post("/v1/responses", json={
+        **common, "input": [
+            {"type": "message", "role": "user", "content": "Hello"},
+            *payload["output"],
+            {"type": "message", "role": "user", "content": "Continue"},
+        ],
+    })
+    stored = client.post("/v1/responses", json={
+        **common, "previous_response_id": payload["id"], "input": "Continue",
+    })
+    assert explicit.status_code == stored.status_code == 200
+    assert session.prompts[1] == session.prompts[2]
 
 
 @pytest.mark.parametrize("variant", [
