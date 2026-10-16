@@ -20,8 +20,10 @@ KERNEL = 20
 PADDING = 5
 
 
-def build_circuit(tokens=36):
-    graph = decoder_circuit(tokens)
+def build_circuit(tokens=36, *, decoder_graph=None,
+                  input_capacity=INPUT_CAPACITY,
+                  output_capacity=OUTPUT_CAPACITY):
+    graph = decoder_graph if decoder_graph is not None else decoder_circuit(tokens)
     graph['name'] = 'kokoro_generator_stage0_bounded'
     graph['native_entry']['function'] = 'ck_kokoro_generator_stage0_bounded'
     graph['native_entry']['params'].append(
@@ -33,7 +35,7 @@ def build_circuit(tokens=36):
         complete_generator=False, complete_waveform=False)
     graph['runtime_lengths']['generator_stage0_frames'] = {
         'producer': 'generator_stage0_extent', 'result': 'valid_extent',
-        'capacity': OUTPUT_CAPACITY, 'allow_zero': False}
+        'capacity': output_capacity, 'allow_zero': False}
     graph['activation_buffers']['generator_stage0_extent_value'] = {'shape': [1]}
     graph['activation_bindings']['generator_stage0_extent_value'] = \
         'generator_stage0_extent_value'
@@ -44,7 +46,7 @@ def build_circuit(tokens=36):
         'produces_runtime_lengths': {'generator_stage0_frames': 'valid_extent'},
         'runtime_scalar_bindings': {'extent_scale_source': 'upsampled_frames'},
         'params': {'call_constants': {'extent_scale_factor': UPSAMPLE,
-                                     'extent_scale_capacity': OUTPUT_CAPACITY}},
+                                     'extent_scale_capacity': output_capacity}},
         'graph_slots': {'inputs': {}, 'outputs': {
             'valid_extent': 'generator_stage0_extent_value'}},
     }
@@ -52,14 +54,14 @@ def build_circuit(tokens=36):
         'generator_stage0_activation', 'leaky_relu_strided_checked',
         'leaky_relu_strided_f32_checked',
         {'input': 'decoder_decode3_output'}, 'generator_stage0_activation',
-        [INPUT_CHANNELS, INPUT_CAPACITY],
-        {'R': INPUT_CHANNELS, 'C': INPUT_CAPACITY,
+        [INPUT_CHANNELS, input_capacity],
+        {'R': INPUT_CHANNELS, 'C': input_capacity,
          'negative_slope': .1,
          'call_constants': {
-            'leaky_input_elements': INPUT_CHANNELS * INPUT_CAPACITY,
-            'leaky_input_stride': INPUT_CAPACITY,
-            'leaky_output_elements': INPUT_CHANNELS * INPUT_CAPACITY,
-            'leaky_output_stride': INPUT_CAPACITY,
+            'leaky_input_elements': INPUT_CHANNELS * input_capacity,
+            'leaky_input_stride': input_capacity,
+            'leaky_output_elements': INPUT_CHANNELS * input_capacity,
+            'leaky_output_stride': input_capacity,
             'leaky_rows': INPUT_CHANNELS}},
         None, ('upsampled_frames',),
         {'leaky_columns': 'upsampled_frames'})
@@ -67,18 +69,18 @@ def build_circuit(tokens=36):
         'generator_stage0_upsample', 'audio_conv_transpose1d_dense_checked',
         'audio_conv_transpose1d_dense_channel_major_f32_checked',
         {'input': 'generator_stage0_activation'},
-        'generator_stage0_upsample', [OUTPUT_CHANNELS, OUTPUT_CAPACITY],
-        {'I': INPUT_CHANNELS, 'O': OUTPUT_CHANNELS, 'T': INPUT_CAPACITY,
-         'K': KERNEL, 'U': OUTPUT_CAPACITY,
-         'Q': OUTPUT_CHANNELS * OUTPUT_CAPACITY,
+        'generator_stage0_upsample', [OUTPUT_CHANNELS, output_capacity],
+        {'I': INPUT_CHANNELS, 'O': OUTPUT_CHANNELS, 'T': input_capacity,
+         'K': KERNEL, 'U': output_capacity,
+         'Q': OUTPUT_CHANNELS * output_capacity,
          'call_constants': {
-            'dense_deconv_input_elements': INPUT_CHANNELS * INPUT_CAPACITY,
-            'dense_deconv_input_stride': INPUT_CAPACITY,
+            'dense_deconv_input_elements': INPUT_CHANNELS * input_capacity,
+            'dense_deconv_input_stride': input_capacity,
             'dense_deconv_weight_elements': INPUT_CHANNELS * OUTPUT_CHANNELS * KERNEL,
             'dense_deconv_bias_elements': OUTPUT_CHANNELS,
-            'dense_deconv_output_elements': OUTPUT_CHANNELS * OUTPUT_CAPACITY,
-            'dense_deconv_output_stride': OUTPUT_CAPACITY,
-            'dense_deconv_scratch_elements': OUTPUT_CHANNELS * OUTPUT_CAPACITY,
+            'dense_deconv_output_elements': OUTPUT_CHANNELS * output_capacity,
+            'dense_deconv_output_stride': output_capacity,
+            'dense_deconv_scratch_elements': OUTPUT_CHANNELS * output_capacity,
             'dense_deconv_input_channels': INPUT_CHANNELS,
             'dense_deconv_output_channels': OUTPUT_CHANNELS,
             'dense_deconv_kernel_size': KERNEL,

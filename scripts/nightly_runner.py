@@ -817,6 +817,11 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_kokoro_runtime_decoder_complete.py",
         timeout_sec=900,
     ),
+    "tts_kokoro_runtime_generator_stage0": TestSuite(
+        "TTS Kokoro Runtime-Length First Generator Upsample", "inference",
+        ROOT / "tests" / "test_v8_kokoro_runtime_generator_stage0.py",
+        timeout_sec=900,
+    ),
     "tts_checked_op_constants": TestSuite(
         "Checked Per-Operation ABI Constants Generated Graph", "kernels",
         ROOT / "tests" / "test_v8_checked_op_constants.py",
