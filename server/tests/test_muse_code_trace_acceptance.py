@@ -43,9 +43,13 @@ def _trace():
                 {"type": "message", "role": "user", "content": "Run pwd once."},
                 REASON, {**CALL, "namespace": None, "name": "muse.bash"}, RESULT,
             ]},
-            "events": [{"type": "response.completed", "response": {
+            "events": [
+                {"type": "response.output_item.done", "item": {
+                    "type": "message", "role": "assistant",
+                    "content": [{"type": "output_text", "text": ANSWER}]}},
+                {"type": "response.completed", "response": {
                 "status": "completed", "output": [{"type": "message", "role": "assistant",
-                                                   "content": ANSWER}],
+                    "content": [{"type": "output_text", "text": ANSWER}]}],
                 "output_text": ANSWER, "usage": {"input_tokens": 20}}}],
         },
     ]
@@ -162,3 +166,26 @@ def test_identity_mismatch_fails_and_missing_after_is_incomplete():
 def test_malformed_trace_rejected():
     with pytest.raises(ValueError, match="event before request"):
         parse_trace(b'SSE RESPONSE: event: response.completed\\ndata: {}')
+
+
+@pytest.mark.parametrize("mutation,expected", [
+    (lambda g: g[1]["request"]["input"].reverse(), "request_1_history_order_mismatch"),
+    (lambda g: g[1]["request"]["input"].pop(0), "request_1_history_order_mismatch"),
+    (lambda g: g[1]["request"]["input"].__setitem__(slice(1, 3),
+        list(reversed(g[1]["request"]["input"][1:3]))),
+     "request_1_history_order_mismatch"),
+    (lambda g: g[0]["request"]["input"].append(RESULT),
+     "request_0_unknown_tool_result"),
+    (lambda g: g[1]["events"][1]["response"]["output"][0]["content"][0].update(
+        text="WRONG ANSWER"), "request_1_message_text_mismatch"),
+    (lambda g: g[0]["events"][0]["item"]["content"][0].update(
+        text="WRONG REASONING"), "request_0_stream_output_mismatch"),
+    (lambda g: g[1]["events"].pop(0), "request_1_stream_output_mismatch"),
+])
+def test_reviewed_false_passes_now_fail(mutation, expected):
+    groups = _trace()
+    mutation(groups)
+    report = _evaluate(groups)
+    assert report["protocol"]["status"] == "fail"
+    assert expected in report["protocol"]["errors"]
+    assert report["task"]["status"] == "fail"

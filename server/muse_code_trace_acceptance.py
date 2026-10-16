@@ -5,6 +5,9 @@ Muse Code's transport trace records requests and SSE events. This evaluator
 checks the protocol and task separately; a correct final sentence cannot hide
 an extra tool invocation or a lost tool result. Loaded identity is certified
 only when matching before/after snapshots and expected hashes are supplied.
+It expects a complete, text-only single-task trace starting before the first
+tool call, and compares completed output items with SSE done items. It does
+not verify SSE deltas or independently attest tool effects.
 """
 
 from __future__ import annotations
@@ -54,6 +57,44 @@ def _reasoning(item: dict[str, Any]) -> str:
            or not isinstance(p.get("text"), str) for p in parts):
         raise ValueError("unrenderable reasoning content")
     return "".join(p["text"] for p in parts)
+
+
+def _message_text(item: dict[str, Any]) -> str:
+    content = item.get("content")
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list) or any(
+        not isinstance(part, dict)
+        or part.get("type") not in {"input_text", "output_text", "text"}
+        or not isinstance(part.get("text"), str) for part in content
+    ):
+        raise ValueError("unrenderable message content")
+    return "".join(part["text"] for part in content)
+
+
+def _canonical_item(item: Any) -> tuple[Any, ...]:
+    """Compare the rendered text history, allowing qualified tool-name replay."""
+    if not isinstance(item, dict):
+        raise ValueError("history item is not an object")
+    kind = item.get("type")
+    if kind == "message":
+        role = item.get("role")
+        if role not in {"system", "developer", "user", "assistant", "tool"}:
+            raise ValueError("unrecognized message role")
+        return (kind, role, _message_text(item))
+    if kind == "reasoning":
+        identifier = item.get("id")
+        if not isinstance(identifier, str) or not identifier:
+            raise ValueError("reasoning has no stable identity")
+        return (kind, identifier, _reasoning(item))
+    if kind == "function_call":
+        return (kind, *_call(item))
+    if kind == "function_call_output":
+        call_id, output = item.get("call_id"), item.get("output")
+        if not isinstance(call_id, str) or not call_id or not isinstance(output, str) or not output:
+            raise ValueError("malformed tool result")
+        return (kind, call_id, output)
+    raise ValueError("unsupported history item")
 
 
 def parse_trace(raw: bytes) -> list[dict[str, Any]]:
@@ -122,6 +163,8 @@ def evaluate(raw: bytes, stdout: str, *, model: str, tool_name: str,
     seen_calls: dict[str, tuple[str, str]] = {}
     seen_outputs: dict[str, str] = {}
     prior_items: list[dict[str, Any]] = []
+    expected_prefix: list[tuple[Any, ...]] | None = None
+    pending_call_ids: list[str] = []
     expected_args = json.dumps(expected_arguments, sort_keys=True, separators=(",", ":"),
                                allow_nan=False)
     tool_count = 0
@@ -133,6 +176,24 @@ def evaluate(raw: bytes, stdout: str, *, model: str, tool_name: str,
         if not isinstance(items, list):
             errors.append(f"request_{index}_input_missing")
             items = []
+        try:
+            canonical_input = [_canonical_item(item) for item in items]
+        except ValueError:
+            errors.append(f"request_{index}_history_item_malformed")
+            canonical_input = []
+        if index == 0:
+            if any(item[0] != "message" for item in canonical_input):
+                errors.append("initial_history_unverifiable")
+        elif expected_prefix is None:
+            errors.append(f"request_{index}_prior_response_missing")
+        else:
+            if canonical_input[:len(expected_prefix)] != expected_prefix:
+                errors.append(f"request_{index}_history_order_mismatch")
+            continuation = canonical_input[len(expected_prefix):]
+            if ([item[0] for item in continuation] !=
+                    ["function_call_output"] * len(pending_call_ids)
+                    or [item[1] for item in continuation] != pending_call_ids):
+                errors.append(f"request_{index}_tool_result_order_mismatch")
         events = group["events"]
         terminals = [e for e in events if e.get("type") in {
             "response.completed", "response.failed", "response.incomplete", "response.cancelled"}]
@@ -151,17 +212,26 @@ def evaluate(raw: bytes, stdout: str, *, model: str, tool_name: str,
             errors.append(f"request_{index}_output_missing")
             responses.append(None)
             continue
-        done_calls = [e.get("item") for e in events
-                      if e.get("type") == "response.output_item.done"
-                      and isinstance(e.get("item"), dict)
-                      and e["item"].get("type") == "function_call"]
+        done_items = [e.get("item") for e in events
+                      if e.get("type") == "response.output_item.done"]
+        try:
+            canonical_output = [_canonical_item(item) for item in output]
+            canonical_done = [_canonical_item(item) for item in done_items]
+            if canonical_done != canonical_output:
+                errors.append(f"request_{index}_stream_output_mismatch")
+        except ValueError:
+            errors.append(f"request_{index}_output_item_malformed")
+            canonical_output = []
         calls = [item for item in output if isinstance(item, dict)
                  and item.get("type") == "function_call"]
-        try:
-            if sorted(_call(x) for x in done_calls) != sorted(_call(x) for x in calls):
-                errors.append(f"request_{index}_stream_call_mismatch")
-        except ValueError:
-            errors.append(f"request_{index}_malformed_call")
+        message_texts = [item[2] for item in canonical_output if item[0] == "message"]
+        if "".join(message_texts) != response.get("output_text"):
+            errors.append(f"request_{index}_message_text_mismatch")
+        # Input can only contain results for calls from earlier responses.
+        for item in items:
+            if isinstance(item, dict) and item.get("type") == "function_call_output":
+                if item.get("call_id") not in seen_calls:
+                    errors.append(f"request_{index}_unknown_tool_result")
         for item in calls:
             try:
                 call_id, name, arguments = _call(item)
@@ -209,10 +279,13 @@ def evaluate(raw: bytes, stdout: str, *, model: str, tool_name: str,
                     errors.append(f"request_{index}_tool_result_changed")
                 else:
                     seen_outputs[call_id] = results[0]
-        for item in items:
-            if isinstance(item, dict) and item.get("type") == "function_call_output":
-                if item.get("call_id") not in seen_calls:
-                    errors.append(f"request_{index}_unknown_tool_result")
+        if canonical_input and canonical_output:
+            expected_prefix = canonical_input + canonical_output
+            pending_call_ids = [item[1] for item in canonical_output
+                                if item[0] == "function_call"]
+        else:
+            expected_prefix = None
+            pending_call_ids = []
         responses.append(response)
         prior_items.extend(x for x in output if isinstance(x, dict))
     completed = [r for r in responses if r is not None]
