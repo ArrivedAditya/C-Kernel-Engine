@@ -2232,6 +2232,8 @@ typedef enum {
     CK_ATTN_REDUCTION_F16_ONLINE_SINGLE_RANGE = 2,
     CK_ATTN_REDUCTION_F16_FLASH_AUTO_QTILE64 = 3,
     CK_ATTN_REDUCTION_BF16_PYTORCH_SDPA = 4,
+    CK_ATTN_REDUCTION_F16_REGULAR_NOSCALE = 5,
+    CK_ATTN_REDUCTION_F16_FLASH_AUTO_QTILE64_REGULAR_TAIL_NOSCALE = 6,
 } ck_attention_reduction_t;
 
 // Research selectors for partitioning independent prefill attention outputs.
@@ -2359,6 +2361,10 @@ ck_attention_status_t attention_forward_decode_head_major_gqa_f16cache_gemma4_co
     float *out_token, int num_heads, int num_kv_heads, int kv_tokens,
     int cache_capacity, int head_dim, int aligned_head_dim,
     ck_attention_reduction_t reduction);
+ck_attention_status_t attention_forward_decode_head_major_gqa_f16cache_regular_noscale(
+    const float *q_token, const uint16_t *k_cache, const uint16_t *v_cache,
+    float *out_token, int num_heads, int num_kv_heads, int kv_tokens,
+    int cache_capacity, int head_dim, int aligned_head_dim, int sliding_window);
 ck_attention_status_t attention_forward_decode_head_major_gqa_f16cache_sliding_gemma4_contract(
     const float *q_token, const uint16_t *k_cache, const uint16_t *v_cache,
     float *out_token, int num_heads, int num_kv_heads, int kv_tokens,

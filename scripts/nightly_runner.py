@@ -798,6 +798,25 @@ TEST_SUITES = {
         "TTS Kokoro Runtime-Length F0 and Noise Entry", "kernels",
         ROOT / "tests" / "test_v8_kokoro_runtime_prosody_norm.py",
     ),
+    "tts_kokoro_runtime_prosody_complete": TestSuite(
+        "TTS Kokoro Runtime-Length Complete F0 and Noise", "kernels",
+        ROOT / "tests" / "test_v8_kokoro_runtime_prosody_complete.py",
+    ),
+    "tts_kokoro_runtime_decoder_ingress": TestSuite(
+        "TTS Kokoro Runtime-Length Decoder Ingress", "inference",
+        ROOT / "tests" / "test_v8_kokoro_runtime_decoder_ingress.py",
+        timeout_sec=300,
+    ),
+    "tts_kokoro_runtime_decoder_encode": TestSuite(
+        "TTS Kokoro Runtime-Length First Decoder Block", "inference",
+        ROOT / "tests" / "test_v8_kokoro_runtime_decoder_encode.py",
+        timeout_sec=600,
+    ),
+    "tts_kokoro_runtime_decoder_complete": TestSuite(
+        "TTS Kokoro Runtime-Length Complete Acoustic Decoder", "inference",
+        ROOT / "tests" / "test_v8_kokoro_runtime_decoder_complete.py",
+        timeout_sec=900,
+    ),
     "tts_checked_op_constants": TestSuite(
         "Checked Per-Operation ABI Constants Generated Graph", "kernels",
         ROOT / "tests" / "test_v8_checked_op_constants.py",

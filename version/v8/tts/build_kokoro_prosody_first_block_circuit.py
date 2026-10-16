@@ -31,7 +31,7 @@ def operation(ident, op, kernel, source, output, params, weights=None,
     return result
 
 
-def branch_ops(branch):
+def branch_ops(branch, capacity=CAPACITY):
     stem = branch.lower()
     prefix = f'duration_prosody.{branch}.0'
     source = f'{stem}_norm0_output'
@@ -43,26 +43,26 @@ def branch_ops(branch):
     def activation(name, input_name):
         add(name, 'leaky_relu_strided_checked',
             'leaky_relu_strided_f32_checked', input_name,
-            {'R': CHANNELS, 'C': CAPACITY, 'negative_slope': .2,
-             'call_constants': {'leaky_input_elements': CHANNELS * CAPACITY,
-                'leaky_input_stride': CAPACITY,
-                'leaky_output_elements': CHANNELS * CAPACITY,
-                'leaky_output_stride': CAPACITY,
+            {'R': CHANNELS, 'C': capacity, 'negative_slope': .2,
+             'call_constants': {'leaky_input_elements': CHANNELS * capacity,
+                'leaky_input_stride': capacity,
+                'leaky_output_elements': CHANNELS * capacity,
+                'leaky_output_stride': capacity,
                 'leaky_rows': CHANNELS}},
             runtime_args=['leaky_columns'])
     def convolution(name, input_name, index):
         weight_prefix = f'{prefix}.conv{index}'
         add(name, 'audio_conv1d_checked',
             'audio_conv1d_checked_channel_major_f32', input_name,
-            {'I': CHANNELS, 'O': CHANNELS, 'T': CAPACITY, 'K': 3,
-             'U': CAPACITY, 'Q': CHANNELS * CAPACITY,
-             'call_constants': {'conv_input_elements': CHANNELS * CAPACITY,
-                'conv_input_stride': CAPACITY,
+            {'I': CHANNELS, 'O': CHANNELS, 'T': capacity, 'K': 3,
+             'U': capacity, 'Q': CHANNELS * capacity,
+             'call_constants': {'conv_input_elements': CHANNELS * capacity,
+                'conv_input_stride': capacity,
                 'conv_weight_elements': CHANNELS * CHANNELS * 3,
                 'conv_bias_elements': CHANNELS,
-                'conv_output_elements': CHANNELS * CAPACITY,
-                'conv_output_stride': CAPACITY,
-                'conv_scratch_elements': CHANNELS * CAPACITY,
+                'conv_output_elements': CHANNELS * capacity,
+                'conv_output_stride': capacity,
+                'conv_scratch_elements': CHANNELS * capacity,
                 'conv_input_channels': CHANNELS,
                 'conv_output_channels': CHANNELS,
                 'conv_kernel_size': 3, 'conv_stride': 1,
@@ -88,14 +88,14 @@ def branch_ops(branch):
         {'weight': f'{norm2}.fc.weight', 'bias': f'{norm2}.fc.bias'})
     add(f'{stem}_norm1_output', 'audio_adain_instance_norm',
         'audio_adain_instance_norm_f32', f'{stem}_conv0',
-        {'C': CHANNELS, 'T': CAPACITY, 'normalization_epsilon': 1e-5,
-         'call_constants': {'adain_input_elements': CHANNELS * CAPACITY,
-            'adain_input_stride': CAPACITY,
+        {'C': CHANNELS, 'T': capacity, 'normalization_epsilon': 1e-5,
+         'call_constants': {'adain_input_elements': CHANNELS * capacity,
+            'adain_input_stride': capacity,
             'adain_norm_weight_elements': CHANNELS,
             'adain_norm_bias_elements': CHANNELS,
             'adain_style_affine_elements': 2 * CHANNELS,
-            'adain_output_elements': CHANNELS * CAPACITY,
-            'adain_output_stride': CAPACITY,
+            'adain_output_elements': CHANNELS * capacity,
+            'adain_output_stride': capacity,
             'adain_channels': CHANNELS}},
         {'norm_weight': f'{norm2}.norm.weight',
          'norm_bias': f'{norm2}.norm.bias'},
@@ -111,14 +111,14 @@ def branch_ops(branch):
         'returns_status': True,
         'consumes_runtime_lengths': ['expanded_frames'],
         'runtime_scalar_bindings': {'sum_columns': 'expanded_frames'},
-        'params': {'R': CHANNELS, 'C': CAPACITY,
+        'params': {'R': CHANNELS, 'C': capacity,
             'scale': 1.0 / math.sqrt(2.0), 'call_constants': {
-                'sum_left_elements': CHANNELS * CAPACITY,
-                'sum_left_stride': CAPACITY,
-                'sum_right_elements': CHANNELS * CAPACITY,
-                'sum_right_stride': CAPACITY,
-                'sum_output_elements': CHANNELS * CAPACITY,
-                'sum_output_stride': CAPACITY, 'sum_rows': CHANNELS}},
+                'sum_left_elements': CHANNELS * capacity,
+                'sum_left_stride': capacity,
+                'sum_right_elements': CHANNELS * capacity,
+                'sum_right_stride': capacity,
+                'sum_output_elements': CHANNELS * capacity,
+                'sum_output_stride': capacity, 'sum_rows': CHANNELS}},
         'graph_slots': {'inputs': {'left': 'prosody_shared_channel',
             'right': f'{stem}_conv1'},
             'outputs': {'output': f'{stem}_block0_output'}}})

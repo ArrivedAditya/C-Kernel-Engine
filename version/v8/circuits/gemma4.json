@@ -173,7 +173,7 @@
             "tensor.q.dtype": "fp32",
             "tensor.kv.dtype": "fp16",
             "tensor.layout": "head_major",
-            "numerics.attention_reduction": "f16_flash_auto_qtile64_noscale"
+            "numerics.attention_reduction": "f16_flash_auto_qtile64_regular_tail_noscale"
           },
           "validation": "observed",
           "evidence": "Gemma4 uses unit-scale attention and persistent FP16 K/V across multimodal prefill segments."
@@ -184,7 +184,7 @@
             "tensor.q.dtype": "fp32",
             "tensor.kv.dtype": "fp16",
             "tensor.layout": "head_major",
-            "numerics.attention_reduction": "f16_online_single_range_noscale"
+            "numerics.attention_reduction": "f16_regular_fp32_noscale"
           },
           "validation": "observed",
           "evidence": "Gemma4 decode retains unit-scale attention over the persistent FP16 cache."
@@ -202,7 +202,7 @@
             "tensor.q.dtype": "fp32",
             "tensor.kv.dtype": "fp16",
             "tensor.layout": "head_major",
-            "numerics.attention_reduction": "f16_flash_auto_qtile64_noscale"
+            "numerics.attention_reduction": "f16_flash_auto_qtile64_regular_tail_noscale"
           },
           "validation": "observed",
           "evidence": "Gemma4 sliding prefill uses the layer-declared live range of the persistent FP16 cache."
@@ -213,7 +213,7 @@
             "tensor.q.dtype": "fp32",
             "tensor.kv.dtype": "fp16",
             "tensor.layout": "head_major",
-            "numerics.attention_reduction": "f16_online_single_range_noscale"
+            "numerics.attention_reduction": "f16_regular_fp32_noscale"
           },
           "validation": "observed",
           "evidence": "Gemma4 sliding decode uses the layer-declared live cache range with unit attention scale."
