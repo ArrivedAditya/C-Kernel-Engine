@@ -37,45 +37,45 @@ def style(name, prefix, channels):
 
 
 def decoder_residual_block_ops(stem, source, prefix, input_channels,
-                               output_channels):
+                               output_channels, frame_capacity=FRAMES):
     """Declare one non-upsampling AdainResBlk1d; caller owns graph edges."""
     ops = []
     add = ops.append
     add(style(f'{stem}_norm0_style', f'{prefix}.norm1', input_channels))
     add(norm(f'{stem}_norm0', source,
              f'{stem}_norm0_style', f'{prefix}.norm1',
-             input_channels, FRAMES, 'expanded_frames'))
+             input_channels, frame_capacity, 'expanded_frames'))
     add(activation(f'{stem}_act0', f'{stem}_norm0',
-                   input_channels, FRAMES, 'expanded_frames'))
+                   input_channels, frame_capacity, 'expanded_frames'))
     add(convolution(f'{stem}_conv0', f'{stem}_act0',
         f'{prefix}.conv1', input_channels, output_channels,
-        FRAMES, 3, 'expanded_frames'))
+        frame_capacity, 3, 'expanded_frames'))
     add(style(f'{stem}_norm1_style', f'{prefix}.norm2', output_channels))
     add(norm(f'{stem}_norm1', f'{stem}_conv0',
              f'{stem}_norm1_style', f'{prefix}.norm2',
-             output_channels, FRAMES, 'expanded_frames'))
+             output_channels, frame_capacity, 'expanded_frames'))
     add(activation(f'{stem}_act1', f'{stem}_norm1',
-                   output_channels, FRAMES, 'expanded_frames'))
+                   output_channels, frame_capacity, 'expanded_frames'))
     add(convolution(f'{stem}_conv1', f'{stem}_act1',
         f'{prefix}.conv2', output_channels, output_channels,
-        FRAMES, 3, 'expanded_frames'))
+        frame_capacity, 3, 'expanded_frames'))
     add(convolution(f'{stem}_shortcut', source,
         f'{prefix}.conv1x1', input_channels, output_channels,
-        FRAMES, 1, 'expanded_frames', zero_bias=True))
+        frame_capacity, 1, 'expanded_frames', zero_bias=True))
     add(declared(f'{stem}_output',
         'audio_scaled_sum_strided_checked',
         'audio_scaled_sum_strided_f32_checked',
         {'left': f'{stem}_conv1',
          'right': f'{stem}_shortcut'},
-        f'{stem}_output', [output_channels, FRAMES],
-        {'R': output_channels, 'C': FRAMES,
+        f'{stem}_output', [output_channels, frame_capacity],
+        {'R': output_channels, 'C': frame_capacity,
          'scale': 1.0 / math.sqrt(2.0), 'call_constants': {
-            'sum_left_elements': output_channels * FRAMES,
-            'sum_left_stride': FRAMES,
-            'sum_right_elements': output_channels * FRAMES,
-            'sum_right_stride': FRAMES,
-            'sum_output_elements': output_channels * FRAMES,
-            'sum_output_stride': FRAMES,
+            'sum_left_elements': output_channels * frame_capacity,
+            'sum_left_stride': frame_capacity,
+            'sum_right_elements': output_channels * frame_capacity,
+            'sum_right_stride': frame_capacity,
+            'sum_output_elements': output_channels * frame_capacity,
+            'sum_output_stride': frame_capacity,
             'sum_rows': output_channels}},
         None, ('expanded_frames',),
         {'sum_columns': 'expanded_frames'}))
