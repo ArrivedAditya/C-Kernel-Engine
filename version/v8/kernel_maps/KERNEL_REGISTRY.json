@@ -12490,6 +12490,7 @@
           "tests/test_v8_kokoro_runtime_prosody_norm.py",
           "tests/test_v8_kokoro_generated_prosody_first_block.py",
           "tests/test_v8_kokoro_generated_prosody_complete.py",
+          "tests/test_v8_kokoro_runtime_prosody_complete.py",
           "tests/test_v8_kokoro_generated_decoder_encode.py",
           "tests/test_v8_kokoro_generated_decoder_complete.py",
           "tests/test_v8_kokoro_source_residual_prefix.py",
@@ -14406,6 +14407,7 @@
           "tests/test_v8_kokoro_runtime_text_expansion.py",
           "tests/test_v8_kokoro_generated_prosody_first_block.py",
           "tests/test_v8_kokoro_generated_prosody_complete.py",
+          "tests/test_v8_kokoro_runtime_prosody_complete.py",
           "tests/test_v8_kokoro_generated_decoder_ingress.py",
           "tests/test_v8_kokoro_generated_decoder_encode.py",
           "tests/test_v8_kokoro_generated_decoder_complete.py",
@@ -17809,6 +17811,7 @@
           "tests/test_v8_audio_prosody_upsample_oracle.py",
           "tests/test_v8_prosody_upsample_generated.py",
           "tests/test_v8_kokoro_generated_prosody_complete.py",
+          "tests/test_v8_kokoro_runtime_prosody_complete.py",
           "tests/test_v8_kokoro_generated_decoder_complete.py"
         ],
         "oracle": "Pinned PyTorch 2.8 F.conv_transpose1d(groups=channels), committed small and production-shape fixtures"
@@ -23930,6 +23933,7 @@
           "tests/test_v8_checked_scaled_sum_generated.py",
           "tests/test_v8_kokoro_generated_prosody_first_block.py",
           "tests/test_v8_kokoro_generated_prosody_complete.py",
+          "tests/test_v8_kokoro_runtime_prosody_complete.py",
           "tests/test_v8_kokoro_generated_decoder_encode.py",
           "tests/test_v8_kokoro_generated_decoder_complete.py",
           "tests/test_v8_kokoro_source_residual_first_pair.py",
@@ -26101,6 +26105,7 @@
           "tests/test_v8_audio_prosody_upsample_oracle.py",
           "tests/test_v8_prosody_upsample_generated.py",
           "tests/test_v8_kokoro_generated_prosody_complete.py",
+          "tests/test_v8_kokoro_runtime_prosody_complete.py",
           "tests/test_v8_kokoro_generated_decoder_complete.py"
         ],
         "oracle": "Pinned PyTorch 2.8 F.interpolate(mode=nearest), exact element copy"
@@ -48274,6 +48279,7 @@
           "tests/test_v8_kokoro_runtime_text_expansion.py",
           "tests/test_v8_kokoro_generated_prosody_first_block.py",
           "tests/test_v8_kokoro_generated_prosody_complete.py",
+          "tests/test_v8_kokoro_runtime_prosody_complete.py",
           "tests/test_v8_kokoro_generated_decoder_encode.py",
           "tests/test_v8_kokoro_generated_decoder_complete.py",
           "tests/test_v8_kokoro_generated_generator_stage0.py"
@@ -76322,6 +76328,7 @@
           "tests/test_v8_runtime_extent_scale.py",
           "tests/test_v8_prosody_upsample_generated.py",
           "tests/test_v8_kokoro_generated_prosody_complete.py",
+          "tests/test_v8_kokoro_runtime_prosody_complete.py",
           "tests/test_v8_kokoro_generated_generator_stage0.py",
           "tests/test_v8_kokoro_generated_source_stft_conv.py",
           "tests/test_v8_kokoro_runtime_albert_layer.py",

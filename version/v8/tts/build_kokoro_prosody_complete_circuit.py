@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[3]
 OUTPUT = ROOT / 'version/v8/circuits/kokoro_prosody_complete_bounded.json'
 
 
-def final_branch(branch):
+def final_branch(branch, output_capacity=OUTPUT_CAPACITY):
     stem = branch.lower()
     prefix = f'duration_prosody.{branch}.2'
     source = f'{stem}_block1_output'
@@ -22,40 +22,40 @@ def final_branch(branch):
     add(style(f'{stem}_block2_norm0_style', f'{prefix}.norm1', OUTPUT_CHANNELS))
     add(norm(f'{stem}_block2_norm0_output', source,
              f'{stem}_block2_norm0_style', f'{prefix}.norm1',
-             OUTPUT_CHANNELS, OUTPUT_CAPACITY, 'upsampled_frames'))
+             OUTPUT_CHANNELS, output_capacity, 'upsampled_frames'))
     add(activation(f'{stem}_block2_act0', f'{stem}_block2_norm0_output',
-                   OUTPUT_CHANNELS, OUTPUT_CAPACITY, 'upsampled_frames'))
+                   OUTPUT_CHANNELS, output_capacity, 'upsampled_frames'))
     add(convolution(f'{stem}_block2_conv0', f'{stem}_block2_act0',
         f'{prefix}.conv1', OUTPUT_CHANNELS, OUTPUT_CHANNELS,
-        OUTPUT_CAPACITY, 3, 'upsampled_frames'))
+        output_capacity, 3, 'upsampled_frames'))
     add(style(f'{stem}_block2_norm1_style', f'{prefix}.norm2', OUTPUT_CHANNELS))
     add(norm(f'{stem}_block2_norm1_output', f'{stem}_block2_conv0',
              f'{stem}_block2_norm1_style', f'{prefix}.norm2',
-             OUTPUT_CHANNELS, OUTPUT_CAPACITY, 'upsampled_frames'))
+             OUTPUT_CHANNELS, output_capacity, 'upsampled_frames'))
     add(activation(f'{stem}_block2_act1', f'{stem}_block2_norm1_output',
-                   OUTPUT_CHANNELS, OUTPUT_CAPACITY, 'upsampled_frames'))
+                   OUTPUT_CHANNELS, output_capacity, 'upsampled_frames'))
     add(convolution(f'{stem}_block2_conv1', f'{stem}_block2_act1',
         f'{prefix}.conv2', OUTPUT_CHANNELS, OUTPUT_CHANNELS,
-        OUTPUT_CAPACITY, 3, 'upsampled_frames'))
+        output_capacity, 3, 'upsampled_frames'))
     add(declared(f'{stem}_block2_output',
         'audio_scaled_sum_strided_checked',
         'audio_scaled_sum_strided_f32_checked',
         {'left': source, 'right': f'{stem}_block2_conv1'},
-        f'{stem}_block2_output', [OUTPUT_CHANNELS, OUTPUT_CAPACITY],
-        {'R': OUTPUT_CHANNELS, 'C': OUTPUT_CAPACITY,
+        f'{stem}_block2_output', [OUTPUT_CHANNELS, output_capacity],
+        {'R': OUTPUT_CHANNELS, 'C': output_capacity,
          'scale': 1.0 / math.sqrt(2.0), 'call_constants': {
-            'sum_left_elements': OUTPUT_CHANNELS * OUTPUT_CAPACITY,
-            'sum_left_stride': OUTPUT_CAPACITY,
-            'sum_right_elements': OUTPUT_CHANNELS * OUTPUT_CAPACITY,
-            'sum_right_stride': OUTPUT_CAPACITY,
-            'sum_output_elements': OUTPUT_CHANNELS * OUTPUT_CAPACITY,
-            'sum_output_stride': OUTPUT_CAPACITY,
+            'sum_left_elements': OUTPUT_CHANNELS * output_capacity,
+            'sum_left_stride': output_capacity,
+            'sum_right_elements': OUTPUT_CHANNELS * output_capacity,
+            'sum_right_stride': output_capacity,
+            'sum_output_elements': OUTPUT_CHANNELS * output_capacity,
+            'sum_output_stride': output_capacity,
             'sum_rows': OUTPUT_CHANNELS}},
         None, ('upsampled_frames',),
         {'sum_columns': 'upsampled_frames'}))
     add(convolution(f'{stem}_output', f'{stem}_block2_output',
         f'duration_prosody.{branch}_proj', OUTPUT_CHANNELS, 1,
-        OUTPUT_CAPACITY, 1, 'upsampled_frames'))
+        output_capacity, 1, 'upsampled_frames'))
     return ops
 
 
