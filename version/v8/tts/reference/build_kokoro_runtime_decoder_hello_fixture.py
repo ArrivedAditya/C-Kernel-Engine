@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package the pinned eight-ID full-model decoder capture for cheap CI parity."""
+"""Package the pinned eight-ID decoder and first generator capture."""
 
 import argparse
 import hashlib
@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[4]
 OUTPUT = ROOT / 'tests/fixtures/tts/kokoro_runtime_decoder_hello_8_pinned.npz'
 NAMES = ('predictor_style', 'decoder_style', 'predicted_duration',
          'decoder_decode_0', 'decoder_decode_1', 'decoder_decode_2',
-         'decoder_decode_3')
+         'decoder_decode_3', 'decoder_generator_ups_0')
 
 
 def sha256(data):
@@ -42,8 +42,8 @@ def main():
     args.output.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(args.output, **arrays)
     meta = {
-        'schema': 'cke.kokoro.runtime_decoder_hello_8.v1',
-        'scope': 'direct pinned full-model eight-ID decoder outputs and styles',
+        'schema': 'cke.kokoro.runtime_decoder_hello_8.v2',
+        'scope': 'direct pinned full-model eight-ID decoder and first generator outputs',
         'model_pin': capture['pin']['model']['revision'],
         'code_pin': capture['pin']['reference_code']['kokoro'],
         'asset_sha256': capture['assets'],
