@@ -81,7 +81,7 @@ int main(void) {
     model.pos = 3;
     ck_prefill(&model, tokens, 2);
     if (prefill_calls != 0 || decode_calls != 2 || model.pos != 5 ||
-        g_ck_skip_decode_logits) return 2;
+        bad_position || bad_skip || g_ck_skip_decode_logits) return 2;
     prefill_calls = decode_calls = bad_position = bad_skip = 0;
     expected_decode_start = 2;
     expected_decode_count = 3;
@@ -90,6 +90,13 @@ int main(void) {
     ck_prefill(&model, tokens, 5);
     if (prefill_calls != 1 || decode_calls != 1 || model.pos != 3 ||
         bad_position || bad_skip || g_ck_skip_decode_logits) return 3;
+    prefill_calls = decode_calls = bad_position = bad_skip = 0;
+    expected_decode_start = 3;
+    expected_decode_count = 2;
+    cancel_after_decodes = -1;
+    ck_prefill(&model, tokens, 2);
+    if (prefill_calls != 0 || decode_calls != 2 || model.pos != 5 ||
+        bad_position || bad_skip || g_ck_skip_decode_logits) return 4;
     return 0;
 }
 """
