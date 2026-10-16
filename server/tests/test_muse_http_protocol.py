@@ -22,6 +22,12 @@ CALL = (' to=self<|message|>Read it first.<|eom|>'
         '<atem:parameter name="path">/tmp/a</atem:parameter>\n'
         '</atem:invoke>\n</atem:function_calls><|eot|>')
 FINAL = ' to=user<|message|>The file says cobalt.<|eot|>'
+NAMESPACE_TOOL = {"type": "namespace", "name": "muse", "description": "Local tools", "tools": [
+    {**TOOL, "name": "read_file"},
+]}
+NAMESPACE_CALL = CALL.replace("to=read_file", "to=muse.read_file").replace(
+    'name="read_file"', 'name="muse.read_file"'
+)
 
 
 class _Session:
@@ -92,6 +98,103 @@ def test_muse_tool_round_trip_and_channel_isolation(stream: bool) -> None:
     assert second.json()["output_text"] == "The file says cobalt."
     assert "cobalt" in session.prompts[1]
     assert all("<|eom|>" not in stops for stops in session.stops)
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_muse_code_namespace_tool_round_trip(stream: bool) -> None:
+    client, session = _client([NAMESPACE_CALL, FINAL])
+    first = client.post("/v1/responses", json={
+        "model": "muse-test", "input": "Read /tmp/a", "tools": [NAMESPACE_TOOL],
+        "stream": stream,
+    })
+    assert first.status_code == 200, first.text
+    if stream:
+        events = _events(first)
+        assert any(e["type"] == "response.completed" for e in events)
+        calls = [e["item"] for e in events if e["type"] == "response.output_item.done"
+                 and e.get("item", {}).get("type") == "function_call"]
+        response_id = next(e["response"]["id"] for e in events
+                           if e["type"] == "response.completed")
+    else:
+        payload = first.json()
+        calls = [item for item in payload["output"] if item["type"] == "function_call"]
+        response_id = payload["id"]
+    assert len(calls) == 1
+    assert calls[0]["name"] == "read_file"
+    assert calls[0]["namespace"] == "muse"
+    assert json.loads(calls[0]["arguments"]) == {"path": "/tmp/a"}
+    assert '"name": "muse.read_file"' in session.prompts[0]
+    assert '"description": "Local tools"' in session.prompts[0]
+    second = client.post("/v1/responses", json={
+        "model": "muse-test", "previous_response_id": response_id,
+        "input": [{"type": "function_call_output", "call_id": calls[0]["call_id"],
+                   "output": "cobalt"}], "tools": [NAMESPACE_TOOL],
+    })
+    assert second.status_code == 200, second.text
+    assert second.json()["output_text"] == "The file says cobalt."
+    assert '<tool_output name="muse.read_file">' in session.prompts[1]
+
+
+@pytest.mark.parametrize("variant", [
+    {"type": "namespace", "name": "bad.name", "tools": [TOOL]},
+    {"type": "namespace", "name": "muse", "tools": []},
+    {"type": "namespace", "name": "muse", "tools": [{**TOOL, "name": "bad/name"}]},
+    {"type": "namespace", "name": "muse", "tools": [{**TOOL, "defer_loading": True}]},
+    {"type": "namespace", "name": "muse", "tools": [TOOL, TOOL]},
+])
+def test_invalid_namespace_fails_before_generation(variant: dict) -> None:
+    client, session = _client([NAMESPACE_CALL])
+    response = client.post("/v1/responses", json={
+        "model": "muse-test", "input": "Read", "tools": [variant],
+    })
+    assert response.status_code in (400, 501), response.text
+    assert session.prompts == []
+
+
+def test_namespace_collision_with_flat_tool_fails_before_generation() -> None:
+    client, session = _client([NAMESPACE_CALL])
+    response = client.post("/v1/responses", json={
+        "model": "muse-test", "input": "Read", "tools": [NAMESPACE_TOOL,
+            {**TOOL, "name": "muse.read_file"}],
+    })
+    assert response.status_code == 400, response.text
+    assert session.prompts == []
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_muse_unknown_namespace_call_does_not_publish_tool(stream: bool) -> None:
+    client, _ = _client([NAMESPACE_CALL.replace("muse.read_file", "other.read_file"), FINAL])
+    request = {"model": "muse-test", "input": "Read", "tools": [NAMESPACE_TOOL],
+               "stream": stream}
+    first = client.post("/v1/responses", json=request)
+    assert first.status_code == 200, first.text
+    if stream:
+        events = _events(first)
+        assert any(e["type"] == "response.failed" for e in events)
+        assert not any(e.get("item", {}).get("type") == "function_call" for e in events)
+    else:
+        assert first.json()["status"] == "failed"
+        assert not any(i["type"] == "function_call" for i in first.json()["output"])
+    second = client.post("/v1/responses", json=request)
+    assert second.status_code == 200, second.text
+    if stream:
+        assert any(e["type"] == "response.completed" for e in _events(second))
+    else:
+        assert second.json()["status"] == "completed"
+
+
+def test_explicit_namespaced_call_history_renders_qualified_tool() -> None:
+    client, session = _client([FINAL])
+    response = client.post("/v1/responses", json={
+        "model": "muse-test", "tools": [NAMESPACE_TOOL],
+        "input": [
+            {"type": "function_call", "call_id": "call_one", "name": "read_file",
+             "namespace": "muse", "arguments": '{"path":"/tmp/a"}'},
+            {"type": "function_call_output", "call_id": "call_one", "output": "cobalt"},
+        ],
+    })
+    assert response.status_code == 200, response.text
+    assert '<tool_output name="muse.read_file">' in session.prompts[0]
 
 
 @pytest.mark.parametrize("stream", [False, True])
