@@ -49,8 +49,9 @@ class TestV8PrefillCodegen(unittest.TestCase):
 #define MAX_SEQ_LEN 32
 typedef struct { int pos; } CKModel;
 static int g_ck_skip_decode_logits;
-static int prefill_calls, decode_calls, bad_position, bad_skip;
+static int prefill_calls, decode_calls, bad_position, bad_skip, bad_token;
 static int expected_decode_start = 2, expected_decode_count = 3;
+static int expected_token_start = 12;
 static int cancel_after_decodes = -1;
 static int ck_model_cancel_requested(void) {
     return cancel_after_decodes >= 0 && decode_calls >= cancel_after_decodes;
@@ -62,9 +63,9 @@ static void ck_prefill_range(CKModel *m, const int32_t *tokens, int count, int p
     m->pos = pos + count;
 }
 static void ck_decode(CKModel *m, int32_t token) {
-    (void)token;
     if (m->pos != expected_decode_start + decode_calls) bad_position = 1;
     if (g_ck_skip_decode_logits != (decode_calls + 1 < expected_decode_count)) bad_skip = 1;
+    if (token != expected_token_start + decode_calls) bad_token = 1;
     ++decode_calls;
     ++m->pos;
 }
@@ -74,29 +75,32 @@ int main(void) {
     CKModel model = {0};
     ck_prefill(&model, tokens, 5);
     if (prefill_calls != 1 || decode_calls != 3 || model.pos != 5 ||
-        bad_position || bad_skip || g_ck_skip_decode_logits) return 1;
-    prefill_calls = decode_calls = bad_position = bad_skip = 0;
+        bad_position || bad_skip || bad_token || g_ck_skip_decode_logits) return 1;
+    prefill_calls = decode_calls = bad_position = bad_skip = bad_token = 0;
     expected_decode_start = 3;
     expected_decode_count = 2;
+    expected_token_start = 13;
     model.pos = 3;
-    ck_prefill(&model, tokens, 2);
+    ck_prefill(&model, tokens + 3, 2);
     if (prefill_calls != 0 || decode_calls != 2 || model.pos != 5 ||
-        bad_position || bad_skip || g_ck_skip_decode_logits) return 2;
-    prefill_calls = decode_calls = bad_position = bad_skip = 0;
+        bad_position || bad_skip || bad_token || g_ck_skip_decode_logits) return 2;
+    prefill_calls = decode_calls = bad_position = bad_skip = bad_token = 0;
     expected_decode_start = 2;
     expected_decode_count = 3;
+    expected_token_start = 12;
     cancel_after_decodes = 1;
     model.pos = 0;
     ck_prefill(&model, tokens, 5);
     if (prefill_calls != 1 || decode_calls != 1 || model.pos != 3 ||
-        bad_position || bad_skip || g_ck_skip_decode_logits) return 3;
-    prefill_calls = decode_calls = bad_position = bad_skip = 0;
+        bad_position || bad_skip || bad_token || g_ck_skip_decode_logits) return 3;
+    prefill_calls = decode_calls = bad_position = bad_skip = bad_token = 0;
     expected_decode_start = 3;
     expected_decode_count = 2;
+    expected_token_start = 13;
     cancel_after_decodes = -1;
-    ck_prefill(&model, tokens, 2);
+    ck_prefill(&model, tokens + 3, 2);
     if (prefill_calls != 0 || decode_calls != 2 || model.pos != 5 ||
-        bad_position || bad_skip || g_ck_skip_decode_logits) return 4;
+        bad_position || bad_skip || bad_token || g_ck_skip_decode_logits) return 4;
     return 0;
 }
 """
