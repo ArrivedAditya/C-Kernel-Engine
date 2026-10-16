@@ -1410,10 +1410,16 @@ def _tool_call_limit(parallel: Any, max_calls: Any) -> int | None:
 def _required_tool_name(tool_choice: Any) -> str | None:
     if isinstance(tool_choice, dict):
         func = tool_choice.get("function")
-        if isinstance(func, dict):
-            name = func.get("name")
-            if isinstance(name, str) and name.strip():
+        selector = func if isinstance(func, dict) else tool_choice
+        if selector.get("type", "function") != "function":
+            return None
+        name = selector.get("name")
+        namespace = selector.get("namespace")
+        if isinstance(name, str) and name.strip():
+            if namespace is None:
                 return name.strip()
+            if isinstance(namespace, str) and namespace.strip():
+                return f"{namespace.strip()}.{name.strip()}"
     return None
 
 
@@ -1422,8 +1428,9 @@ def _enforce_tool_choice(
 ) -> tuple[str | None, bool]:
     """Enforce the request's tool_choice. Returns (error, drop_calls).
 
-    ``auto`` (or unset/unknown shapes) enforces nothing. ``required`` (or
-    a ``{"function": {"name"}}`` dict) fails when no call was parsed.
+    ``auto`` (or unset) enforces nothing. ``required`` or a named function
+    selector fails when no matching call was parsed. Unsupported selectors
+    are rejected during request validation.
     ``none`` drops parsed calls so nothing executes; the model text is
     returned as-is so the misbehavior stays visible.
     """
@@ -1766,7 +1773,10 @@ def create_app(
         declared_names: set[str] = set()
         for tool in body.tools or []:
             if getattr(tool, "type", None) == "namespace":
-                if not re.fullmatch(r"[A-Za-z0-9_-]+", tool.name) or not tool.tools:
+                # The qualified invoke begins with the namespace. The declared
+                # ATEM parser requires its first character to be a letter or
+                # underscore; reject names it cannot later parse as output.
+                if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]*", tool.name) or not tool.tools:
                     raise _harness_error(400, "invalid or empty tool namespace",
                         err_type="invalid_request_error", code="invalid_tool_namespace")
                 for inner in tool.tools:
@@ -1785,6 +1795,12 @@ def create_app(
                         err_type="invalid_request_error", code="duplicate_tool_name")
                 if name:
                     declared_names.add(name)
+        choice = getattr(body, "tool_choice", None)
+        if (isinstance(choice, dict) and _required_tool_name(choice) is None) or (
+            isinstance(choice, str) and choice not in {"auto", "none", "required"}
+        ):
+            raise _harness_error(400, "unsupported tool_choice selector",
+                err_type="invalid_request_error", code="unsupported_tool_choice")
         for tool in _effective_tools(body):
             if getattr(tool, "name", None):
                 try:

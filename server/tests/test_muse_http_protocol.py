@@ -154,6 +154,68 @@ def test_invalid_namespace_fails_before_generation(variant: dict) -> None:
     assert session.prompts == []
 
 
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("name", ["123tools", "-tools"])
+def test_namespace_name_must_be_parseable_before_generation(
+    stream: bool, name: str,
+) -> None:
+    client, session = _client([NAMESPACE_CALL])
+    bad = client.post("/v1/responses", json={
+        "model": "muse-test", "input": "Read", "stream": stream,
+        "tools": [{**NAMESPACE_TOOL, "name": name}],
+    })
+    assert bad.status_code == 400, bad.text
+    assert session.prompts == []
+    good = client.post("/v1/responses", json={
+        "model": "muse-test", "input": "Read", "stream": stream,
+        "tools": [NAMESPACE_TOOL],
+    })
+    assert good.status_code == 200, good.text
+    if stream:
+        assert any(e["type"] == "response.completed" for e in _events(good))
+    else:
+        assert good.json()["status"] == "completed"
+    assert len(session.prompts) == 1
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("selector,generated,expected_status", [
+    ({"type": "function", "namespace": "muse", "name": "read_file"},
+     NAMESPACE_CALL, "completed"),
+    ({"type": "function", "namespace": "other", "name": "read_file"},
+     NAMESPACE_CALL, "failed"),
+    ({"type": "function", "namespace": "muse", "name": "read_file"},
+     FINAL, "failed"),
+])
+def test_forced_namespaced_tool_choice_is_enforced(
+    stream: bool, selector: dict, generated: str, expected_status: str,
+) -> None:
+    client, session = _client([generated])
+    other = {**NAMESPACE_TOOL, "name": "other"}
+    response = client.post("/v1/responses", json={
+        "model": "muse-test", "input": "Read", "stream": stream,
+        "tools": [NAMESPACE_TOOL, other], "tool_choice": selector,
+    })
+    assert response.status_code == 200, response.text
+    if stream:
+        events = _events(response)
+        assert events[-1]["type"] == f"response.{expected_status}"
+    else:
+        assert response.json()["status"] == expected_status
+    assert len(session.prompts) == 1
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_unsupported_tool_choice_is_rejected_before_generation(stream: bool) -> None:
+    client, session = _client([NAMESPACE_CALL])
+    response = client.post("/v1/responses", json={
+        "model": "muse-test", "input": "Read", "stream": stream,
+        "tools": [NAMESPACE_TOOL], "tool_choice": {"type": "mcp", "name": "read_file"},
+    })
+    assert response.status_code == 400, response.text
+    assert session.prompts == []
+
+
 def test_namespace_collision_with_flat_tool_fails_before_generation() -> None:
     client, session = _client([NAMESPACE_CALL])
     response = client.post("/v1/responses", json={
