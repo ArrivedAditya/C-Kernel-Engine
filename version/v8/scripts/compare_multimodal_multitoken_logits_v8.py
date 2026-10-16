@@ -587,6 +587,8 @@ def _run_llama_greedy_sequence(inputs: dict[str, Any], args: argparse.Namespace)
             str(int(args.top_k)),
             "--decode-mode",
             str(args.llama_decode_mode),
+            "--prefix-decode-policy",
+            str(inputs.get("prefix_decode_policy") or "causal_mixed_prefix"),
             "--flash-attn",
             str(getattr(args, "llama_flash_attention", "disabled")),
             "--logits-out",
@@ -651,6 +653,12 @@ def _run_llama_greedy_sequence(inputs: dict[str, Any], args: argparse.Namespace)
         meta = json.loads(payload)
         if not isinstance(meta, dict) or not meta.get("ok"):
             raise RuntimeError(f"llama_token_replay returned invalid payload: {payload}")
+        requested_policy = str(inputs.get("prefix_decode_policy") or "causal_mixed_prefix")
+        if meta.get("prefix_decode_policy") != requested_policy:
+            raise RuntimeError(
+                "llama.cpp prefix decode policy mismatch: "
+                f"requested={requested_policy!r} actual={meta.get('prefix_decode_policy')!r}"
+            )
         n_vocab = int(meta.get("n_vocab", 0))
         steps = int(meta.get("greedy_steps", args.max_new_tokens) or 0)
         logits = np.fromfile(seq_out, dtype=np.float32)

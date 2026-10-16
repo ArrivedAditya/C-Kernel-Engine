@@ -432,7 +432,10 @@ class MultitokenEOSContractTests(unittest.TestCase):
             logits_path = Path(command[command.index("--logits-out") + 1])
             np.zeros((2, 3), dtype=np.float32).tofile(seq_path)
             np.zeros(3, dtype=np.float32).tofile(logits_path)
-            payload = {"ok": True, "n_vocab": 3, "greedy_steps": 2, "greedy_generated": [1, 2]}
+            payload = {
+                "ok": True, "n_vocab": 3, "greedy_steps": 2, "greedy_generated": [1, 2],
+                "prefix_decode_policy": command[command.index("--prefix-decode-policy") + 1],
+            }
             return mock.Mock(returncode=0, stdout=json.dumps(payload) + "\n", stderr="")
 
         args = Namespace(
@@ -457,6 +460,7 @@ class MultitokenEOSContractTests(unittest.TestCase):
             "prefix_grid": None,
             "prefix_row_dim": 0,
             "prefix_text_pos": 0,
+            "prefix_decode_policy": "non_causal_visual_chunk",
         }
         with mock.patch.object(
             self.runner.first_token.compare_first_token_logits_v7,
@@ -476,6 +480,7 @@ class MultitokenEOSContractTests(unittest.TestCase):
         self.assertIn("--dump-flash-inputs", command)
         flash_index = command.index("--flash-attn")
         self.assertEqual(command[flash_index + 1], "enabled")
+        self.assertEqual(command[command.index("--prefix-decode-policy") + 1], "non_causal_visual_chunk")
         self.assertEqual(result["oracle_evidence"]["commit"], "a" * 40)
 
     def test_llama_flash_input_capture_rejects_unfused_oracle(self) -> None:

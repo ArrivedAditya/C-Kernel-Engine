@@ -335,7 +335,12 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
             np.array([0.0], dtype=np.float32).tofile(logits_path)
             return mock.Mock(
                 returncode=0,
-                stdout=json.dumps({"ok": True, "n_vocab": 1, "flash_attention_mode": actual_mode[0]}),
+                stdout=json.dumps({
+                    "ok": True,
+                    "n_vocab": 1,
+                    "flash_attention_mode": actual_mode[0],
+                    "prefix_decode_policy": command[command.index("--prefix-decode-policy") + 1],
+                }),
                 stderr="",
             )
 
@@ -352,6 +357,7 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
                 1,
                 tokens_before=[1, 2],
                 prefix_decode_mode="batched",
+                prefix_decode_policy="non_causal_visual_chunk",
                 decode_mode="sequential",
                 flash_attention="enabled",
             )
@@ -362,8 +368,27 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
                 )
 
         self.assertEqual(captured[captured.index("--prefix-decode-mode") + 1], "batched")
+        self.assertEqual(captured[captured.index("--prefix-decode-policy") + 1], "non_causal_visual_chunk")
         self.assertEqual(captured[captured.index("--decode-mode") + 1], "sequential")
         self.assertEqual(captured[captured.index("--flash-attn") + 1], "enabled")
+
+    def test_llama_capture_rejects_helper_without_prefix_policy_evidence(self) -> None:
+        def fake_run(command: list[str]):
+            np.array([0.0], dtype=np.float32).tofile(
+                command[command.index("--logits-out") + 1]
+            )
+            return mock.Mock(returncode=0, stdout=json.dumps({"ok": True, "n_vocab": 1}), stderr="")
+
+        with mock.patch.object(
+            decoder_parity_v8.compare_first_token_logits_v7,
+            "ensure_llama_helper",
+            return_value=Path("/tmp/llama-token-replay"),
+        ), mock.patch.object(decoder_parity_v8, "_run", side_effect=fake_run):
+            with self.assertRaisesRegex(RuntimeError, "prefix decode policy mismatch"):
+                decoder_parity_v8._run_llama_capture(
+                    Path("model.gguf"), [3], 128, 1, 1,
+                    prefix_decode_policy="non_causal_visual_chunk",
+                )
 
     def test_llama_helper_fingerprint_tracks_root_source_and_library_content(self) -> None:
         helper_module = decoder_parity_v8.compare_first_token_logits_v7
@@ -2317,6 +2342,7 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
             self.assertEqual(llama_capture.call_args.kwargs["tokens_before"], [11, 22])
             self.assertEqual(llama_capture.call_args.kwargs["prefix_grid"], (3, 3))
             self.assertEqual(llama_capture.call_args.kwargs["prefix_text_pos"], 5)
+            self.assertEqual(llama_capture.call_args.kwargs["prefix_decode_policy"], "non_causal_visual_chunk")
             self.assertEqual(llama_capture.call_args.kwargs["flash_attention"], "enabled")
             self.assertEqual(Path(llama_capture.call_args.kwargs["prefix_path"]), prefix_path.resolve())
             _, decoder_kwargs = run_decoder.call_args
