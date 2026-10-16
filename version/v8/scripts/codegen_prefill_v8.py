@@ -1776,6 +1776,11 @@ def emit_prefill_op(
 def emit_prefill_function(ops: List[Dict], config: Dict, profile: bool = False, dump: bool = False) -> str:
     """Emit the prefill function with all ops unrolled."""
     lines = []
+    history_scopes = {op.get("prefill_history_scope") for op in ops
+                      if op.get("prefill_history_scope") is not None}
+    if history_scopes - {"current_chunk"}:
+        raise RuntimeError(f"unsupported prefill history scope: {sorted(history_scopes)!r}")
+    chunk_local_history = "current_chunk" in history_scopes
     context_capacity = int(config.get("context_length", config.get("context_len", 0)) or 0)
     prefill_chunk_length = int(config.get("prefill_chunk_length", context_capacity) or context_capacity)
     if context_capacity <= 0 or prefill_chunk_length <= 0:
@@ -1999,8 +2004,23 @@ static void ck_prefill_range(CKModel *model, const int32_t *tokens, int num_toke
     lines.append("    while (consumed < num_tokens) {")
     lines.append("        if (ck_model_cancel_requested()) return;")
     lines.append(f"        int chunk = num_tokens - consumed > {prefill_chunk_length} ? {prefill_chunk_length} : num_tokens - consumed;")
-    lines.append("        if (chunk == 1 && consumed > 0) {")
-    lines.append("            ck_decode(model, tokens[consumed]);")
+    if chunk_local_history:
+        lines.append("        if (consumed > 0 || start_pos > 0) {")
+        lines.append("            /* This selected prefill provider sees only its own chunk.")
+        lines.append("             * Continue through decode so attention reads prior KV and")
+        lines.append("             * cache writes append at absolute positions. */")
+        lines.append("            for (int i = 0; i < chunk; ++i) {")
+        lines.append("                if (ck_model_cancel_requested()) {")
+        lines.append("                    g_ck_skip_decode_logits = 0;")
+        lines.append("                    return;")
+        lines.append("                }")
+        lines.append("                g_ck_skip_decode_logits = consumed + i + 1 < num_tokens;")
+        lines.append("                ck_decode(model, tokens[consumed + i]);")
+        lines.append("            }")
+        lines.append("            g_ck_skip_decode_logits = 0;")
+    else:
+        lines.append("        if (chunk == 1 && consumed > 0) {")
+        lines.append("            ck_decode(model, tokens[consumed]);")
     lines.append("        } else {")
     lines.append("            ck_prefill_range(model, tokens + consumed, chunk, start_pos + consumed);")
     lines.append("        }")
