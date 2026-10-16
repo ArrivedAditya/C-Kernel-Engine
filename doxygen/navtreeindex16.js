@@ -1,5 +1,16 @@
 var NAVTREEINDEX16 =
 {
+"mega__fused__attention__avx_8c.html#a7b2cd3664e2858631e67aebb6576b1e2":[2,0,1,1,0,3,16],
+"mega__fused__attention__avx_8c.html#a83b70777dc5595bab8c9060d83e4bd91":[2,0,1,1,0,3,3],
+"mega__fused__attention__avx_8c.html#a8dac2945f1e6614acad014658a67c25c":[2,0,1,1,0,3,5],
+"mega__fused__attention__avx_8c.html#ab74480f5b3519b41f21a0f8c25fd6498":[2,0,1,1,0,3,17],
+"mega__fused__attention__avx_8c.html#abb23ccebfb6305a7d1b4f76e35587484":[2,0,1,1,0,3,8],
+"mega__fused__attention__avx_8c.html#ad3b0b6d8d5d3de58e5d56ce84e667b20":[2,0,1,1,0,3,9],
+"mega__fused__attention__avx_8c.html#aec2d9f29e69cc84b40b2a6504a54d812":[2,0,1,1,0,3,0],
+"mega__fused__attention__avx_8c.html#afb10ce2e9784bf731312a52032176aaa":[2,0,1,1,0,3,4],
+"mega__fused__attention__avx_8c_source.html":[2,0,1,1,0,3],
+"mega__fused__attention__decode__q5__0_8c.html":[2,0,1,1,0,4],
+"mega__fused__attention__decode__q5__0_8c.html#a3c6fc830704a70059d6f5ae9df4b0fce":[2,0,1,1,0,4,5],
 "mega__fused__attention__decode__q5__0_8c.html#a3cb6880844a013eaf338e5e24851a831":[2,0,1,1,0,4,4],
 "mega__fused__attention__decode__q5__0_8c.html#a63d5de133ef52f96c5e24906eeca3226":[2,0,1,1,0,4,2],
 "mega__fused__attention__decode__q5__0_8c.html#a810c4648e813796b57b54fae12112200":[2,0,1,1,0,4,0],
@@ -238,16 +249,5 @@ var NAVTREEINDEX16 =
 "qwen4__exp__kernels_8c.html#a77f955fcd4b76fd8eb0d1b10d142be5b":[2,0,1,1,100,7],
 "qwen4__exp__kernels_8c.html#a8f4c53f7982731eb785340c2239e974f":[2,0,1,1,100,12],
 "qwen4__exp__kernels_8c.html#aa6007c71eb310b9879ff23628042d37d":[2,0,1,1,100,10],
-"qwen4__exp__kernels_8c.html#aaf9adeba09e7e9e853b68fbc3815b2c8":[2,0,1,1,100,4],
-"qwen4__exp__kernels_8c.html#ac2b597b15d2b313325bbbe2a805cc23f":[2,0,1,1,100,15],
-"qwen4__exp__kernels_8c.html#ad81cf3528088084d07fe46014e4477fd":[2,0,1,1,100,13],
-"qwen4__exp__kernels_8c.html#aef4780ceb7a35ad4d22163493cf7dd38":[2,0,1,1,100,11],
-"qwen4__exp__kernels_8c.html#af109c824b998965c1da1addd58ec56d0":[2,0,1,1,100,16],
-"qwen4__exp__kernels_8c_source.html":[2,0,1,1,100],
-"recurrent__gate__kernels_8c.html":[2,0,1,1,101],
-"recurrent__gate__kernels_8c.html#a29f48b99af73f1ef9c48b8a9ce53397d":[2,0,1,1,101,1],
-"recurrent__gate__kernels_8c.html#a33632320e455741062d562d8aca62627":[2,0,1,1,101,8],
-"recurrent__gate__kernels_8c.html#a369266c24eacffb87046522897a570d5":[2,0,1,1,101,0],
-"recurrent__gate__kernels_8c.html#a48555d84102dbaa50fae8be3730a50e7":[2,0,1,1,101,20],
-"recurrent__gate__kernels_8c.html#a500cf70fc074fd75ae5b691103de1df3":[2,0,1,1,101,14]
+"qwen4__exp__kernels_8c.html#aaf9adeba09e7e9e853b68fbc3815b2c8":[2,0,1,1,100,4]
 };
