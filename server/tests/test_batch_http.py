@@ -148,6 +148,10 @@ def test_native_normal_eos_completes_both_http_delivery_modes():
             assert body["status"] == "completed"
             assert body["output_text"] == "A"
             assert body.get("incomplete_details") is None
+            observed_response = client.get(
+                f"/v1/cke/batch-observation/{body['id']}")
+            assert observed_response.status_code == 200
+            assert observed_response.json()["native_done"] is True
     finally:
         owner.close()
 
@@ -371,7 +375,8 @@ def test_two_http_clients_have_independent_text_and_output_limits():
                             max_prompt_tokens=8, loop=loop)
     app = create_app(FakeSession(), model="m", context_length=128,
                      chat_template="{{ messages[0].content }}",
-                     batch_http=owner)
+                     batch_http=owner,
+                     loaded_identity={"schema": "cke.loaded_serving_identity.v1"})
     client = TestClient(app)
 
     def send(letter, limit):
@@ -401,6 +406,18 @@ def test_two_http_clients_have_independent_text_and_output_limits():
     assert a.json()["status"] == b.json()["status"] == "incomplete"
     assert any(len(c) == 2 for c in loop.calls)
     assert owner.shared_steps > 0
+    for response in (a.json(), b.json()):
+        observed_response = client.get(
+            f"/v1/cke/batch-observation/{response['id']}")
+        assert observed_response.status_code == 200
+        observed = observed_response.json()
+        assert observed["native_done"] is True
+        assert observed["queue_wait_ms"] is not None
+        assert observed["time_to_first_native_token_ms"] is not None
+        assert observed["time_to_native_completion_ms"] is not None
+        assert (0 <= observed["queue_wait_ms"]
+                <= observed["time_to_first_native_token_ms"]
+                <= observed["time_to_native_completion_ms"])
     owner.close()
 
 
@@ -430,6 +447,8 @@ def test_owner_exception_fails_active_and_pending_consumers_once():
                             max_prompt_tokens=8, loop=loop)
     a, b = owner.reserve(), owner.reserve()
     assert a.start_worker(None) and b.start_worker(None)
+    owner.bind_response(a.client, "resp_failure_a")
+    owner.bind_response(b.client, "resp_failure_b")
     def generate(lease, text):
         return lease.session.generate(None, text, max_tokens=4,
                                       temperature=0, top_p=1,
@@ -457,6 +476,11 @@ def test_owner_exception_fails_active_and_pending_consumers_once():
     assert owner.poisoned and not owner.worker.is_alive()
     assert not owner.slots and owner.pending.empty()
     assert a.client.events.empty() and b.client.events.empty()
+    for response_id in ("resp_failure_a", "resp_failure_b"):
+        observed = owner.response_observation(response_id)
+        assert observed["native_done"] is True
+        assert observed["time_to_first_native_token_ms"] is None
+        assert observed["time_to_native_completion_ms"] is not None
     try:
         owner.reserve()
     except SessionError:
