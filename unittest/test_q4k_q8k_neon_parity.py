@@ -148,6 +148,23 @@ class TestQ4KQ8KNeonParity(unittest.TestCase):
         # AArch64.
         cls.has_neon_gemv = (
             cls.lib.ck_q4_k_q8_k_provider_name().decode() == "q4_k_q8_k_neon")
+        # Optimized-lane enforcement: when CK_REQUIRE_Q4K_NEON=1 (set by the
+        # nightly dotprod build step), falling back to the reference provider
+        # is a hard failure, not a skip - the optimized lane must actually
+        # execute the optimized kernel.
+        cls.require_neon = os.environ.get("CK_REQUIRE_Q4K_NEON", "") not in (
+            "", "0")
+
+    def _require_or_skip_neon(self) -> None:
+        if self.has_neon_gemv:
+            return
+        if self.require_neon:
+            self.fail("CK_REQUIRE_Q4K_NEON=1 but the engine dispatches "
+                      "gemv_q4_k_q8_k to the scalar reference - the optimized "
+                      "lane did not execute the intended NEON provider")
+        self.skipTest("engine built without __ARM_FEATURE_DOTPROD; "
+                      "rebuild with CK_ARM_ARCH or CK_ARM_NATIVE=1 to "
+                      "exercise NEON")
 
     # ---- provider selection -------------------------------------------
 
@@ -162,6 +179,7 @@ class TestQ4KQ8KNeonParity(unittest.TestCase):
         self.assertIn(name, ("q4_k_q8_k_neon", "q4_k_q8_k_ref"))
 
     def test_forced_ref_escape_hatches(self) -> None:
+        self._require_or_skip_neon()
         if self.has_neon_gemv:
             self.assertEqual(
                 _provider_name_via_subprocess("ck_q4_k_q8_k_provider_name",
@@ -235,17 +253,17 @@ class TestQ4KQ8KNeonParity(unittest.TestCase):
                 f"row {row}: NEON {y_neon[row]} vs oracle {oracle}")
 
     def test_gemv_neon_matches_ref_and_oracle(self) -> None:
-        if not self.has_neon_gemv:
-            self.skipTest("engine built without __ARM_FEATURE_DOTPROD; "
-                          "rebuild with CK_ARM_NATIVE=1 to exercise NEON")
+        self._require_or_skip_neon()
         for M, K in ((1, QK_K), (4, 2 * QK_K), (5, 8 * QK_K)):
             with self.subTest(M=M, K=K):
                 self._check_gemv(M, K)
 
     def test_gemm_nt_neon_matches_oracle(self) -> None:
-        if not self.has_neon_gemv:
-            self.skipTest("engine built without __ARM_FEATURE_DOTPROD; "
-                          "rebuild with CK_ARM_NATIVE=1 to exercise NEON")
+        # The provider-name check alone cannot prove GEMM executed the NEON
+        # kernel; this test verifies the arithmetic directly against the
+        # independent oracle AND that the GEMM entry funnels through the
+        # dispatched GEMV row kernel bit-exactly (gemm_nt -> gemm -> gemv).
+        self._require_or_skip_neon()
         M, N, K = 3, 5, 2 * QK_K  # 3 activation rows, 5 weight rows
         rng = self.rng
         nb = K // QK_K
@@ -266,6 +284,17 @@ class TestQ4KQ8KNeonParity(unittest.TestCase):
                 self.assertTrue(
                     np.isclose(c[m, n], oracle, rtol=1e-4, atol=ATOL),
                     f"C[{m},{n}]: NEON {c[m, n]} vs oracle {oracle}")
+        # Entry-linkage proof: the GEMM entry must produce exactly what the
+        # dispatched GEMV produces row-by-row (bias aside), so a NEON GEMV
+        # result cannot come from a stale scalar GEMM path or vice versa.
+        for m in range(M):
+            a_row = a[m * nb * BLOCK_Q8_K_SIZE:(m + 1) * nb * BLOCK_Q8_K_SIZE]
+            y_row = np.zeros(N, dtype=np.float32)
+            self.lib.gemv_q4_k_q8_k(y_row.ctypes.data_as(F32P), _buf(w),
+                                    _buf(a_row), N, K)
+            np.testing.assert_array_equal(
+                c[m] - bias, y_row,
+                err_msg=f"GEMM row {m} diverged from the dispatched GEMV")
 
 
 if __name__ == "__main__":
