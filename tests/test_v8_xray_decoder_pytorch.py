@@ -1,4 +1,5 @@
 import importlib.util
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -68,6 +69,118 @@ class DecoderPyTorchXRayTests(unittest.TestCase):
 
         self.assertEqual(boundary, "mlp_gate")
         np.testing.assert_array_equal(logical, values)
+
+    def test_selected_experts_capture_uses_the_last_logical_token(self) -> None:
+        values = np.asarray([4, 1, 3, 2, 7, 5], dtype=np.int32)
+        np.testing.assert_array_equal(
+            MODULE._selected_experts_last(values, token_count=2, top_k=3),
+            [2, 7, 5],
+        )
+        with self.assertRaisesRegex(RuntimeError, "unproven token extent"):
+            MODULE._selected_experts_last(values[:-1], token_count=2, top_k=3)
+
+    def test_ck_capture_reads_integer_expert_ids_with_logical_token_extent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            def capture(**_kwargs):
+                raw = Path(os.environ["CK_DEBUG_EXPORT_HIDDEN"])
+                np.asarray([.1, .2, .3, .4], dtype=np.float32).tofile(
+                    raw / "tok_0000_layer_005_moe_routing_weights.f32"
+                )
+                np.asarray([9, 1, 5, 2], dtype=np.int32).tofile(
+                    raw / "tok_0000_layer_005_moe_selected_experts.i32"
+                )
+                return {"logits": [np.asarray([1.0], dtype=np.float32)]}
+
+            with mock.patch.object(MODULE, "load_ck_greedy_trajectory", side_effect=capture):
+                tensors, _ = MODULE.capture_ck(root, [10, 11], root / "ck")
+            np.testing.assert_array_equal(
+                np.fromfile(tensors[5]["moe_selected_experts"]["path"], dtype=np.float32),
+                [5, 2],
+            )
+            np.testing.assert_array_equal(
+                np.fromfile(tensors[5]["moe_routing_weights"]["path"], dtype=np.float32),
+                np.asarray([.3, .4], dtype=np.float32),
+            )
+
+    def test_router_comparison_binds_weights_to_expert_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            def snapshot(name, ids, weights):
+                folder = root / name
+                return {5: {
+                    "moe_selected_experts": MODULE._write_tensor(
+                        folder / "ids.f32", np.asarray(ids, dtype=np.float32)
+                    ),
+                    "moe_routing_weights": MODULE._write_tensor(
+                        folder / "weights.f32", np.asarray(weights, dtype=np.float32)
+                    ),
+                }}
+
+            ck = snapshot("ck", [26, 34, 30], [.57, .48, .49])
+            publisher = snapshot("publisher", [30, 26, 34], [.49, .57, .48])
+            MODULE.canonicalize_router_snapshots(ck, root / "ck")
+            MODULE.canonicalize_router_snapshots(publisher, root / "publisher")
+            for boundary in ("moe_selected_experts", "moe_routing_weights"):
+                np.testing.assert_array_equal(
+                    np.fromfile(ck[5][boundary]["path"], dtype=np.float32),
+                    np.fromfile(publisher[5][boundary]["path"], dtype=np.float32),
+                )
+
+            wrong_owner = snapshot("wrong_owner", [30, 26, 25], [.49, .57, .48])
+            MODULE.canonicalize_router_snapshots(wrong_owner, root / "wrong_owner")
+            selected = [(5, "moe_selected_experts"), (5, "moe_routing_weights")]
+            order = [f"decoder.layer.5.{boundary}" for _, boundary in selected]
+            call_ir = {"operations": [{"layer": 5, "op": "group_limited_topk_router",
+                                       "function": "group_limited_topk_router_sigmoid_f32"}]}
+
+            def report(subject):
+                return MODULE.xray.compare_manifests(
+                    MODULE.manifest("ck", "fixture", root, subject, call_ir, selected),
+                    MODULE.manifest("publisher", "fixture", root, publisher,
+                                    call_ir, selected),
+                    MODULE.profile(order, {}), checkpoint_order=order,
+                )
+
+            self.assertEqual(report(ck)["status"], "pass")
+            mismatch = report(wrong_owner)
+            self.assertEqual(mismatch["status"], "fail")
+            self.assertEqual(
+                mismatch["first_divergence"]["checkpoint_id"],
+                "decoder.layer.5.moe_selected_experts",
+            )
+            rounded_cosine = snapshot(
+                "rounded_cosine", [1, 4, 7, 9, 12, 16], [.1] * 6
+            )
+            MODULE.canonicalize_router_snapshots(rounded_cosine, root / "rounded_cosine")
+            identical = MODULE.manifest(
+                "ck", "fixture", root, rounded_cosine, call_ir, selected
+            )
+            self.assertEqual(MODULE.xray.compare_manifests(
+                identical, identical, MODULE.profile(order, {}),
+                checkpoint_order=order,
+            )["status"], "pass")
+
+    def test_router_comparison_rejects_missing_or_duplicate_expert_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            weights = MODULE._write_tensor(
+                root / "weights.f32", np.asarray([.5, .5], dtype=np.float32)
+            )
+            with self.assertRaisesRegex(RuntimeError, "without selected experts"):
+                MODULE.canonicalize_router_snapshots(
+                    {1: {"moe_routing_weights": weights}}, root
+                )
+            indices = MODULE._write_tensor(
+                root / "indices.f32", np.asarray([7, 7], dtype=np.float32)
+            )
+            with self.assertRaisesRegex(RuntimeError, "invalid selected-expert pairs"):
+                MODULE.canonicalize_router_snapshots(
+                    {1: {"moe_routing_weights": weights,
+                         "moe_selected_experts": indices}}, root
+                )
 
     def test_instrumented_attention_resolver_captures_semantic_mla_edges(self) -> None:
         import torch
