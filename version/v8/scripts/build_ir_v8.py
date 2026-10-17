@@ -2362,6 +2362,92 @@ OP_DATAFLOW = {
         "inputs": {"input": "main_stream"},
         "outputs": {"output": {"slot": "layer_input", "dtype": "fp32"}},
     },
+    "rwkv7_time_mix_shifts": {
+        "inputs": {"x": "main_stream", "shift_in": "att_shift"},
+        "outputs": {
+            "xr": {"slot": "xr_lane", "dtype": "fp32"},
+            "xw": {"slot": "xw_lane", "dtype": "fp32"},
+            "xk": {"slot": "xk_lane", "dtype": "fp32"},
+            "xv": {"slot": "xv_lane", "dtype": "fp32"},
+            "xa": {"slot": "xa_lane", "dtype": "fp32"},
+            "xg": {"slot": "xg_lane", "dtype": "fp32"},
+            "shift_out": {"slot": "att_shift", "dtype": "fp32"},
+        },
+    },
+    "rwkv7_r_proj": {
+        "inputs": {"x": "xr_lane"},
+        "outputs": {"y": {"slot": "r_vec", "dtype": "fp32"}},
+    },
+    "rwkv7_k_proj": {
+        "inputs": {"x": "xk_lane"},
+        "outputs": {"y": {"slot": "k_raw_vec", "dtype": "fp32"}},
+    },
+    "rwkv7_v_proj": {
+        "inputs": {"x": "xv_lane"},
+        "outputs": {"y": {"slot": "v_in_vec", "dtype": "fp32"}},
+    },
+    "rwkv7_lora_gates": {
+        "inputs": {"xw": "xw_lane", "xa": "xa_lane", "xg": "xg_lane"},
+        "outputs": {
+            "w_log": {"slot": "w_log_vec", "dtype": "fp32"},
+            "a_out": {"slot": "a_vec", "dtype": "fp32"},
+            "g_out": {"slot": "g_vec", "dtype": "fp32"},
+        },
+    },
+    "rwkv7_vgate_produce": {
+        "inputs": {"v_in": "v_in_vec"},
+        "outputs": {
+            "v_out": {"slot": "v_mix_vec", "dtype": "fp32"},
+            "v_first_out": {"slot": "v_first", "dtype": "fp32"},
+        },
+    },
+    "rwkv7_vgate_vmix": {
+        "inputs": {"v_in": "v_in_vec", "v_first": "v_first", "xv": "xv_lane"},
+        "outputs": {
+            "v_out": {"slot": "v_mix_vec", "dtype": "fp32"},
+            "v_first_out": {"slot": "v_first", "dtype": "fp32"},
+        },
+    },
+    "rwkv7_kk_factor": {
+        "inputs": {"k": "k_raw_vec"},
+        "outputs": {"kk_raw": {"slot": "kk_raw_vec", "dtype": "fp32"}},
+    },
+    "rwkv7_norm_kk": {
+        "inputs": {"kk_in": "kk_raw_vec"},
+        "outputs": {"kk_out": {"slot": "kk_vec", "dtype": "fp32"}},
+    },
+    "rwkv7_scale_k": {
+        "inputs": {"k_in": "k_raw_vec", "a": "a_vec"},
+        "outputs": {"k_out": {"slot": "k_scaled_vec", "dtype": "fp32"}},
+    },
+    "rwkv7_wkv_decode": {
+        "inputs": {
+            "r": "r_vec",
+            "w_log": "w_log_vec",
+            "k": "k_scaled_vec",
+            "v": "v_mix_vec",
+            "kk": "kk_vec",
+            "a": "a_vec",
+            "g": "g_vec",
+            "rk": "external:rwkv7_time_mix_rk",
+            "state_in": "wkv",
+        },
+        "outputs": {
+            "y": {"slot": "wkv_out", "dtype": "fp32"},
+            "state_out": {"slot": "wkv", "dtype": "fp32"},
+        },
+    },
+    "rwkv7_out_proj": {
+        "inputs": {"x": "wkv_out"},
+        "outputs": {"y": {"slot": "post_attention_stream", "dtype": "fp32"}},
+    },
+    "rwkv7_channelmix_decode": {
+        "inputs": {"x": "main_stream", "shift_in": "ffn_shift"},
+        "outputs": {
+            "shift_out": {"slot": "ffn_shift", "dtype": "fp32"},
+            "out": {"slot": "channelmix_output", "dtype": "fp32"},
+        },
+    },
     "post_attention_norm": {
         "inputs": {"input": "main_stream"},
         "outputs": {"output": {"slot": "main_stream", "dtype": "fp32"}},
@@ -3465,6 +3551,12 @@ CK_EXPORT int32_t ck_model_lookup_token(const char *text) {
 }
 """ + chat_contract_api
         }
+
+    elif tokenizer_type == "rwkv_world_trie":
+        raise ValueError(
+            "Unsupported tokenizer backend 'rwkv_world_trie': native longest-match "
+            "encoding is not implemented; circuit inventory is not executable model support"
+        )
 
     # Unknown tokenizer type
     return None
@@ -4756,6 +4848,20 @@ TEMPLATE_TO_KERNEL_OP = {
     "mamba_selective_scan": "mamba_selective_scan",
     "mamba_rmsnorm_gate": "mamba_rmsnorm_gate",
     "mamba_out_proj": "matmul",
+    "rwkv7_time_mix_shifts": "rwkv7_time_mix_shifts",
+    "rwkv7_r_proj": "matmul",
+    "rwkv7_k_proj": "matmul",
+    "rwkv7_v_proj": "matmul",
+    "rwkv7_lora_gates": "rwkv7_lora_gates",
+    "rwkv7_vgate_produce": "rwkv7_vgate_vmix",
+    "rwkv7_vgate_vmix": "rwkv7_vgate_vmix",
+    "rwkv7_kk_factor": "rwkv7_kk_factor",
+    "rwkv7_norm_kk": "rwkv7_norm_kk",
+    "rwkv7_scale_k": "rwkv7_scale_k",
+    "rwkv7_wkv_decode": "rwkv7_wkv_decode",
+    "rwkv7_out_proj": "matmul",
+    "rwkv7_channelmix_decode": "rwkv7_channelmix_decode",
+    "rwkv7_trie_tokenizer": None,  # RWKV-7 trie tokenizer - init handled separately
     "moe_router": "matmul",
     "full_softmax_topk_router": "full_softmax_topk_router",
     "group_limited_topk_router": "group_limited_topk_router",
@@ -9419,6 +9525,10 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
     "partial_rope_concat": [],
     "mla_attention": [],
         "out_proj": ["wo"],
+        "rwkv7_r_proj": ["attn_Wr"],
+        "rwkv7_k_proj": ["attn_Wk"],
+        "rwkv7_v_proj": ["attn_Wv"],
+        "rwkv7_out_proj": ["attn_Wo"],
         "cross_out_proj": ["cross_wo"],
         "mlp_gate_up": ["w1"],
         "mlp_up": ["w3"],
@@ -9532,6 +9642,15 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         "recurrent_qk_l2_norm": None,
         "recurrent_core": None,
         "recurrent_norm_gate": None,
+        "rwkv7_time_mix_shifts": None,
+        "rwkv7_lora_gates": None,
+        "rwkv7_vgate_produce": None,
+        "rwkv7_vgate_vmix": None,
+        "rwkv7_kk_factor": None,
+        "rwkv7_norm_kk": None,
+        "rwkv7_scale_k": None,
+        "rwkv7_wkv_decode": None,
+        "rwkv7_channelmix_decode": None,
         "attn_gate_sigmoid_mul": None,
         "attn_gate_softplus_mul": None,
         "residual_add": None,
@@ -9551,6 +9670,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         "bpe_tokenizer": "metadata",  # BPE tokenizer init
         "wordpiece_tokenizer": "metadata",  # WordPiece tokenizer init
         "tiktoken_tokenizer": "metadata",  # TikToken tokenizer init
+        "rwkv7_trie_tokenizer": "metadata",  # RWKV-7 trie tokenizer init
         "patch_embeddings": "metadata",  # Vision model patches
         "weight_tying": "metadata",
         "lm_head": "metadata",  # Signals separate lm_head weight (not tied)
@@ -11090,6 +11210,7 @@ def _check_ir1_completeness(manifest: Dict, ir1_ops: List[Dict]) -> None:
         "bpe_tokenizer",
         "wordpiece_tokenizer",
         "tiktoken_tokenizer",
+        "rwkv7_trie_tokenizer",
         "tokenizer",
         "weight_tying",
         "lm_head",
@@ -12622,6 +12743,39 @@ WEIGHT_PATTERNS = {
     "vocab_strings": ["vocab_strings"],
     "vocab_merges": ["vocab_merges"],
 
+    # RWKV-7 provisional manifest aliases (importer gate: no RWKV-7
+    # safetensors importer exists yet; names cover HF-style and compact
+    # exporters and are resolved when the first manifest lands)
+    "attn_Wr": ["blocks.{L}.attn.r_proj.weight", "attn_Wr"],
+    "attn_Wk": ["blocks.{L}.attn.k_proj.weight", "attn_Wk"],
+    "attn_Wv": ["blocks.{L}.attn.v_proj.weight", "attn_Wv"],
+    "attn_Wo": ["blocks.{L}.attn.o_proj.weight", "attn_Wo"],
+    "attn_mu_r": ["blocks.{L}.attn.mu_r", "attn_mu_r"],
+    "attn_mu_w": ["blocks.{L}.attn.mu_w", "attn_mu_w"],
+    "attn_mu_k": ["blocks.{L}.attn.mu_k", "attn_mu_k"],
+    "attn_mu_v": ["blocks.{L}.attn.mu_v", "attn_mu_v"],
+    "attn_mu_a": ["blocks.{L}.attn.mu_a", "attn_mu_a"],
+    "attn_mu_g": ["blocks.{L}.attn.mu_g", "attn_mu_g"],
+    "attn_lora_w1": ["blocks.{L}.attn.lora_w1", "attn_lora_w1"],
+    "attn_lora_w2": ["blocks.{L}.attn.lora_w2", "attn_lora_w2"],
+    "attn_lora_w0": ["blocks.{L}.attn.lora_w0", "attn_lora_w0"],
+    "attn_lora_a1": ["blocks.{L}.attn.lora_a1", "attn_lora_a1"],
+    "attn_lora_a2": ["blocks.{L}.attn.lora_a2", "attn_lora_a2"],
+    "attn_lora_a0": ["blocks.{L}.attn.lora_a0", "attn_lora_a0"],
+    "attn_lora_g1": ["blocks.{L}.attn.lora_g1", "attn_lora_g1"],
+    "attn_lora_g2": ["blocks.{L}.attn.lora_g2", "attn_lora_g2"],
+    "attn_lora_v1": ["blocks.{L}.attn.lora_v1", "attn_lora_v1"],
+    "attn_lora_v2": ["blocks.{L}.attn.lora_v2", "attn_lora_v2"],
+    "attn_lora_v0": ["blocks.{L}.attn.lora_v0", "attn_lora_v0"],
+    "attn_k_k": ["blocks.{L}.attn.k_k", "attn_k_k"],
+    "attn_k_a": ["blocks.{L}.attn.k_a", "attn_k_a"],
+    "attn_wkv_rk": ["blocks.{L}.attn.wkv_rk", "attn_wkv_rk"],
+    "attn_wkv_ln_w": ["blocks.{L}.attn.wkv_ln_w", "attn_wkv_ln_w"],
+    "attn_wkv_ln_b": ["blocks.{L}.attn.wkv_ln_b", "attn_wkv_ln_b"],
+    "ffn_mu": ["blocks.{L}.ffn.mu", "ffn_mu"],
+    "ffn_Wk": ["blocks.{L}.ffn.Wk.weight", "ffn_Wk"],
+    "ffn_Wv": ["blocks.{L}.ffn.Wv.weight", "ffn_Wv"],
+
     # Footer weights
     "lm_head": ["lm_head.weight", "output.weight"],
     "final_ln_weight": ["final_ln_weight", "norm.weight", "v.post_ln.weight"],
@@ -12870,6 +13024,19 @@ TEMPLATE_OP_WEIGHTS = {
     "attn_gate_sigmoid_mul": [],  # No model weights
     "attn_gate_softplus_mul": [],  # No model weights
     "out_proj": ["wo", "bo", "wo_input_min", "wo_input_max", "wo_output_min", "wo_output_max"],  # Output projection + optional bias
+    "rwkv7_r_proj": ["attn_Wr"],
+    "rwkv7_k_proj": ["attn_Wk"],
+    "rwkv7_v_proj": ["attn_Wv"],
+    "rwkv7_out_proj": ["attn_Wo"],
+    "rwkv7_time_mix_shifts": ["attn_mu_r", "attn_mu_w", "attn_mu_k", "attn_mu_v", "attn_mu_a", "attn_mu_g"],
+    "rwkv7_lora_gates": ["attn_lora_w1", "attn_lora_w2", "attn_lora_w0", "attn_lora_a1", "attn_lora_a2", "attn_lora_a0", "attn_lora_g1", "attn_lora_g2"],
+    "rwkv7_vgate_produce": [],
+    "rwkv7_vgate_vmix": ["attn_lora_v1", "attn_lora_v2", "attn_lora_v0"],
+    "rwkv7_kk_factor": ["attn_k_k"],
+    "rwkv7_norm_kk": [],
+    "rwkv7_scale_k": ["attn_k_a"],
+    "rwkv7_wkv_decode": ["attn_wkv_rk", "attn_wkv_ln_w", "attn_wkv_ln_b"],
+    "rwkv7_channelmix_decode": ["ffn_mu", "ffn_Wk", "ffn_Wv"],
     "cross_out_proj": ["cross_wo", "cross_bo"],
     "residual_add": [],  # No model weights
     "add_stream": [],

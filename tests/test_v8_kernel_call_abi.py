@@ -15,8 +15,8 @@ SCHEMA = ROOT / "version" / "v8" / "schemas" / "kernel_call_abi.schema.json"
 REGISTRY = MAPS / "KERNEL_REGISTRY.json"
 EXCLUDED = {"KERNEL_REGISTRY.json", "kernel_bindings.json", "kernel_bindings.overlay.json"}
 BUILD_IR = ROOT / "version" / "v8" / "scripts" / "build_ir_v8.py"
-EXPECTED_GOVERNED_MAP_COUNT = 219
-EXPECTED_MAP_OWNED_ABI_COUNT = 299
+EXPECTED_GOVERNED_MAP_COUNT = 226
+EXPECTED_MAP_OWNED_ABI_COUNT = 306
 GLM4_PARITY_PROVIDERS = {
     "rope_forward_qk_pairwise_llama_cpu",
     "rope_precompute_cache_llama_cpu",
@@ -62,6 +62,25 @@ def load_json(path: Path) -> dict:
 
 
 class V8KernelCallABITests(unittest.TestCase):
+    def test_rwkv7_projection_metadata_matches_each_explicit_layer_graph(self) -> None:
+        circuit = load_json(ROOT / "version/v8/circuits/rwkv7.json")
+        kinds = circuit["block_types"]["decoder"]["body"]["ops_by_kind"]
+        self.assertEqual(set(kinds), {"layer_0", "layer_gt0"})
+        for kind, ops in kinds.items():
+            for op, inputs in circuit["projection_inputs"].items():
+                nodes = [node for node in ops if node["op"] == op]
+                self.assertEqual(len(nodes), 1, (kind, op))
+                for port, slot in inputs.items():
+                    self.assertEqual(nodes[0]["graph_slots"]["inputs"][port], slot,
+                                     (kind, op, port))
+        self.assertEqual(circuit["projection_inputs"]["rwkv7_r_proj"]["x"], "xr_lane")
+        self.assertEqual(circuit["projection_inputs"]["rwkv7_k_proj"]["x"], "xk_lane")
+        self.assertEqual(circuit["projection_inputs"]["rwkv7_v_proj"]["x"], "xv_lane")
+
+    def test_unimplemented_trie_tokenizer_fails_before_emitting_c(self) -> None:
+        with self.assertRaisesRegex(ValueError, "native longest-match encoding is not implemented"):
+            build_ir_v8._generate_tokenizer_c_code("rwkv_world_trie", 65536, 0)
+
     def test_lowered_scalar_booleans_are_valid_c_expressions(self) -> None:
         self.assertEqual(build_ir_v8._c_scalar_expr(True), "1")
         self.assertEqual(build_ir_v8._c_scalar_expr(False), "0")
