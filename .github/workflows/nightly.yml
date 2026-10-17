@@ -48,7 +48,23 @@ jobs:
             unittest/test_hyper_connection_quantized.py \
             unittest/test_moe_swiglu_q4k_q5k.py \
             unittest/test_deltanet_transposed_scalar.py \
-            unittest/test_q6k_q8k_neon_parity.py
+            unittest/test_q6k_q8k_neon_parity.py \
+            unittest/test_q4k_q8k_neon_parity.py
+
+      - name: Rebuild engine with ARM dot-product ISA and rerun NEON parity
+        # Baseline armv8-a builds keep the scalar Q4_K dot (no SDOT); this
+        # build enables __ARM_FEATURE_DOTPROD so the NEON parity assertions
+        # below exercise the real SDOT path on runners that have it (and
+        # report the truthful ref provider name where not). An explicit
+        # -march is used because gcc -march=native silently falls back to
+        # armv8-a on CPUs it does not recognize (e.g. Cortex-X925).
+        run: |
+          make clean
+          make CK_ARM_ARCH="armv8.2-a+dotprod" build/libckernel_engine.so
+          ldd -r build/libckernel_engine.so
+          python -m pytest -q \
+            unittest/test_q6k_q8k_neon_parity.py \
+            unittest/test_q4k_q8k_neon_parity.py
 
       - name: Verify portable normalization fixture on native ARM64
         if: always()

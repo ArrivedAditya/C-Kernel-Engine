@@ -20,6 +20,9 @@
 #if defined(__x86_64__) || defined(__i386__)
 #include <immintrin.h>
 #endif
+#if defined(__ARM_NEON) || defined(__aarch64__)
+#include <arm_neon.h>
+#endif
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -115,10 +118,113 @@ void quantize_row_q8_k_ref(const float *x, void *vy, int k) {
     }
 }
 
+#if defined(__ARM_NEON) || defined(__aarch64__)
+/* NEON Q8_K row quantizer. Byte-exact against quantize_row_q8_k_ref:
+ * - amax via IEEE max reduction (exact), then the first element whose |x|
+ *   equals amax, matching the scalar strict-> tie-break.
+ * - Plain single-precision multiply (fp-contract off), then the same
+ *   magic-constant round-to-nearest-even as ck_nearest_int, vectorized.
+ * - bsums recomputed from the stored int8 payload, integer-exact. */
+#if defined(__clang__)
+#pragma clang fp contract(off)
+#elif defined(__GNUC__)
+__attribute__((optimize("fp-contract=off")))
+#endif
+void quantize_row_q8_k_neon(const float *x, void *vy, int k) {
+    if (!x || !vy || k <= 0) {
+        return;
+    }
+    assert(k % QK_K == 0);
+    const int nb = k / QK_K;
+    block_q8_K *y = (block_q8_K *)vy;
+
+    for (int i = 0; i < nb; ++i) {
+        float32x4_t vmax = vdupq_n_f32(0.0f);
+        for (int j = 0; j < QK_K; j += 16) {
+            const float32x4_t a0 = vabsq_f32(vld1q_f32(x + j + 0));
+            const float32x4_t a1 = vabsq_f32(vld1q_f32(x + j + 4));
+            const float32x4_t a2 = vabsq_f32(vld1q_f32(x + j + 8));
+            const float32x4_t a3 = vabsq_f32(vld1q_f32(x + j + 12));
+            vmax = vmaxq_f32(vmax, vmaxq_f32(vmaxq_f32(a0, a1),
+                                             vmaxq_f32(a2, a3)));
+        }
+        float lanes[4];
+        vst1q_f32(lanes, vmax);
+        const float amax = fmaxf(fmaxf(lanes[0], lanes[1]),
+                                 fmaxf(lanes[2], lanes[3]));
+        if (!amax) {
+            y[i].d = 0.0f;
+            memset(y[i].qs, 0, sizeof(y[i].qs));
+            memset(y[i].bsums, 0, sizeof(y[i].bsums));
+            x += QK_K;
+            continue;
+        }
+
+        /* Scalar ref keeps the FIRST element reaching amax (strict >). */
+        float max = 0.0f;
+        for (int j = 0; j < QK_K; ++j) {
+            if (fabsf(x[j]) == amax) {
+                max = x[j];
+                break;
+            }
+        }
+
+        const float iscale = -127.0f / max;
+        const float32x4_t viscale = vdupq_n_f32(iscale);
+        const float32x4_t vmagic = vdupq_n_f32(12582912.0f);
+        const int32x4_t mmant = vdupq_n_s32(0x007fffff);
+        const int32x4_t mbias = vdupq_n_s32(0x00400000);
+        const int32x4_t vlo = vdupq_n_s32(-128);
+        const int32x4_t vhi = vdupq_n_s32(127);
+
+        for (int j = 0; j < QK_K; j += 16) {
+            /* ck_nearest_int(iscale * x[j]): one rounded multiply, then the
+             * magic-constant trick (round-to-nearest-even), vectorized. */
+            int32x4_t v0 = vreinterpretq_s32_f32(vaddq_f32(
+                vmulq_f32(viscale, vld1q_f32(x + j + 0)), vmagic));
+            int32x4_t v1 = vreinterpretq_s32_f32(vaddq_f32(
+                vmulq_f32(viscale, vld1q_f32(x + j + 4)), vmagic));
+            int32x4_t v2 = vreinterpretq_s32_f32(vaddq_f32(
+                vmulq_f32(viscale, vld1q_f32(x + j + 8)), vmagic));
+            int32x4_t v3 = vreinterpretq_s32_f32(vaddq_f32(
+                vmulq_f32(viscale, vld1q_f32(x + j + 12)), vmagic));
+            v0 = vsubq_s32(vandq_s32(v0, mmant), mbias);
+            v1 = vsubq_s32(vandq_s32(v1, mmant), mbias);
+            v2 = vsubq_s32(vandq_s32(v2, mmant), mbias);
+            v3 = vsubq_s32(vandq_s32(v3, mmant), mbias);
+            v0 = vminq_s32(vmaxq_s32(v0, vlo), vhi);
+            v1 = vminq_s32(vmaxq_s32(v1, vlo), vhi);
+            v2 = vminq_s32(vmaxq_s32(v2, vlo), vhi);
+            v3 = vminq_s32(vmaxq_s32(v3, vlo), vhi);
+            const int16x8_t p0 = vcombine_s16(vmovn_s32(v0), vmovn_s32(v1));
+            const int16x8_t p1 = vcombine_s16(vmovn_s32(v2), vmovn_s32(v3));
+            vst1q_s8(&y[i].qs[j], vcombine_s8(vmovn_s16(p0), vmovn_s16(p1)));
+        }
+
+        for (int j = 0; j < QK_K / 16; ++j) {
+            const int8x16_t q = vld1q_s8(&y[i].qs[j * 16]);
+            const int32x4_t s0 = vpaddlq_s16(vmovl_s8(vget_low_s8(q)));
+            const int32x4_t s1 = vpaddlq_s16(vmovl_s8(vget_high_s8(q)));
+            const int32x4_t s = vaddq_s32(s0, s1);
+            int32_t sl[4];
+            vst1q_s32(sl, s);
+            y[i].bsums[j] = (int16_t)(sl[0] + sl[1] + sl[2] + sl[3]);
+        }
+
+        y[i].d = 1.0f / iscale;
+        x += QK_K;
+    }
+}
+#endif /* __ARM_NEON || __aarch64__ */
+
 void quantize_row_q8_k_sse(const float *x, void *vy, int k);
 void quantize_row_q8_k_avx(const float *x, void *vy, int k);
 void quantize_row_q8_k_avx2(const float *x, void *vy, int k);
 void quantize_row_q8_k_avx512(const float *x, void *vy, int k);
+
+#if defined(__ARM_NEON) || defined(__aarch64__)
+void quantize_row_q8_k_neon(const float *x, void *vy, int k);
+#endif
 
 void quantize_row_q8_k(const float *x, void *vy, int k) {
     const char *ref_env = getenv("CK_DEBUG_Q8K_REF");
@@ -134,8 +240,30 @@ void quantize_row_q8_k(const float *x, void *vy, int k) {
     quantize_row_q8_k_avx(x, vy, k);
 #elif defined(__SSE4_1__)
     quantize_row_q8_k_sse(x, vy, k);
+#elif defined(__ARM_NEON) || defined(__aarch64__)
+    quantize_row_q8_k_neon(x, vy, k);
 #else
     quantize_row_q8_k_ref(x, vy, k);
+#endif
+}
+
+const char *ck_quantize_row_q8_k_provider_name(void) {
+    const char *ref_env = getenv("CK_DEBUG_Q8K_REF");
+    if (ref_env && atoi(ref_env) != 0) {
+        return "q8_k_quantize_ref";
+    }
+#if defined(__AVX512F__) && defined(__AVX512BW__)
+    return "q8_k_quantize_avx512";
+#elif defined(__AVX2__)
+    return "q8_k_quantize_avx2";
+#elif defined(__AVX__)
+    return "q8_k_quantize_avx";
+#elif defined(__SSE4_1__)
+    return "q8_k_quantize_sse";
+#elif defined(__ARM_NEON) || defined(__aarch64__)
+    return "q8_k_quantize_neon";
+#else
+    return "q8_k_quantize_ref";
 #endif
 }
 
@@ -199,6 +327,100 @@ static float dot_q4_k_q8_k_ref(const block_q4_K *w,
     }
     return sumf;
 }
+
+#if defined(__ARM_FEATURE_DOTPROD)
+static int32_t reduce_s32x4(int32x4_t v) {
+    int32_t lanes[4];
+    vst1q_s32(lanes, v);
+    return lanes[0] + lanes[1] + lanes[2] + lanes[3];
+}
+
+/* Q4_K x Q8_K dot using the AArch64 dot-product extension (SDOT). Nibbles
+ * are in [0,15], so they are valid non-negative int8 values for vdotq_s32.
+ * Integer arithmetic matches the scalar reference exactly; the FP32
+ * per-super-block epilogue keeps the reference expression.
+ *
+ * Gated on __ARM_FEATURE_DOTPROD rather than plain NEON: on cores without
+ * SDOT the widening (vmovl/vmlal) variant is no faster than the compiler's
+ * own autovectorization of the scalar reference, so those hosts keep the
+ * reference path (baseline armv8-a builds are unaffected). */
+static float dot_q4_k_q8_k_neon(const block_q4_K *w,
+                                const block_q8_K *x,
+                                int k)
+{
+    const int nb = k / QK_K;
+    float sumf = 0.0f;
+    const uint8x16_t m4 = vdupq_n_u8(0x0F);
+
+    for (int i = 0; i < nb; ++i) {
+        uint8_t sc[8], m_val[8];
+        unpack_q4_k_scales(w[i].scales, sc, m_val);
+
+        const float d = CK_FP16_TO_FP32(w[i].d) * x[i].d;
+        const float dmin = CK_FP16_TO_FP32(w[i].dmin) * x[i].d;
+
+        /* sumi = sum_j bsums[j] * m[j/2] */
+        int16_t mv[16];
+        for (int j = 0; j < 16; ++j) {
+            mv[j] = (int16_t)m_val[j / 2];
+        }
+        const int16x8_t b0 = vld1q_s16(x[i].bsums);
+        const int16x8_t b1 = vld1q_s16(x[i].bsums + 8);
+        const int16x8_t m0 = vld1q_s16(mv);
+        const int16x8_t m1 = vld1q_s16(mv + 8);
+        int32x4_t sumi_v = vmull_s16(vget_low_s16(b0), vget_low_s16(m0));
+        sumi_v = vmlal_s16(sumi_v, vget_high_s16(b0), vget_high_s16(m0));
+        sumi_v = vmlal_s16(sumi_v, vget_low_s16(b1), vget_low_s16(m1));
+        sumi_v = vmlal_s16(sumi_v, vget_high_s16(b1), vget_high_s16(m1));
+        const int32_t sumi = reduce_s32x4(sumi_v);
+
+        /* Scale each group's partial dots in vector form so only one
+         * horizontal reduction is needed per super-block. */
+        int32x4_t scaled_v = vdupq_n_s32(0);
+        for (int group = 0; group < 4; ++group) {
+            const uint8_t *qs = &w[i].qs[group * 32];
+            const int8_t *q8_lo = &x[i].qs[group * 64];
+            const int8_t *q8_hi = q8_lo + 32;
+
+            const uint8x16_t q0 = vld1q_u8(qs);
+            const uint8x16_t q1 = vld1q_u8(qs + 16);
+
+            const int8x16_t lo0 = vreinterpretq_s8_u8(vandq_u8(q0, m4));
+            const int8x16_t lo1 = vreinterpretq_s8_u8(vandq_u8(q1, m4));
+            const int8x16_t hi0 = vreinterpretq_s8_u8(vshrq_n_u8(q0, 4));
+            const int8x16_t hi1 = vreinterpretq_s8_u8(vshrq_n_u8(q1, 4));
+
+            int32x4_t lo = vdotq_s32(vdupq_n_s32(0), lo0, vld1q_s8(q8_lo));
+            lo = vdotq_s32(lo, lo1, vld1q_s8(q8_lo + 16));
+            int32x4_t hi = vdotq_s32(vdupq_n_s32(0), hi0, vld1q_s8(q8_hi));
+            hi = vdotq_s32(hi, hi1, vld1q_s8(q8_hi + 16));
+
+            scaled_v = vmlaq_s32(scaled_v, lo,
+                                 vdupq_n_s32((int32_t)sc[2 * group]));
+            scaled_v = vmlaq_s32(scaled_v, hi,
+                                 vdupq_n_s32((int32_t)sc[2 * group + 1]));
+        }
+        const int32_t scaled_sum = reduce_s32x4(scaled_v);
+        sumf += d * (float)scaled_sum - dmin * (float)sumi;
+    }
+    return sumf;
+}
+
+static void gemv_q4_k_q8_k_neon(float *y,
+                                const void *W,
+                                const void *x_q8,
+                                int M, int K)
+{
+    const block_q4_K *blocks = (const block_q4_K *)W;
+    const block_q8_K *x = (const block_q8_K *)x_q8;
+    const int blocks_per_row = K / QK_K;
+
+    for (int row = 0; row < M; ++row) {
+        const block_q4_K *w_row = blocks + (size_t)row * (size_t)blocks_per_row;
+        y[row] = dot_q4_k_q8_k_neon(w_row, x, K);
+    }
+}
+#endif /* __ARM_FEATURE_DOTPROD */
 
 void gemv_q4_k_q8_k_ref(float *y,
                         const void *W,
@@ -291,8 +513,35 @@ void gemv_q4_k_q8_k(float *y,
     gemv_q4_k_q8_k_avx(y, W, x_q8, M, K);
 #elif defined(__SSE4_1__)
     gemv_q4_k_q8_k_sse(y, W, x_q8, M, K);
+#elif defined(__ARM_FEATURE_DOTPROD)
+    /* SDOT NEON is integer-exact against the scalar reference (identical
+     * block arithmetic and FP32 epilogue); CK_DEBUG_Q4K_Q8_REF=1 still
+     * forces the reference above. Baseline armv8-a builds (no dot-product
+     * extension) keep the reference path, which the compiler already
+     * autovectorizes well. */
+    gemv_q4_k_q8_k_neon(y, W, x_q8, M, K);
 #else
     gemv_q4_k_q8_k_ref(y, W, x_q8, M, K);
+#endif
+}
+
+const char *ck_q4_k_q8_k_provider_name(void)
+{
+    if (ck_q4k_q8k_force_ref()) {
+        return "q4_k_q8_k_ref";
+    }
+#if defined(__AVX512VNNI__) && defined(__AVX512VL__) && !defined(CK_NO_AVX512_VNNI)
+    return "q4_k_q8_k_vnni";
+#elif defined(__AVX2__)
+    return "q4_k_q8_k_avx2";
+#elif defined(__AVX__)
+    return "q4_k_q8_k_avx";
+#elif defined(__SSE4_1__)
+    return "q4_k_q8_k_sse";
+#elif defined(__ARM_FEATURE_DOTPROD)
+    return "q4_k_q8_k_neon";
+#else
+    return "q4_k_q8_k_ref";
 #endif
 }
 

@@ -238,14 +238,20 @@ WARNING_FLAGS += -Wno-unused-function
 endif
 
 INCLUDES := -Iinclude
-# Opt-in native ARM ISA flags for the engine library. Default stays baseline
+# Opt-in ARM ISA flags for the engine library. Default stays baseline
 # armv8-a (NEON is mandatory on AArch64, so NEON kernel paths are always
-# compiled); CK_ARM_NATIVE=1 adds -march=native, which unlocks SVE2/BF16/I8MM
-# codegen on Armv9 hosts such as NVIDIA GB10 (DGX Spark).
+# compiled). CK_ARM_NATIVE=1 adds -march=native where the compiler recognizes
+# the host CPU; on hosts it does not (e.g. gcc 13 on Cortex-X925/GB10, which
+# silently falls back to armv8-a), pass an explicit CK_ARM_ARCH instead, e.g.
+#   make CK_ARM_ARCH="armv9-a+sve2+dotprod+i8mm+bf16"   # NVIDIA GB10
+#   make CK_ARM_ARCH="armv8.2-a+dotprod"                # Neoverse N1/N2 CI
 ARM_ARCH_FLAGS :=
 ifneq ($(IS_ARM_ARCH),)
 ifeq ($(CK_ARM_NATIVE),1)
 ARM_ARCH_FLAGS := $(call cc-option,-march=native)
+endif
+ifdef CK_ARM_ARCH
+ARM_ARCH_FLAGS := $(call cc-option,-march=$(CK_ARM_ARCH))
 endif
 endif
 CFLAGS  := -O3 -fPIC $(OPENMP_FLAG) $(WARNING_FLAGS) $(ARCH_DEFINES) $(AVX_FLAGS) $(SSSE3_FLAGS) $(ARM_ARCH_FLAGS) $(NATIVE_TUNE_FLAGS_SUPPORTED) $(NO_MATH_ERRNO_FLAGS_SUPPORTED) $(INCLUDES)
