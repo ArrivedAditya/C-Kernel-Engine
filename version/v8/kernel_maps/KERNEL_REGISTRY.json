@@ -5060,22 +5060,22 @@
           "head_major"
         ],
         "numerics.attention_reduction": [
-          "f16_flash_auto_qtile64_noscale"
+          "f16_flash_auto_qtile64_regular_tail_noscale"
         ]
       },
       "supported_reductions": {
-        "f16_flash_auto_qtile64_noscale": {
+        "f16_flash_auto_qtile64_regular_tail_noscale": {
           "status": "validated",
           "function": "attention_forward_causal_head_major_gqa_prefill_append_f16cache_gemma4_workspace",
           "explicit_selector": true,
-          "selector": "CK_ATTN_REDUCTION_F16_FLASH_AUTO_QTILE64",
-          "notes": "Unit-scale tiled attention for batches of at least 64 queries; online attention for shorter batches."
+          "selector": "CK_ATTN_REDUCTION_F16_FLASH_AUTO_QTILE64_REGULAR_TAIL_NOSCALE",
+          "notes": "Unit-scale tiled attention for batches of at least 64 queries; materialized-softmax regular attention for shorter batches."
         }
       },
       "numerical_capabilities": {
         "input_dtype": "fp32_q_fp16_kv",
-        "accumulation_dtype": "fp32_tiled_or_fp16_online",
-        "reduction_order": "f16_flash_auto_qtile64_noscale",
+        "accumulation_dtype": "fp32_tiled_or_fp32_regular",
+        "reduction_order": "f16_flash_auto_qtile64_regular_tail_noscale",
         "output_dtype": "fp32"
       },
       "operation_interface": "attention.causal_gqa.append_f16cache.noscale.prefill.v1",
@@ -5285,7 +5285,7 @@
           },
           {
             "name": "reduction",
-            "source": "const:CK_ATTN_REDUCTION_F16_FLASH_AUTO_QTILE64"
+            "source": "const:CK_ATTN_REDUCTION_F16_FLASH_AUTO_QTILE64_REGULAR_TAIL_NOSCALE"
           },
           {
             "name": "token_workspace",
@@ -5518,22 +5518,22 @@
           "head_major"
         ],
         "numerics.attention_reduction": [
-          "f16_flash_auto_qtile64_noscale"
+          "f16_flash_auto_qtile64_regular_tail_noscale"
         ]
       },
       "supported_reductions": {
-        "f16_flash_auto_qtile64_noscale": {
+        "f16_flash_auto_qtile64_regular_tail_noscale": {
           "status": "validated",
           "function": "attention_forward_causal_head_major_gqa_prefill_append_f16cache_sliding_gemma4_workspace",
           "explicit_selector": true,
-          "selector": "CK_ATTN_REDUCTION_F16_FLASH_AUTO_QTILE64",
-          "notes": "Unit-scale tiled attention for batches of at least 64 queries within the declared live window; online attention otherwise."
+          "selector": "CK_ATTN_REDUCTION_F16_FLASH_AUTO_QTILE64_REGULAR_TAIL_NOSCALE",
+          "notes": "Unit-scale tiled attention for batches of at least 64 queries within the declared live window; materialized-softmax regular attention otherwise."
         }
       },
       "numerical_capabilities": {
         "input_dtype": "fp32_q_fp16_kv",
-        "accumulation_dtype": "fp32_tiled_or_fp16_online",
-        "reduction_order": "f16_flash_auto_qtile64_noscale",
+        "accumulation_dtype": "fp32_tiled_or_fp32_regular",
+        "reduction_order": "f16_flash_auto_qtile64_regular_tail_noscale",
         "output_dtype": "fp32"
       },
       "operation_interface": "attention.causal_gqa.append_f16cache.noscale.sliding.prefill.v1",
@@ -5749,7 +5749,7 @@
           },
           {
             "name": "reduction",
-            "source": "const:CK_ATTN_REDUCTION_F16_FLASH_AUTO_QTILE64"
+            "source": "const:CK_ATTN_REDUCTION_F16_FLASH_AUTO_QTILE64_REGULAR_TAIL_NOSCALE"
           },
           {
             "name": "token_workspace",
@@ -6220,22 +6220,22 @@
           "head_major"
         ],
         "numerics.attention_reduction": [
-          "f16_online_single_range_noscale"
+          "f16_regular_fp32_noscale"
         ]
       },
       "supported_reductions": {
-        "f16_online_single_range_noscale": {
+        "f16_regular_fp32_noscale": {
           "status": "validated",
           "function": "attention_forward_decode_head_major_gqa_f16cache_gemma4_contract",
           "explicit_selector": true,
-          "selector": "CK_ATTN_REDUCTION_F16_ONLINE_SINGLE_RANGE",
-          "notes": "Gemma4 unit-scale decode over an FP16 persistent cache."
+          "selector": "CK_ATTN_REDUCTION_F16_REGULAR_NOSCALE",
+          "notes": "Unit-scale materialized-softmax decode over an FP16 persistent cache with FP32 value accumulation."
         }
       },
       "numerical_capabilities": {
         "input_dtype": "fp32_q_fp16_kv",
-        "accumulation_dtype": "fp32_scores_fp16_value_updates",
-        "reduction_order": "f16_online_single_range_noscale",
+        "accumulation_dtype": "fp32",
+        "reduction_order": "f16_regular_fp32_noscale",
         "output_dtype": "fp32"
       },
       "operation_interface": "attention.causal_gqa.f16cache.noscale.decode.v1",
@@ -6402,7 +6402,7 @@
           },
           {
             "name": "reduction",
-            "source": "const:CK_ATTN_REDUCTION_F16_ONLINE_SINGLE_RANGE"
+            "source": "const:CK_ATTN_REDUCTION_F16_REGULAR_NOSCALE"
           }
         ]
       },
@@ -6429,22 +6429,22 @@
           "head_major"
         ],
         "numerics.attention_reduction": [
-          "f16_online_single_range_noscale"
+          "f16_regular_fp32_noscale"
         ]
       },
       "supported_reductions": {
-        "f16_online_single_range_noscale": {
+        "f16_regular_fp32_noscale": {
           "status": "validated",
           "function": "attention_forward_decode_head_major_gqa_f16cache_sliding_gemma4_contract",
           "explicit_selector": true,
-          "selector": "CK_ATTN_REDUCTION_F16_ONLINE_SINGLE_RANGE",
-          "notes": "Gemma4 unit-scale decode over the declared sliding range of an FP16 persistent cache."
+          "selector": "CK_ATTN_REDUCTION_F16_REGULAR_NOSCALE",
+          "notes": "Unit-scale materialized-softmax decode over the declared sliding range of an FP16 persistent cache with FP32 value accumulation."
         }
       },
       "numerical_capabilities": {
         "input_dtype": "fp32_q_fp16_kv",
-        "accumulation_dtype": "fp32_scores_fp16_value_updates",
-        "reduction_order": "f16_online_single_range_noscale",
+        "accumulation_dtype": "fp32",
+        "reduction_order": "f16_regular_fp32_noscale",
         "output_dtype": "fp32"
       },
       "operation_interface": "attention.causal_gqa.f16cache.noscale.sliding.decode.v1",
@@ -6616,7 +6616,7 @@
           },
           {
             "name": "reduction",
-            "source": "const:CK_ATTN_REDUCTION_F16_ONLINE_SINGLE_RANGE"
+            "source": "const:CK_ATTN_REDUCTION_F16_REGULAR_NOSCALE"
           }
         ]
       },
@@ -12492,6 +12492,7 @@
           "tests/test_v8_kokoro_generated_prosody_complete.py",
           "tests/test_v8_kokoro_runtime_prosody_complete.py",
           "tests/test_v8_kokoro_generated_decoder_encode.py",
+          "tests/test_v8_kokoro_runtime_decoder_encode.py",
           "tests/test_v8_kokoro_generated_decoder_complete.py",
           "tests/test_v8_kokoro_source_residual_prefix.py",
           "tests/test_v8_kokoro_source_residual_first_pair.py",
@@ -13473,6 +13474,7 @@
           "tests/test_v8_audio_concat_channels_checked.py",
           "tests/test_v8_audio_concat_channels_generated.py",
           "tests/test_v8_kokoro_generated_decoder_ingress.py",
+          "tests/test_v8_kokoro_runtime_decoder_ingress.py",
           "tests/test_v8_kokoro_generated_decoder_complete.py"
         ],
         "oracle": "Independent NumPy concatenate(axis=0), exact FP32 copy"
@@ -14408,8 +14410,10 @@
           "tests/test_v8_kokoro_generated_prosody_first_block.py",
           "tests/test_v8_kokoro_generated_prosody_complete.py",
           "tests/test_v8_kokoro_runtime_prosody_complete.py",
+          "tests/test_v8_kokoro_runtime_decoder_ingress.py",
           "tests/test_v8_kokoro_generated_decoder_ingress.py",
           "tests/test_v8_kokoro_generated_decoder_encode.py",
+          "tests/test_v8_kokoro_runtime_decoder_encode.py",
           "tests/test_v8_kokoro_generated_decoder_complete.py",
           "tests/test_v8_kokoro_generated_source_stft_conv.py"
         ],
@@ -23935,6 +23939,7 @@
           "tests/test_v8_kokoro_generated_prosody_complete.py",
           "tests/test_v8_kokoro_runtime_prosody_complete.py",
           "tests/test_v8_kokoro_generated_decoder_encode.py",
+          "tests/test_v8_kokoro_runtime_decoder_encode.py",
           "tests/test_v8_kokoro_generated_decoder_complete.py",
           "tests/test_v8_kokoro_source_residual_first_pair.py",
           "tests/test_v8_kokoro_source_residual_block0.py",
@@ -27845,6 +27850,7 @@
       "id": "deepseek_mla_attention_f32",
       "op": "mla_attention",
       "variant": "prefill_ref_f32",
+      "prefill_history_scope": "current_chunk",
       "quant": {
         "weight": "none",
         "activation": "fp32",
@@ -27993,7 +27999,7 @@
           }
         ]
       },
-      "notes": "Reference causal MLA prefill attention over the current token sequence. Workers dynamically claim complete token rows to balance both increasing causal-history cost and asymmetric core throughput. Query/head rows remain independent and retain their original reduction order; planner-owned score rows prevent cross-worker aliasing. The model-derived softmax scale is explicit.",
+      "notes": "Reference causal MLA prefill attention over the current token sequence. Workers dynamically claim complete token rows to balance both increasing causal-history cost and asymmetric core throughput. Query/head rows remain independent and retain their original reduction order; planner-owned score rows prevent cross-worker aliasing. The model-derived softmax scale is explicit. This provider does not read persistent KV history, so appended prefill rows must use a history-aware provider or decode replay.",
       "name": "deepseek_mla_attention_f32",
       "_source_file": "deepseek_mla_attention_f32.json"
     },
@@ -48281,6 +48287,7 @@
           "tests/test_v8_kokoro_generated_prosody_complete.py",
           "tests/test_v8_kokoro_runtime_prosody_complete.py",
           "tests/test_v8_kokoro_generated_decoder_encode.py",
+          "tests/test_v8_kokoro_runtime_decoder_encode.py",
           "tests/test_v8_kokoro_generated_decoder_complete.py",
           "tests/test_v8_kokoro_generated_generator_stage0.py"
         ],
@@ -48589,6 +48596,7 @@
           "tests/test_v8_kokoro_generated_albert_layer.py",
           "tests/test_v8_kokoro_generated_encoder.py",
           "tests/test_v8_kokoro_generated_decoder_encode.py",
+          "tests/test_v8_kokoro_runtime_decoder_encode.py",
           "tests/test_v8_kokoro_generated_decoder_complete.py",
           "tests/test_v8_audio_source_projection_generated.py",
           "tests/test_v8_kokoro_generated_f0_source.py",

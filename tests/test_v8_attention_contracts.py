@@ -471,11 +471,11 @@ class AttentionContractV8Tests(unittest.TestCase):
                 phases = circuit["required_contracts"][name]["phases"]
                 self.assertEqual(
                     phases["prefill"]["requires"]["numerics.attention_reduction"],
-                    "f16_flash_auto_qtile64_noscale",
+                    "f16_flash_auto_qtile64_regular_tail_noscale",
                 )
                 self.assertEqual(
                     phases["decode"]["requires"]["numerics.attention_reduction"],
-                    "f16_online_single_range_noscale",
+                    "f16_regular_fp32_noscale",
                 )
                 result = resolver.resolve_contract(
                     circuit, copy.deepcopy(self.contracts), copy.deepcopy(self.kernels),
@@ -488,7 +488,20 @@ class AttentionContractV8Tests(unittest.TestCase):
                 self.assertEqual(
                     next(arg["source"] for arg in kernel_map["call_abi"]["params"]
                          if arg["name"] == "reduction"),
-                    "const:CK_ATTN_REDUCTION_F16_FLASH_AUTO_QTILE64",
+                    "const:CK_ATTN_REDUCTION_F16_FLASH_AUTO_QTILE64_REGULAR_TAIL_NOSCALE",
+                )
+                decode = resolver.resolve_contract(
+                    circuit, copy.deepcopy(self.contracts), copy.deepcopy(self.kernels),
+                    operation=name, phase="decode", mode="bringup",
+                    source_circuit_path=V8_ROOT / "circuits" / "gemma4.json",
+                )
+                decode_map = resolver.load_json(
+                    V8_ROOT / "kernel_maps" / f"{decode['kernel']['id']}.json"
+                )
+                self.assertEqual(
+                    next(arg["source"] for arg in decode_map["call_abi"]["params"]
+                         if arg["name"] == "reduction"),
+                    "const:CK_ATTN_REDUCTION_F16_REGULAR_NOSCALE",
                 )
 
     def test_f16kv_prefill_provider_owns_head_parallel_selection(self) -> None:

@@ -12,9 +12,10 @@ the server boundary so a generic harness can use ``POST /v1/responses`` with
 * non-stream + SSE streaming with OpenAI event order and ``sequence_number``
 * real ``usage`` + ``performance``, capacity preflight, cancel (404/409/500/504)
 
-The server never executes tools server-side. Only function-like tools
-(``function``/``mcp``) are parsed back into ``function_call`` items for the
-client to execute. Unsupported tool types are rejected before generation.
+The server never executes tools server-side. Function-like tools
+(``function``/``mcp`` and nondeferred ``namespace`` functions) are parsed
+back into ``function_call`` items for the client to execute. Unsupported
+tool types are rejected before generation.
 """
 
 from __future__ import annotations
@@ -311,7 +312,9 @@ def _select_template(
     return None
 
 
-def _input_chat_messages(value: Any) -> list[dict[str, Any]]:
+def _input_chat_messages(
+    value: Any, *, preserve_reasoning: bool = False,
+) -> list[dict[str, Any]]:
     if value is None:
         return []
     if isinstance(value, str):
@@ -319,6 +322,31 @@ def _input_chat_messages(value: Any) -> list[dict[str, Any]]:
     messages: list[dict[str, Any]] = []
     for item in value:
         item_type = getattr(item, "type", None)
+        if item_type == "reasoning" and preserve_reasoning:
+            # A Muse Responses client replays visible reasoning as a separate
+            # input item. The publisher template represents it as the
+            # assistant's self channel before the following tool/final turn.
+            # Dropping it changes the prompt on every tool continuation.
+            parts = getattr(item, "content", None)
+            reasoning = "".join(part.text for part in parts) if parts else ""
+            if not reasoning and (
+                getattr(item, "encrypted_content", None)
+                or getattr(item, "summary", None)
+                or parts
+            ):
+                raise ValueError(
+                    "Muse reasoning history requires visible reasoning text"
+                )
+            if not reasoning:
+                # The Responses API may emit an empty reasoning item when a
+                # visible-reasoning request goes directly to a final answer.
+                # It carries no conversation state to replay.
+                continue
+            messages.append({
+                "role": "assistant", "recipient": "self", "content": reasoning,
+                "end_turn": False, "tool_calls": [],
+            })
+            continue
         if item_type == "message" or (
             item_type is None and getattr(item, "role", None) is not None
         ):
@@ -354,7 +382,9 @@ def _input_chat_messages(value: Any) -> list[dict[str, Any]]:
                         {
                             "id": item.call_id,
                             "type": "function",
-                            "function": {"name": item.name, "arguments": arguments},
+                            "function": {"name": (
+                                f"{item.namespace}.{item.name}" if item.namespace else item.name
+                            ), "arguments": arguments},
                         }
                     ],
                 }
@@ -690,7 +720,31 @@ def _effective_tools(body: Any) -> list[Any]:
     tools = getattr(body, "tools", None) if body is not None else None
     if not tools:
         return []
-    return [t for t in tools if getattr(t, "type", None) in _FUNCTION_LIKE_TYPES]
+    effective = []
+    for tool in tools:
+        if getattr(tool, "type", None) == "namespace":
+            effective.extend(
+                inner.model_copy(update={"name": f"{tool.name}.{inner.name}"})
+                for inner in tool.tools
+            )
+        elif getattr(tool, "type", None) in _FUNCTION_LIKE_TYPES:
+            effective.append(tool)
+    return effective
+
+
+def _namespace_tool_names(body: Any) -> dict[str, str]:
+    return {
+        f"{tool.name}.{inner.name}": tool.name
+        for tool in (getattr(body, "tools", None) or [])
+        if getattr(tool, "type", None) == "namespace"
+        for inner in tool.tools
+    }
+
+
+def _wire_tool_name(call: dict[str, Any]) -> str:
+    name = call.get("name") or ""
+    namespace = call.get("namespace")
+    return name[len(namespace) + 1:] if namespace else name
 
 
 def _has_function_tools(body: Any) -> bool:
@@ -862,11 +916,17 @@ def _render_with_chat_templates(
                 for message in messages
             ]
         tools = None
+        namespace_descriptions = {}
         if body is not None and getattr(body, "tools", None):
+            namespace_descriptions = {
+                t.name: t.description or "" for t in body.tools
+                if getattr(t, "type", None) == "namespace"
+            }
+            render_tools = _effective_tools(body) if namespace_descriptions else body.tools
             if tool_protocol == _TOOL_SYNTAX_GEMMA4_DSL_V1:
-                tools = [_gemma_template_tool(t) for t in body.tools]
+                tools = [_gemma_template_tool(t) for t in render_tools]
             else:
-                tools = [t.model_dump() for t in body.tools]
+                tools = [t.model_dump() for t in render_tools]
 
         def _raise_exception(message: str = "") -> None:
             raise ValueError(str(message))
@@ -895,6 +955,7 @@ def _render_with_chat_templates(
                 add_generation_prompt=add_generation_prompt,
                 add_vision_id=False,
                 raise_exception=_raise_exception,
+                tool_namespace_descriptions=namespace_descriptions,
                 **(renderer_tokens or {}),
             )
         )
@@ -1376,10 +1437,16 @@ def _tool_call_limit(parallel: Any, max_calls: Any) -> int | None:
 def _required_tool_name(tool_choice: Any) -> str | None:
     if isinstance(tool_choice, dict):
         func = tool_choice.get("function")
-        if isinstance(func, dict):
-            name = func.get("name")
-            if isinstance(name, str) and name.strip():
+        selector = func if isinstance(func, dict) else tool_choice
+        if selector.get("type", "function") != "function":
+            return None
+        name = selector.get("name")
+        namespace = selector.get("namespace")
+        if isinstance(name, str) and name.strip():
+            if namespace is None:
                 return name.strip()
+            if isinstance(namespace, str) and namespace.strip():
+                return f"{namespace.strip()}.{name.strip()}"
     return None
 
 
@@ -1388,8 +1455,9 @@ def _enforce_tool_choice(
 ) -> tuple[str | None, bool]:
     """Enforce the request's tool_choice. Returns (error, drop_calls).
 
-    ``auto`` (or unset/unknown shapes) enforces nothing. ``required`` (or
-    a ``{"function": {"name"}}`` dict) fails when no call was parsed.
+    ``auto`` (or unset) enforces nothing. ``required`` or a named function
+    selector fails when no matching call was parsed. Unsupported selectors
+    are rejected during request validation.
     ``none`` drops parsed calls so nothing executes; the model text is
     returned as-is so the misbehavior stays visible.
     """
@@ -1722,13 +1790,44 @@ def create_app(
         unsupported_types = sorted({
             str(getattr(tool, "type", "unknown"))
             for tool in (body.tools or [])
-            if getattr(tool, "type", None) not in _FUNCTION_LIKE_TYPES
+            if getattr(tool, "type", None) not in _FUNCTION_LIKE_TYPES | {"namespace"}
         })
         if unsupported_types:
             raise _harness_error(
                 501, f"unsupported tool types: {', '.join(unsupported_types)}",
                 err_type="invalid_request_error", code="unsupported_tool_type",
             )
+        declared_names: set[str] = set()
+        for tool in body.tools or []:
+            if getattr(tool, "type", None) == "namespace":
+                # The qualified invoke begins with the namespace. The declared
+                # ATEM parser requires its first character to be a letter or
+                # underscore; reject names it cannot later parse as output.
+                if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]*", tool.name) or not tool.tools:
+                    raise _harness_error(400, "invalid or empty tool namespace",
+                        err_type="invalid_request_error", code="invalid_tool_namespace")
+                for inner in tool.tools:
+                    if (not re.fullmatch(r"[A-Za-z0-9_.-]+", inner.name)
+                            or inner.name.count(".") > 1):
+                        raise _harness_error(400, "invalid namespace function name",
+                            err_type="invalid_request_error", code="invalid_tool_namespace")
+                    if inner.defer_loading:
+                        raise _harness_error(501, "deferred namespace tools require tool search",
+                            err_type="invalid_request_error", code="unsupported_tool_type")
+            for name in ([f"{tool.name}.{inner.name}" for inner in tool.tools]
+                         if getattr(tool, "type", None) == "namespace"
+                         else [getattr(tool, "name", None)]):
+                if name and name in declared_names:
+                    raise _harness_error(400, f"duplicate tool name: {name}",
+                        err_type="invalid_request_error", code="duplicate_tool_name")
+                if name:
+                    declared_names.add(name)
+        choice = getattr(body, "tool_choice", None)
+        if (isinstance(choice, dict) and _required_tool_name(choice) is None) or (
+            isinstance(choice, str) and choice not in {"auto", "none", "required"}
+        ):
+            raise _harness_error(400, "unsupported tool_choice selector",
+                err_type="invalid_request_error", code="unsupported_tool_choice")
         for tool in _effective_tools(body):
             if getattr(tool, "name", None):
                 try:
@@ -1786,7 +1885,10 @@ def create_app(
                 )
             messages.extend(dict(m) for m in previous)
         try:
-            current = _input_chat_messages(body.input)
+            current = _input_chat_messages(
+                body.input,
+                preserve_reasoning=(tool_syntax == _TOOL_SYNTAX_MUSE_ATEM_V1),
+            )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         known_call_ids = {
@@ -2002,7 +2104,8 @@ def create_app(
                             id=tc.get("id") or f"fc_{uuid.uuid4().hex[:24]}",
                             call_id=tc.get("call_id")
                             or f"call_{uuid.uuid4().hex[:24]}",
-                            name=tc.get("name") or "",
+                            name=_wire_tool_name(tc),
+                            namespace=tc.get("namespace"),
                             arguments=tc.get("arguments") or "{}",
                             status=item_status_value,  # type: ignore
                         ).model_dump()
@@ -2102,6 +2205,11 @@ def create_app(
                     }
                     for call in tool_calls
                 ]
+            if tool_syntax == _TOOL_SYNTAX_MUSE_ATEM_V1 and thinking:
+                history.append({
+                    "role": "assistant", "recipient": "self", "content": thinking,
+                    "end_turn": False, "tool_calls": [],
+                })
             _store_response(response_id, resp, [*history, assistant])
         return resp
 
@@ -2137,6 +2245,11 @@ def create_app(
             return None, None, None
         if tool_calls == [] and code is None:
             return None, None, None
+        namespace_names = _namespace_tool_names(body)
+        for call in tool_calls or []:
+            namespace = namespace_names.get(call.get("name", ""))
+            if namespace is not None:
+                call["namespace"] = namespace
         return tool_calls, code, msg
 
     def _muse_channels(raw: str) -> tuple[str, str, str | None]:
@@ -2582,7 +2695,8 @@ def create_app(
                                         id=func_id,
                                         call_id=tc.get("call_id")
                                         or f"call_{uuid.uuid4().hex[:24]}",
-                                        name=tc["name"],
+                                        name=_wire_tool_name(tc),
+                                        namespace=tc.get("namespace"),
                                         arguments="",
                                         status="in_progress",  # type: ignore
                                     ).model_dump(),
@@ -2616,7 +2730,8 @@ def create_app(
                                     "item": FunctionCall(
                                         id=func_id,
                                         call_id=tc.get("call_id") or func_id,
-                                        name=tc["name"],
+                                        name=_wire_tool_name(tc),
+                                        namespace=tc.get("namespace"),
                                         arguments=args_str,
                                         status=msg_status,  # type: ignore
                                     ).model_dump(),

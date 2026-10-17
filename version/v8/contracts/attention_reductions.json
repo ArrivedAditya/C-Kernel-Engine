@@ -207,6 +207,47 @@
         "reference": "pinned llama.cpp CPU flash-attention capture with independent Q/K/V"
       }
     },
+    "f16_regular_fp32_noscale": {
+      "status": "validated",
+      "q_compute": "fp16_rounded",
+      "k_compute": "fp16_rounded",
+      "score_accumulator": "fp32",
+      "softmax_statistics": "fp32",
+      "value_compute": "fp16_rounded",
+      "value_accumulator": "fp32",
+      "partial_storage": "none",
+      "partial_merge": "none",
+      "partition": {"kind": "single_range"},
+      "description": "Unit-scale regular attention rounds Q/K/V and normalized probabilities through FP16, then accumulates values in FP32 using three score passes without heap scratch.",
+      "validation": {
+        "test": "tests/test_v8_direct_layout_attention.py",
+        "cases": ["grouped heads", "padded width", "longer-than-tile decode", "invalid capacity"],
+        "reference": "independent materialized-softmax calculation and pinned llama.cpp non-flash exact-input captures"
+      }
+    },
+    "f16_flash_auto_qtile64_regular_tail_noscale": {
+      "status": "validated",
+      "q_compute": "shape_dependent_fp16_or_fp32",
+      "k_compute": "fp16_rounded",
+      "score_accumulator": "fp32",
+      "softmax_statistics": "fp32",
+      "value_compute": "fp16_rounded",
+      "value_accumulator": "fp32",
+      "partial_storage": "shape_dependent_none_or_fp32",
+      "partial_merge": "shape_dependent_single_range_or_fp32_chunk_order",
+      "partition": {
+        "kind": "query_tile_threshold",
+        "threshold": 64,
+        "below_threshold": "f16_regular_fp32_noscale",
+        "at_or_above_threshold": "f16_kv_tiled64_fp32_softmax_fp64_sum_update_noscale"
+      },
+      "description": "Unit-scale tiled prefill retains 64-query tiles where valid and uses regular FP32 value accumulation for short or actively sliding segments.",
+      "validation": {
+        "test": "tests/test_v8_direct_layout_attention.py",
+        "cases": ["segmented text-image-text prefill", "short-query fallback", "decode tail"],
+        "reference": "independent materialized-softmax calculation and pinned llama.cpp non-flash exact-input captures"
+      }
+    },
     "f16_online_fp32_merge": {
       "status": "validated",
       "q_compute": "fp16_rounded",

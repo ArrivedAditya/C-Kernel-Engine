@@ -8,8 +8,9 @@ validation errors (422); do not add permissive parsing to turn them into
 
 Serving policy (server.live): serving separately rejects recognized but
 unsupported types with 501 ``unsupported_tool_type`` before rendering.
-Only function-like tools (function/mcp) are accepted for generation and
-parsed back into ``function_call`` items for the client to execute. All
+Only function-like tools (function/mcp and nondeferred namespace functions)
+are accepted for generation and parsed back into ``function_call`` items
+for the client to execute. All
 other recognized types (file_search, computer(_use_preview),
 web_search(_2025_08_26), code_interpreter, image_generation) are rejected
 before rendering. The server never executes any tool server-side.
@@ -33,6 +34,15 @@ class FunctionTool(BaseModel):
     defer_loading: bool | None = None
     description: str | None = None
     output_schema: dict[str, Any] | None = None
+
+
+class NamespaceTool(BaseModel):
+    """A group of client-executed functions (Muse Responses wire shape)."""
+
+    type: Literal["namespace"] = "namespace"
+    name: str
+    description: str | None = None
+    tools: list[FunctionTool]
 
 
 class FileSearchTool(BaseModel):
@@ -141,6 +151,7 @@ class McpTool(BaseModel):
 
 ToolDefinition = Annotated[
     FunctionTool
+    | NamespaceTool
     | FileSearchTool
     | ComputerTool
     | ComputerUsePreviewTool

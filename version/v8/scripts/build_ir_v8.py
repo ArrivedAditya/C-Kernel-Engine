@@ -16644,6 +16644,12 @@ def load_kernel_call_abis(
         if kernel_id in result:
             raise RuntimeError(f"HARD CALL ABI FAULT: duplicate call ABI owner for {kernel_id!r}.")
         _validate_kernel_call_abi(kernel_id, function, call_abi, path)
+        prefill_history_scope = doc.get("prefill_history_scope")
+        if prefill_history_scope not in {None, "current_chunk"}:
+            raise RuntimeError(
+                f"HARD CALL ABI FAULT: kernel {kernel_id!r} in {path.name} declares "
+                f"unsupported prefill_history_scope={prefill_history_scope!r}."
+            )
         legacy_keys = [key for key in {kernel_id, function} if key and key in legacy]
         if legacy_keys:
             raise RuntimeError(
@@ -16655,6 +16661,7 @@ def load_kernel_call_abis(
             "op": str(doc.get("op", "") or ""),
             "call_abi": copy.deepcopy(call_abi),
             "source_file": path.name,
+            **({"prefill_history_scope": prefill_history_scope} if prefill_history_scope else {}),
         }
     return result
 
@@ -17485,6 +17492,8 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
                 ),
             },
         }
+        if call_abi_entry and call_abi_entry.get("prefill_history_scope"):
+            call_op["prefill_history_scope"] = call_abi_entry["prefill_history_scope"]
         if op.get("template_op_id") is not None:
             call_op["template_op_id"] = str(op["template_op_id"])
         for key in ("runtime_extent_contract", "produces_runtime_lengths",

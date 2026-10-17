@@ -86,6 +86,10 @@ class DirectLayoutAttentionTests(unittest.TestCase):
             gemma_decode_signature
         )
         cls._lib.attention_forward_decode_head_major_gqa_f16cache_gemma4_contract.restype = ctypes.c_int
+        cls._lib.attention_forward_decode_head_major_gqa_f16cache_regular_noscale.argtypes = (
+            gemma_decode_signature
+        )
+        cls._lib.attention_forward_decode_head_major_gqa_f16cache_regular_noscale.restype = ctypes.c_int
         cls._lib.attention_forward_decode_head_major_gqa_f16cache_sliding_gemma4_contract.argtypes = (
             gemma_decode_signature[:10] + [ctypes.c_int] + gemma_decode_signature[10:]
         )
@@ -268,6 +272,29 @@ class DirectLayoutAttentionTests(unittest.TestCase):
                 expected[dst:dst + rows * dim] = result[src:src + rows * dim]
             offset += rows
         self.assertEqual(actual.tobytes(), expected.tobytes())
+        regular_tail = array("f", [0.0]) * len(actual)
+        regular_args = list(args)
+        regular_args[3] = fp(regular_tail)
+        regular_args[12] = 6  # Tiled visual segment, regular short-query tail.
+        self.assertEqual(segmented_fn(*regular_args, plan, len(segments)), 0)
+        tail_q = array("f")
+        for head in range(heads):
+            start = (head * tokens + segments[0] + segments[1]) * dim
+            tail_q.extend(q[start:start + dim])
+        direct_tail = array("f", [0.0]) * (heads * dim)
+        self.assertEqual(
+            self._lib.attention_forward_decode_head_major_gqa_f16cache_regular_noscale(
+                fp(tail_q), hp(k), hp(v), fp(direct_tail), heads, kv_heads,
+                segments[0] + segments[1] + 1, capacity, dim, dim, capacity,
+            ), 0,
+        )
+        for head in range(heads):
+            src = (head * tokens + segments[0] + segments[1]) * dim
+            self.assertEqual(
+                regular_tail[src:src + dim].tobytes(),
+                direct_tail[head * dim:(head + 1) * dim].tobytes(),
+            )
+        self.assertNotEqual(regular_tail.tobytes(), actual.tobytes())
         self.assertEqual(fn(
             fp(q), hp(k), hp(v), fp(unsegmented), heads, kv_heads,
             tokens, 0, capacity, dim, dim, capacity, 3,
@@ -294,6 +321,100 @@ class DirectLayoutAttentionTests(unittest.TestCase):
             ), 0)
             self.assertEqual(sentinel[0], 123.0)
             self.assertEqual(sentinel[-1], 123.0)
+
+    def test_f16cache_regular_noscale_matches_materialized_softmax(self):
+        heads, kv_heads, tokens, capacity, dim, stride = 4, 2, 79, 83, 40, 48
+
+        def half(value):
+            return struct.unpack("<e", struct.pack("<e", value))[0]
+
+        def half_bits(value):
+            return int.from_bytes(struct.pack("<e", value), "little")
+
+        def half_from_bits(bits):
+            return struct.unpack("<e", struct.pack("<H", bits))[0]
+
+        q = array("f", (
+            math.sin(i * 0.17) * 1.3 + math.cos(i * 0.037) * 0.4
+            for i in range(heads * stride)
+        ))
+        k = array("H", (
+            half_bits(math.cos(i * 0.031) * 0.5 + math.sin(i * 0.071) * 0.2)
+            for i in range(kv_heads * capacity * stride)
+        ))
+        v = array("H", (
+            half_bits(math.sin(i * 0.021) * 1.8)
+            for i in range(kv_heads * capacity * stride)
+        ))
+        guarded = array("f", [99.0] * (heads * stride + 2))
+        output = (ctypes.c_float * (heads * stride)).from_buffer(
+            guarded, ctypes.sizeof(ctypes.c_float)
+        )
+        args = (
+            (ctypes.c_float * len(q)).from_buffer(q),
+            (ctypes.c_uint16 * len(k)).from_buffer(k),
+            (ctypes.c_uint16 * len(v)).from_buffer(v),
+            output, heads, kv_heads, tokens, capacity, dim, stride, 0,
+        )
+        fn = self._lib.attention_forward_decode_head_major_gqa_f16cache_regular_noscale
+        self.assertEqual(fn(*args), 0)
+        self.assertEqual(guarded[0], 99.0)
+        self.assertEqual(guarded[-1], 99.0)
+
+        for head in range(heads):
+            kv_head = head // (heads // kv_heads)
+            query = [half(q[head * stride + d]) for d in range(dim)]
+            scores = []
+            for token in range(tokens):
+                base = (kv_head * capacity + token) * stride
+                scores.append(sum(query[d] * half_from_bits(k[base + d])
+                                  for d in range(dim)))
+            peak = max(scores)
+            exps = [math.exp(score - peak) for score in scores]
+            total = sum(exps)
+            for d in range(dim):
+                expected = sum(
+                    half(exps[token] / total) *
+                    half_from_bits(v[(kv_head * capacity + token) * stride + d])
+                    for token in range(tokens)
+                )
+                self.assertAlmostEqual(guarded[1 + head * stride + d], expected, delta=2e-4)
+            self.assertEqual(list(guarded[1 + head * stride + dim:1 + (head + 1) * stride]),
+                             [0.0] * (stride - dim))
+
+        invalid = list(args)
+        invalid[6] = capacity + 1
+        before = guarded.tobytes()
+        self.assertNotEqual(fn(*invalid), 0)
+        self.assertEqual(guarded.tobytes(), before)
+        invalid = list(args)
+        invalid[8] = 4097
+        self.assertNotEqual(fn(*invalid), 0)
+        self.assertEqual(guarded.tobytes(), before)
+        window = 11
+        sliding = array("f", [0.0] * (heads * stride))
+        sliding_args = list(args)
+        sliding_args[3] = (ctypes.c_float * len(sliding)).from_buffer(sliding)
+        sliding_args[-1] = window
+        self.assertEqual(fn(*sliding_args), 0)
+        for head in range(heads):
+            kv_head = head // (heads // kv_heads)
+            query = [half(q[head * stride + d]) for d in range(dim)]
+            scores = []
+            for token in range(tokens - window, tokens):
+                base = (kv_head * capacity + token) * stride
+                scores.append(sum(query[d] * half_from_bits(k[base + d])
+                                  for d in range(dim)))
+            peak = max(scores)
+            exps = [math.exp(score - peak) for score in scores]
+            total = sum(exps)
+            for d in range(dim):
+                expected = sum(
+                    half(exps[index] / total) *
+                    half_from_bits(v[(kv_head * capacity + tokens - window + index) * stride + d])
+                    for index in range(window)
+                )
+                self.assertAlmostEqual(sliding[head * stride + d], expected, delta=2e-4)
 
     def test_gemma4_f16cache_matches_independent_rounding_oracle(self):
         heads, kv_heads = 6, 2
