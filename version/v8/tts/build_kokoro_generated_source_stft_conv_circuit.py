@@ -17,8 +17,8 @@ CONV_CHANNELS = 256
 CONV_FRAMES_CAPACITY = F0_CAPACITY * 10
 
 
-def build_circuit(tokens=36):
-    graph = source_circuit(tokens)
+def build_circuit(tokens=36, *, source_graph=None):
+    graph = source_graph if source_graph is not None else source_circuit(tokens)
     graph['name'] = 'kokoro_generated_source_stft_conv_bounded'
     graph['native_entry']['function'] = 'ck_kokoro_generated_source_stft_conv_bounded'
     graph['native_entry']['params'].extend([
