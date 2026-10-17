@@ -822,6 +822,11 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_kokoro_runtime_generator_stage0.py",
         timeout_sec=900,
     ),
+    "tts_kokoro_runtime_source_projection": TestSuite(
+        "TTS Kokoro Runtime-Length F0 Source Projection", "inference",
+        ROOT / "tests" / "test_v8_kokoro_runtime_source_projection.py",
+        timeout_sec=300,
+    ),
     "tts_checked_op_constants": TestSuite(
         "Checked Per-Operation ABI Constants Generated Graph", "kernels",
         ROOT / "tests" / "test_v8_checked_op_constants.py",
@@ -1149,7 +1154,10 @@ TEST_SUITES = {
     "tts_kokoro_generator_stage1_pool": TestSuite(
         "Kokoro Generated Second-Stage Residual Pool", "inference",
         ROOT / "tests" / "test_v8_kokoro_generator_stage1_pool.py",
-        timeout_sec=420,
+        # This full connected suite passed in 379.2s on the merged #795 CI
+        # runner and timed out once at 420s. Preserve the blocking test with
+        # measured headroom for runner variation; a 600s timeout still fails.
+        timeout_sec=600,
     ),
     "tts_audio_spectral_head_oracle": TestSuite(
         "TTS Spectral Head Pinned PyTorch Oracle", "kernels",

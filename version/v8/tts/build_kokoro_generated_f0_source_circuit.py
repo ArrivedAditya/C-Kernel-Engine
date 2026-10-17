@@ -18,8 +18,10 @@ HARMONIC_ELEMENTS = SAMPLES_CAPACITY * HARMONICS
 SCRATCH_ELEMENTS = F0_CAPACITY * HARMONICS + HARMONIC_ELEMENTS
 
 
-def build_circuit(tokens=36):
-    graph = prosody_circuit(tokens)
+def build_circuit(tokens=36, *, prosody_graph=None,
+                  f0_capacity=F0_CAPACITY):
+    graph = prosody_graph if prosody_graph is not None else prosody_circuit(tokens)
+    scratch_elements = f0_capacity * HARMONICS + HARMONIC_ELEMENTS
     graph['name'] = 'kokoro_generated_f0_source_bounded'
     graph['native_entry']['function'] = 'ck_kokoro_generated_f0_source_bounded'
     graph['native_entry']['params'].append(
@@ -57,14 +59,14 @@ def build_circuit(tokens=36):
         'returns_status': True,
         'consumes_runtime_lengths': ['upsampled_frames', 'source_samples'],
         'runtime_scalar_bindings': {'source_frames': 'upsampled_frames'},
-        'params': {'F': F0_CAPACITY, 'S': SAMPLES_CAPACITY, 'H': HARMONICS,
-            'Q': SCRATCH_ELEMENTS, 'upsample': UPSAMPLE,
+        'params': {'F': f0_capacity, 'S': SAMPLES_CAPACITY, 'H': HARMONICS,
+            'Q': scratch_elements, 'upsample': UPSAMPLE,
             'harmonics': HARMONICS, 'sample_rate': 24000.,
             'voiced_threshold': 10., 'sine_amp': .1, 'noise_std': .003,
-            'call_constants': {'source_f0_capacity': F0_CAPACITY,
+            'call_constants': {'source_f0_capacity': f0_capacity,
                 'source_gaussian_capacity': HARMONIC_ELEMENTS,
                 'source_output_capacity': HARMONIC_ELEMENTS,
-                'source_scratch_capacity': SCRATCH_ELEMENTS}},
+                'source_scratch_capacity': scratch_elements}},
         'graph_slots': {'inputs': {'f0': 'f0_output',
             'gaussian': 'external:source_gaussian'},
             'outputs': {'output': 'source_harmonics'}},
