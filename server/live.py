@@ -66,6 +66,7 @@ from .schemas.output_items import (
 from .schemas.response import CreateResponseRequest
 from .session_v8 import (
     CK_SESSION_REQUEST_RAW_PROMPT,
+    CK_SESSION_REQUEST_REJECT_PROMPT_TRUNCATION,
     SessionBusyError,
     SessionError,
     stop_reason_name,
@@ -1933,6 +1934,10 @@ def create_app(
         )
         top_p_eff = body.top_p if body.top_p is not None else top_p
         effective_flags = flags
+        # Fail-closed backstop: admission below rejects over-capacity requests,
+        # and the native side must never silently truncate a prompt that slips
+        # through — it must fail the request instead.
+        effective_flags |= CK_SESSION_REQUEST_REJECT_PROMPT_TRUNCATION
         effective_thinking = _resolve_thinking_mode(body)
         jinja_rendered: str | None = None
         generation_prefix = ""
@@ -2051,6 +2056,19 @@ def create_app(
                         500, "native tokenizer failed while counting the rendered prompt",
                         err_type="server_error", code="native_tokenization_failed",
                     ) from exc
+                if prompt_tokens >= context_length:
+                    # Case 1: the prompt alone does not fit the loaded context
+                    # capacity. Reject before any model execution; never
+                    # truncate and never present it as success.
+                    raise _harness_error(
+                        400,
+                        f"rendered prompt has {prompt_tokens} tokens, exceeding the "
+                        f"loaded context capacity {context_length} before any output "
+                        "tokens are reserved; shorten the prompt or load a larger "
+                        "generated runtime",
+                        err_type="invalid_request_error",
+                        code="context_length_exceeded",
+                    )
                 if prompt_tokens + tok_limit > context_length:
                     available = max(0, context_length - prompt_tokens)
                     raise _harness_error(
