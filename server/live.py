@@ -3149,6 +3149,9 @@ def create_app(
                     "X-Accel-Buffering": "no",
                 },
             )
+        non_stream_response_id = f"resp_{uuid.uuid4().hex[:24]}"
+        if batch_http is not None:
+            batch_http.bind_response(lease.client, non_stream_response_id)
         think_enabled = _resolve_thinking_mode(body) == "visible"
         chunks: list[str] = []
         result: dict[str, Any] | None = None
@@ -3234,7 +3237,7 @@ def create_app(
                 )
                 err_resp = build_response(
                     body,
-                    response_id=f"resp_{uuid.uuid4().hex[:24]}",
+                    response_id=non_stream_response_id,
                     message_id=f"msg_{uuid.uuid4().hex[:24]}",
                     created_at=int(time.time()),
                     completed_at=int(time.time()),
@@ -3317,7 +3320,7 @@ def create_app(
             item_status = "incomplete"
         final_resp = build_response(
             body,
-            response_id=f"resp_{uuid.uuid4().hex[:24]}",
+            response_id=non_stream_response_id,
             message_id=f"msg_{uuid.uuid4().hex[:24]}",
             created_at=int(time.time()),
             completed_at=int(time.time()),
