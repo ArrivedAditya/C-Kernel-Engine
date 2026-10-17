@@ -827,6 +827,11 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_kokoro_runtime_source_projection.py",
         timeout_sec=300,
     ),
+    "tts_kokoro_runtime_source_stft_conv": TestSuite(
+        "TTS Kokoro Runtime-Length Source STFT and Convolution", "inference",
+        ROOT / "tests" / "test_v8_kokoro_runtime_source_stft_conv.py",
+        timeout_sec=300,
+    ),
     "tts_checked_op_constants": TestSuite(
         "Checked Per-Operation ABI Constants Generated Graph", "kernels",
         ROOT / "tests" / "test_v8_checked_op_constants.py",
