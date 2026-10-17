@@ -82,6 +82,56 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
             with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, "prefix_decode_policy"):
                 decoder_parity_v8._prefix_decode_policy({"prefix_decode_policy": invalid})
 
+    def test_bridge_visual_prefix_missing_or_synthetic_fails_before_compile(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            report_path = root / "bridge_report.json"
+            output = root / "parity.json"
+            report_path.write_text(json.dumps({
+                "decoder_runtime": {"gguf": str(root / "decoder.gguf")},
+                "prefix_decode_policy": "causal_mixed_prefix",
+                "multimodal_prompt_segmented": True,
+                "prefix_source": "encoder",
+                "prefix_tokens": 9,
+                "prefix_dump_path": None,
+            }), encoding="utf-8")
+            argv = ["--bridge-report", str(report_path), "--workdir", str(root / "work"),
+                    "--json-out", str(output)]
+            with mock.patch.object(decoder_parity_v8.bridge_runner_v8, "_prepare_decoder_runtime") as compile_runtime:
+                with self.assertRaisesRegex(ValueError, "no prefix bytes"):
+                    decoder_parity_v8.main(argv)
+                with self.assertRaisesRegex(ValueError, "synthetic prefix cannot replace"):
+                    decoder_parity_v8.main([*argv, "--synthetic-prefix-tokens", "9"])
+                compile_runtime.assert_not_called()
+            self.assertFalse(output.exists())
+            with self.assertRaisesRegex(ValueError, "requires prefix_tokens"):
+                decoder_parity_v8._bridge_prefix_path({"prefix_source": "encoder"}, None, 0)
+
+    def test_bridge_visual_prefix_extent_must_match_loaded_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prefix = root / "prefix.f32"
+            prefix.write_bytes(array("f", [0.0] * (8 * 64)).tobytes())
+            report = {"prefix_tokens": 9, "prefix_dump_path": str(prefix),
+                      "multimodal_prompt_segmented": True}
+            path, expected = decoder_parity_v8._bridge_prefix_path(report, None, 0)
+            self.assertEqual(path, prefix.resolve())
+            loaded = decoder_parity_v8._load_prefix_embeddings(path, 0, 64)
+            with self.assertRaisesRegex(ValueError, "declared=9 loaded=8"):
+                decoder_parity_v8._verify_bridge_prefix_binding(report, path, loaded[1], loaded[2])
+            decoder_parity_v8._verify_bridge_prefix_extent(None, loaded[1])
+            self.assertEqual(decoder_parity_v8._bridge_prefix_path(None, None, 0), (None, None))
+
+            report["prefix_tokens"] = 8
+            report["prefix_embed_dim"] = 64
+            report["prefix_dump_sha256"] = hashlib.sha256(prefix.read_bytes()).hexdigest()
+            decoder_parity_v8._verify_bridge_prefix_binding(report, path, loaded[1], loaded[2])
+            with self.assertRaisesRegex(ValueError, "row width mismatch"):
+                decoder_parity_v8._verify_bridge_prefix_binding(report, path, loaded[1], 32)
+            prefix.write_bytes(array("f", [1.0] * (8 * 64)).tobytes())
+            with self.assertRaisesRegex(ValueError, "hash does not match"):
+                decoder_parity_v8._verify_bridge_prefix_binding(report, path, loaded[1], loaded[2])
+
     def test_encoder_prefix_report_binds_complete_independent_exports(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -2276,6 +2326,7 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
                         "prompt_tokens_before_image": [11, 22],
                         "prompt_tokens_after_image": [33, 44, 55],
                         "multimodal_prompt_segmented": True,
+                        "prefix_tokens": 9,
                         "prefix_dump_path": str(prefix_path),
                         "prefix_grid_x": 3,
                         "prefix_grid_y": 3,

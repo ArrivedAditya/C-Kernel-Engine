@@ -98,6 +98,75 @@ def _prefix_decode_policy(bridge_report: dict[str, Any] | None) -> str:
     return policy
 
 
+def _bridge_prefix_path(
+    bridge_report: dict[str, Any] | None,
+    explicit_path: Path | None,
+    synthetic_prefix_tokens: int,
+) -> tuple[Path | None, int | None]:
+    if bridge_report is None:
+        return explicit_path, None
+
+    declared = bridge_report.get("prefix_tokens")
+    if declared is not None and (isinstance(declared, bool) or not isinstance(declared, int) or declared < 0):
+        raise ValueError("bridge report prefix_tokens must be a nonnegative integer")
+    requires_visual_prefix = (
+        bridge_report.get("multimodal_prompt_segmented") is True
+        or bridge_report.get("prefix_source") == "encoder"
+    )
+    if declared is None and requires_visual_prefix:
+        raise ValueError("visual bridge report requires prefix_tokens")
+    if declared == 0 and requires_visual_prefix:
+        raise ValueError("visual bridge report requires a nonempty visual prefix")
+
+    dump = bridge_report.get("prefix_dump_path")
+    if dump is not None and (not isinstance(dump, str) or not dump.strip()):
+        raise ValueError("bridge report prefix_dump_path must be a nonempty path when present")
+    path = explicit_path or (Path(dump).resolve() if dump else None)
+    if declared is not None and declared > 0:
+        if synthetic_prefix_tokens > 0:
+            raise ValueError("synthetic prefix cannot replace a bridge-declared visual prefix")
+        if path is None:
+            raise ValueError(
+                "bridge report declares visual prefix but has no prefix bytes; "
+                "rerun the bridge with --dump-prefix-f32 or pass --prefix-f32"
+            )
+    return path, declared
+
+
+def _verify_bridge_prefix_extent(declared: int | None, loaded: int) -> None:
+    if declared is not None and loaded != declared:
+        raise ValueError(
+            "bridge visual prefix extent mismatch: "
+            f"declared={declared} loaded={loaded}"
+        )
+
+
+def _verify_bridge_prefix_binding(
+    bridge_report: dict[str, Any] | None,
+    prefix_path: Path | None,
+    prefix_tokens: int,
+    prefix_row_dim: int,
+) -> None:
+    if bridge_report is None:
+        return
+    _verify_bridge_prefix_extent(bridge_report.get("prefix_tokens"), prefix_tokens)
+    declared_dim = bridge_report.get("prefix_embed_dim")
+    if declared_dim is not None:
+        if isinstance(declared_dim, bool) or not isinstance(declared_dim, int) or declared_dim <= 0:
+            raise ValueError("bridge report prefix_embed_dim must be a positive integer")
+        if prefix_tokens > 0 and prefix_row_dim != declared_dim:
+            raise ValueError(
+                "bridge visual prefix row width mismatch: "
+                f"declared={declared_dim} loaded={prefix_row_dim}"
+            )
+    declared_hash = bridge_report.get("prefix_dump_sha256")
+    if declared_hash is not None:
+        if not isinstance(declared_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", declared_hash):
+            raise ValueError("bridge report prefix_dump_sha256 must be a SHA-256 hex digest")
+        if prefix_path is None or hashlib.sha256(prefix_path.read_bytes()).hexdigest() != declared_hash:
+            raise ValueError("bridge visual prefix hash does not match bridge report")
+
+
 def _verify_runtime_memory_contracts(runtime: dict[str, Any]) -> dict[str, Any]:
     """Verify planner-produced write extents without recomputing kernel sizes."""
     phase_paths = {
@@ -2223,6 +2292,11 @@ def main(argv: list[str] | None = None) -> int:
 
     bridge_report = _load_bridge_report(args.bridge_report.resolve()) if args.bridge_report is not None else None
     prefix_decode_policy = _prefix_decode_policy(bridge_report)
+    resolved_prefix_path, _ = _bridge_prefix_path(
+        bridge_report,
+        args.prefix_f32.resolve() if args.prefix_f32 is not None else None,
+        int(args.synthetic_prefix_tokens),
+    )
     if args.gguf is not None:
         gguf_path = args.gguf.resolve()
     elif bridge_report is not None:
@@ -2264,11 +2338,6 @@ def main(argv: list[str] | None = None) -> int:
         tokens_after_csv=args.tokens_after,
         bridge_report=bridge_report,
     )
-    resolved_prefix_path = args.prefix_f32.resolve() if args.prefix_f32 is not None else None
-    if resolved_prefix_path is None and bridge_report is not None:
-        bridge_prefix_dump = str(bridge_report.get("prefix_dump_path") or "").strip()
-        if bridge_prefix_dump:
-            resolved_prefix_path = Path(bridge_prefix_dump).resolve()
     prefix_embeddings, prefix_tokens, prefix_row_dim, prefix_source = _load_prefix_embeddings(
         resolved_prefix_path,
         int(args.synthetic_prefix_tokens),
@@ -2276,6 +2345,7 @@ def main(argv: list[str] | None = None) -> int:
         int(decoder_runtime.get("input_embed_dim", 0) or 0),
         int(args.prefix_row_dim) if args.prefix_row_dim is not None else None,
     )
+    _verify_bridge_prefix_binding(bridge_report, resolved_prefix_path, prefix_tokens, prefix_row_dim)
     separate_prefixes = args.llama_prefix_f32 is not None
     if separate_prefixes:
         if resolved_prefix_path is None or int(args.synthetic_prefix_tokens) > 0:
@@ -2498,7 +2568,11 @@ def main(argv: list[str] | None = None) -> int:
             "Separate prefix files compare image-to-logit behavior; their producers are not verified by this report, and this is not decoder-arithmetic parity."
             if separate_prefixes else
             "This is decoder-only parity: identical token IDs and prefix into llama.cpp and the generated v8 runtime.",
-            "prefix_tokens=0 isolates text-decoder parity before the encoder->decoder bridge is introduced.",
+            (
+                "prefix_tokens=0 isolates text-decoder parity before the encoder->decoder bridge is introduced."
+                if prefix_tokens == 0 else
+                "A nonempty visual prefix was supplied to both decoders; this does not certify its encoder."
+            ),
             "When a bridge report is provided, the parity tool replays the exact segmented multimodal prompt: text-before + image prefix + text-after.",
             "Separate prefix files require independent producer provenance before a numerical or vision certification verdict."
             if separate_prefixes else
