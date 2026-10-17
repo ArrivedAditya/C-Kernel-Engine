@@ -1,0 +1,161 @@
+{
+  "arithmetic": {
+    "deterministic": true,
+    "merge_order": "none",
+    "partial_accumulator": "fp32",
+    "split_strategy": "serial",
+    "thread_count_changes_arithmetic_order": false
+  },
+  "call_abi": {
+    "params": [
+      {
+        "name": "kk_in",
+        "source": "activation:kk_in",
+        "cast": "const float*",
+        "ports": [
+          "input:kk_in"
+        ]
+      },
+      {
+        "name": "kk_out",
+        "source": "output:kk_out",
+        "cast": "float*",
+        "ports": [
+          "output:kk_out"
+        ]
+      },
+      {
+        "name": "num_heads",
+        "source": "dim:num_heads"
+      },
+      {
+        "name": "head_dim",
+        "source": "dim:head_dim"
+      }
+    ],
+    "version": 1
+  },
+  "dims": [
+    "C",
+    "num_heads",
+    "head_dim"
+  ],
+  "id": "rwkv7_norm_kk_f32",
+  "provider_numerical_contract_schema": 1,
+  "numerical_contract": {
+    "id": "rwkv7_norm_kk_fp32",
+    "circuit_binding_required": true
+  },
+  "constraints": {
+    "dimensions": {
+      "num_heads": {
+        "min": 1,
+        "max": 256
+      },
+      "head_dim": {
+        "min": 1,
+        "max": 512
+      }
+    }
+  },
+  "impl": {
+    "c_declaration": "int ck_rwkv7_norm_kk(const float *kk_in, float *kk_out, int num_heads, int head_dim);",
+    "function": "ck_rwkv7_norm_kk",
+    "sources": [
+      "src/kernels/rwkv7_decode.c"
+    ]
+  },
+  "inputs": [
+    {
+      "access": "read",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "kk_in",
+      "placement": "local",
+      "shape": [
+        "C"
+      ],
+      "storage_class": "activation"
+    }
+  ],
+  "weights": [],
+  "outputs": [
+    {
+      "access": "write",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "kk_out",
+      "placement": "local",
+      "shape": [
+        "C"
+      ],
+      "storage_class": "activation",
+      "may_alias": [
+        "input:kk_in"
+      ]
+    }
+  ],
+  "modes": {
+    "backward": false,
+    "inference": true,
+    "training": false
+  },
+  "notes": "RWKV-7 kk per-head L2 normalize, divisor max(norm,1e-12). kk_out may exactly alias kk_in.",
+  "numerical_capabilities": [
+    {
+      "arithmetic": {
+        "deterministic": true,
+        "merge_order": "none",
+        "partial_accumulator": "fp32",
+        "split_strategy": "serial",
+        "thread_count_changes_arithmetic_order": false
+      },
+      "contract_id": "rwkv7_norm_kk_fp32",
+      "explicit_selector": true,
+      "function": "ck_rwkv7_norm_kk",
+      "implementation": {
+        "isa_dispatch": "scalar",
+        "threading": {
+          "runtime": "serial",
+          "work_partition": [
+            "serial"
+          ],
+          "dispatch": [
+            "inline"
+          ],
+          "reduction_order_effect": "contract_defined"
+        }
+      },
+      "phases": [
+        "decode",
+        "prefill"
+      ],
+      "status": "observed"
+    }
+  ],
+  "op": "rwkv7_norm_kk",
+  "operation_interface": "rwkv7.norm_kk.head_major.fp32.v1",
+  "quant": {
+    "activation": "fp32",
+    "output": "fp32",
+    "weight": "fp32"
+  },
+  "selection": {
+    "equivalence_group": "rwkv7_norm_kk_f32",
+    "phases": [
+      "decode",
+      "prefill"
+    ],
+    "priority": 100,
+    "status": "candidate"
+  },
+  "tests": {
+    "oracle": "unittest/test_rwkv_decode.py and unittest/test_rwkv7_block.py vs torch reference; scalar serial contract.",
+    "unit": [
+      "tests/test_v8_rwkv7_decode_oracle.py"
+    ]
+  },
+  "variant": "per_head_l2_fp32"
+}

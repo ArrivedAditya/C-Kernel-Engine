@@ -1,0 +1,406 @@
+{
+  "arithmetic": {
+    "deterministic": true,
+    "merge_order": "none",
+    "partial_accumulator": "fp32",
+    "split_strategy": "serial",
+    "thread_count_changes_arithmetic_order": false
+  },
+  "call_abi": {
+    "params": [
+      {
+        "name": "x",
+        "source": "activation:x",
+        "cast": "const float*",
+        "ports": [
+          "input:x"
+        ]
+      },
+      {
+        "name": "shift_in",
+        "source": "activation:shift_in",
+        "cast": "const float*",
+        "ports": [
+          "input:shift_in"
+        ]
+      },
+      {
+        "name": "mu_r",
+        "source": "weight:mu_r",
+        "cast": "const float*",
+        "ports": [
+          "weight:mu_r"
+        ]
+      },
+      {
+        "name": "mu_w",
+        "source": "weight:mu_w",
+        "cast": "const float*",
+        "ports": [
+          "weight:mu_w"
+        ]
+      },
+      {
+        "name": "mu_k",
+        "source": "weight:mu_k",
+        "cast": "const float*",
+        "ports": [
+          "weight:mu_k"
+        ]
+      },
+      {
+        "name": "mu_v",
+        "source": "weight:mu_v",
+        "cast": "const float*",
+        "ports": [
+          "weight:mu_v"
+        ]
+      },
+      {
+        "name": "mu_a",
+        "source": "weight:mu_a",
+        "cast": "const float*",
+        "ports": [
+          "weight:mu_a"
+        ]
+      },
+      {
+        "name": "mu_g",
+        "source": "weight:mu_g",
+        "cast": "const float*",
+        "ports": [
+          "weight:mu_g"
+        ]
+      },
+      {
+        "name": "xr",
+        "source": "output:xr",
+        "cast": "float*",
+        "ports": [
+          "output:xr"
+        ]
+      },
+      {
+        "name": "xw",
+        "source": "output:xw",
+        "cast": "float*",
+        "ports": [
+          "output:xw"
+        ]
+      },
+      {
+        "name": "xk",
+        "source": "output:xk",
+        "cast": "float*",
+        "ports": [
+          "output:xk"
+        ]
+      },
+      {
+        "name": "xv",
+        "source": "output:xv",
+        "cast": "float*",
+        "ports": [
+          "output:xv"
+        ]
+      },
+      {
+        "name": "xa",
+        "source": "output:xa",
+        "cast": "float*",
+        "ports": [
+          "output:xa"
+        ]
+      },
+      {
+        "name": "xg",
+        "source": "output:xg",
+        "cast": "float*",
+        "ports": [
+          "output:xg"
+        ]
+      },
+      {
+        "name": "shift_out",
+        "source": "output:shift_out",
+        "cast": "float*",
+        "ports": [
+          "output:shift_out"
+        ]
+      },
+      {
+        "name": "dim",
+        "source": "dim:dim"
+      }
+    ],
+    "version": 1
+  },
+  "dims": [
+    "C",
+    "dim"
+  ],
+  "id": "rwkv7_time_mix_shifts_f32",
+  "provider_numerical_contract_schema": 1,
+  "numerical_contract": {
+    "id": "rwkv7_time_mix_shifts_fp32",
+    "circuit_binding_required": true
+  },
+  "constraints": {},
+  "impl": {
+    "c_declaration": "int ck_rwkv7_time_mix_shifts(const float *x, const float *shift_in, const float *mu_r, const float *mu_w, const float *mu_k, const float *mu_v, const float *mu_a, const float *mu_g, float *xr, float *xw, float *xk, float *xv, float *xa, float *xg, float *shift_out, int dim);",
+    "function": "ck_rwkv7_time_mix_shifts",
+    "sources": [
+      "src/kernels/rwkv7_decode.c"
+    ]
+  },
+  "inputs": [
+    {
+      "access": "read",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "x",
+      "placement": "local",
+      "shape": [
+        "C"
+      ],
+      "storage_class": "activation"
+    },
+    {
+      "access": "read",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "shift_in",
+      "placement": "local",
+      "shape": [
+        "C"
+      ],
+      "storage_class": "activation"
+    }
+  ],
+  "weights": [
+    {
+      "access": "read",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "mu_r",
+      "placement": "local",
+      "shape": [
+        "C"
+      ],
+      "storage_class": "weight"
+    },
+    {
+      "access": "read",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "mu_w",
+      "placement": "local",
+      "shape": [
+        "C"
+      ],
+      "storage_class": "weight"
+    },
+    {
+      "access": "read",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "mu_k",
+      "placement": "local",
+      "shape": [
+        "C"
+      ],
+      "storage_class": "weight"
+    },
+    {
+      "access": "read",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "mu_v",
+      "placement": "local",
+      "shape": [
+        "C"
+      ],
+      "storage_class": "weight"
+    },
+    {
+      "access": "read",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "mu_a",
+      "placement": "local",
+      "shape": [
+        "C"
+      ],
+      "storage_class": "weight"
+    },
+    {
+      "access": "read",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "mu_g",
+      "placement": "local",
+      "shape": [
+        "C"
+      ],
+      "storage_class": "weight"
+    }
+  ],
+  "outputs": [
+    {
+      "access": "write",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "xr",
+      "placement": "local",
+      "shape": [
+        "C"
+      ],
+      "storage_class": "activation"
+    },
+    {
+      "access": "write",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "xw",
+      "placement": "local",
+      "shape": [
+        "C"
+      ],
+      "storage_class": "activation"
+    },
+    {
+      "access": "write",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "xk",
+      "placement": "local",
+      "shape": [
+        "C"
+      ],
+      "storage_class": "activation"
+    },
+    {
+      "access": "write",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "xv",
+      "placement": "local",
+      "shape": [
+        "C"
+      ],
+      "storage_class": "activation"
+    },
+    {
+      "access": "write",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "xa",
+      "placement": "local",
+      "shape": [
+        "C"
+      ],
+      "storage_class": "activation"
+    },
+    {
+      "access": "write",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "xg",
+      "placement": "local",
+      "shape": [
+        "C"
+      ],
+      "storage_class": "activation"
+    },
+    {
+      "access": "write",
+      "consumption": "required",
+      "dtype": "fp32",
+      "layout": "feature_contiguous",
+      "name": "shift_out",
+      "placement": "local",
+      "shape": [
+        "C"
+      ],
+      "storage_class": "activation",
+      "may_alias": [
+        "input:shift_in"
+      ]
+    }
+  ],
+  "modes": {
+    "backward": false,
+    "inference": true,
+    "training": false
+  },
+  "notes": "RWKV-7 six-lane shift bundle xr/xw/xk/xv/xa/xg[i]=x[i]+mu[i]*(shift_in[i]-x[i]), shift_out=x. Seven outputs pairwise disjoint; shift_out may alias shift_in. Read-only inputs may overlap.",
+  "numerical_capabilities": [
+    {
+      "arithmetic": {
+        "deterministic": true,
+        "merge_order": "none",
+        "partial_accumulator": "fp32",
+        "split_strategy": "serial",
+        "thread_count_changes_arithmetic_order": false
+      },
+      "contract_id": "rwkv7_time_mix_shifts_fp32",
+      "explicit_selector": true,
+      "function": "ck_rwkv7_time_mix_shifts",
+      "implementation": {
+        "isa_dispatch": "scalar",
+        "threading": {
+          "runtime": "serial",
+          "work_partition": [
+            "serial"
+          ],
+          "dispatch": [
+            "inline"
+          ],
+          "reduction_order_effect": "contract_defined"
+        }
+      },
+      "phases": [
+        "decode",
+        "prefill"
+      ],
+      "status": "observed"
+    }
+  ],
+  "op": "rwkv7_time_mix_shifts",
+  "operation_interface": "rwkv7.time_mix_shifts.token_major.fp32.v1",
+  "quant": {
+    "activation": "fp32",
+    "output": "fp32",
+    "weight": "fp32"
+  },
+  "selection": {
+    "equivalence_group": "rwkv7_time_mix_shifts_f32",
+    "phases": [
+      "decode",
+      "prefill"
+    ],
+    "priority": 100,
+    "status": "candidate"
+  },
+  "tests": {
+    "oracle": "unittest/test_rwkv_decode.py and unittest/test_rwkv7_block.py vs torch reference; scalar serial contract.",
+    "unit": [
+      "unittest/test_rwkv_decode.py"
+    ]
+  },
+  "variant": "shift_bundle_fp32"
+}

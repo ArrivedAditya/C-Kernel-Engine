@@ -5,7 +5,7 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "version/v8/kernel_maps",
     "counts": {
-      "total": 426,
+      "total": 433,
       "by_op": {
         "add_backward": 1,
         "add_stream": 2,
@@ -154,6 +154,13 @@
         "runtime_extent_affine": 1,
         "runtime_extent_scale": 1,
         "runtime_extent_sum": 1,
+        "rwkv7_channelmix_decode": 1,
+        "rwkv7_kk_factor": 1,
+        "rwkv7_lora_gates": 1,
+        "rwkv7_norm_kk": 1,
+        "rwkv7_scale_k": 1,
+        "rwkv7_time_mix_shifts": 1,
+        "rwkv7_vgate_vmix": 1,
         "rwkv7_wkv_decode": 1,
         "shared_relu2_expert_mlp": 1,
         "shared_swiglu_expert_mlp": 6,
@@ -76524,6 +76531,1896 @@
       "call_abi": {
         "params": [
           {
+            "name": "x",
+            "source": "activation:x",
+            "cast": "const float*",
+            "ports": [
+              "input:x"
+            ]
+          },
+          {
+            "name": "shift_in",
+            "source": "activation:shift_in",
+            "cast": "const float*",
+            "ports": [
+              "input:shift_in"
+            ]
+          },
+          {
+            "name": "mu",
+            "source": "weight:mu",
+            "cast": "const float*",
+            "ports": [
+              "weight:mu"
+            ]
+          },
+          {
+            "name": "Wk",
+            "source": "weight:Wk",
+            "cast": "const float*",
+            "ports": [
+              "weight:Wk"
+            ]
+          },
+          {
+            "name": "Wv",
+            "source": "weight:Wv",
+            "cast": "const float*",
+            "ports": [
+              "weight:Wv"
+            ]
+          },
+          {
+            "name": "shift_out",
+            "source": "output:shift_out",
+            "cast": "float*",
+            "ports": [
+              "output:shift_out"
+            ]
+          },
+          {
+            "name": "out",
+            "source": "output:out",
+            "cast": "float*",
+            "ports": [
+              "output:out"
+            ]
+          },
+          {
+            "name": "dim",
+            "source": "dim:dim"
+          },
+          {
+            "name": "hidden_dim",
+            "source": "dim:hidden_dim"
+          },
+          {
+            "name": "scratch",
+            "source": "scratch:scratch",
+            "cast": "float*"
+          },
+          {
+            "name": "scratch_elems",
+            "source": "runtime:scratch_elems"
+          }
+        ],
+        "version": 1
+      },
+      "dims": [
+        "C",
+        "dim",
+        "hidden_dim",
+        "scratch_elems"
+      ],
+      "id": "rwkv7_channelmix_decode_f32",
+      "provider_numerical_contract_schema": 1,
+      "numerical_contract": {
+        "id": "rwkv7_channelmix_decode_fp32",
+        "circuit_binding_required": true
+      },
+      "constraints": {},
+      "impl": {
+        "c_declaration": "int ck_rwkv7_channelmix_decode(const float *x, const float *shift_in, const float *mu, const float *Wk, const float *Wv, float *shift_out, float *out, int dim, int hidden_dim, float *scratch, size_t scratch_elems);",
+        "function": "ck_rwkv7_channelmix_decode",
+        "sources": [
+          "src/kernels/rwkv7_decode.c"
+        ]
+      },
+      "inputs": [
+        {
+          "access": "read",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "x",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "activation"
+        },
+        {
+          "access": "read",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "shift_in",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "activation"
+        }
+      ],
+      "weights": [
+        {
+          "access": "read",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "mu",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "weight"
+        },
+        {
+          "access": "read",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "Wk",
+          "placement": "local",
+          "shape": [
+            "hidden_dim",
+            "C"
+          ],
+          "storage_class": "weight"
+        },
+        {
+          "access": "read",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "Wv",
+          "placement": "local",
+          "shape": [
+            "C",
+            "hidden_dim"
+          ],
+          "storage_class": "weight"
+        }
+      ],
+      "outputs": [
+        {
+          "access": "write",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "shift_out",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "activation",
+          "may_alias": [
+            "input:shift_in"
+          ]
+        },
+        {
+          "access": "write",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "out",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "activation"
+        }
+      ],
+      "modes": {
+        "backward": false,
+        "inference": true,
+        "training": false
+      },
+      "notes": "RWKV-7 squared-ReLU feedforward decode: xk=x+mu*(shift_in-x), hidden=relu(Wk@xk)^2, out=Wv@hidden, shift_out=x. shift_out may alias shift_in; scratch caller-owned disjoint.",
+      "numerical_capabilities": [
+        {
+          "arithmetic": {
+            "deterministic": true,
+            "merge_order": "none",
+            "partial_accumulator": "fp32",
+            "split_strategy": "serial",
+            "thread_count_changes_arithmetic_order": false
+          },
+          "contract_id": "rwkv7_channelmix_decode_fp32",
+          "explicit_selector": true,
+          "function": "ck_rwkv7_channelmix_decode",
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "contract_defined"
+            }
+          },
+          "phases": [
+            "decode",
+            "prefill"
+          ],
+          "status": "observed"
+        }
+      ],
+      "op": "rwkv7_channelmix_decode",
+      "operation_interface": "rwkv7.channelmix_decode.token_major.fp32.v1",
+      "quant": {
+        "activation": "fp32",
+        "output": "fp32",
+        "weight": "fp32"
+      },
+      "selection": {
+        "equivalence_group": "rwkv7_channelmix_decode_f32",
+        "phases": [
+          "decode",
+          "prefill"
+        ],
+        "priority": 100,
+        "status": "candidate"
+      },
+      "tests": {
+        "oracle": "unittest/test_rwkv_decode.py and unittest/test_rwkv7_block.py vs torch reference; scalar serial contract.",
+        "unit": [
+          "unittest/test_rwkv7_block.py"
+        ]
+      },
+      "variant": "squared_relu_feedforward_fp32",
+      "name": "rwkv7_channelmix_decode_f32",
+      "_source_file": "rwkv7_channelmix_decode_f32.json"
+    },
+    {
+      "arithmetic": {
+        "deterministic": true,
+        "merge_order": "none",
+        "partial_accumulator": "fp32",
+        "split_strategy": "serial",
+        "thread_count_changes_arithmetic_order": false
+      },
+      "call_abi": {
+        "params": [
+          {
+            "name": "k",
+            "source": "activation:k",
+            "cast": "const float*",
+            "ports": [
+              "input:k"
+            ]
+          },
+          {
+            "name": "k_k",
+            "source": "weight:k_k",
+            "cast": "const float*",
+            "ports": [
+              "weight:k_k"
+            ]
+          },
+          {
+            "name": "kk_raw",
+            "source": "output:kk_raw",
+            "cast": "float*",
+            "ports": [
+              "output:kk_raw"
+            ]
+          },
+          {
+            "name": "dim",
+            "source": "dim:dim"
+          }
+        ],
+        "version": 1
+      },
+      "dims": [
+        "C",
+        "dim"
+      ],
+      "id": "rwkv7_kk_factor_f32",
+      "provider_numerical_contract_schema": 1,
+      "numerical_contract": {
+        "id": "rwkv7_kk_factor_fp32",
+        "circuit_binding_required": true
+      },
+      "constraints": {},
+      "impl": {
+        "c_declaration": "int ck_rwkv7_apply_kk_factor(const float *k, const float *k_k, float *kk_raw, int dim);",
+        "function": "ck_rwkv7_apply_kk_factor",
+        "sources": [
+          "src/kernels/rwkv7_decode.c"
+        ]
+      },
+      "inputs": [
+        {
+          "access": "read",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "k",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "activation"
+        }
+      ],
+      "weights": [
+        {
+          "access": "read",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "k_k",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "weight"
+        }
+      ],
+      "outputs": [
+        {
+          "access": "write",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "kk_raw",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "activation",
+          "may_alias": [
+            "input:k"
+          ]
+        }
+      ],
+      "modes": {
+        "backward": false,
+        "inference": true,
+        "training": false
+      },
+      "notes": "RWKV-7 kk_raw = k .* k_k over [C]. kk_raw may exactly alias k or k_k (per-element read-before-write).",
+      "numerical_capabilities": [
+        {
+          "arithmetic": {
+            "deterministic": true,
+            "merge_order": "none",
+            "partial_accumulator": "fp32",
+            "split_strategy": "serial",
+            "thread_count_changes_arithmetic_order": false
+          },
+          "contract_id": "rwkv7_kk_factor_fp32",
+          "explicit_selector": true,
+          "function": "ck_rwkv7_apply_kk_factor",
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "contract_defined"
+            }
+          },
+          "phases": [
+            "decode",
+            "prefill"
+          ],
+          "status": "observed"
+        }
+      ],
+      "op": "rwkv7_kk_factor",
+      "operation_interface": "rwkv7.kk_factor.token_major.fp32.v1",
+      "quant": {
+        "activation": "fp32",
+        "output": "fp32",
+        "weight": "fp32"
+      },
+      "selection": {
+        "equivalence_group": "rwkv7_kk_factor_f32",
+        "phases": [
+          "decode",
+          "prefill"
+        ],
+        "priority": 100,
+        "status": "candidate"
+      },
+      "tests": {
+        "oracle": "unittest/test_rwkv_decode.py and unittest/test_rwkv7_block.py vs torch reference; scalar serial contract.",
+        "unit": [
+          "unittest/test_rwkv_decode.py"
+        ]
+      },
+      "variant": "elementwise_multiply_fp32",
+      "name": "rwkv7_kk_factor_f32",
+      "_source_file": "rwkv7_kk_factor_f32.json"
+    },
+    {
+      "arithmetic": {
+        "deterministic": true,
+        "merge_order": "none",
+        "partial_accumulator": "fp32",
+        "split_strategy": "serial",
+        "thread_count_changes_arithmetic_order": false
+      },
+      "call_abi": {
+        "params": [
+          {
+            "name": "xw",
+            "source": "activation:xw",
+            "cast": "const float*",
+            "ports": [
+              "input:xw"
+            ]
+          },
+          {
+            "name": "xa",
+            "source": "activation:xa",
+            "cast": "const float*",
+            "ports": [
+              "input:xa"
+            ]
+          },
+          {
+            "name": "xg",
+            "source": "activation:xg",
+            "cast": "const float*",
+            "ports": [
+              "input:xg"
+            ]
+          },
+          {
+            "name": "w1",
+            "source": "weight:w1",
+            "cast": "const float*",
+            "ports": [
+              "weight:w1"
+            ]
+          },
+          {
+            "name": "w2",
+            "source": "weight:w2",
+            "cast": "const float*",
+            "ports": [
+              "weight:w2"
+            ]
+          },
+          {
+            "name": "w0",
+            "source": "weight:w0",
+            "cast": "const float*",
+            "ports": [
+              "weight:w0"
+            ]
+          },
+          {
+            "name": "a1",
+            "source": "weight:a1",
+            "cast": "const float*",
+            "ports": [
+              "weight:a1"
+            ]
+          },
+          {
+            "name": "a2",
+            "source": "weight:a2",
+            "cast": "const float*",
+            "ports": [
+              "weight:a2"
+            ]
+          },
+          {
+            "name": "a0",
+            "source": "weight:a0",
+            "cast": "const float*",
+            "ports": [
+              "weight:a0"
+            ]
+          },
+          {
+            "name": "g1",
+            "source": "weight:g1",
+            "cast": "const float*",
+            "ports": [
+              "weight:g1"
+            ]
+          },
+          {
+            "name": "g2",
+            "source": "weight:g2",
+            "cast": "const float*",
+            "ports": [
+              "weight:g2"
+            ]
+          },
+          {
+            "name": "dim",
+            "source": "dim:dim"
+          },
+          {
+            "name": "rank_w",
+            "source": "dim:rank_w"
+          },
+          {
+            "name": "rank_a",
+            "source": "dim:rank_a"
+          },
+          {
+            "name": "rank_g",
+            "source": "dim:rank_g"
+          },
+          {
+            "name": "w_log",
+            "source": "output:w_log",
+            "cast": "float*",
+            "ports": [
+              "output:w_log"
+            ]
+          },
+          {
+            "name": "a_out",
+            "source": "output:a_out",
+            "cast": "float*",
+            "ports": [
+              "output:a_out"
+            ]
+          },
+          {
+            "name": "g_out",
+            "source": "output:g_out",
+            "cast": "float*",
+            "ports": [
+              "output:g_out"
+            ]
+          }
+        ],
+        "version": 1
+      },
+      "dims": [
+        "C",
+        "dim",
+        "rank_w",
+        "rank_a",
+        "rank_g"
+      ],
+      "id": "rwkv7_lora_gates_f32",
+      "provider_numerical_contract_schema": 1,
+      "numerical_contract": {
+        "id": "rwkv7_lora_gates_fp32",
+        "circuit_binding_required": true
+      },
+      "constraints": {},
+      "impl": {
+        "c_declaration": "int ck_rwkv7_lora_gates(const float *xw, const float *xa, const float *xg, const float *w1, const float *w2, const float *w0, const float *a1, const float *a2, const float *a0, const float *g1, const float *g2, int dim, int rank_w, int rank_a, int rank_g, float *w_log, float *a_out, float *g_out);",
+        "function": "ck_rwkv7_lora_gates",
+        "sources": [
+          "src/kernels/rwkv7_decode.c"
+        ]
+      },
+      "inputs": [
+        {
+          "access": "read",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "xw",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "activation"
+        },
+        {
+          "access": "read",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "xa",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "activation"
+        },
+        {
+          "access": "read",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "xg",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "activation"
+        }
+      ],
+      "weights": [
+        {
+          "access": "read",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "w1",
+          "placement": "local",
+          "shape": [
+            "C",
+            "rank_w"
+          ],
+          "storage_class": "weight"
+        },
+        {
+          "access": "read",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "w2",
+          "placement": "local",
+          "shape": [
+            "rank_w",
+            "C"
+          ],
+          "storage_class": "weight"
+        },
+        {
+          "access": "read",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "w0",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "weight"
+        },
+        {
+          "access": "read",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "a1",
+          "placement": "local",
+          "shape": [
+            "C",
+            "rank_a"
+          ],
+          "storage_class": "weight"
+        },
+        {
+          "access": "read",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "a2",
+          "placement": "local",
+          "shape": [
+            "rank_a",
+            "C"
+          ],
+          "storage_class": "weight"
+        },
+        {
+          "access": "read",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "a0",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "weight"
+        },
+        {
+          "access": "read",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "g1",
+          "placement": "local",
+          "shape": [
+            "C",
+            "rank_g"
+          ],
+          "storage_class": "weight"
+        },
+        {
+          "access": "read",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "g2",
+          "placement": "local",
+          "shape": [
+            "rank_g",
+            "C"
+          ],
+          "storage_class": "weight"
+        }
+      ],
+      "outputs": [
+        {
+          "access": "write",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "w_log",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "activation"
+        },
+        {
+          "access": "write",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "a_out",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "activation"
+        },
+        {
+          "access": "write",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "g_out",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "activation"
+        }
+      ],
+      "modes": {
+        "backward": false,
+        "inference": true,
+        "training": false
+      },
+      "notes": "RWKV-7 unfused FP32 LoRA chains w_log/a/g. Fusion is a later perf change behind its own parity gate.",
+      "numerical_capabilities": [
+        {
+          "arithmetic": {
+            "deterministic": true,
+            "merge_order": "none",
+            "partial_accumulator": "fp32",
+            "split_strategy": "serial",
+            "thread_count_changes_arithmetic_order": false
+          },
+          "contract_id": "rwkv7_lora_gates_fp32",
+          "explicit_selector": true,
+          "function": "ck_rwkv7_lora_gates",
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "contract_defined"
+            }
+          },
+          "phases": [
+            "decode",
+            "prefill"
+          ],
+          "status": "observed"
+        }
+      ],
+      "op": "rwkv7_lora_gates",
+      "operation_interface": "rwkv7.lora_gates.token_major.fp32.v1",
+      "quant": {
+        "activation": "fp32",
+        "output": "fp32",
+        "weight": "fp32"
+      },
+      "selection": {
+        "equivalence_group": "rwkv7_lora_gates_f32",
+        "phases": [
+          "decode",
+          "prefill"
+        ],
+        "priority": 100,
+        "status": "candidate"
+      },
+      "tests": {
+        "oracle": "unittest/test_rwkv_decode.py and unittest/test_rwkv7_block.py vs torch reference; scalar serial contract.",
+        "unit": [
+          "unittest/test_rwkv_decode.py"
+        ]
+      },
+      "variant": "unfused_lora_fp32",
+      "name": "rwkv7_lora_gates_f32",
+      "_source_file": "rwkv7_lora_gates_f32.json"
+    },
+    {
+      "arithmetic": {
+        "deterministic": true,
+        "merge_order": "none",
+        "partial_accumulator": "fp32",
+        "split_strategy": "serial",
+        "thread_count_changes_arithmetic_order": false
+      },
+      "call_abi": {
+        "params": [
+          {
+            "name": "kk_in",
+            "source": "activation:kk_in",
+            "cast": "const float*",
+            "ports": [
+              "input:kk_in"
+            ]
+          },
+          {
+            "name": "kk_out",
+            "source": "output:kk_out",
+            "cast": "float*",
+            "ports": [
+              "output:kk_out"
+            ]
+          },
+          {
+            "name": "num_heads",
+            "source": "dim:num_heads"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          }
+        ],
+        "version": 1
+      },
+      "dims": [
+        "C",
+        "num_heads",
+        "head_dim"
+      ],
+      "id": "rwkv7_norm_kk_f32",
+      "provider_numerical_contract_schema": 1,
+      "numerical_contract": {
+        "id": "rwkv7_norm_kk_fp32",
+        "circuit_binding_required": true
+      },
+      "constraints": {
+        "dimensions": {
+          "num_heads": {
+            "min": 1,
+            "max": 256
+          },
+          "head_dim": {
+            "min": 1,
+            "max": 512
+          }
+        }
+      },
+      "impl": {
+        "c_declaration": "int ck_rwkv7_norm_kk(const float *kk_in, float *kk_out, int num_heads, int head_dim);",
+        "function": "ck_rwkv7_norm_kk",
+        "sources": [
+          "src/kernels/rwkv7_decode.c"
+        ]
+      },
+      "inputs": [
+        {
+          "access": "read",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "kk_in",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "activation"
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "access": "write",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "kk_out",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "activation",
+          "may_alias": [
+            "input:kk_in"
+          ]
+        }
+      ],
+      "modes": {
+        "backward": false,
+        "inference": true,
+        "training": false
+      },
+      "notes": "RWKV-7 kk per-head L2 normalize, divisor max(norm,1e-12). kk_out may exactly alias kk_in.",
+      "numerical_capabilities": [
+        {
+          "arithmetic": {
+            "deterministic": true,
+            "merge_order": "none",
+            "partial_accumulator": "fp32",
+            "split_strategy": "serial",
+            "thread_count_changes_arithmetic_order": false
+          },
+          "contract_id": "rwkv7_norm_kk_fp32",
+          "explicit_selector": true,
+          "function": "ck_rwkv7_norm_kk",
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "contract_defined"
+            }
+          },
+          "phases": [
+            "decode",
+            "prefill"
+          ],
+          "status": "observed"
+        }
+      ],
+      "op": "rwkv7_norm_kk",
+      "operation_interface": "rwkv7.norm_kk.head_major.fp32.v1",
+      "quant": {
+        "activation": "fp32",
+        "output": "fp32",
+        "weight": "fp32"
+      },
+      "selection": {
+        "equivalence_group": "rwkv7_norm_kk_f32",
+        "phases": [
+          "decode",
+          "prefill"
+        ],
+        "priority": 100,
+        "status": "candidate"
+      },
+      "tests": {
+        "oracle": "unittest/test_rwkv_decode.py and unittest/test_rwkv7_block.py vs torch reference; scalar serial contract.",
+        "unit": [
+          "tests/test_v8_rwkv7_decode_oracle.py"
+        ]
+      },
+      "variant": "per_head_l2_fp32",
+      "name": "rwkv7_norm_kk_f32",
+      "_source_file": "rwkv7_norm_kk_f32.json"
+    },
+    {
+      "arithmetic": {
+        "deterministic": true,
+        "merge_order": "none",
+        "partial_accumulator": "fp32",
+        "split_strategy": "serial",
+        "thread_count_changes_arithmetic_order": false
+      },
+      "call_abi": {
+        "params": [
+          {
+            "name": "k_in",
+            "source": "activation:k_in",
+            "cast": "const float*",
+            "ports": [
+              "input:k_in"
+            ]
+          },
+          {
+            "name": "a",
+            "source": "activation:a",
+            "cast": "const float*",
+            "ports": [
+              "input:a"
+            ]
+          },
+          {
+            "name": "k_a",
+            "source": "weight:k_a",
+            "cast": "const float*",
+            "ports": [
+              "weight:k_a"
+            ]
+          },
+          {
+            "name": "k_out",
+            "source": "output:k_out",
+            "cast": "float*",
+            "ports": [
+              "output:k_out"
+            ]
+          },
+          {
+            "name": "dim",
+            "source": "dim:dim"
+          }
+        ],
+        "version": 1
+      },
+      "dims": [
+        "C",
+        "dim"
+      ],
+      "id": "rwkv7_scale_k_f32",
+      "provider_numerical_contract_schema": 1,
+      "numerical_contract": {
+        "id": "rwkv7_scale_k_fp32",
+        "circuit_binding_required": true
+      },
+      "constraints": {},
+      "impl": {
+        "c_declaration": "int ck_rwkv7_scale_k(const float *k_in, const float *a, const float *k_a, float *k_out, int dim);",
+        "function": "ck_rwkv7_scale_k",
+        "sources": [
+          "src/kernels/rwkv7_decode.c"
+        ]
+      },
+      "inputs": [
+        {
+          "access": "read",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "k_in",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "activation"
+        },
+        {
+          "access": "read",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "a",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "activation"
+        }
+      ],
+      "weights": [
+        {
+          "access": "read",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "k_a",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "weight"
+        }
+      ],
+      "outputs": [
+        {
+          "access": "write",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "k_out",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "activation"
+        }
+      ],
+      "modes": {
+        "backward": false,
+        "inference": true,
+        "training": false
+      },
+      "notes": "RWKV-7 diagram-normative k_out = k_in * (1 + (k_a-1) * a) over [C]; intentionally differs from modeling_rwkv7.py:501.",
+      "numerical_capabilities": [
+        {
+          "arithmetic": {
+            "deterministic": true,
+            "merge_order": "none",
+            "partial_accumulator": "fp32",
+            "split_strategy": "serial",
+            "thread_count_changes_arithmetic_order": false
+          },
+          "contract_id": "rwkv7_scale_k_fp32",
+          "explicit_selector": true,
+          "function": "ck_rwkv7_scale_k",
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "contract_defined"
+            }
+          },
+          "phases": [
+            "decode",
+            "prefill"
+          ],
+          "status": "observed"
+        }
+      ],
+      "op": "rwkv7_scale_k",
+      "operation_interface": "rwkv7.scale_k.token_major.fp32.v1",
+      "quant": {
+        "activation": "fp32",
+        "output": "fp32",
+        "weight": "fp32"
+      },
+      "selection": {
+        "equivalence_group": "rwkv7_scale_k_f32",
+        "phases": [
+          "decode",
+          "prefill"
+        ],
+        "priority": 100,
+        "status": "candidate"
+      },
+      "tests": {
+        "oracle": "unittest/test_rwkv_decode.py and unittest/test_rwkv7_block.py vs torch reference; scalar serial contract.",
+        "unit": [
+          "unittest/test_rwkv_decode.py"
+        ]
+      },
+      "variant": "diagram_lerp_fp32",
+      "name": "rwkv7_scale_k_f32",
+      "_source_file": "rwkv7_scale_k_f32.json"
+    },
+    {
+      "arithmetic": {
+        "deterministic": true,
+        "merge_order": "none",
+        "partial_accumulator": "fp32",
+        "split_strategy": "serial",
+        "thread_count_changes_arithmetic_order": false
+      },
+      "call_abi": {
+        "params": [
+          {
+            "name": "x",
+            "source": "activation:x",
+            "cast": "const float*",
+            "ports": [
+              "input:x"
+            ]
+          },
+          {
+            "name": "shift_in",
+            "source": "activation:shift_in",
+            "cast": "const float*",
+            "ports": [
+              "input:shift_in"
+            ]
+          },
+          {
+            "name": "mu_r",
+            "source": "weight:mu_r",
+            "cast": "const float*",
+            "ports": [
+              "weight:mu_r"
+            ]
+          },
+          {
+            "name": "mu_w",
+            "source": "weight:mu_w",
+            "cast": "const float*",
+            "ports": [
+              "weight:mu_w"
+            ]
+          },
+          {
+            "name": "mu_k",
+            "source": "weight:mu_k",
+            "cast": "const float*",
+            "ports": [
+              "weight:mu_k"
+            ]
+          },
+          {
+            "name": "mu_v",
+            "source": "weight:mu_v",
+            "cast": "const float*",
+            "ports": [
+              "weight:mu_v"
+            ]
+          },
+          {
+            "name": "mu_a",
+            "source": "weight:mu_a",
+            "cast": "const float*",
+            "ports": [
+              "weight:mu_a"
+            ]
+          },
+          {
+            "name": "mu_g",
+            "source": "weight:mu_g",
+            "cast": "const float*",
+            "ports": [
+              "weight:mu_g"
+            ]
+          },
+          {
+            "name": "xr",
+            "source": "output:xr",
+            "cast": "float*",
+            "ports": [
+              "output:xr"
+            ]
+          },
+          {
+            "name": "xw",
+            "source": "output:xw",
+            "cast": "float*",
+            "ports": [
+              "output:xw"
+            ]
+          },
+          {
+            "name": "xk",
+            "source": "output:xk",
+            "cast": "float*",
+            "ports": [
+              "output:xk"
+            ]
+          },
+          {
+            "name": "xv",
+            "source": "output:xv",
+            "cast": "float*",
+            "ports": [
+              "output:xv"
+            ]
+          },
+          {
+            "name": "xa",
+            "source": "output:xa",
+            "cast": "float*",
+            "ports": [
+              "output:xa"
+            ]
+          },
+          {
+            "name": "xg",
+            "source": "output:xg",
+            "cast": "float*",
+            "ports": [
+              "output:xg"
+            ]
+          },
+          {
+            "name": "shift_out",
+            "source": "output:shift_out",
+            "cast": "float*",
+            "ports": [
+              "output:shift_out"
+            ]
+          },
+          {
+            "name": "dim",
+            "source": "dim:dim"
+          }
+        ],
+        "version": 1
+      },
+      "dims": [
+        "C",
+        "dim"
+      ],
+      "id": "rwkv7_time_mix_shifts_f32",
+      "provider_numerical_contract_schema": 1,
+      "numerical_contract": {
+        "id": "rwkv7_time_mix_shifts_fp32",
+        "circuit_binding_required": true
+      },
+      "constraints": {},
+      "impl": {
+        "c_declaration": "int ck_rwkv7_time_mix_shifts(const float *x, const float *shift_in, const float *mu_r, const float *mu_w, const float *mu_k, const float *mu_v, const float *mu_a, const float *mu_g, float *xr, float *xw, float *xk, float *xv, float *xa, float *xg, float *shift_out, int dim);",
+        "function": "ck_rwkv7_time_mix_shifts",
+        "sources": [
+          "src/kernels/rwkv7_decode.c"
+        ]
+      },
+      "inputs": [
+        {
+          "access": "read",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "x",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "activation"
+        },
+        {
+          "access": "read",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "shift_in",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "activation"
+        }
+      ],
+      "weights": [
+        {
+          "access": "read",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "mu_r",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "weight"
+        },
+        {
+          "access": "read",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "mu_w",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "weight"
+        },
+        {
+          "access": "read",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "mu_k",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "weight"
+        },
+        {
+          "access": "read",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "mu_v",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "weight"
+        },
+        {
+          "access": "read",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "mu_a",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "weight"
+        },
+        {
+          "access": "read",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "mu_g",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "weight"
+        }
+      ],
+      "outputs": [
+        {
+          "access": "write",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "xr",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "activation"
+        },
+        {
+          "access": "write",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "xw",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "activation"
+        },
+        {
+          "access": "write",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "xk",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "activation"
+        },
+        {
+          "access": "write",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "xv",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "activation"
+        },
+        {
+          "access": "write",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "xa",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "activation"
+        },
+        {
+          "access": "write",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "xg",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "activation"
+        },
+        {
+          "access": "write",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "shift_out",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "activation",
+          "may_alias": [
+            "input:shift_in"
+          ]
+        }
+      ],
+      "modes": {
+        "backward": false,
+        "inference": true,
+        "training": false
+      },
+      "notes": "RWKV-7 six-lane shift bundle xr/xw/xk/xv/xa/xg[i]=x[i]+mu[i]*(shift_in[i]-x[i]), shift_out=x. Seven outputs pairwise disjoint; shift_out may alias shift_in. Read-only inputs may overlap.",
+      "numerical_capabilities": [
+        {
+          "arithmetic": {
+            "deterministic": true,
+            "merge_order": "none",
+            "partial_accumulator": "fp32",
+            "split_strategy": "serial",
+            "thread_count_changes_arithmetic_order": false
+          },
+          "contract_id": "rwkv7_time_mix_shifts_fp32",
+          "explicit_selector": true,
+          "function": "ck_rwkv7_time_mix_shifts",
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "contract_defined"
+            }
+          },
+          "phases": [
+            "decode",
+            "prefill"
+          ],
+          "status": "observed"
+        }
+      ],
+      "op": "rwkv7_time_mix_shifts",
+      "operation_interface": "rwkv7.time_mix_shifts.token_major.fp32.v1",
+      "quant": {
+        "activation": "fp32",
+        "output": "fp32",
+        "weight": "fp32"
+      },
+      "selection": {
+        "equivalence_group": "rwkv7_time_mix_shifts_f32",
+        "phases": [
+          "decode",
+          "prefill"
+        ],
+        "priority": 100,
+        "status": "candidate"
+      },
+      "tests": {
+        "oracle": "unittest/test_rwkv_decode.py and unittest/test_rwkv7_block.py vs torch reference; scalar serial contract.",
+        "unit": [
+          "unittest/test_rwkv_decode.py"
+        ]
+      },
+      "variant": "shift_bundle_fp32",
+      "name": "rwkv7_time_mix_shifts_f32",
+      "_source_file": "rwkv7_time_mix_shifts_f32.json"
+    },
+    {
+      "arithmetic": {
+        "deterministic": true,
+        "merge_order": "none",
+        "partial_accumulator": "fp32",
+        "split_strategy": "serial",
+        "thread_count_changes_arithmetic_order": false
+      },
+      "call_abi": {
+        "params": [
+          {
+            "name": "v_in",
+            "source": "activation:v_in",
+            "cast": "const float*",
+            "ports": [
+              "input:v_in"
+            ]
+          },
+          {
+            "name": "v_first",
+            "source": "activation:v_first",
+            "cast": "const float*",
+            "ports": [
+              "input:v_first"
+            ]
+          },
+          {
+            "name": "xv",
+            "source": "activation:xv",
+            "cast": "const float*",
+            "ports": [
+              "input:xv"
+            ]
+          },
+          {
+            "name": "v1",
+            "source": "weight:v1",
+            "cast": "const float*",
+            "ports": [
+              "weight:v1"
+            ]
+          },
+          {
+            "name": "v2",
+            "source": "weight:v2",
+            "cast": "const float*",
+            "ports": [
+              "weight:v2"
+            ]
+          },
+          {
+            "name": "v0",
+            "source": "weight:v0",
+            "cast": "const float*",
+            "ports": [
+              "weight:v0"
+            ]
+          },
+          {
+            "name": "dim",
+            "source": "dim:dim"
+          },
+          {
+            "name": "rank_v",
+            "source": "dim:rank_v"
+          },
+          {
+            "name": "v_out",
+            "source": "output:v_out",
+            "cast": "float*",
+            "ports": [
+              "output:v_out"
+            ]
+          },
+          {
+            "name": "v_first_out",
+            "source": "output:v_first_out",
+            "cast": "float*",
+            "ports": [
+              "output:v_first_out"
+            ]
+          },
+          {
+            "name": "v_gate",
+            "source": "output:v_gate",
+            "cast": "float*",
+            "ports": [
+              "output:v_gate"
+            ]
+          }
+        ],
+        "version": 1
+      },
+      "dims": [
+        "C",
+        "dim",
+        "rank_v"
+      ],
+      "id": "rwkv7_vgate_vmix_f32",
+      "provider_numerical_contract_schema": 1,
+      "numerical_contract": {
+        "id": "rwkv7_vgate_vmix_fp32",
+        "circuit_binding_required": true
+      },
+      "constraints": {},
+      "impl": {
+        "c_declaration": "int ck_rwkv7_vgate_vmix(const float *v_in, const float *v_first, const float *xv, const float *v1, const float *v2, const float *v0, int dim, int rank_v, float *v_out, float *v_first_out, float *v_gate);",
+        "function": "ck_rwkv7_vgate_vmix",
+        "sources": [
+          "src/kernels/rwkv7_decode.c"
+        ]
+      },
+      "inputs": [
+        {
+          "access": "read",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "v_in",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "activation"
+        },
+        {
+          "access": "read",
+          "consumption": "optional",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "v_first",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "activation"
+        },
+        {
+          "access": "read",
+          "consumption": "optional",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "xv",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "activation"
+        }
+      ],
+      "weights": [
+        {
+          "access": "read",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "v1",
+          "placement": "local",
+          "shape": [
+            "C",
+            "rank_v"
+          ],
+          "storage_class": "weight"
+        },
+        {
+          "access": "read",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "v2",
+          "placement": "local",
+          "shape": [
+            "rank_v",
+            "C"
+          ],
+          "storage_class": "weight"
+        },
+        {
+          "access": "read",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "v0",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "weight"
+        }
+      ],
+      "outputs": [
+        {
+          "access": "write",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "v_out",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "activation"
+        },
+        {
+          "access": "write",
+          "consumption": "required",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "v_first_out",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "activation",
+          "may_alias": [
+            "input:v_first"
+          ]
+        },
+        {
+          "access": "write",
+          "consumption": "optional",
+          "dtype": "fp32",
+          "layout": "feature_contiguous",
+          "name": "v_gate",
+          "placement": "local",
+          "shape": [
+            "C"
+          ],
+          "storage_class": "activation"
+        }
+      ],
+      "modes": {
+        "backward": false,
+        "inference": true,
+        "training": false
+      },
+      "notes": "RWKV-7 value-residual gate. Layer 0: omit optional ports (NULL-bound in lowering) to produce v_first. Layer>0: full consume path. v_first_out may alias v_first.",
+      "numerical_capabilities": [
+        {
+          "arithmetic": {
+            "deterministic": true,
+            "merge_order": "none",
+            "partial_accumulator": "fp32",
+            "split_strategy": "serial",
+            "thread_count_changes_arithmetic_order": false
+          },
+          "contract_id": "rwkv7_vgate_vmix_fp32",
+          "explicit_selector": true,
+          "function": "ck_rwkv7_vgate_vmix",
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "contract_defined"
+            }
+          },
+          "phases": [
+            "decode",
+            "prefill"
+          ],
+          "status": "observed"
+        }
+      ],
+      "op": "rwkv7_vgate_vmix",
+      "operation_interface": "rwkv7.vgate_vmix.token_major.fp32.v1",
+      "quant": {
+        "activation": "fp32",
+        "output": "fp32",
+        "weight": "fp32"
+      },
+      "selection": {
+        "equivalence_group": "rwkv7_vgate_vmix_f32",
+        "phases": [
+          "decode",
+          "prefill"
+        ],
+        "priority": 100,
+        "status": "candidate"
+      },
+      "tests": {
+        "oracle": "unittest/test_rwkv_decode.py and unittest/test_rwkv7_block.py vs torch reference; scalar serial contract.",
+        "unit": [
+          "unittest/test_rwkv7_block.py"
+        ]
+      },
+      "variant": "value_residual_gate_fp32",
+      "name": "rwkv7_vgate_vmix_f32",
+      "_source_file": "rwkv7_vgate_vmix_f32.json"
+    },
+    {
+      "arithmetic": {
+        "deterministic": true,
+        "merge_order": "none",
+        "partial_accumulator": "fp32",
+        "split_strategy": "serial",
+        "thread_count_changes_arithmetic_order": false
+      },
+      "call_abi": {
+        "params": [
+          {
             "name": "r",
             "source": "activation:r",
             "cast": "const float*",
@@ -76877,7 +78774,8 @@
             }
           },
           "phases": [
-            "decode"
+            "decode",
+            "prefill"
           ],
           "status": "validated"
         }

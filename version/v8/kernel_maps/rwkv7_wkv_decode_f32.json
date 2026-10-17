@@ -205,7 +205,7 @@
           "work_partition": ["serial"]
         }
       },
-      "phases": ["decode"],
+      "phases": ["decode", "prefill"],
       "status": "validated"
     }
   ],

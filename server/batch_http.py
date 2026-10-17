@@ -13,7 +13,6 @@ from collections import OrderedDict
 import queue
 import secrets
 import threading
-import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -41,10 +40,6 @@ class _Client:
     mixed_steps: int = 0
     shared_with: dict[str, int] = field(default_factory=dict)
     mixed_with: dict[str, int] = field(default_factory=dict)
-    enqueued_at: float | None = None
-    admitted_at: float | None = None
-    first_native_token_at: float | None = None
-    native_completed_at: float | None = None
 
 
 class _Proxy:
@@ -86,7 +81,6 @@ class _Proxy:
                 return {"prompt_tokens": len(ids), "generated_tokens": 0,
                         "stop_reason": 3, "timing_unavailable": True}
             self.client.started = True
-            self.client.enqueued_at = time.monotonic()
             self.owner.pending.put((self.client, ids, max_tokens, temperature, top_p))
         output_ids: list[int] = []
         visible_bytes = b""
@@ -333,7 +327,6 @@ class Batch2HTTPOwner:
             if client is not None and self.slots.get(client.slot) is client:
                 del self.slots[client.slot]
             if client is not None:
-                client.native_completed_at = time.monotonic()
                 client.native_done.set()
                 if client.delivered.is_set():
                     self.clients.pop(id(client), None)
@@ -354,9 +347,7 @@ class Batch2HTTPOwner:
                 except queue.Empty:
                     break
             for client in admitted:
-                if not client.native_done.is_set():
-                    client.native_completed_at = time.monotonic()
-                    client.native_done.set()
+                client.native_done.set()
                 if client.delivered.is_set():
                     self.clients.pop(id(client), None)
         for client in admitted:
@@ -381,13 +372,10 @@ class Batch2HTTPOwner:
             except queue.Empty:
                 client = None
             if client is not None:
-                with self.guard:
-                    client.admitted_at = time.monotonic()
                 if client.cancelled.is_set():
                     with self.guard:
                         if self.slots.get(client.slot) is client:
                             del self.slots[client.slot]
-                        client.native_completed_at = time.monotonic()
                         client.native_done.set()
                         if client.delivered.is_set():
                             self.clients.pop(id(client), None)
@@ -426,8 +414,6 @@ class Batch2HTTPOwner:
             for event in tick.tokens:
                 with self.guard:
                     recipient = self.tickets.get(event.ticket)
-                    if recipient is not None and recipient.first_native_token_at is None:
-                        recipient.first_native_token_at = time.monotonic()
                 if recipient is not None:
                     if not recipient.terminal_sent:
                         try:
@@ -471,8 +457,6 @@ class Batch2HTTPOwner:
             client = self.responses.get(response_id)
             if client is None:
                 return None
-            def elapsed_ms(start: float | None, end: float | None) -> float | None:
-                return round((end - start) * 1000, 3) if start is not None and end is not None else None
             return {
                 "schema": "cke.batch2_response_observation.v1",
                 "response_id": response_id,
@@ -481,11 +465,6 @@ class Batch2HTTPOwner:
                 "shared_with": dict(client.shared_with),
                 "mixed_with": dict(client.mixed_with),
                 "native_done": client.native_done.is_set(),
-                "queue_wait_ms": elapsed_ms(client.enqueued_at, client.admitted_at),
-                "time_to_first_native_token_ms": elapsed_ms(
-                    client.enqueued_at, client.first_native_token_at),
-                "time_to_native_completion_ms": elapsed_ms(
-                    client.enqueued_at, client.native_completed_at),
             }
 
     def close(self, timeout: float = 10.0):
