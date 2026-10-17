@@ -107,7 +107,20 @@ def _resolve_run_dir(model: str, run_dir: str | None) -> Path:
         return ck_run_v8.CACHE_DIR / info["repo_id"].replace("/", "--")
     if input_type == "hf_id":
         return ck_run_v8.CACHE_DIR / info["model_id"].replace("/", "--")
-    return Path(info["path"])
+    # Local inputs: never treat the source artifact (or its directory) as
+    # disposable build output. Mirror ck_run_v8's own resolution so serving a
+    # local GGUF or source directory builds under the cache, exactly like the
+    # CLI run path, and only an already-compiled runtime dir is used in place.
+    if input_type == "gguf":
+        return ck_run_v8.CACHE_DIR / info["path"].stem
+    if input_type == "local_dir":
+        local_dir = info["path"]
+        if ck_run_v8._is_runtime_dir(local_dir):
+            return local_dir
+        return local_dir / ".ck_build_v8"
+    if input_type == "local_config":
+        return info["path"].parent / ".ck_build_v8"
+    return ck_run_v8.CACHE_DIR / "unknown"
 
 
 def _build_runtime(

@@ -319,3 +319,125 @@ def loaded_serving_identity(
         },
         "session_library_sha256": digest.hexdigest(),
     }
+
+
+def _manifest_special_tokens(run_dir: Path) -> dict[str, Any]:
+    """Read the special_tokens document from runtime artifacts (manifest first)."""
+    for name in ("weights_manifest.json", "init.json"):
+        path = Path(run_dir) / name
+        if not path.is_file():
+            continue
+        try:
+            doc = json.loads(path.read_bytes())
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            continue
+        special = doc.get("special_tokens")
+        if isinstance(special, dict) and special:
+            return special
+    return {}
+
+
+def _manifest_special_token_ids(run_dir: Path) -> dict[str, int]:
+    """Read special-token IDs from runtime artifacts (manifest first)."""
+    ids: dict[str, int] = {}
+    for key, value in _manifest_special_tokens(run_dir).items():
+        if (isinstance(key, str) and key.endswith("_token_id")
+                and isinstance(value, int) and not isinstance(value, bool)):
+            ids[key[: -len("_id")]] = value
+    return ids
+
+
+def _loaded_model_token_decoder(run_dir: Path):
+    """Return an ID->text decoder bound to the already-loaded runtime library.
+
+    The native session dlopens the runtime's model library; attaching with
+    RTLD_NOLOAD reuses that mapping instead of initializing a second model.
+    Returns None when the runtime library is not loaded in this process.
+    """
+    if not hasattr(os, "RTLD_NOLOAD"):
+        return None
+    lib = None
+    for name in ("libmodel.so", "ck-kernel-inference.so", "ck-kernel-decode.so"):
+        try:
+            lib = ctypes.CDLL(
+                str(Path(run_dir).resolve() / name),
+                mode=os.RTLD_NOLOAD | os.RTLD_NOW,
+            )
+            break
+        except OSError:
+            continue
+    if lib is None:
+        return None
+    try:
+        decode = lib.ck_model_decode_tokens
+    except AttributeError:
+        return None
+    decode.argtypes = [
+        ctypes.POINTER(ctypes.c_int32), ctypes.c_int, ctypes.c_char_p, ctypes.c_int,
+    ]
+    decode.restype = ctypes.c_int
+
+    def decode_ids(ids: list[int]) -> str:
+        arr = (ctypes.c_int32 * len(ids))(*ids)
+        buf = ctypes.create_string_buffer(max(64, len(ids) * 16))
+        out_len = decode(arr, len(ids), buf, len(buf))
+        if out_len < 0:
+            raise ValueError("runtime tokenizer decode failed")
+        return bytes(buf.raw[:out_len]).decode("utf-8", errors="replace")
+
+    return decode_ids
+
+
+def runtime_renderer_tokens(run_dir: Path, *, decode_ids=None) -> dict[str, str] | None:
+    """Resolve special-token Jinja variables from runtime artifacts when no
+    verified serving bundle exists.
+
+    IDs come from weights_manifest.json (or init.json) special_tokens; the
+    text comes from the runtime's own embedded tokenizer, never from a
+    hardcoded table. Returns None when the values cannot be resolved, so a
+    template that requires them still fails loudly under StrictUndefined
+    instead of rendering invented delimiters.
+    """
+    ids = _manifest_special_token_ids(run_dir)
+    if not ids:
+        return None
+    if decode_ids is None:
+        decode_ids = _loaded_model_token_decoder(run_dir)
+    if decode_ids is None:
+        return None
+    variables: dict[str, str] = {}
+    for name, token_id in sorted(ids.items()):
+        try:
+            text = decode_ids([token_id])
+        except Exception:
+            return None
+        if not text:
+            return None
+        variables[name] = text
+    return variables or None
+
+
+def runtime_auto_bos_token(run_dir: Path, *, decode_ids=None) -> str | None:
+    """Text of the BOS token the runtime tokenizer adds automatically at encode
+    time, or None when the runtime does not auto-add one.
+
+    Templates rendered with a literal leading BOS (HF/GGUF-native templates
+    emit ``{{ bos_token }}``) would otherwise be encoded with BOS twice: once
+    from the rendered text and once from the encoder's add_bos behavior. The
+    text is resolved through the runtime's own tokenizer, never hardcoded.
+    """
+    special = _manifest_special_tokens(run_dir)
+    if not special or not special.get("add_bos_token"):
+        return None
+    bos_id = special.get("bos_token_id")
+    if not isinstance(bos_id, int) or isinstance(bos_id, bool):
+        return None
+    if decode_ids is None:
+        decode_ids = _loaded_model_token_decoder(run_dir)
+    if decode_ids is None:
+        return None
+    try:
+        text = decode_ids([bos_id])
+    except Exception:
+        return None
+    return text or None

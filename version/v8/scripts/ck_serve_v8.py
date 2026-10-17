@@ -553,6 +553,14 @@ def main(argv: list[str] | None = None) -> int:
         run_dir,
         context_length=runtime_context_length,
     )
+    if renderer_tokens is None and chat_template:
+        # No verified serving bundle: resolve publisher token variables (e.g.
+        # bos_token for GGUF-native templates) from the runtime's own embedded
+        # tokenizer instead of leaving them undefined.
+        from server.serving_bundle import runtime_renderer_tokens
+        renderer_tokens = runtime_renderer_tokens(run_dir)
+    from server.serving_bundle import runtime_auto_bos_token
+    auto_bos_token_text = runtime_auto_bos_token(run_dir)
     loaded_identity = None
     if resolved_serving is not None:
         from server.serving_bundle import loaded_serving_identity, verify_loaded_libraries
@@ -615,6 +623,7 @@ def main(argv: list[str] | None = None) -> int:
             tool_protocol=selected_tool_protocol,
             loaded_identity=loaded_identity,
             renderer_tokens=renderer_tokens,
+            auto_bos_token_text=auto_bos_token_text,
             allow_untemplated=args.no_chat_template and args.allow_raw_prompt,
             batch_http=batch_http,
         )
