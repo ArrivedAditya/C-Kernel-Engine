@@ -58,7 +58,12 @@ enum CKSessionRequestFlagsV8 {
     CK_SESSION_REQUEST_TIMESTAMPS = UINT32_C(1) << 2,
     /* Requests reset generated recurrent/KV state by default. Set this only
      * when the caller deliberately continues the preceding request. */
-    CK_SESSION_REQUEST_CONTINUE_STATE = UINT32_C(1) << 3
+    CK_SESSION_REQUEST_CONTINUE_STATE = UINT32_C(1) << 3,
+    /* Fail the request instead of silently truncating a prompt that does not
+     * fit the remaining context budget. Serving layers set this so their
+     * admission policy can never be bypassed by the native truncation
+     * fallback. */
+    CK_SESSION_REQUEST_REJECT_PROMPT_TRUNCATION = UINT32_C(1) << 4
 };
 
 typedef struct CKSessionConfigV8 {

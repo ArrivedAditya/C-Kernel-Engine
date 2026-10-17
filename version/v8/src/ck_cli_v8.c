@@ -5897,6 +5897,8 @@ int ck_session_v8_generate(
     opt.top_p = request->top_p > 0.0f ? request->top_p : 0.9f;
     opt.system_prompt = request->system_text;
     opt.no_chat_template = (request->flags & CK_SESSION_REQUEST_RAW_PROMPT) != 0;
+    opt.reject_prompt_token_truncation =
+        (request->flags & CK_SESSION_REQUEST_REJECT_PROMPT_TRUNCATION) != 0;
     opt.ignore_eos = (request->flags & CK_SESSION_REQUEST_IGNORE_EOS) != 0;
     opt.timestamps = (request->flags & CK_SESSION_REQUEST_TIMESTAMPS) != 0;
     opt.quiet_output = true;
