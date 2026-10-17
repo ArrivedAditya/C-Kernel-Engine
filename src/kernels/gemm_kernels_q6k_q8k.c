@@ -265,6 +265,21 @@ static float dot_q6_k_q8_k_neon(const block_q6_K *w,
 
     return sumf;
 }
+
+static void gemv_q6_k_q8_k_neon(float *y,
+                                const void *W,
+                                const void *x_q8,
+                                int M, int K)
+{
+    const block_q6_K *blocks = (const block_q6_K *)W;
+    const block_q8_K *x = (const block_q8_K *)x_q8;
+    const int blocks_per_row = K / QK_K;
+
+    for (int row = 0; row < M; ++row) {
+        const block_q6_K *w_row = blocks + (size_t)row * (size_t)blocks_per_row;
+        y[row] = dot_q6_k_q8_k_neon(w_row, x, K);
+    }
+}
 #endif
 
 void gemv_q6_k_q8_k_ref(float *y,
@@ -1360,6 +1375,13 @@ void gemv_q6_k_q8_k(float *y,
 #elif defined(__SSE4_1__)
     gemv_q6_k_q8_k_sse(y, W, x_q8, M, K);
     return;
+#elif defined(__ARM_NEON) || defined(__aarch64__)
+    /* NEON keeps the same integer-exact per-block dot as the scalar
+     * reference but accumulates the FP32 block contributions sequentially
+     * instead of through eight partial lanes, so strict parity mode (handled
+     * above) still uses the reference reduction order. */
+    gemv_q6_k_q8_k_neon(y, W, x_q8, M, K);
+    return;
 #endif
     gemv_q6_k_q8_k_ref(y, W, x_q8, M, K);
 }
@@ -1375,6 +1397,8 @@ const char *ck_q6_k_q8_k_provider_name(void)
     return "q6_k_q8_k_avx";
 #elif defined(__SSE4_1__)
     return "q6_k_q8_k_sse";
+#elif defined(__ARM_NEON) || defined(__aarch64__)
+    return "q6_k_q8_k_neon";
 #else
     return "q6_k_q8_k_ref";
 #endif
@@ -1458,6 +1482,9 @@ void gemv_q6_k_q8_k_parallel_simd(float *y,
 #elif defined(__SSE4_1__)
         y[row] = strict ? dot_q6_k_q8_k_ref(w_row, x, K)
                         : dot_q6_k_q8_k_sse(w_row, x, K);
+#elif defined(__ARM_NEON) || defined(__aarch64__)
+        y[row] = strict ? dot_q6_k_q8_k_ref(w_row, x, K)
+                        : dot_q6_k_q8_k_neon(w_row, x, K);
 #else
         y[row] = dot_q6_k_q8_k_ref(w_row, x, K);
 #endif
@@ -1716,6 +1743,9 @@ static inline float ck_dot_q6_k_q8_k_fast_or_ref(const block_q6_K *w,
 #elif defined(__SSE4_1__)
     if (ck_strict_parity_enabled()) return dot_q6_k_q8_k_ref(w, x, K);
     return dot_q6_k_q8_k_sse(w, x, K);
+#elif defined(__ARM_NEON) || defined(__aarch64__)
+    if (ck_strict_parity_enabled()) return dot_q6_k_q8_k_ref(w, x, K);
+    return dot_q6_k_q8_k_neon(w, x, K);
 #else
     return dot_q6_k_q8_k_ref(w, x, K);
 #endif

@@ -238,7 +238,17 @@ WARNING_FLAGS += -Wno-unused-function
 endif
 
 INCLUDES := -Iinclude
-CFLAGS  := -O3 -fPIC $(OPENMP_FLAG) $(WARNING_FLAGS) $(ARCH_DEFINES) $(AVX_FLAGS) $(SSSE3_FLAGS) $(NATIVE_TUNE_FLAGS_SUPPORTED) $(NO_MATH_ERRNO_FLAGS_SUPPORTED) $(INCLUDES)
+# Opt-in native ARM ISA flags for the engine library. Default stays baseline
+# armv8-a (NEON is mandatory on AArch64, so NEON kernel paths are always
+# compiled); CK_ARM_NATIVE=1 adds -march=native, which unlocks SVE2/BF16/I8MM
+# codegen on Armv9 hosts such as NVIDIA GB10 (DGX Spark).
+ARM_ARCH_FLAGS :=
+ifneq ($(IS_ARM_ARCH),)
+ifeq ($(CK_ARM_NATIVE),1)
+ARM_ARCH_FLAGS := $(call cc-option,-march=native)
+endif
+endif
+CFLAGS  := -O3 -fPIC $(OPENMP_FLAG) $(WARNING_FLAGS) $(ARCH_DEFINES) $(AVX_FLAGS) $(SSSE3_FLAGS) $(ARM_ARCH_FLAGS) $(NATIVE_TUNE_FLAGS_SUPPORTED) $(NO_MATH_ERRNO_FLAGS_SUPPORTED) $(INCLUDES)
 CXX ?= g++
 BENCH_CC ?= gcc
 BENCH_CXX ?= $(CXX)
