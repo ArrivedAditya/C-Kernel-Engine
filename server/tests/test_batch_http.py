@@ -492,6 +492,66 @@ def test_owner_exception_fails_active_and_pending_consumers_once():
     owner.close()
 
 
+def test_later_owner_failure_preserves_completed_request_timing():
+    class FailAfterCompletion(FakeLoop):
+        def advance(self):
+            if self.calls:
+                raise RuntimeError("later native step failed")
+            return super().advance()
+
+    loop = FailAfterCompletion()
+    loop.gate.set()
+    owner = Batch2HTTPOwner(FakeSession(), max_extra_bytes=1,
+                            max_prompt_tokens=8, loop=loop)
+    a = owner.reserve()
+    assert a.start_worker(None)
+    owner.bind_response(a.client, "finished_before_failure")
+    delivery_blocked = threading.Event()
+    resume_delivery = threading.Event()
+
+    def generate(lease, prompt, on_token):
+        return lease.session.generate(None, prompt, max_tokens=1,
+                                      temperature=0, top_p=1,
+                                      on_token=on_token,
+                                      flags=CK_SESSION_REQUEST_RAW_PROMPT)
+
+    def hold_delivery(*_):
+        delivery_blocked.set()
+        assert resume_delivery.wait(5)
+        return 0
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(generate, a, "A", hold_delivery)
+            assert delivery_blocked.wait(5)
+            assert a.client.native_done.is_set()
+            completed_at = a.client.native_completed_at
+            before = owner.response_observation("finished_before_failure")
+            assert before["time_to_native_completion_ms"] is not None
+
+            b = owner.reserve()
+            assert b.start_worker(None)
+            owner.bind_response(b.client, "failed_later")
+            second = pool.submit(generate, b, "B", lambda *_: 0)
+            try:
+                second.result(timeout=5)
+            except SessionError:
+                pass
+            else:
+                raise AssertionError("later native failure returned success")
+            assert owner.poisoned
+            assert a.client.native_completed_at == completed_at
+            assert owner.response_observation("finished_before_failure") == before
+            assert owner.response_observation("failed_later")["native_done"] is True
+            resume_delivery.set()
+            assert first.result(timeout=5)["generated_tokens"] == 1
+            b.release()
+    finally:
+        resume_delivery.set()
+        a.release()
+        owner.close()
+
+
 def test_owner_exception_rejects_a_request_still_tokenizing():
     class BlockingEncode(FakeSession):
         def __init__(self):

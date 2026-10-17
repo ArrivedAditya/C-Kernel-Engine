@@ -354,8 +354,9 @@ class Batch2HTTPOwner:
                 except queue.Empty:
                     break
             for client in admitted:
-                client.native_completed_at = time.monotonic()
-                client.native_done.set()
+                if not client.native_done.is_set():
+                    client.native_completed_at = time.monotonic()
+                    client.native_done.set()
                 if client.delivered.is_set():
                     self.clients.pop(id(client), None)
         for client in admitted:
