@@ -932,7 +932,12 @@ def _render_with_chat_templates(
             raise ValueError(str(message))
 
         env = jinja2.sandbox.SandboxedEnvironment(
-            undefined=jinja2.StrictUndefined, autoescape=False
+            undefined=jinja2.StrictUndefined, autoescape=False,
+            # Match the reference chat-template rendering semantics
+            # (transformers' apply_chat_template): block tags consume their
+            # surrounding whitespace, so e.g. a comment line before
+            # {{ bos_token }} cannot leak a stray newline into the prompt.
+            trim_blocks=True, lstrip_blocks=True,
         )
         # Transformers' chat renderer uses JSON text here. Jinja's built-in
         # tojson HTML-escapes quotes even with autoescape disabled, changing
@@ -1680,6 +1685,7 @@ def create_app(
     tool_protocol: str | None = None,
     loaded_identity: dict[str, Any] | None = None,
     renderer_tokens: dict[str, str] | None = None,
+    auto_bos_token_text: str | None = None,
     allow_untemplated: bool = False,
     cancel_wait_seconds: float = 10.0,
     viz_html: str | None = None,
@@ -1975,6 +1981,13 @@ def create_app(
             )
         if jinja_rendered is not None and jinja_rendered.strip():
             prompt = jinja_rendered
+            if auto_bos_token_text and prompt.startswith(auto_bos_token_text):
+                # The runtime tokenizer auto-adds BOS at encode time, so a
+                # template that renders a literal leading BOS (GGUF-native
+                # templates emit {{ bos_token }}) would be encoded with BOS
+                # twice. Strip the literal; the encoder re-adds it, matching
+                # the reference add_special_tokens=False flow exactly.
+                prompt = prompt[len(auto_bos_token_text):]
             effective_flags |= CK_SESSION_REQUEST_RAW_PROMPT
         elif chat_contract is not None:
             prompt = _format_prompt_with_chat_contract(
@@ -3490,7 +3503,7 @@ def create_live_app_from_run_dir(
     from .runtime import load_manifest_templates, load_tool_protocol
     from .serving_bundle import (
         load_resolved_serving, loaded_serving_identity, resolved_renderer_tokens,
-        verify_loaded_libraries,
+        runtime_auto_bos_token, runtime_renderer_tokens, verify_loaded_libraries,
     )
 
     run_dir = Path(run_dir).expanduser().resolve()
@@ -3519,6 +3532,12 @@ def create_live_app_from_run_dir(
     session, capacity, _ = open_live_session(
         run_dir, context_length=context_length, num_threads=num_threads
     )
+    if renderer_tokens is None and chat_template:
+        # No verified serving bundle: resolve publisher token variables (e.g.
+        # bos_token for GGUF-native templates) from the runtime's own embedded
+        # tokenizer instead of leaving them undefined.
+        renderer_tokens = runtime_renderer_tokens(run_dir)
+    auto_bos_token_text = runtime_auto_bos_token(run_dir)
     try:
         resolved_serving = load_resolved_serving(run_dir)
         loaded_identity = None
@@ -3542,5 +3561,6 @@ def create_live_app_from_run_dir(
         tool_protocol=tool_protocol,
         loaded_identity=loaded_identity,
         renderer_tokens=renderer_tokens,
+        auto_bos_token_text=auto_bos_token_text,
         **kwargs,
     )

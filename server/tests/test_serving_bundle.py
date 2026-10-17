@@ -764,3 +764,41 @@ def test_raw_build_without_chat_assets_and_normal_chat_rejection(setup, monkeypa
     monkeypatch.setattr(ck_serve_v8.SessionV8, "open", lambda *a, **k: pytest.fail("opened without chat assets"))
     with pytest.raises(ValueError, match="normal chat serving requires"):
         ck_serve_v8.main([str(setup[0]), "--no-build", "--no-viz"])
+
+
+def test_runtime_renderer_tokens_from_manifest_ids_without_serving_bundle(tmp_path):
+    """No serving.json: variables resolve from manifest IDs via the runtime tokenizer."""
+    from server.serving_bundle import runtime_renderer_tokens
+
+    (tmp_path / "weights_manifest.json").write_text(json.dumps({
+        "special_tokens": {"bos_token_id": 2, "eos_token_id": 106, "pad_token_id": 0},
+    }))
+    pieces = {2: "<bos>", 106: "<end_of_turn>", 0: "<pad>"}
+    tokens = runtime_renderer_tokens(tmp_path, decode_ids=lambda ids: pieces[ids[0]])
+    assert tokens == {"bos_token": "<bos>", "eos_token": "<end_of_turn>", "pad_token": "<pad>"}
+
+
+def test_runtime_renderer_tokens_init_json_fallback(tmp_path):
+    from server.serving_bundle import runtime_renderer_tokens
+
+    (tmp_path / "init.json").write_text(json.dumps({
+        "special_tokens": {"bos_token_id": 2},
+    }))
+    tokens = runtime_renderer_tokens(tmp_path, decode_ids=lambda ids: "<bos>")
+    assert tokens == {"bos_token": "<bos>"}
+
+
+def test_runtime_renderer_tokens_stays_none_when_unresolvable(tmp_path):
+    from server.serving_bundle import runtime_renderer_tokens
+
+    # No artifacts at all: None, so StrictUndefined still fails loudly.
+    assert runtime_renderer_tokens(tmp_path, decode_ids=lambda ids: "<x>") is None
+    (tmp_path / "weights_manifest.json").write_text(json.dumps({
+        "special_tokens": {"bos_token_id": 2},
+    }))
+    # Empty decode text is not a usable delimiter.
+    assert runtime_renderer_tokens(tmp_path, decode_ids=lambda ids: "") is None
+    # Decode failure is not silently ignored either.
+    def boom(ids):
+        raise RuntimeError("no tokenizer")
+    assert runtime_renderer_tokens(tmp_path, decode_ids=boom) is None
