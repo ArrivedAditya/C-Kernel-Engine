@@ -186,6 +186,46 @@ def _write_tensor(path: Path, values: np.ndarray) -> dict[str, Any]:
     return {"path": str(path.resolve()), "shape": list(values.shape), "sha256": _sha256(path)}
 
 
+def _selected_experts_last(
+    values: np.ndarray, token_count: int, top_k: int, *, allow_last_only: bool = False
+) -> np.ndarray:
+    expected = {token_count * top_k}
+    if allow_last_only:
+        expected.add(top_k)
+    if top_k <= 0 or values.size not in expected:
+        raise RuntimeError("selected-expert capture has an unproven token extent")
+    return values[-top_k:]
+
+
+def canonicalize_router_snapshots(
+    tensors: dict[int, dict[str, dict[str, Any]]], output_dir: Path
+) -> None:
+    """Compare selected experts with their weights, independent of top-k order."""
+    for layer, boundaries in tensors.items():
+        weights = boundaries.get("moe_routing_weights")
+        if weights is None:
+            continue
+        selected = boundaries.get("moe_selected_experts")
+        if selected is None:
+            raise RuntimeError(f"layer {layer} has routing weights without selected experts")
+        ids = np.fromfile(selected["path"], dtype=np.float32)
+        values = np.fromfile(weights["path"], dtype=np.float32)
+        if (ids.shape != values.shape or not np.isfinite(ids).all()
+                or not np.isfinite(values).all() or np.any(ids < 0)
+                or np.any(ids >= (1 << 24))
+                or np.any(ids != np.floor(ids)) or np.unique(ids).size != ids.size):
+            raise RuntimeError(f"layer {layer} has invalid selected-expert pairs")
+        order = np.argsort(ids, kind="stable")
+        boundaries["moe_selected_experts"] = _write_tensor(
+            output_dir / f"layer_{layer:03d}_moe_selected_experts_by_id.f32",
+            ids[order],
+        )
+        boundaries["moe_routing_weights"] = _write_tensor(
+            output_dir / f"layer_{layer:03d}_moe_routing_weights_by_id.f32",
+            values[order],
+        )
+
+
 def _load_remote_causal_lm_class(checkpoint: Path, model_config: Any) -> Any:
     """Resolve a trusted remote model while adapting legacy Transformers APIs."""
     from transformers.dynamic_module_utils import get_class_from_dynamic_module
@@ -598,6 +638,7 @@ def capture_pytorch(
                 ).reshape(*hidden.shape[:-1], -1)
                 captured[layer]["moe_router_logits"] = logits[0, -1].cpu().contiguous()
                 captured[layer]["moe_routing_weights"] = output[1][-1].float().cpu().contiguous()
+                captured[layer]["moe_selected_experts"] = output[2][-1].float().cpu().contiguous()
                 if layer == mla_replay_layer:
                     captured[layer]["moe_router_logits_full"] = (
                         logits[0].cpu().contiguous()
@@ -700,6 +741,7 @@ def capture_ck(
             "mlp_down",
             "routed_free_out",
             "moe_router_logits",
+            "moe_selected_experts",
             "moe_routing_weights",
             "moe_routed_output",
             "moe_combined_output",
@@ -776,6 +818,19 @@ def capture_ck(
         tensors.setdefault(layer, {})[boundary] = _write_tensor(
             output_dir / f"layer_{layer:03d}_{boundary}.f32",
             last,
+        )
+    for path in sorted(dump_dir.glob("tok_*_layer_*_moe_selected_experts.i32")):
+        layer = int(path.name.split("_layer_", 1)[1].split("_", 1)[0])
+        weights = tensors.get(layer, {}).get("moe_routing_weights")
+        if weights is None:
+            raise RuntimeError(f"{path} has no paired routing weights")
+        top_k = int(weights["shape"][-1])
+        selected = _selected_experts_last(
+            np.fromfile(path, dtype=np.int32), len(token_ids), top_k
+        )
+        tensors[layer]["moe_selected_experts"] = _write_tensor(
+            output_dir / f"layer_{layer:03d}_moe_selected_experts.f32",
+            selected,
         )
     return tensors, trajectory["logits"][0]
 
@@ -942,7 +997,7 @@ def capture_ck_persistent(
         "layer_out", "block_rmsnorm", "q_proj", "mla_kv_a", "mla_kv_norm",
         "mla_k_nope", "mla_value", "mla_query", "mla_key", "mla_context",
         "attn_gate", "attn_out", "out_proj",
-        "after_attn", "ffn_input", "ffn_norm", "moe_router_logits", "moe_routing_weights",
+        "after_attn", "ffn_input", "ffn_norm", "moe_router_logits", "moe_selected_experts", "moe_routing_weights",
         "mlp_gate", "mlp_gate_last", "mlp_up", "mlp_up_last", "mlp_swiglu", "mlp_down",
         "routed_free_out",
         "moe_routed_output", "moe_combined_output",
@@ -991,6 +1046,26 @@ def capture_ck_persistent(
         tensors.setdefault(layer, {})[boundary] = _write_tensor(
             output_dir / f"layer_{layer:03d}_{boundary}.f32", values
         )
+    for path in dump_dir.glob("tok_*_layer_*_moe_selected_experts.i32"):
+        token_pos = int(path.name.split("tok_", 1)[1].split("_", 1)[0])
+        layer = int(path.name.split("_layer_", 1)[1].split("_", 1)[0])
+        candidates[(layer, "moe_selected_experts")] = max(
+            candidates.get((layer, "moe_selected_experts"), (-1, path)),
+            (token_pos, path), key=lambda pair: pair[0],
+        )
+    for (layer, boundary), (_token_pos, path) in candidates.items():
+        if boundary != "moe_selected_experts":
+            continue
+        weights = tensors.get(layer, {}).get("moe_routing_weights")
+        if weights is None:
+            raise RuntimeError(f"{path} has no paired routing weights")
+        selected = _selected_experts_last(
+            np.fromfile(path, dtype=np.int32), 1, int(weights["shape"][-1]),
+            allow_last_only=True,
+        )
+        tensors[layer][boundary] = _write_tensor(
+            output_dir / f"layer_{layer:03d}_{boundary}.f32", selected
+        )
     return tensors, trajectory["logits"][len(forced_ids)]
 
 
@@ -1017,6 +1092,7 @@ def operation_metadata(call_ir: dict[str, Any], layer: int, boundary: str) -> di
         "mlp_down": "mlp_down",
         "routed_free_out": "farskip_routed_shared_combine",
         "moe_router_logits": "moe_router",
+        "moe_selected_experts": "group_limited_topk_router",
         "moe_routing_weights": "group_limited_topk_router",
         "moe_routed_output": "moe_swiglu_expert_mlp",
         "moe_combined_output": "shared_swiglu_expert_mlp",
@@ -1081,7 +1157,7 @@ def manifest(
                 "phase": "teacher_forced",
                 "layer": layer,
                 "tensor_path": tensor["path"],
-                "storage_dtype": "bf16",
+                "storage_dtype": "i32" if boundary == "moe_selected_experts" else "bf16",
                 "exported_dtype": "fp32",
                 "logical_shape": tensor["shape"],
                 "physical_shape": tensor["shape"],
@@ -1120,6 +1196,13 @@ def profile(order: list[str], intervals: dict[str, list[str]]) -> dict[str, Any]
         ],
         "observed_storage": {"default": "bf16", "checkpoints": {}},
         "dtype_thresholds": {
+            "i32": {
+                "cosine_min": 0.0,
+                "rmse_max": 0.0,
+                "relative_rmse_max": 0.0,
+                "max_abs_max": 0.0,
+                "finite_required": True,
+            },
             "bf16": {
                 "cosine_min": 0.999,
                 "rmse_max": 0.02,
@@ -1157,6 +1240,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         args.output_dir / "ck",
         mla_replay_layer,
     )
+    canonicalize_router_snapshots(torch_tensors, args.output_dir / "pytorch")
+    canonicalize_router_snapshots(ck_tensors, args.output_dir / "ck")
     layer_count = min(len(torch_tensors), len(ck_tensors))
     all_layers = list(range(layer_count))
     sparse_layers = sorted({0, layer_count // 3, (2 * layer_count) // 3, layer_count - 1})
@@ -1222,6 +1307,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "mlp_swiglu",
         "mlp_down",
         "moe_router_logits",
+        "moe_selected_experts",
         "moe_routing_weights",
         "moe_routed_output",
         "moe_combined_output",
@@ -1283,6 +1369,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             prompt_ids,
             forced_ids,
             args.output_dir / "ck_persistent",
+        )
+        canonicalize_router_snapshots(
+            persistent_tensors, args.output_dir / "ck_persistent"
         )
         state_layers = sorted(set(ck_tensors) & set(persistent_tensors))
         state_selected = [
@@ -1411,6 +1500,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             else ("pass" if state_pass else "diverged")
         ),
         "token_count": len(token_ids),
+        "router_comparison": "selected experts and associated weights sorted by expert ID",
         "ranking": ranking,
         "mla_same_input_replay": mla_same_input,
         "sparse_first_non_exact": sparse_report.get("first_non_exact_checkpoint"),

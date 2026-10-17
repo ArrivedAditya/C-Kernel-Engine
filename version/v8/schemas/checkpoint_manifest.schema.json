@@ -46,7 +46,7 @@
           "phase": {"type": "string", "minLength": 1},
           "layer": {"type": "integer", "minimum": -1},
           "tensor_path": {"type": "string", "minLength": 1},
-          "storage_dtype": {"enum": ["fp32", "fp16", "bf16", "q8_0", "q8_k"]},
+          "storage_dtype": {"enum": ["fp32", "fp16", "bf16", "i32", "q8_0", "q8_k"]},
           "exported_dtype": {"enum": ["fp32", "fp16", "bf16"]},
           "logical_shape": {"type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 1}},
         "physical_shape": {"type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 1}},
