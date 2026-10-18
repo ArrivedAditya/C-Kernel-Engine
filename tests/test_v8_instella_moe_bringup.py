@@ -707,6 +707,83 @@ class BF16StorageProjectionTests(unittest.TestCase):
             x, changed, None, 1, 1, fixture["k"])[0],
             _bf16_to_float(_float_to_bf16(changed_exact)))
 
+    def test_captured_instella_router_replays_each_input_packet(self) -> None:
+        fixture_dir = ROOT / "tests" / "fixtures" / "instella_router7"
+        fixture_bytes = (fixture_dir / "captured_router.json").read_bytes()
+        provenance = json.loads((fixture_dir / "provenance.json").read_text())
+        self.assertEqual(hashlib.sha256(fixture_bytes).hexdigest(),
+                         provenance["fixture_sha256"])
+        fixture = json.loads(fixture_bytes)
+        self.assertEqual(fixture["provider"], "group_limited_topk_router_sigmoid_f32")
+
+        router = self.library.group_limited_topk_router_sigmoid_f32
+        float_pointer = ctypes.POINTER(ctypes.c_float)
+        router.argtypes = [float_pointer, float_pointer,
+                           ctypes.POINTER(ctypes.c_int), float_pointer,
+                           ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                           ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                           ctypes.c_float]
+        router.restype = None
+        bias = np.asarray(fixture["correction_bias_f32_bits"], dtype=np.uint32).view(np.float32)
+        selected_by_backend = {}
+        with tempfile.TemporaryDirectory() as temporary:
+            for backend in ("ck", "pytorch"):
+                logits = np.asarray(fixture[f"{backend}_logits_f32_bits"],
+                                    dtype=np.uint32).view(np.float32)
+                expected_ids = fixture[f"{backend}_selected_experts"]
+                expected_weights = np.asarray(
+                    fixture[f"{backend}_routing_weights_f32_bits"],
+                    dtype=np.uint32).view(np.float32)
+                packet = write_bundle(
+                    Path(temporary) / backend,
+                    operation="group_limited_topk_router",
+                    provider=fixture["provider"],
+                    contract="fp32_sigmoid_biased_topk_normalized",
+                    runtime=ROOT / "build/libckernel_engine.so",
+                    context={"backend_input": backend,
+                             "fixture_sha256": provenance["fixture_sha256"],
+                             "top_k": fixture["top_k"]},
+                    tensors={
+                        "logits": (logits, "fp32", ("expert",)),
+                        "correction_bias": (bias, "fp32", ("expert",)),
+                        "expected_ids": (np.asarray(expected_ids, dtype=np.float32),
+                                         "fp32", ("selection",)),
+                        "expected_weights": (expected_weights, "fp32", ("selection",)),
+                    },
+                )
+                manifest, operands = load_bundle(packet)
+                self.assertEqual(manifest["provider"], fixture["provider"])
+                actual_ids = np.full(fixture["top_k"], -1, dtype=np.int32)
+                actual_weights = np.zeros(fixture["top_k"], dtype=np.float32)
+                router(
+                    operands["logits"].ctypes.data_as(float_pointer),
+                    operands["correction_bias"].ctypes.data_as(float_pointer),
+                    actual_ids.ctypes.data_as(ctypes.POINTER(ctypes.c_int)),
+                    actual_weights.ctypes.data_as(float_pointer),
+                    1, fixture["n_experts"], fixture["top_k"],
+                    fixture["n_group"], fixture["topk_group"],
+                    fixture["norm_topk_prob"],
+                    ctypes.c_float(fixture["routed_scaling_factor"]),
+                )
+                self.assertEqual(sorted(actual_ids.tolist()), sorted(expected_ids))
+                actual_by_id = {int(i): int(w.view(np.uint32))
+                                for i, w in zip(actual_ids, actual_weights)}
+                expected_by_id = {int(i): int(w.view(np.uint32))
+                                  for i, w in zip(expected_ids, expected_weights)}
+                self.assertEqual(actual_by_id, expected_by_id)
+                selected_by_backend[backend] = set(actual_ids.tolist())
+
+                # The sixth-place margin is larger than float sigmoid error:
+                # each packet's input determines its own expert set.
+                scores = [1 / (1 + math.exp(-float(v))) + float(b)
+                          for v, b in zip(logits, bias)]
+                ranked = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
+                self.assertGreater(scores[ranked[5]] - scores[ranked[6]], 1e-6)
+                self.assertEqual(set(ranked[:6]), set(expected_ids))
+
+        self.assertEqual(selected_by_backend["ck"] - selected_by_backend["pytorch"], {18})
+        self.assertEqual(selected_by_backend["pytorch"] - selected_by_backend["ck"], {33})
+
     def test_odd_width_bias_and_two_rows_match_independent_sum(self) -> None:
         k, n, m = 7, 3, 2
         x_bits = [0x3F80, 0xBE80, 0x3D80, 0xBF20, 0x3F10, 0x3E00, 0x3C80,
