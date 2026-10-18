@@ -20,6 +20,7 @@ from tests.test_v8_kokoro_generated_prosody_complete import verified_fixture
 from tests import test_v8_kokoro_runtime_stage1_ingress as ingress_support
 from tests import test_v8_kokoro_source_residual_first_pair as fixture_support
 from tests import test_v8_kokoro_generated_albert_layer as xray_support
+from version.v8.scripts.xray_operation_bundle_v8 import load_bundle, write_bundle
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -72,7 +73,8 @@ class KokoroRuntimeStage1SourceJoinTest(unittest.TestCase):
             'generator_stage1_pad_extent_value': 'i32'})
         cls.fixture.source['config']['context_length'] = 64
         cls.layout, cls.calls, cls.library, cls.loaded, cls.fn = (
-            compile_native_graph(cls.root, cls.fixture.source, cls.circuit))
+            compile_native_graph(cls.root, cls.fixture.source, cls.circuit,
+                                 extra_exports=('audio_scaled_sum_strided_f32_checked',)))
         cls.fn.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t] + [
             ctypes.POINTER(ctypes.c_int32)] * 9
         cls.buffers = {item['name']: item for item in
@@ -162,6 +164,41 @@ class KokoroRuntimeStage1SourceJoinTest(unittest.TestCase):
                 expected = (self.source['output'][0],
                             self.join['source_residual'][0],
                             self.join['join'][0])
+            bundle = write_bundle(
+                self.root / f'stage1-join-replay-{count}',
+                operation='generator_stage1_join',
+                provider='audio_scaled_sum_strided_f32_checked',
+                contract='fp32_valid_columns_scale_one', runtime=self.library,
+                context={'request_length': count, 'valid_columns': valid, 'row': row,
+                         'selected_operation': self.calls['operations'][-1]['function'],
+                         'model_pin': self.refs.join_meta['model_pin'],
+                         'code_pin': self.refs.join_meta['code_pin']},
+                tensors={
+                    'left': (main[row, :valid].copy(), 'fp32', ('time',)),
+                    'right': (residual[row, :valid].copy(), 'fp32', ('time',)),
+                    'cke_output': (joined[row, :valid].copy(), 'fp32', ('time',)),
+                    'oracle_output': (np.asarray(expected[2][row, :valid], dtype=np.float32),
+                                      'fp32', ('time',)),
+                },
+            )
+            _, operands = load_bundle(bundle)
+            replayed = np.zeros_like(operands['cke_output'])
+            replay_fn = self.loaded.audio_scaled_sum_strided_f32_checked
+            replay_fn.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.c_size_t,
+                                  ctypes.c_size_t, ctypes.POINTER(ctypes.c_float),
+                                  ctypes.c_size_t, ctypes.c_size_t,
+                                  ctypes.POINTER(ctypes.c_float), ctypes.c_size_t,
+                                  ctypes.c_size_t, ctypes.c_size_t, ctypes.c_size_t,
+                                  ctypes.c_float]
+            replay_fn.restype = ctypes.c_int
+            ptr = ctypes.POINTER(ctypes.c_float)
+            self.assertEqual(replay_fn(
+                operands['left'].ctypes.data_as(ptr), valid, valid,
+                operands['right'].ctypes.data_as(ptr), valid, valid,
+                replayed.ctypes.data_as(ptr), valid, valid, 1, valid, 1.0,
+            ), 0)
+            np.testing.assert_array_equal(replayed.view(np.uint32),
+                                          operands['cke_output'].view(np.uint32))
             metrics = {name: checkpoint_metrics(actual[:, :valid], target)
                        for name, actual, target in zip(
                            ('source_conv', 'source_residual', 'join'),

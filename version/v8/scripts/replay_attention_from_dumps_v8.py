@@ -23,6 +23,10 @@ if str(V7_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(V7_SCRIPTS))
 
 import parity_test  # type: ignore  # noqa: E402
+if __package__:
+    from .xray_operation_bundle_v8 import BundleError, load_bundle, write_bundle
+else:
+    from xray_operation_bundle_v8 import BundleError, load_bundle, write_bundle
 
 
 def _require_tensor_any(dumps: list[parity_test.ParityDump], layer: int, names: list[str]) -> np.ndarray:
@@ -335,6 +339,12 @@ def replay_resolved_segmented_prefill(
         "status": "fail_replay_fidelity" if not bitwise else
                   "fail_cache_reconstruction" if not cache_matches else "pass",
         "interpretation": "replay fidelity only; not oracle parity or a local kernel-cause verdict",
+        "attribution": {
+            "replay_fidelity": "pass" if bitwise else "fail",
+            "cache_reconstruction": "pass" if cache_matches else "fail",
+            "identical_input_oracle": "not_tested",
+            "first_proven_local_divergence": None,
+        },
         "layer": layer,
         "provider": call["function"],
         "kernel_id": call["kernel_id"],
@@ -354,9 +364,89 @@ def replay_resolved_segmented_prefill(
     }
 
 
+def _export_resolved_bundle(
+    directory: Path, dumps: list[parity_test.ParityDump], layer: int,
+    call: dict, call_op: dict, segments: list[int], engine_so: Path,
+    source_hashes: dict[str, str], oracle_mode: str,
+) -> Path:
+    tokens = sum(segments)
+    heads, kv_heads, dim = call["num_heads"], call["num_kv_heads"], call["head_dim"]
+    tensors = {}
+    for name, count in (("Qcur_rope", heads), ("Kcur_rope", kv_heads),
+                        ("Vcur_normed", kv_heads), ("kqv_out", heads)):
+        values = _reshape_token_major_qhd(_unique_tensor(dumps, layer, name), tokens, count, dim)
+        tensors[name] = (values, "fp32", ("token", "head", "channel"))
+    for name in ("Kcache_post_store", "Vcache_post_store"):
+        capture = _unique_capture(dumps, layer, name)
+        if (capture.dtype != "fp16" or capture.token_id != 0 or
+                tuple(capture.data.shape) != (tokens, kv_heads, dim)):
+            raise BundleError(f"{name} is not a complete post-store FP16 cache")
+        tensors[name] = (np.asarray(capture.data, dtype=np.float16), "fp16",
+                         ("position", "kv_head", "channel"))
+    return write_bundle(
+        directory, operation="attention_sliding", provider=call["function"],
+        contract=call["selector"], runtime=engine_so,
+        context={"layer": layer, "segments": segments, "resolved_call_op": call_op,
+                 "source_sha256": source_hashes, "oracle_mode": oracle_mode,
+                 "valid_cache_positions": [0, tokens]},
+        tensors=tensors,
+    )
+
+
+def _load_resolved_bundle(path: Path) -> tuple[list[parity_test.ParityDump], int, dict, list[int], Path]:
+    manifest, tensors = load_bundle(path)
+    context = manifest.get("context")
+    if not isinstance(context, dict) or manifest["operation"] != "attention_sliding":
+        raise BundleError("bundle is not a resolved sliding-attention operation")
+    layer, segments = context.get("layer"), context.get("segments")
+    if type(layer) is not int or layer < 0 or not isinstance(segments, list):
+        raise BundleError("bundle has invalid layer or segment plan")
+    if not segments or any(type(value) is not int or value <= 0 for value in segments):
+        raise BundleError("bundle has invalid segment lengths")
+    sources = context.get("source_sha256")
+    if (not isinstance(sources, dict) or set(sources) != {"dump", "call_ir", "parity_report"}
+            or any(not isinstance(value, str) or len(value) != 64
+                   or any(ch not in "0123456789abcdef" for ch in value)
+                   for value in sources.values())):
+        raise BundleError("bundle is missing source artifact hashes")
+    if not isinstance(context.get("resolved_call_op"), dict):
+        raise BundleError("bundle has no resolved call")
+    call = _resolved_segmented_call({"operations": [context["resolved_call_op"]]}, layer)
+    if call["function"] != manifest["provider"] or call["selector"] != manifest["contract"]:
+        raise BundleError("bundle provider or numerical contract differs from its resolved call")
+    if call["function"] != _SEGMENTED_F16_SLIDING:
+        raise BundleError("bundle provider is not supported by this replay adapter")
+    tokens = sum(segments)
+    if tokens > (1 << 20) or call["workspace_bytes"] > (1 << 28):
+        raise BundleError("bundle exceeds bounded replay capacities")
+    if context.get("valid_cache_positions") != [0, tokens]:
+        raise BundleError("bundle valid cache extent differs from the segment plan")
+    expected = {"Qcur_rope", "Kcur_rope", "Vcur_normed", "kqv_out",
+                "Kcache_post_store", "Vcache_post_store"}
+    if set(tensors) != expected:
+        raise BundleError("bundle is missing or adding attention operands")
+    dumps = []
+    for name in sorted(expected):
+        spec = manifest["tensors"][name]
+        heads = call["num_heads"] if name in {"Qcur_rope", "kqv_out"} else call["num_kv_heads"]
+        if spec["shape"] != [tokens, heads, call["head_dim"]]:
+            raise BundleError(f"{name} geometry differs from the resolved call")
+        cache = name.endswith("post_store")
+        if spec["dtype"] != ("fp16" if cache else "fp32") or spec["axes"] != (
+            ["position", "kv_head", "channel"] if cache else ["token", "head", "channel"]
+        ):
+            raise BundleError(f"{name} dtype or semantic axes differ")
+        values = tensors[name].astype(np.float32)
+        dumps.append(parity_test.ParityDump(layer, name, values if cache else values.reshape(-1),
+                                            0, spec["dtype"]))
+    return dumps, layer, call, segments, Path(manifest["runtime"]["path"])
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Replay full-attention kernels from parity dumps")
-    ap.add_argument("--dump", type=Path, required=True, help="Path to dump.bin")
+    input_group = ap.add_mutually_exclusive_group(required=True)
+    input_group.add_argument("--dump", type=Path, help="Path to dump.bin")
+    input_group.add_argument("--bundle", type=Path, help="Verified operation bundle JSON")
     ap.add_argument("--layer", type=int, default=0)
     ap.add_argument(
         "--mode",
@@ -384,7 +474,27 @@ def main(argv: list[str] | None = None) -> int:
                     help="Diagnostic fallback for older dumps without post-store cache captures")
     ap.add_argument("--independent-fp64", action="store_true",
                     help="Compare captured operands with an explicit FP64 causal sliding reference")
+    ap.add_argument("--export-bundle", type=Path, default=None,
+                    help="Export actual resolved-call operands to an empty local directory")
     args = ap.parse_args(argv)
+
+    if args.bundle is not None:
+        if any((args.resolved_call_ir, args.parity_report, args.engine_so, args.export_bundle,
+                args.segments, args.mode, args.raw_output, args.allow_reconstructed_cache)):
+            ap.error("--bundle uses its own verified call, runtime and direct cache operands")
+        try:
+            dumps, layer, call, segments, engine_so = _load_resolved_bundle(args.bundle)
+            report = replay_resolved_segmented_prefill(
+                dumps, layer, call, segments, engine_so, independent_fp64=args.independent_fp64,
+            )
+            report["bundle_sha256"] = _sha256(args.bundle)
+        except (BundleError, ValueError, KeyError, TypeError, OSError) as exc:
+            report = {"status": "incomplete", "error": str(exc),
+                      "interpretation": "bundle evidence is missing or inconsistent; no kernel-cause verdict"}
+        print(json.dumps(report, indent=2))
+        if args.output is not None:
+            args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        return {"pass": 0, "fail_replay_fidelity": 1, "fail_cache_reconstruction": 1}.get(report["status"], 2)
 
     dumps = parity_test.read_dump_file(args.dump)
     if args.resolved_call_ir is not None:
@@ -405,7 +515,20 @@ def main(argv: list[str] | None = None) -> int:
                 require_direct_cache=not args.allow_reconstructed_cache,
                 independent_fp64=args.independent_fp64,
             )
-        except (ValueError, KeyError, AttributeError, OSError) as exc:
+            if args.export_bundle is not None:
+                selected_op = next(op for op in call_ir["operations"]
+                                   if op.get("layer") == args.layer and op.get("section") == "body"
+                                   and op.get("op") in ("attn_sliding", "attention_sliding"))
+                source_hashes = {"dump": _sha256(args.dump),
+                                 "call_ir": _sha256(args.resolved_call_ir),
+                                 "parity_report": _sha256(args.parity_report)}
+                bundle_path = _export_resolved_bundle(
+                    args.export_bundle, dumps, args.layer, call, selected_op, segments,
+                    args.engine_so, source_hashes,
+                    str((parity_report.get("dump_compare") or {}).get("llama_flash_attention_mode", "unknown")),
+                )
+                report["bundle_path"] = str(bundle_path)
+        except (BundleError, ValueError, KeyError, AttributeError, OSError) as exc:
             report = {
                 "status": "incomplete",
                 "interpretation": "replay evidence is missing or inconsistent; no kernel-cause verdict",
@@ -420,8 +543,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.output is not None:
             args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
         return {"pass": 0, "fail_replay_fidelity": 1, "fail_cache_reconstruction": 1}.get(report["status"], 2)
-    if args.segments is not None or args.engine_so is not None or args.parity_report is not None:
-        ap.error("--segments, --engine-so and --parity-report require --resolved-call-ir")
+    if args.segments is not None or args.engine_so is not None or args.parity_report is not None or args.export_bundle is not None:
+        ap.error("--segments, --engine-so, --parity-report and --export-bundle require --resolved-call-ir")
     q_flat = _require_tensor_any(dumps, args.layer, ["Qcur_rope"])
     num_tokens = _infer_num_tokens(q_flat, args.num_heads, args.head_dim)
     num_kv_heads = args.num_kv_heads if args.num_kv_heads is not None else args.num_heads

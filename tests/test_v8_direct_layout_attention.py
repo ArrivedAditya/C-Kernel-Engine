@@ -1071,9 +1071,36 @@ class DirectLayoutAttentionTests(unittest.TestCase):
         self.assertTrue(result["cache_reconstruction"]["k_bitwise_equal"])
         self.assertTrue(result["cache_reconstruction"]["v_bitwise_equal"])
         self.assertEqual(result["metrics"]["max_abs"], 0.0)
+        self.assertEqual(result["attribution"]["identical_input_oracle"], "not_tested")
+        self.assertIsNone(result["attribution"]["first_proven_local_divergence"])
         self.assertEqual(result["independent_fp64"]["vs_captured_cke"],
                          result["independent_fp64"]["vs_replayed_cke"])
         self.assertLess(result["independent_fp64"]["vs_captured_cke"]["rmse"], 0.01)
+        bundle_path = replay._export_resolved_bundle(
+            self._lib_path.parent / "operation-bundle", dumps, 0, resolved,
+            call_ir["operations"][0], segments, self._lib_path,
+            {"dump": "0" * 64, "call_ir": "1" * 64, "parity_report": "2" * 64},
+            "disabled",
+        )
+        bundle_dumps, bundle_layer, bundle_call, bundle_segments, bundle_engine = \
+            replay._load_resolved_bundle(bundle_path)
+        bundle_result = replay.replay_resolved_segmented_prefill(
+            bundle_dumps, bundle_layer, bundle_call, bundle_segments, bundle_engine,
+        )
+        self.assertEqual(bundle_result["status"], "pass")
+        self.assertEqual(bundle_result["metrics"]["max_abs"], 0.0)
+        cache_path = bundle_path.parent / "Kcache_post_store.bin"
+        changed_bytes = bytearray(cache_path.read_bytes())
+        changed_bytes[0] ^= 1
+        cache_path.write_bytes(changed_bytes)
+        with self.assertRaisesRegex(ValueError, "tensor bytes changed"):
+            replay._load_resolved_bundle(bundle_path)
+        cache_path.write_bytes(dumps[4].data.astype(np.float16).tobytes())
+        manifest = json.loads(bundle_path.read_text())
+        manifest["provider"] = "stale_provider"
+        bundle_path.write_text(json.dumps(manifest))
+        with self.assertRaisesRegex(ValueError, "provider or numerical contract differs"):
+            replay._load_resolved_bundle(bundle_path)
         with self.assertRaisesRegex(ValueError, "expected one"):
             replay.replay_resolved_segmented_prefill(dumps[:4], 0, resolved, segments, self._lib_path)
         self.assertEqual(
