@@ -3113,6 +3113,14 @@ def _special_tokens_from_tokenizer_config(
     for key, out_key in (("add_bos_token", "add_bos_token"), ("add_eos_token", "add_eos_token"), ("add_prefix_space", "add_space_prefix")):
         if key in cfg:
             out[out_key] = bool(cfg.get(key))
+    # A fast tokenizer's tokenizer.json post-processor governs encode-time
+    # insertion. ByteLevel post-processing never inserts BOS/EOS, even when
+    # stale tokenizer_config flags claim otherwise (as in Instella).
+    if tokenizer_path.exists() and cfg.get("tokenizer_class") == "PreTrainedTokenizerFast":
+        processor = tokenizer.get("post_processor")
+        if isinstance(processor, dict) and processor.get("type") == "ByteLevel":
+            out["add_bos_token"] = False
+            out["add_eos_token"] = False
     return out
 
 

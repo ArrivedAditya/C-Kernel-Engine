@@ -1018,7 +1018,18 @@ def load_tokenizer_json(path: str, vocab_size: int) -> tuple[list[int], bytes, l
             tokens_by_id[idx] = token
 
     added_tokens = data.get("added_tokens", [])
-    special_added_ids: set[int] = set()
+    exact_added_ids: set[int] = set()
+    def validate_raw_added_token(row: dict, source: str) -> None:
+        """Native type-4 matching is an exact raw substring, with no HF flags."""
+        for flag in ("single_word", "lstrip", "rstrip"):
+            if row.get(flag, False) is not False:
+                raise GGUFError(f"{source}: unsupported AddedToken {flag}={row.get(flag)!r}")
+        # Normalization changes matching only when the publisher has a normalizer.
+        if row.get("normalized", False) is True and data.get("normalizer") is not None:
+            raise GGUFError(f"{source}: normalized AddedToken requires unsupported normalization")
+        if "normalized" in row and not isinstance(row["normalized"], bool):
+            raise GGUFError(f"{source}: invalid AddedToken normalized flag")
+
     config_path = Path(path).with_name("tokenizer_config.json")
     tokenizer_config = json.loads(config_path.read_text(encoding="utf-8")) if config_path.is_file() else {}
     if not isinstance(tokenizer_config, dict):
@@ -1043,6 +1054,7 @@ def load_tokenizer_json(path: str, vocab_size: int) -> tuple[list[int], bytes, l
         for row in added_tokens:
             if not isinstance(row, dict):
                 continue
+            validate_raw_added_token(row, "tokenizer.json added_tokens")
             token = row.get("content")
             idx = row.get("id")
             if not isinstance(token, str) or not isinstance(idx, int):
@@ -1057,26 +1069,28 @@ def load_tokenizer_json(path: str, vocab_size: int) -> tuple[list[int], bytes, l
                     f"tokenizer.json conflicting token id {idx}: {existing!r} vs {token!r}"
                 )
             tokens_by_id[idx] = token
-            if row.get("special") is True or token in named_specials:
-                special_added_ids.add(idx)
+            # AddedToken entries are matched before BPE even when `special`
+            # is false. That flag controls special-token treatment, not
+            # whether the publisher tokenizer keeps the token indivisible.
+            exact_added_ids.add(idx)
 
     added_decoder = tokenizer_config.get("added_tokens_decoder", {})
     if isinstance(added_decoder, dict):
         for key, row in added_decoder.items():
             if not isinstance(row, dict):
                 continue
+            validate_raw_added_token(row, "tokenizer_config.json added_tokens_decoder")
             try:
                 idx = int(key)
             except (TypeError, ValueError):
                 continue
             token = special_content(row)
-            if (0 <= idx < vocab_size and token == tokens_by_id[idx]
-                    and (row.get("special") is True or token in named_specials)):
-                special_added_ids.add(idx)
+            if 0 <= idx < vocab_size and token == tokens_by_id[idx]:
+                exact_added_ids.add(idx)
     for token in named_specials:
         idx = vocab.get(token)
         if isinstance(idx, int) and 0 <= idx < vocab_size and tokens_by_id[idx] == token:
-            special_added_ids.add(idx)
+            exact_added_ids.add(idx)
 
     missing_ids = [i for i, t in enumerate(tokens_by_id) if t == ""]
     if max_id + 1 != vocab_size or missing_ids:
@@ -1108,7 +1122,7 @@ def load_tokenizer_json(path: str, vocab_size: int) -> tuple[list[int], bytes, l
     # those declarations for the native BPE pre-token matching path.
     scores_data: list[float] = [0.0] * vocab_size
     types_data: list[int] = [1] * vocab_size  # GGUF NORMAL
-    for idx in special_added_ids:
+    for idx in exact_added_ids:
         types_data[idx] = 4  # GGUF USER_DEFINED
 
     merges_data: list[int] = []

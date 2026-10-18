@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import ctypes
 import json
 import math
 import subprocess
@@ -515,6 +516,134 @@ def test_instella_style_zero_bos_and_one_eos_are_preserved(tmp_path: Path) -> No
     assert special["eos_token_id"] == 1
     assert special["pad_token_id"] == 1
     assert special["stop_token_ids"] == [1]
+
+
+def test_fast_bytelevel_postprocessor_overrides_stale_bos_flag(tmp_path: Path) -> None:
+    converter = _load_converter()
+    (tmp_path / "tokenizer.json").write_text(json.dumps({
+        "model": {"vocab": {"<bos>": 0, "hello": 1}},
+        "post_processor": {"type": "ByteLevel", "add_prefix_space": False},
+    }), encoding="utf-8")
+    (tmp_path / "tokenizer_config.json").write_text(json.dumps({
+        "tokenizer_class": "PreTrainedTokenizerFast",
+        "bos_token": "<bos>", "add_bos_token": True,
+    }), encoding="utf-8")
+    special = converter._special_tokens_from_tokenizer_config(tmp_path, "bpe")
+    assert special["bos_token_id"] == 0
+    assert special["add_bos_token"] is False
+
+
+def test_non_special_added_token_is_still_exact_matched(tmp_path: Path) -> None:
+    converter = _load_converter()
+    (tmp_path / "tokenizer.json").write_text(json.dumps({
+        "model": {"type": "BPE", "vocab": {"a": 0, "<|User|>": 1}, "merges": []},
+        "added_tokens": [{"id": 1, "content": "<|User|>", "special": False}],
+    }), encoding="utf-8")
+    offsets, strings, _merges, _scores, types = converter.load_tokenizer_json(
+        str(tmp_path / "tokenizer.json"), 2
+    )
+    assert strings[offsets[1]:].startswith(b"<|User|>\0")
+    assert types == [1, 4]
+
+
+@pytest.mark.parametrize("source", ["added_tokens", "added_tokens_decoder"])
+@pytest.mark.parametrize("property,value", [
+    ("single_word", True), ("lstrip", True), ("rstrip", True),
+])
+def test_unsupported_added_token_matching_fails_conversion(
+    tmp_path: Path, source: str, property: str, value: bool
+) -> None:
+    converter = _load_converter()
+    row = {"id": 4, "content": "cat", "special": False, property: value}
+    doc = {"model": {"type": "BPE", "vocab": {
+        "c": 0, "a": 1, "t": 2, "s": 3, "cat": 4,
+    }, "merges": []}, "added_tokens": [row] if source == "added_tokens" else []}
+    (tmp_path / "tokenizer.json").write_text(json.dumps(doc), encoding="utf-8")
+    if source == "added_tokens_decoder":
+        (tmp_path / "tokenizer_config.json").write_text(
+            json.dumps({"added_tokens_decoder": {"4": row}}), encoding="utf-8"
+        )
+    with pytest.raises(converter.load_tokenizer_json.__globals__["GGUFError"], match=property):
+        converter.load_tokenizer_json(str(tmp_path / "tokenizer.json"), 5)
+
+
+@pytest.mark.parametrize("source", ["added_tokens", "added_tokens_decoder"])
+def test_normalized_added_token_with_normalizer_fails_conversion(
+    tmp_path: Path, source: str
+) -> None:
+    converter = _load_converter()
+    row = {"id": 1, "content": "é", "normalized": True, "special": False}
+    doc = {"model": {"type": "BPE", "vocab": {"e": 0, "é": 1}, "merges": []},
+           "normalizer": {"type": "NFC"},
+           "added_tokens": [row] if source == "added_tokens" else []}
+    (tmp_path / "tokenizer.json").write_text(json.dumps(doc), encoding="utf-8")
+    if source == "added_tokens_decoder":
+        (tmp_path / "tokenizer_config.json").write_text(
+            json.dumps({"added_tokens_decoder": {"1": row}}), encoding="utf-8"
+        )
+    with pytest.raises(converter.load_tokenizer_json.__globals__["GGUFError"], match="normalization"):
+        converter.load_tokenizer_json(str(tmp_path / "tokenizer.json"), 2)
+
+
+def test_imported_raw_added_tokens_match_native_and_publisher(tmp_path: Path) -> None:
+    tokenizers = pytest.importorskip("tokenizers")
+    converter = _load_converter()
+    vocabulary = {token: i for i, token in enumerate(
+        ["<unk>", "c", "a", "t", "s", " ", "x", "<|User|>",
+         "<|UserA|>", "<|Uśer|>"])}
+    publisher = tokenizers.Tokenizer(tokenizers.models.BPE(
+        vocab=vocabulary, merges=[], unk_token="<unk>"))
+    for marker in ("<|User|>", "<|UserA|>", "<|Uśer|>"):
+        publisher.add_tokens([tokenizers.AddedToken(
+            marker, single_word=False, lstrip=False, rstrip=False,
+            normalized=False, special=False)])
+    tokenizer_path = tmp_path / "tokenizer.json"
+    publisher.save(str(tokenizer_path))
+    offsets, strings, merges, _scores, types = converter.load_tokenizer_json(
+        str(tokenizer_path), len(vocabulary))
+    assert merges == []
+    assert types[7:] == [4, 4, 4]
+
+    library = ROOT / "build" / "libckernel_tokenizer.so"
+    subprocess.run(["make", str(library.relative_to(ROOT))], cwd=ROOT,
+                   check=True, capture_output=True)
+    native = ctypes.CDLL(str(library))
+    native.ck_true_bpe_create.restype = ctypes.c_void_p
+    native.ck_true_bpe_free.argtypes = [ctypes.c_void_p]
+    native.ck_true_bpe_load_binary.argtypes = [
+        ctypes.c_void_p, ctypes.c_int, ctypes.POINTER(ctypes.c_int32),
+        ctypes.c_char_p, ctypes.c_int, ctypes.c_void_p]
+    native.ck_true_bpe_register_token_types.argtypes = [
+        ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t]
+    native.ck_true_bpe_encode.argtypes = [
+        ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int,
+        ctypes.POINTER(ctypes.c_int32), ctypes.c_int]
+
+    class Config(ctypes.Structure):
+        _fields_ = [("add_bos", ctypes.c_bool), ("add_eos", ctypes.c_bool),
+                    ("byte_fallback", ctypes.c_bool), ("space_prefix_style", ctypes.c_int),
+                    ("pretokenizer", ctypes.c_int)]
+
+    native.ck_true_bpe_set_config.argtypes = [ctypes.c_void_p, ctypes.POINTER(Config)]
+    handle = native.ck_true_bpe_create()
+    assert handle
+    try:
+        native.ck_true_bpe_set_config(handle, ctypes.byref(Config(
+            False, False, False, 3, 0)))
+        offs = (ctypes.c_int32 * len(offsets))(*offsets)
+        kinds = (ctypes.c_uint8 * len(types))(*types)
+        assert native.ck_true_bpe_load_binary(handle, len(offsets), offs,
+                                              strings, 0, None) == 0
+        assert native.ck_true_bpe_register_token_types(handle, kinds, len(types)) == 0
+        for prompt in ("<|User|>", "cat", "cats", "x<|User|> cat",
+                       "<|UserA|><|User|>", " <|Uśer|> "):
+            encoded = prompt.encode("utf-8")
+            ids = (ctypes.c_int32 * 64)()
+            count = native.ck_true_bpe_encode(handle, encoded, len(encoded), ids, 64)
+            assert count >= 0
+            assert list(ids[:count]) == publisher.encode(prompt).ids
+    finally:
+        native.ck_true_bpe_free(handle)
 
 
 def test_muse_style_message_boundary_is_not_a_stop(tmp_path: Path) -> None:

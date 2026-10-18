@@ -15,6 +15,8 @@ import ctypes
 import json
 import os
 import unicodedata
+import subprocess
+import tempfile
 from pathlib import Path
 
 # Try to load HuggingFace transformers
@@ -754,6 +756,38 @@ def test_imported_token_types():
         lib.ck_true_bpe_free(bpe)
 
 
+def test_large_imported_special_token_table():
+    """Publisher vocabularies can declare more than the old 512-token cap."""
+    bpe = lib.ck_true_bpe_create()
+    if not bpe:
+        return False
+    try:
+        special_count = 1100
+        for token_id in range(special_count):
+            token = f"<|s{token_id:04d}|>".encode("ascii")
+            if lib.ck_true_bpe_add_token(bpe, token, token_id, 0.0) != 0:
+                return False
+        if lib.ck_true_bpe_add_token(bpe, b"ordinary", special_count, 0.0) != 0:
+            return False
+        types = (ctypes.c_uint8 * (special_count + 1))(
+            *([4] * special_count + [1])
+        )
+        if lib.ck_true_bpe_register_token_types(bpe, types, special_count) != -1:
+            return False
+        if lib.ck_true_bpe_register_token_types(bpe, types, special_count + 1) != 0:
+            return False
+        out = (ctypes.c_int32 * 4)()
+        for token_id in (0, 511, 803, 1024, special_count - 1):
+            token = f"<|s{token_id:04d}|>".encode("ascii")
+            if lib.ck_true_bpe_encode(bpe, token, len(token), out, 4) != 1:
+                return False
+            if out[0] != token_id:
+                return False
+        return lib.ck_true_bpe_lookup(bpe, b"ordinary") == special_count
+    finally:
+        lib.ck_true_bpe_free(bpe)
+
+
 def test_explicit_bos_and_declared_space_prefix():
     bpe = lib.ck_true_bpe_create()
     if not bpe:
@@ -782,6 +816,71 @@ def test_explicit_bos_and_declared_space_prefix():
     finally:
         lib.ck_true_bpe_free(bpe)
 
+def test_added_token_allocation_failure_retry():
+    """Inject both native allocation failures without poisoning future adds."""
+    source = r'''
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <stddef.h>
+#include <stdlib.h>
+#include <string.h>
+static int fail_realloc, fail_strdup;
+void ck_test_fail_realloc(void) { fail_realloc = 1; }
+void ck_test_fail_strdup(void) { fail_strdup = 1; }
+void *realloc(void *ptr, size_t size) {
+    static void *(*real_realloc)(void *, size_t);
+    if (!real_realloc) real_realloc = dlsym(RTLD_NEXT, "realloc");
+    if (fail_realloc) { fail_realloc = 0; return NULL; }
+    return real_realloc(ptr, size);
+}
+char *strdup(const char *str) {
+    static char *(*real_strdup)(const char *);
+    if (!real_strdup) real_strdup = dlsym(RTLD_NEXT, "strdup");
+    if (fail_strdup) { fail_strdup = 0; return NULL; }
+    return real_strdup(str);
+}
+'''
+    driver = r'''
+#include "tokenizer/true_bpe.h"
+void ck_test_fail_realloc(void);
+void ck_test_fail_strdup(void);
+int main(void) {
+    CKTrueBPE *bpe = ck_true_bpe_create();
+    if (!bpe) return 1;
+    ck_test_fail_realloc();
+    if (ck_true_bpe_add_special_token(bpe, "first", 1) != -1) return 2;
+    if (ck_true_bpe_add_special_token(bpe, "first", 1) != 0) return 3;
+    ck_test_fail_strdup();
+    if (ck_true_bpe_add_special_token(bpe, "second", 2) != -1) return 4;
+    if (ck_true_bpe_add_special_token(bpe, "second", 2) != 0) return 5;
+    ck_true_bpe_free(bpe);
+    return 0;
+}
+'''
+    root = LIB_PATH.parent.parent
+    with tempfile.TemporaryDirectory() as tmp:
+        temp = Path(tmp)
+        (temp / "fault.c").write_text(source)
+        (temp / "driver.c").write_text(driver)
+        for command in (
+            ["cc", "-shared", "-fPIC", str(temp / "fault.c"), "-ldl", "-o", str(temp / "fault.so")],
+            ["cc", "-I", str(root / "include"), str(temp / "driver.c"),
+             "-L", str(LIB_PATH.parent), "-lckernel_tokenizer", str(temp / "fault.so"), "-l", "dl",
+             "-Wl,-rpath," + str(LIB_PATH.parent), "-o", str(temp / "driver")],
+        ):
+            result = subprocess.run(command, capture_output=True, text=True)
+            if result.returncode:
+                print(result.stderr)
+                return False
+        result = subprocess.run([str(temp / "driver")],
+                                env={**os.environ, "LD_PRELOAD": str(temp / "fault.so")},
+                                capture_output=True, text=True)
+        if result.returncode:
+            print(result.stderr, "fault driver exit", result.returncode)
+            return False
+    return True
+
+
 def main():
     print("="*60)
     print("True BPE Tokenizer Test: Special Tokens & Byte Decoding")
@@ -789,6 +888,8 @@ def main():
 
     results = []
     results.append(("Imported Token Types", test_imported_token_types()))
+    results.append(("Allocation Failure and Retry", test_added_token_allocation_failure_retry()))
+    results.append(("Large Imported Special Token Table", test_large_imported_special_token_table()))
     results.append(("Explicit BOS and Space Prefix", test_explicit_bos_and_declared_space_prefix()))
 
     # Run tests
