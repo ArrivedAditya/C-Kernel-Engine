@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import ctypes
 import copy
+import hashlib
 import json
 import math
 import struct
@@ -630,12 +631,53 @@ class BF16StorageProjectionTests(unittest.TestCase):
         exact = math.fsum(a * _bf16_to_float(b) for a, b in zip(x, w))
         self.assertEqual(_float_to_bf16(exact), fixture["expected_bf16_bits"])
         result = self._project(x, w, None, 1, 1, fixture["k"])
-        self.assertEqual(_float_to_bf16(result[0]), fixture["expected_bf16_bits"])
+        self.assertEqual(result[0], _bf16_to_float(fixture["expected_bf16_bits"]))
         x_array = (ctypes.c_float * len(x))(*x)
         w_array = (ctypes.c_uint16 * len(w))(*w)
         old_output = (ctypes.c_float * 1)(-999.0)
         self.legacy_project(x_array, w_array, None, old_output, 1, 1, fixture["k"])
         self.assertNotEqual(_float_to_bf16(old_output[0]), fixture["expected_bf16_bits"])
+
+    def test_captured_instella_kv_projection_rounding_boundary(self) -> None:
+        fixture_dir = ROOT / "tests" / "fixtures" / "instella_kvb1"
+        fixture_bytes = (fixture_dir / "captured_projection.json").read_bytes()
+        provenance = json.loads((fixture_dir / "provenance.json").read_text())
+        self.assertEqual(hashlib.sha256(fixture_bytes).hexdigest(),
+                         provenance["fixture_sha256"])
+        fixture = json.loads(fixture_bytes)
+        x = [_bf16_to_float(bits) for bits in fixture["input_bf16_bits"]]
+        weights = fixture["weight_bf16_bits"]
+        self.assertEqual(len(x), fixture["k"])
+        self.assertEqual(len(weights), fixture["k"])
+
+        # The publisher's BF16 matmul lands on the upper neighbor here. The
+        # exact BF16-operand dot is just below the midpoint, so the resolved
+        # accurate-storage provider must retain the lower neighbor. This is
+        # an arithmetic verdict, not a full-model parity assertion.
+        exact = math.fsum(a * _bf16_to_float(b) for a, b in zip(x, weights))
+        lower = fixture["cke_bf16_bits"]
+        upper = fixture["publisher_bf16_bits"]
+        midpoint = (_bf16_to_float(lower) + _bf16_to_float(upper)) / 2
+        self.assertEqual(upper, lower + 1)
+        self.assertLess(exact, midpoint)
+        self.assertGreater(midpoint - exact, 0)
+        self.assertEqual(_float_to_bf16(exact), lower)
+        self.assertNotEqual(exact, _bf16_to_float(lower))
+        self.assertEqual(self._project(
+            x, weights, None, 1, 1, fixture["k"])[0], _bf16_to_float(lower))
+
+        # A one-ULP source-weight perturbation crosses the boundary. This
+        # ensures the test really exercises the captured operands, rather
+        # than accepting either adjacent BF16 output unconditionally.
+        changed = weights.copy()
+        changed[fixture["perturb_weight_index"]] += 1
+        changed_exact = math.fsum(
+            a * _bf16_to_float(b) for a, b in zip(x, changed)
+        )
+        self.assertGreater(changed_exact, midpoint)
+        self.assertEqual(self._project(
+            x, changed, None, 1, 1, fixture["k"])[0],
+            _bf16_to_float(_float_to_bf16(changed_exact)))
 
     def test_odd_width_bias_and_two_rows_match_independent_sum(self) -> None:
         k, n, m = 7, 3, 2
@@ -654,8 +696,8 @@ class BF16StorageProjectionTests(unittest.TestCase):
                     for i in range(k)
                 ) + bias[col]
                 self.assertEqual(
-                    _float_to_bf16(actual[row * n + col]),
-                    _float_to_bf16(exact),
+                    actual[row * n + col],
+                    _bf16_to_float(_float_to_bf16(exact)),
                 )
 
     def test_invalid_width_does_not_publish_output(self) -> None:

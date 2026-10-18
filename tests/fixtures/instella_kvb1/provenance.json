@@ -1,0 +1,27 @@
+{
+  "schema": "cke.instella.kvb_projection_capture.v1",
+  "publisher_revision": "74d28c1a8425583d7805b58e2caa9c13d6b62929",
+  "publisher_config_sha256": "d5e1f9f410a835a86a61648a0f246f656181b2724ea97826f40b63f261c9c62b",
+  "capture_script": "version/v8/scripts/xray_decoder_pytorch_v8.py",
+  "capture_script_sha256": "fc6d1d01a3af79a6a3fee481f6ac91d4dffb2a50739df0573f83cbe87f9a18a7",
+  "capture_args": {
+    "token_ids": [
+      1
+    ],
+    "threads": 8,
+    "mla_replay_layer": 1
+  },
+  "source_run": "instella-pointwise-bf16-20261018/xray-prefix-1",
+  "source_weight": "model.layers.1.self_attn.kv_b_proj.weight",
+  "source_weight_row": 3046,
+  "input_checkpoint": "decoder.layer.1.mla_kv_norm",
+  "output_checkpoint": "decoder.layer.1.mla_value",
+  "fixture_sha256": "b62d87eab9db8a8cbdf401b54d8700ac1d0b8295c5587b50163b17e4955cdb31",
+  "pytorch_version": "2.12.1+cpu",
+  "transformers_version": "5.13.0",
+  "safetensors_version": "0.8.0",
+  "arithmetic_verdict": "Captured CK and publisher inputs match exactly. One BF16 value differs by one ULP. The exact BF16-operand dot lies below the midpoint; CKE accurate storage rounds down and publisher BF16 matmul rounds up. Identical-operand attention replay is exact. Full-model numerical parity remains unresolved.",
+  "model_library_file_sha256": "3107a50b96bcfe6789899a43708383341fc7c14e810d75731d4db0ab07170291",
+  "engine_library_file_sha256": "d8a92a36aab579947e075ae390ef8b511b67f6d0f84287b0205496e1fa12ba6f",
+  "source_weight_shard_sha256": "3e9c9f4613273ec24c3b1118242376647c00063726ad935ec92bc0ece209e58c"
+}
