@@ -24,6 +24,10 @@
 #include <immintrin.h>
 #endif
 
+#if defined(__ARM_NEON) || defined(__aarch64__)
+#include <arm_neon.h>
+#endif
+
 #if defined(__AVX2__)
 static inline __m256 rmsnorm_square_avx2_no_contract(__m256 values)
 {
@@ -77,6 +81,19 @@ static inline float rmsnorm_div_f32_ordered(float numerator, float denominator)
     volatile float ordered_denominator = denominator;
     return ordered_numerator / ordered_denominator;
 #endif
+}
+#endif
+
+/* Portable NEON horizontal sum (no AArch64-only vaddvq_f32): folds the four
+ * lanes pairwise as (l0+l2) + (l1+l3). This is one specific reassociation of
+ * the scalar ascending sum; the numerical contract is tolerance-based, the
+ * same as the SSE/AVX branches above. */
+#if defined(__ARM_NEON) || defined(__aarch64__)
+static inline float hsum128_ps_rmsnorm(float32x4_t v) {
+    const float32x2_t lo = vget_low_f32(v);
+    const float32x2_t hi = vget_high_f32(v);
+    const float32x2_t sum2 = vadd_f32(lo, hi);
+    return vget_lane_f32(vpadd_f32(sum2, sum2), 0);
 }
 #endif
 
@@ -649,6 +666,45 @@ void rmsnorm_forward_strided_f32(const float *input,
             y[d] = x[d] * rstd * gamma[d];
         }
 
+#elif defined(__ARM_NEON) || defined(__aarch64__)
+        /* NEON: 4 floats at a time. The sum-of-squares is reassociated
+         * through four lanes (FMA accumulation, like the AVX-512 branch),
+         * so results differ from the ascending scalar order by FP32
+         * reassociation noise only; CK_RMSNORM_EXACT / strict parity mode
+         * above still selects the scalar reference. */
+        float32x4_t sum_sq_vec = vdupq_n_f32(0.0f);
+        int d = 0;
+
+        for (; d + 4 <= D; d += 4) {
+            const float32x4_t xv = vld1q_f32(&x[d]);
+            sum_sq_vec = vfmaq_f32(sum_sq_vec, xv, xv);
+        }
+        float sum_sq = hsum128_ps_rmsnorm(sum_sq_vec);
+
+        for (; d < D; ++d) {
+            sum_sq += x[d] * x[d];
+        }
+
+        float mean_sq = sum_sq / (float)D;
+        float rstd = 1.0f / sqrtf(mean_sq + eps);
+        if (rstd_cache) {
+            rstd_cache[t] = rstd;
+        }
+
+        const float32x4_t rstd_vec = vdupq_n_f32(rstd);
+        d = 0;
+        for (; d + 4 <= D; d += 4) {
+            const float32x4_t xv = vld1q_f32(&x[d]);
+            const float32x4_t gv = vld1q_f32(&gamma[d]);
+            /* Keep the two separate rounding boundaries of the scalar tail:
+             * x_hat = x * rstd, then y = x_hat * gamma (no FMA fusion). */
+            const float32x4_t x_hat = vmulq_f32(xv, rstd_vec);
+            vst1q_f32(&y[d], vmulq_f32(x_hat, gv));
+        }
+        for (; d < D; ++d) {
+            y[d] = x[d] * rstd * gamma[d];
+        }
+
 #else
         // Scalar fallback
         float sum_sq = 0.0f;
@@ -796,6 +852,26 @@ void gemma4_v_norm_forward(const float *input,
         tokens * num_kv_heads, head_dim, head_dim, eps);
 }
 
+
+/* Truthful provider-name helper (same pattern as ck_q4_k_q8_k_provider_name).
+ * Reports the ISA path rmsnorm_forward / rmsnorm_forward_strided_f32 will
+ * actually execute, including the strict/exact escape hatches. */
+const char *ck_rmsnorm_provider_name(void)
+{
+    const char *exact_env = getenv("CK_RMSNORM_EXACT");
+    if (ck_strict_parity_enabled() || (exact_env && atoi(exact_env) != 0)) {
+        return "rmsnorm_strict_scalar";
+    }
+#if defined(__AVX512F__)
+    return "rmsnorm_avx512";
+#elif defined(__AVX__)
+    return "rmsnorm_avx";
+#elif defined(__ARM_NEON) || defined(__aarch64__)
+    return "rmsnorm_neon";
+#else
+    return "rmsnorm_scalar";
+#endif
+}
 
 /**
  * RMSNorm backward pass
