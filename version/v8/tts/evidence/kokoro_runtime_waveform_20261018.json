@@ -1,0 +1,85 @@
+{
+  "scope": "13-ID captured-Gaussian diagnostic WAV; connected numerical parity remains FAIL",
+  "text": "Hello there.",
+  "voice": "af_heart",
+  "voice_row": 10,
+  "samples": 36600,
+  "sample_rate": 24000,
+  "library_sha256": "c7df600b083caf2f40dab76f22da6c195e9592a1ec37753874a7326b2700a2b3",
+  "package_sha256": "5c3e477b0881e3a72c60bea4b49fe289ea7dcfb3ecaecd5440b90e6000a9c470",
+  "wav_sha256": "f006465cd9b9bcc2d849f62ae1cdda59b98ba6acdbc2f1be6d1c94ad13dace7f",
+  "model_pin": "e8a90b41091c3c5b70375c47cc959799920fa4d6",
+  "code_pin": "dfb907a02bba8152ca444717ca5d78747ccb4bec",
+  "segments": 589,
+  "reproduction_command": "./native-kokoro-runtime-wav prepared-captured-noise.cktts hello-there-13-diagnostic.wav",
+  "schema": "cke.kokoro.runtime_waveform_diagnostic.v1",
+  "generated_entry": "ck_kokoro_runtime_waveform_bounded",
+  "circuit": "version/v8/circuits/kokoro_runtime_waveform_bounded.json",
+  "retained_wav": "tests/fixtures/tts/kokoro_runtime_waveform_hello_there_13_diagnostic.wav",
+  "retained_package_scope": "offline asset-backed artifact; package contains 580 model weights and nine external input buffers, no neural intermediates",
+  "input_ids": [
+    0,
+    50,
+    83,
+    54,
+    156,
+    31,
+    16,
+    81,
+    156,
+    86,
+    123,
+    4,
+    0
+  ],
+  "noise_contract": "captured Gaussian for diagnostic arithmetic isolation; native RNG not certified in this variable-length circuit",
+  "connected_waveform_numerical": {
+    "status": "fail",
+    "oracle": "pinned PyTorch 2.8 direct full-model capture",
+    "max_abs": 0.0020952410995960236,
+    "rmse": 8.145433332437684e-05,
+    "ceiling": 0.0002,
+    "worst_index": 11017
+  },
+  "execution_status": "pass",
+  "pcm_comparison": "native WAV PCM16 bytes equal conversion of generated FP32 samples",
+  "host_source": "version/v8/tts/native_kokoro_wav_host.c",
+  "test_command": "python3 -m unittest tests.test_v8_kokoro_runtime_waveform",
+  "note": "Library hash is the on-disk artifact identified through the resolved symbol at capture time, not an embedded runtime build identity.",
+  "length_cases": [
+    {
+      "phoneme_ids": 8,
+      "af_heart_row": 5,
+      "valid_frames": 6481,
+      "valid_samples": 32400,
+      "waveform_max_abs": 0.010312862694263458,
+      "waveform_rmse": 0.00033829447736022074,
+      "numerical_status": "fail"
+    },
+    {
+      "phoneme_ids": 13,
+      "af_heart_row": 10,
+      "valid_frames": 7321,
+      "valid_samples": 36600,
+      "waveform_max_abs": 0.0020952410995960236,
+      "waveform_rmse": 8.145433332437684e-05,
+      "numerical_status": "fail"
+    },
+    {
+      "phoneme_ids": 36,
+      "af_heart_row": 33,
+      "valid_frames": 12361,
+      "valid_samples": 61800,
+      "waveform_max_abs": 0.007651925086975098,
+      "waveform_rmse": 0.00024222997700931208,
+      "numerical_status": "fail"
+    }
+  ],
+  "numerical_localization": {
+    "identical_input_reference": "tests.test_v8_kokoro_generator_stage1_pool.KokoroGeneratorStage1PoolTest.test_circuit_selection_and_direct_full_model_parity",
+    "identical_input_result": "PASS at 36 IDs: second residual pool final activation <=2e-4 versus pinned full-model capture",
+    "connected_36_join_max_abs": 0.040740132331848145,
+    "connected_36_pool_final_max_abs": 0.30070245265960693,
+    "interpretation": "The residual pool passes its identical-input contract; the larger connected error is propagated and may be amplified from its divergent upstream join. This does not locate the first upstream numerical mismatch or certify waveform quality."
+  }
+}

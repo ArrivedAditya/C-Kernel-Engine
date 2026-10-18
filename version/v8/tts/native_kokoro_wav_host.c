@@ -2,9 +2,10 @@
 #ifdef CK_TTS_EXPECTED_LIBRARY_SHA256
 #define _GNU_SOURCE
 #endif
-/* Fixed-utterance native Kokoro diagnostic host. The generated model owns
- * every neural operation; this host loads caller-owned storage, optionally
- * fills request-local excitation, and writes WAV. */
+/* Native Kokoro diagnostic host. The generated model owns every neural
+ * operation; this host loads caller-owned storage, optionally fills
+ * request-local excitation, and writes only the returned valid WAV samples.
+ * CK_TTS_RUNTIME_WAVEFORM selects the bounded runtime-length entry ABI. */
 #include "ckernel_tts.h"
 #include <errno.h>
 #include <fcntl.h>
@@ -16,6 +17,13 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#ifdef CK_TTS_RUNTIME_WAVEFORM
+#define CK_TTS_GENERATED_ENTRY ck_kokoro_runtime_waveform_bounded
+#define CK_TTS_GENERATED_SYMBOL "ck_kokoro_runtime_waveform_bounded"
+#else
+#define CK_TTS_GENERATED_ENTRY ck_kokoro_waveform_bounded
+#define CK_TTS_GENERATED_SYMBOL "ck_kokoro_waveform_bounded"
+#endif
 #ifdef CK_TTS_EXPECTED_LIBRARY_SHA256
 #include <dlfcn.h>
 #include <openssl/evp.h>
@@ -24,7 +32,7 @@
  * digest identifies its on-disk artifact at capture time; this is not an
  * embedded build identity or proof against concurrent file replacement. */
 static int verify_loaded_library(void) {
-    void *symbol = dlsym(RTLD_DEFAULT, "ck_kokoro_waveform_bounded");
+    void *symbol = dlsym(RTLD_DEFAULT, CK_TTS_GENERATED_SYMBOL);
     Dl_info info;
     if (!symbol || !dladdr(symbol, &info) || !info.dli_fname) return 0;
     FILE *stream = fopen(info.dli_fname, "rb");
@@ -60,8 +68,13 @@ static int verify_loaded_library(void) {
 #define CK_TTS_COMPILED_TOKEN_COUNT 0
 #endif
 
-extern int ck_kokoro_waveform_bounded(uint8_t *, size_t, int32_t *, int32_t *,
+#ifdef CK_TTS_RUNTIME_WAVEFORM
+extern int CK_TTS_GENERATED_ENTRY(uint8_t *, size_t, int32_t *, int32_t *,
+    int32_t *, int32_t *, int32_t *, int32_t *, int32_t *, int32_t *, int32_t *);
+#else
+extern int CK_TTS_GENERATED_ENTRY(uint8_t *, size_t, int32_t *, int32_t *,
     int32_t *, int32_t *, int32_t *, int32_t *, int32_t *);
+#endif
 
 static int read_u32(FILE *stream, uint32_t *value) {
     unsigned char bytes[4];
@@ -300,20 +313,29 @@ int main(int argc, char **argv) {
             seed, 0) != CK_AUDIO_EXTENT_OK) {
         free(arena); return 6;
     }
-    int32_t lengths[7] = {-1, -1, -1, -1, -1, -1, -1};
-    const int status = ck_kokoro_waveform_bounded(arena, arena_bytes,
+    int32_t lengths[9] = {-1, -1, -1, -1, -1, -1, -1, -1, -1};
+    const int status = CK_TTS_GENERATED_ENTRY(arena, arena_bytes,
         &lengths[0], &lengths[1], &lengths[2], &lengths[3],
-        &lengths[4], &lengths[5], &lengths[6]);
-    if (status || lengths[3] <= 0 ||
-        (uint64_t)lengths[3] > waveform_capacity ||
-        lengths[4] <= 1 ||
-        (int64_t)(lengths[4] - 1) * 5 != lengths[3]) {
+        &lengths[4], &lengths[5], &lengths[6]
+#ifdef CK_TTS_RUNTIME_WAVEFORM
+        , &lengths[7], &lengths[8]
+#endif
+        );
+#ifdef CK_TTS_RUNTIME_WAVEFORM
+    const int sample_index = 5, frame_index = 6;
+#else
+    const int sample_index = 3, frame_index = 4;
+#endif
+    if (status || lengths[sample_index] <= 0 ||
+        (uint64_t)lengths[sample_index] > waveform_capacity ||
+        lengths[frame_index] <= 1 ||
+        (int64_t)(lengths[frame_index] - 1) * 5 != lengths[sample_index]) {
         free(arena); return 7;
     }
     const float *waveform = (const float *)(arena + (size_t)waveform_offset);
-    okay = write_wav(argv[2], waveform, (size_t)lengths[3]);
+    okay = write_wav(argv[2], waveform, (size_t)lengths[sample_index]);
     free(arena);
     if (!okay) return 8;
-    printf("wrote %d samples at 24000 Hz\n", lengths[3]);
+    printf("wrote %d samples at 24000 Hz\n", lengths[sample_index]);
     return 0;
 }

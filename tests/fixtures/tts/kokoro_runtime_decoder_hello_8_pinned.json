@@ -1,6 +1,6 @@
 {
-  "schema": "cke.kokoro.runtime_decoder_hello_8.v9",
-  "scope": "direct pinned full-model eight-ID decoder through second generator join",
+  "schema": "cke.kokoro.runtime_decoder_hello_8.v11",
+  "scope": "direct pinned full-model 8-ID decoder through waveform",
   "model_pin": "e8a90b41091c3c5b70375c47cc959799920fa4d6",
   "code_pin": "dfb907a02bba8152ca444717ca5d78747ccb4bec",
   "asset_sha256": {
@@ -49,8 +49,13 @@
     "decoder_generator_reflection_pad": "c64584498d245b1128e93347c6c83247bba65c51a83cd4e9d3411f4966a996d2",
     "decoder_generator_noise_convs_1": "fa74a2097b75747faf8d3c57948452b4e032b34732a33b91803f88d914643ac6",
     "decoder_generator_noise_res_1": "382707f744144dbbd367c33a028c9eccca2b904c1ba6e0f8d3eff833a9fe85c2",
-    "decoder_generator_stage1_join": "5f6e5909517dbddc22b5e9c599974999a850de9c38e14bc21a371edb2e21b17d"
+    "decoder_generator_stage1_join": "5f6e5909517dbddc22b5e9c599974999a850de9c38e14bc21a371edb2e21b17d",
+    "decoder_generator_stage1_final_activation": "916eed6e984462005d264d1b564b1deb5a0f222de293844ae366af79c57c5350",
+    "decoder_generator_conv_post": "4f6b0f907b69b27d53aab08c7eb061ef44e3ad28ffb4950fc3c7acafa5c017d3",
+    "istft_magnitude": "fb475d59b8fb982dab8f8d713f763896c2a713edb632bbb07e5bb355c472256c",
+    "istft_phase": "d85d0a9f576e847f6ecb02256913ce104f85ccf2961052eeb28ad682d25c8af2",
+    "waveform_f32": "687c35b13aa96fcd86dd59b55060bd85f9bb04004fbcbd9cdabc1dc9eae31cbe"
   },
-  "fixture_sha256": "b6bf4843c945f488e9ef3c4ff33618d638d4e9d390346280d7b28e18f0f46f3e",
-  "reproduction_command": "python version/v8/tts/reference/capture_kokoro_v1.py --model-dir /path/to/pinned/kokoro --output-dir /tmp/hello --text 'Hello.'; python version/v8/tts/reference/build_kokoro_runtime_decoder_hello_fixture.py --capture /tmp/hello"
+  "fixture_sha256": "7e8c3b0570c1631c329d9d939a434fd0c0753dc72a323e2dba535f8680c0aed4",
+  "reproduction_command": "python version/v8/tts/reference/capture_kokoro_v1.py --model-dir /path/to/pinned/kokoro --output-dir /tmp/capture --text 'Hello.'; python version/v8/tts/reference/build_kokoro_runtime_decoder_hello_fixture.py --capture /tmp/capture --text 'Hello.' --tokens 8 --output /data/cke/worktrees/v8-kokoro-runtime-stage1-pool-20261018/tests/fixtures/tts/kokoro_runtime_decoder_hello_8_pinned.npz"
 }

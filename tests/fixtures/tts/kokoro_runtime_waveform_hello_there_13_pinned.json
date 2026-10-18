@@ -1,0 +1,39 @@
+{
+  "schema": "cke.kokoro.runtime_waveform_13.v1",
+  "scope": "direct pinned full-model 13-ID decoder through waveform",
+  "model_pin": "e8a90b41091c3c5b70375c47cc959799920fa4d6",
+  "code_pin": "dfb907a02bba8152ca444717ca5d78747ccb4bec",
+  "asset_sha256": {
+    "config.json": "5abb01e2403b072bf03d04fde160443e209d7a0dad49a423be15196b9b43c17f",
+    "kokoro-v1_0.pth": "496dba118d1a58f5f3db2efc88dbdc216e0483fc89fe6e47ee1f2c53f18ad1e4",
+    "voices/af_heart.pt": "0ab5709b8ffab19bfd849cd11d98f75b60af7733253ad0d67b12382a102cb4ff"
+  },
+  "environment": {
+    "kokoro": "0.9.4",
+    "misaki": "0.9.4",
+    "torch": "2.8.0+cpu",
+    "transformers": "5.17.0",
+    "spacy": "3.8.16",
+    "num2words": "0.5.14",
+    "phonemizer-fork": "3.3.2",
+    "espeakng-loader": "0.2.4"
+  },
+  "voice_row_index": 10,
+  "valid_frames": 61,
+  "upsampled_frames": 122,
+  "source_manifest_sha256": "abede8905eda32667265e0f09873556af8e3b8222b90c42fee8e10057228d687",
+  "array_sha256": {
+    "word_ids": "b2efe8b4d720b82d3d123fc3639edccbf1fc3520aee770961d9e617399af5e55",
+    "predictor_style": "8a3a4d4081f2b8afcc43c7d277ab250d24b662b43225d7cb825895331fbe5fd0",
+    "decoder_style": "b17d4d0da6c04626e439c989224f4408b5aa1fc214e8dcea53eabadf20bf4993",
+    "generator_harmonic_gaussian": "eb93215478773b42f648cc57e6457bbcb46c5ab5c3f65ca5e3f8a353bbb7ef58",
+    "decoder_generator_stage1_join": "f0c4b411f8185601a25c4c923377c6f37f295ebac01bdad76a954bb91ce1727a",
+    "decoder_generator_stage1_final_activation": "5df0b02b0791251e85b03959dc72d60e8c36ce12c07ac16b488625165418c889",
+    "decoder_generator_conv_post": "d05ec43a4bd52ff4f5fb79ca50a6e8cb566208bdc8a153de30f576b2fa15ea23",
+    "istft_magnitude": "62432781fbda977f330412ca2a2bd953453d0d2627c04adb88d81ec4261e612f",
+    "istft_phase": "94859dd9111fbac9b167a2859a943ae9ba39360e7c840ea1054a416de63de628",
+    "waveform_f32": "408a7f6c52542cc5de94c2ab25e9145fc03ac479d83611f7454c32f411d15534"
+  },
+  "fixture_sha256": "c5db7eab69a2cf37e31dd1e027a177e84babd500152cc279dfbc3ee9f896bde8",
+  "reproduction_command": "python version/v8/tts/reference/capture_kokoro_v1.py --model-dir /path/to/pinned/kokoro --output-dir /tmp/capture --text 'Hello there.'; python version/v8/tts/reference/build_kokoro_runtime_decoder_hello_fixture.py --capture /tmp/capture --text 'Hello there.' --tokens 13 --waveform-only --output tests/fixtures/tts/kokoro_runtime_waveform_hello_there_13_pinned.npz"
+}
