@@ -163,6 +163,34 @@
         "axis_names": ["token", "head", "feature"]
       }
     },
+    "decoder.mla_attention_bf16_phases": {
+      "op": "mla_attention",
+      "template_ops": [
+        "mla_attention"
+      ],
+      "phases": {
+        "prefill": {
+          "contract_id": "mla_attention_eager_bf16_phases_fp32_carrier_v1",
+          "validation": "validated",
+          "evidence": "tests/test_v8_instella_mla_bf16_phases.py captured publisher layer-11 prefill and parallel parity"
+        },
+        "decode": {
+          "contract_id": "mla_attention_eager_bf16_phases_fp32_carrier_v1",
+          "validation": "validated",
+          "evidence": "tests/test_v8_instella_mla_bf16_phases.py per-prefix decode parity and bounded-cache checks"
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.mla_attention.output",
+        "producer": "mla_attention",
+        "logical_layout": "token_head_feature",
+        "axis_names": [
+          "token",
+          "head",
+          "feature"
+        ]
+      }
+    },
     "decoder.projections_bf16_storage": {
       "op": "gemm",
       "template_ops": [
@@ -203,8 +231,8 @@
     "partial_rope_concat": "deepseek_mla_partial_rope_concat_packed_bf16_storage",
     "mla_kv_cache_store": "deepseek_mla_kv_cache_store_f32",
     "mla_kv_cache_batch_store": "deepseek_mla_kv_cache_batch_store_f32",
-    "mla_attention_prefill": "deepseek_mla_attention_f32",
-    "mla_attention_decode": "deepseek_mla_attention_decode_f32",
+    "mla_attention_prefill": "deepseek_mla_attention_bf16_phases",
+    "mla_attention_decode": "deepseek_mla_attention_decode_bf16_phases",
     "moe_router": "gemm_nt_fp32_exact",
     "group_limited_topk_router": "group_limited_topk_router_sigmoid_f32",
     "moe_swiglu_expert": "moe_swiglu_expert_forward_bf16",

@@ -4483,6 +4483,46 @@
       "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},
       "position_transform": null,
       "description": "Argmax over nonempty finite FP32 values with NumPy-compatible first-index tie selection."
+    },
+    "mla_attention_eager_bf16_phases_fp32_carrier_v1": {
+      "operator_family": "attention",
+      "status": "validated",
+      "storage": {
+        "input": "fp32",
+        "weight": "none",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "bf16_rne",
+        "weight": "none",
+        "accumulator": "fp32",
+        "contraction": "disabled",
+        "evaluation_order": "ascending_feature_qk_then_fp32_softmax_then_ascending_context_pv"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "input_load",
+          "partial_store",
+          "activation_intermediate_store",
+          "softmax_probability_store",
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "composite",
+        "order": "stage_ordered",
+        "partial_accumulator": "fp32",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "independent_rows",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Causal MLA: BF16-RNE Q/K/V operands carried in FP32; FP32 ascending QK accumulation stored as BF16 before scaling; scaled score stored as BF16; FP32 max/exp/sum/normalize softmax; probability stored as BF16; FP32 ascending probability-V accumulation stored as BF16. Prefill uses current chunk, decode uses one bounded cache prefix. No cross-row arithmetic reduction."
     }
   }
 }

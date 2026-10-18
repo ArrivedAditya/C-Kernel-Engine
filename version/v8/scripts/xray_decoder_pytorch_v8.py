@@ -882,6 +882,16 @@ def _load_full_mla_tensor(
     return np.ascontiguousarray(values.reshape(shape))
 
 
+def _mla_replay_function_name(kernel_id: str) -> str:
+    replay_functions = {
+        "deepseek_mla_attention_f32": "deepseek_mla_attention_f32_workspace",
+        "deepseek_mla_attention_bf16_phases": "deepseek_mla_attention_bf16_phases_workspace",
+    }
+    if kernel_id not in replay_functions:
+        raise RuntimeError(f"no same-input MLA replay for selected provider {kernel_id!r}")
+    return replay_functions[kernel_id]
+
+
 def replay_mla_same_input(
     runtime: Path,
     call_ir: dict[str, Any],
@@ -912,7 +922,9 @@ def replay_mla_same_input(
     )
 
     library = ctypes.CDLL(str((runtime / "libckernel_engine.so").resolve()))
-    function = library.deepseek_mla_attention_f32_workspace
+    kernel_id = operation.get("call_abi", {}).get("kernel_id")
+    replay_function = _mla_replay_function_name(kernel_id)
+    function = getattr(library, replay_function)
     float_pointer = ctypes.POINTER(ctypes.c_float)
     function.argtypes = [
         float_pointer,
@@ -976,7 +988,8 @@ def replay_mla_same_input(
     axes = ["token", "head", "feature"]
     return {
         "layer": layer,
-        "kernel_id": operation.get("call_abi", {}).get("kernel_id"),
+        "kernel_id": kernel_id,
+        "replay_function": replay_function,
         "function": operation.get("function"),
         "attention_scale": scale,
         "shape": [token_count, heads, value_width],

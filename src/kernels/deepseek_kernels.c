@@ -726,7 +726,8 @@ static void ds_mla_attention_f32_query_range(const float *q,
                                              float *scores,
                                              int query_begin,
                                              int query_end,
-                                             int query_step)
+                                             int query_step,
+                                             int bf16_phases)
 {
     for (int query = query_begin; query < query_end; query += query_step) {
         const int t = query / num_heads;
@@ -739,9 +740,15 @@ static void ds_mla_attention_f32_query_range(const float *q,
             const float *k_vec = k + ds_mla_thd_idx(j, kv_h, 0, num_kv_heads, qk_head_dim);
             float dot = 0.0f;
             for (int d = 0; d < qk_head_dim; ++d) {
-                dot += q_vec[d] * k_vec[d];
+                dot += bf16_phases
+                    ? ds_mla_bf16_round(q_vec[d]) * ds_mla_bf16_round(k_vec[d])
+                    : q_vec[d] * k_vec[d];
             }
-            const float score = dot * scale;
+            /* Eager BF16 attention stores the QK matmul result before scaling,
+             * then stores the scaled score. Keep the FP32 provider unchanged. */
+            const float score = bf16_phases
+                ? ds_mla_bf16_round(ds_mla_bf16_round(dot) * scale)
+                : dot * scale;
             scores[j] = score;
             if (score > max_score) max_score = score;
         }
@@ -756,13 +763,38 @@ static void ds_mla_attention_f32_query_range(const float *q,
         float *out = output + ((size_t)t * (size_t)num_heads + (size_t)h) * (size_t)v_head_dim;
         for (int d = 0; d < v_head_dim; ++d) out[d] = 0.0f;
         for (int j = 0; j <= t; ++j) {
-            const float weight = scores[j] * inv_sum;
+            const float weight = bf16_phases
+                ? ds_mla_bf16_round(scores[j] * inv_sum)
+                : scores[j] * inv_sum;
             const float *v_vec = v + ds_mla_thd_idx(j, kv_h, 0, num_kv_heads, v_head_dim);
             for (int d = 0; d < v_head_dim; ++d) {
-                out[d] += weight * v_vec[d];
+                out[d] += weight * (bf16_phases
+                    ? ds_mla_bf16_round(v_vec[d]) : v_vec[d]);
+            }
+        }
+        if (bf16_phases) {
+            for (int d = 0; d < v_head_dim; ++d) {
+                out[d] = ds_mla_bf16_round(out[d]);
             }
         }
     }
+}
+
+static int ds_mla_prefill_valid(const float *q, const float *k,
+                                const float *v, float *output,
+                                int num_heads, int num_kv_heads,
+                                int num_tokens, int qk_head_dim,
+                                int v_head_dim, float scale,
+                                float *scores, size_t scores_bytes)
+{
+    return q && k && v && output && scores && num_heads > 0 &&
+        num_kv_heads > 0 && num_heads >= num_kv_heads &&
+        num_heads % num_kv_heads == 0 && num_tokens > 0 &&
+        qk_head_dim > 0 && v_head_dim > 0 &&
+        num_tokens <= INT_MAX / num_heads &&
+        (size_t)num_tokens <= SIZE_MAX / sizeof(float) &&
+        scores_bytes >= (size_t)num_tokens * sizeof(float) &&
+        isfinite(scale) && scale > 0.0f;
 }
 
 void deepseek_mla_attention_f32_workspace(const float *q,
@@ -778,21 +810,29 @@ void deepseek_mla_attention_f32_workspace(const float *q,
                                           float *scores,
                                           size_t scores_bytes)
 {
-    if (!q || !k || !v || !output || num_heads <= 0 || num_kv_heads <= 0 ||
-        num_tokens <= 0 || qk_head_dim <= 0 || v_head_dim <= 0 ||
-        num_tokens > INT_MAX / num_heads ||
-        !isfinite(scale) || scale <= 0.0f) {
-        return;
-    }
-    if ((size_t)num_tokens > SIZE_MAX / sizeof(float) || !scores ||
-        scores_bytes < (size_t)num_tokens * sizeof(float)) {
-        return;
-    }
+    if (!ds_mla_prefill_valid(q, k, v, output, num_heads, num_kv_heads,
+            num_tokens, qk_head_dim, v_head_dim, scale, scores,
+            scores_bytes)) return;
 
     ds_mla_attention_f32_query_range(
         q, k, v, output, num_heads, num_kv_heads, num_tokens,
         qk_head_dim, v_head_dim, scale, scores,
-        0, num_tokens * num_heads, 1);
+        0, num_tokens * num_heads, 1, 0);
+}
+
+void deepseek_mla_attention_bf16_phases_workspace(
+    const float *q, const float *k, const float *v, float *output,
+    int num_heads, int num_kv_heads, int num_tokens,
+    int qk_head_dim, int v_head_dim, float scale,
+    float *scores, size_t scores_bytes)
+{
+    if (!ds_mla_prefill_valid(q, k, v, output, num_heads, num_kv_heads,
+            num_tokens, qk_head_dim, v_head_dim, scale, scores,
+            scores_bytes)) return;
+    ds_mla_attention_f32_query_range(
+        q, k, v, output, num_heads, num_kv_heads, num_tokens,
+        qk_head_dim, v_head_dim, scale, scores,
+        0, num_tokens * num_heads, 1, 1);
 }
 
 typedef struct {
@@ -807,6 +847,7 @@ typedef struct {
     int v_head_dim;
     float scale;
     float *scores;
+    int bf16_phases;
     _Alignas(CK_CACHE_LINE) atomic_int next_token;
 } ds_mla_attention_f32_args_t;
 
@@ -832,11 +873,11 @@ static void ds_mla_attention_f32_work(int ith, int nth, void *opaque)
             thread_scores,
             token * args->num_heads,
             (token + 1) * args->num_heads,
-            1);
+            1, args->bf16_phases);
     }
 }
 
-void deepseek_mla_attention_f32_parallel_dispatch(
+static void ds_mla_attention_parallel_dispatch(
     const float *q,
     const float *k,
     const float *v,
@@ -848,8 +889,12 @@ void deepseek_mla_attention_f32_parallel_dispatch(
     int v_head_dim,
     float scale,
     float *scores,
-    size_t scores_bytes)
+    size_t scores_bytes,
+    int bf16_phases)
 {
+    if (!ds_mla_prefill_valid(q, k, v, output, num_heads, num_kv_heads,
+            num_tokens, qk_head_dim, v_head_dim, scale, scores,
+            scores_bytes)) return;
     ck_threadpool_t *pool = ck_threadpool_global();
     const char *disabled = getenv("CK_DISABLE_MLA_PARALLEL_PREFILL");
     int active = pool ? ck_threadpool_n_threads(pool) : 1;
@@ -861,9 +906,15 @@ void deepseek_mla_attention_f32_parallel_dispatch(
         num_tokens > INT_MAX / num_heads ||
         score_row_bytes == 0 || (size_t)active > SIZE_MAX / score_row_bytes ||
         scores_bytes < (size_t)active * score_row_bytes) {
-        deepseek_mla_attention_f32_workspace(
-            q, k, v, output, num_heads, num_kv_heads, num_tokens,
-            qk_head_dim, v_head_dim, scale, scores, scores_bytes);
+        if (bf16_phases) {
+            deepseek_mla_attention_bf16_phases_workspace(
+                q, k, v, output, num_heads, num_kv_heads, num_tokens,
+                qk_head_dim, v_head_dim, scale, scores, scores_bytes);
+        } else {
+            deepseek_mla_attention_f32_workspace(
+                q, k, v, output, num_heads, num_kv_heads, num_tokens,
+                qk_head_dim, v_head_dim, scale, scores, scores_bytes);
+        }
         return;
     }
     ds_mla_attention_f32_args_t args = {
@@ -871,9 +922,32 @@ void deepseek_mla_attention_f32_parallel_dispatch(
         .num_heads = num_heads, .num_kv_heads = num_kv_heads,
         .num_tokens = num_tokens, .qk_head_dim = qk_head_dim,
         .v_head_dim = v_head_dim, .scale = scale, .scores = scores,
+        .bf16_phases = bf16_phases,
     };
     atomic_init(&args.next_token, 0);
     ck_threadpool_dispatch_n(pool, active, ds_mla_attention_f32_work, &args);
+}
+
+void deepseek_mla_attention_f32_parallel_dispatch(
+    const float *q, const float *k, const float *v, float *output,
+    int num_heads, int num_kv_heads, int num_tokens,
+    int qk_head_dim, int v_head_dim, float scale,
+    float *scores, size_t scores_bytes)
+{
+    ds_mla_attention_parallel_dispatch(q, k, v, output, num_heads,
+        num_kv_heads, num_tokens, qk_head_dim, v_head_dim,
+        scale, scores, scores_bytes, 0);
+}
+
+void deepseek_mla_attention_bf16_phases_parallel_dispatch(
+    const float *q, const float *k, const float *v, float *output,
+    int num_heads, int num_kv_heads, int num_tokens,
+    int qk_head_dim, int v_head_dim, float scale,
+    float *scores, size_t scores_bytes)
+{
+    ds_mla_attention_parallel_dispatch(q, k, v, output, num_heads,
+        num_kv_heads, num_tokens, qk_head_dim, v_head_dim,
+        scale, scores, scores_bytes, 1);
 }
 
 void deepseek_mla_attention_f32(const float *q,
@@ -975,23 +1049,26 @@ void deepseek_mla_kv_cache_store_f32(float *k_cache,
     }
 }
 
-void deepseek_mla_attention_decode_f32_workspace(const float *q,
-                                                 const float *k_cache,
-                                                 const float *v_cache,
-                                                 float *output,
-                                                 int num_heads,
-                                                 int num_kv_heads,
-                                                 int cache_len,
-                                                 int qk_head_dim,
-                                                 int v_head_dim,
-                                                 int max_seq_len,
-                                                 int cache_stride,
-                                                 float scale,
-                                                 float *scores,
-                                                 size_t scores_bytes)
+static void ds_mla_attention_decode_workspace(const float *q,
+                                               const float *k_cache,
+                                               const float *v_cache,
+                                               float *output,
+                                               int num_heads,
+                                               int num_kv_heads,
+                                               int cache_len,
+                                               int qk_head_dim,
+                                               int v_head_dim,
+                                               int max_seq_len,
+                                               int cache_stride,
+                                               float scale,
+                                               float *scores,
+                                               size_t scores_bytes,
+                                               int bf16_phases)
 {
     if (!q || !k_cache || !v_cache || !output || num_heads <= 0 ||
-        num_kv_heads <= 0 || cache_len <= 0 || qk_head_dim <= 0 ||
+        num_kv_heads <= 0 || num_heads < num_kv_heads ||
+        num_heads % num_kv_heads != 0 || cache_len <= 0 ||
+        cache_len > max_seq_len || qk_head_dim <= 0 ||
         v_head_dim <= 0 || max_seq_len <= 0 || cache_stride <= 0 ||
         !isfinite(scale) || scale <= 0.0f) {
         return;
@@ -1013,9 +1090,13 @@ void deepseek_mla_attention_decode_f32_workspace(const float *q,
             const float *k_vec = k_cache + ((size_t)kv_h * (size_t)max_seq_len + (size_t)j) * (size_t)cache_stride;
             float dot = 0.0f;
             for (int d = 0; d < qk_head_dim; ++d) {
-                dot += q_vec[d] * k_vec[d];
+                dot += bf16_phases
+                    ? ds_mla_bf16_round(q_vec[d]) * ds_mla_bf16_round(k_vec[d])
+                    : q_vec[d] * k_vec[d];
             }
-            const float score = dot * scale;
+            const float score = bf16_phases
+                ? ds_mla_bf16_round(ds_mla_bf16_round(dot) * scale)
+                : dot * scale;
             scores[j] = score;
             if (score > max_score) max_score = score;
         }
@@ -1031,14 +1112,44 @@ void deepseek_mla_attention_decode_f32_workspace(const float *q,
         float *out = output + (size_t)h * (size_t)v_head_dim;
         for (int d = 0; d < v_head_dim; ++d) out[d] = 0.0f;
         for (int j = 0; j < cache_len; ++j) {
-            const float w = scores[j] * inv_sum;
+            const float w = bf16_phases
+                ? ds_mla_bf16_round(scores[j] * inv_sum)
+                : scores[j] * inv_sum;
             const float *v_vec = v_cache + ((size_t)kv_h * (size_t)max_seq_len + (size_t)j) * (size_t)cache_stride;
             for (int d = 0; d < v_head_dim; ++d) {
-                out[d] += w * v_vec[d];
+                out[d] += w * (bf16_phases
+                    ? ds_mla_bf16_round(v_vec[d]) : v_vec[d]);
+            }
+        }
+        if (bf16_phases) {
+            for (int d = 0; d < v_head_dim; ++d) {
+                out[d] = ds_mla_bf16_round(out[d]);
             }
         }
     }
 
+}
+
+void deepseek_mla_attention_decode_f32_workspace(
+    const float *q, const float *k_cache, const float *v_cache,
+    float *output, int num_heads, int num_kv_heads, int cache_len,
+    int qk_head_dim, int v_head_dim, int max_seq_len, int cache_stride,
+    float scale, float *scores, size_t scores_bytes)
+{
+    ds_mla_attention_decode_workspace(q, k_cache, v_cache, output,
+        num_heads, num_kv_heads, cache_len, qk_head_dim, v_head_dim,
+        max_seq_len, cache_stride, scale, scores, scores_bytes, 0);
+}
+
+void deepseek_mla_attention_decode_bf16_phases_workspace(
+    const float *q, const float *k_cache, const float *v_cache,
+    float *output, int num_heads, int num_kv_heads, int cache_len,
+    int qk_head_dim, int v_head_dim, int max_seq_len, int cache_stride,
+    float scale, float *scores, size_t scores_bytes)
+{
+    ds_mla_attention_decode_workspace(q, k_cache, v_cache, output,
+        num_heads, num_kv_heads, cache_len, qk_head_dim, v_head_dim,
+        max_seq_len, cache_stride, scale, scores, scores_bytes, 1);
 }
 
 void deepseek_mla_attention_decode_f32(const float *q,

@@ -1,0 +1,15 @@
+{
+  "schema": "cke.instella_mla_attention_captured_fixture.v1",
+  "source_revision": "74d28c1a8425583d7805b58e2caa9c13d6b62929",
+  "weights_manifest_sha256": "aeffecf3914572a6fc8dfa56f86d2e2b98e205d82fd8632dfeca4731401bdacd",
+  "source_engine_sha256": "58e9f5a2717d8930cf5302a5f4de09cd1dd5d40a91f52f363464e2ee3419e61e",
+  "capture": "teacher-forced 21-token prompt, decoder layer 11, head 8, full causal prefix",
+  "oracle": "PyTorch 2.12.1+cpu, publisher eager_attention_forward BF16 phases",
+  "shape": [
+    21,
+    128
+  ],
+  "head": 8,
+  "scale": 0.16562687709876717,
+  "fixture_sha256": "c694c9505377b69885d8c99a7b7425def993c359620e907e707498135cc2ff37"
+}
