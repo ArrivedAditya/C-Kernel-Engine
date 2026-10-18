@@ -33,6 +33,10 @@
 #include <immintrin.h>
 #endif
 
+#if defined(__ARM_NEON) || defined(__aarch64__)
+#include <arm_neon.h>
+#endif
+
 /*
  * PyTorch-parity sigmoid for strict/exact SwiGLU paths.
  * Keep this in fp32 to match ATen CPU opmath more closely.
@@ -220,6 +224,47 @@ static inline __m512 ck_ggml_expf_avx512(__m512 x) {
         _mm512_set1_ps(INFINITY),
         zero);
     return _mm512_mask_blend_ps(d, res, alt);
+}
+#endif
+
+#if defined(__ARM_NEON) && (defined(__aarch64__) || defined(__ARM_FEATURE_FMA))
+/* NEON port of the same ggml vector exponential the AVX2 provider above
+ * implements; this is llama.cpp's own AArch64 ggml_v_expf (arm limited
+ * optimized-routines polynomial, max error 1.45358 + 0.5 ulps, flushes above
+ * 88.38 / below -103.97). On AArch64 this is the instruction-level oracle
+ * ggml itself uses, so the numerical contract is identical to the AVX2
+ * branch: approximation, not libm expf. Uses vfmaq_f32 (fused), so it
+ * requires FP FMA (baseline on AArch64); 32-bit NEON without FMA keeps the
+ * scalar expf tail. The any-lane predicate uses vgetq_lane_u64 instead of
+ * the AArch64-only vpaddd_u64 so the source stays portable NEON. */
+static inline float32x4_t ck_ggml_expf_neon(float32x4_t x) {
+    const float32x4_t r = vdupq_n_f32(0x1.8p23f);
+    const float32x4_t z = vfmaq_f32(r, x, vdupq_n_f32(0x1.715476p+0f));
+    const float32x4_t n = vsubq_f32(z, r);
+    const float32x4_t b = vfmsq_f32(vfmsq_f32(x, n, vdupq_n_f32(0x1.62e4p-1f)), n,
+                                    vdupq_n_f32(0x1.7f7d1cp-20f));
+    const uint32x4_t e = vshlq_n_u32(vreinterpretq_u32_f32(z), 23);
+    const float32x4_t k = vreinterpretq_f32_u32(vaddq_u32(e, vreinterpretq_u32_f32(vdupq_n_f32(1))));
+    const uint32x4_t c = vcagtq_f32(n, vdupq_n_f32(126));
+    const float32x4_t u = vmulq_f32(b, b);
+    const float32x4_t j = vfmaq_f32(
+        vmulq_f32(vdupq_n_f32(0x1.ffffecp-1f), b),
+        vfmaq_f32(vfmaq_f32(vdupq_n_f32(0x1.fffdb6p-2f), vdupq_n_f32(0x1.555e66p-3f), b),
+                  vfmaq_f32(vdupq_n_f32(0x1.573e2ep-5f), vdupq_n_f32(0x1.0e4020p-7f), b), u), u);
+    const uint64x2_t c64 = vreinterpretq_u64_u32(c);
+    if (!(vgetq_lane_u64(c64, 0) | vgetq_lane_u64(c64, 1))) {
+        return vfmaq_f32(k, j, k);
+    }
+    const uint32x4_t d = vandq_u32(vclezq_f32(n), vdupq_n_u32(0x82000000));
+    const float32x4_t s1 = vreinterpretq_f32_u32(vaddq_u32(d, vdupq_n_u32(0x7f000000)));
+    const float32x4_t s2 = vreinterpretq_f32_u32(vsubq_u32(e, d));
+    return vbslq_f32(vcagtq_f32(n, vdupq_n_f32(192)), vmulq_f32(s1, s1),
+                     vbslq_f32(c, vmulq_f32(vfmaq_f32(s2, s2, j), s1), vfmaq_f32(k, k, j)));
+}
+
+static inline int ck_swiglu_ggml_ref_forced(void) {
+    const char *env = getenv("CK_DEBUG_SWIGLU_GGML_REF");
+    return env && atoi(env) != 0;
 }
 #endif
 
@@ -631,6 +676,9 @@ static void ck_swiglu_ggml_rows(int begin, int end, void *opaque)
     const ck_swiglu_ggml_args_t *args =
         (const ck_swiglu_ggml_args_t *)opaque;
     const int dim = args->dim;
+#if defined(__ARM_NEON) && (defined(__aarch64__) || defined(__ARM_FEATURE_FMA))
+    const int force_ref = ck_swiglu_ggml_ref_forced();
+#endif
     for (int t = begin; t < end; ++t) {
         const float *row = args->input + (size_t)t * (size_t)(2 * dim);
         float *out_row = args->output + (size_t)t * (size_t)dim;
@@ -655,6 +703,18 @@ static void ck_swiglu_ggml_rows(int begin, int end, void *opaque)
                 _mm256_set1_ps(1.0f), ck_ggml_expf_avx2(neg_gate));
             const __m256 silu = _mm256_div_ps(gate, denom);
             _mm256_storeu_ps(out_row + d, _mm256_mul_ps(silu, up));
+        }
+#elif defined(__ARM_NEON) && (defined(__aarch64__) || defined(__ARM_FEATURE_FMA))
+        if (!force_ref) {
+            for (; d + 4 <= dim; d += 4) {
+                const float32x4_t gate = vld1q_f32(row + d);
+                const float32x4_t up = vld1q_f32(row + dim + d);
+                const float32x4_t neg_gate = vsubq_f32(vdupq_n_f32(0.0f), gate);
+                const float32x4_t denom = vaddq_f32(
+                    vdupq_n_f32(1.0f), ck_ggml_expf_neon(neg_gate));
+                const float32x4_t silu = vdivq_f32(gate, denom);
+                vst1q_f32(out_row + d, vmulq_f32(silu, up));
+            }
         }
 #endif
         for (; d < dim; ++d) {
@@ -689,6 +749,9 @@ void swiglu_forward_ggml_split(const float *gate,
     if (!gate || !up || !output || tokens <= 0 || dim <= 0) {
         return;
     }
+#if defined(__ARM_NEON) && (defined(__aarch64__) || defined(__ARM_FEATURE_FMA))
+    const int force_ref = ck_swiglu_ggml_ref_forced();
+#endif
     for (int t = 0; t < tokens; ++t) {
         const float *gate_row = gate + (size_t)t * (size_t)dim;
         const float *up_row = up + (size_t)t * (size_t)dim;
@@ -715,12 +778,45 @@ void swiglu_forward_ggml_split(const float *gate,
             const __m256 silu = _mm256_div_ps(gate_v, denom);
             _mm256_storeu_ps(out_row + d, _mm256_mul_ps(silu, up_v));
         }
+#elif defined(__ARM_NEON) && (defined(__aarch64__) || defined(__ARM_FEATURE_FMA))
+        if (!force_ref) {
+            for (; d + 4 <= dim; d += 4) {
+                const float32x4_t gate_v = vld1q_f32(gate_row + d);
+                const float32x4_t up_v = vld1q_f32(up_row + d);
+                const float32x4_t neg_gate = vsubq_f32(vdupq_n_f32(0.0f), gate_v);
+                const float32x4_t denom = vaddq_f32(
+                    vdupq_n_f32(1.0f), ck_ggml_expf_neon(neg_gate));
+                const float32x4_t silu = vdivq_f32(gate_v, denom);
+                vst1q_f32(out_row + d, vmulq_f32(silu, up_v));
+            }
+        }
 #endif
         for (; d < dim; ++d) {
             const float gate_v = gate_row[d];
             out_row[d] = (gate_v / (1.0f + expf(-gate_v))) * up_row[d];
         }
     }
+}
+
+/* Truthful provider-name helper for the ggml SwiGLU providers
+ * (swiglu_forward_ggml / swiglu_forward_ggml_split), same pattern as
+ * ck_q4_k_q8_k_provider_name. */
+const char *ck_swiglu_ggml_provider_name(void)
+{
+#if defined(__ARM_NEON) && (defined(__aarch64__) || defined(__ARM_FEATURE_FMA))
+    if (ck_swiglu_ggml_ref_forced()) {
+        return "swiglu_ggml_ref";
+    }
+#endif
+#if defined(__AVX512F__) && defined(__AVX512DQ__)
+    return "swiglu_ggml_avx512";
+#elif defined(__AVX2__) && defined(__FMA__)
+    return "swiglu_ggml_avx2";
+#elif defined(__ARM_NEON) && (defined(__aarch64__) || defined(__ARM_FEATURE_FMA))
+    return "swiglu_ggml_neon";
+#else
+    return "swiglu_ggml_ref";
+#endif
 }
 
 #if defined(__AVX512F__)

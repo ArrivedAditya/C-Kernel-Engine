@@ -49,7 +49,8 @@ jobs:
             unittest/test_moe_swiglu_q4k_q5k.py \
             unittest/test_deltanet_transposed_scalar.py \
             unittest/test_q6k_q8k_neon_parity.py \
-            unittest/test_q4k_q8k_neon_parity.py
+            unittest/test_q4k_q8k_neon_parity.py \
+            unittest/test_elementwise_neon_parity.py
 
       - name: Rebuild engine with ARM dot-product ISA and rerun NEON parity
         # Baseline armv8-a builds keep the scalar Q4_K dot (no SDOT); this
@@ -71,7 +72,8 @@ jobs:
           ldd -r build/libckernel_engine.so
           CK_REQUIRE_Q4K_NEON=1 python -m pytest -q -rs \
             unittest/test_q6k_q8k_neon_parity.py \
-            unittest/test_q4k_q8k_neon_parity.py
+            unittest/test_q4k_q8k_neon_parity.py \
+            unittest/test_elementwise_neon_parity.py
 
       - name: Verify portable normalization fixture on native ARM64
         if: always()
