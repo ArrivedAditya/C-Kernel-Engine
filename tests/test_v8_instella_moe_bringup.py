@@ -13,6 +13,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import numpy as np
+
+from version.v8.scripts.xray_operation_bundle_v8 import load_bundle, write_bundle
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "version" / "v8" / "scripts" / "convert_safetensors_to_bump_v8.py"
@@ -665,6 +668,31 @@ class BF16StorageProjectionTests(unittest.TestCase):
         self.assertNotEqual(exact, _bf16_to_float(lower))
         self.assertEqual(self._project(
             x, weights, None, 1, 1, fixture["k"])[0], _bf16_to_float(lower))
+
+        with tempfile.TemporaryDirectory() as temporary:
+            bundle = write_bundle(
+                Path(temporary) / "instella-kv-projection", operation="kv_b_projection",
+                provider="gemm_nt_bf16_accurate_storage",
+                contract="bf16_operands_accurate_bf16_storage", runtime=ROOT / "build/libckernel_engine.so",
+                context={"model_fixture_sha256": provenance["fixture_sha256"],
+                         "k": fixture["k"], "oracle": "publisher BF16 projection"},
+                tensors={
+                    "input": (np.asarray(fixture["input_bf16_bits"], dtype=np.uint16),
+                              "bf16_bits", ("reduction",)),
+                    "weight": (np.asarray(weights, dtype=np.uint16), "bf16_bits", ("reduction",)),
+                    "cke_output": (np.asarray([_bf16_to_float(lower)], dtype=np.float32),
+                                   "fp32", ("output",)),
+                    "publisher_output": (np.asarray([_bf16_to_float(upper)], dtype=np.float32),
+                                         "fp32", ("output",)),
+                },
+            )
+            manifest, operands = load_bundle(bundle)
+            self.assertEqual(manifest["provider"], "gemm_nt_bf16_accurate_storage")
+            replay_input = [_bf16_to_float(int(bits)) for bits in operands["input"]]
+            replay_output = self._project(replay_input, operands["weight"].tolist(),
+                                          None, 1, 1, fixture["k"])
+            self.assertEqual(replay_output[0], float(operands["cke_output"][0]))
+            self.assertNotEqual(replay_output[0], float(operands["publisher_output"][0]))
 
         # A one-ULP source-weight perturbation crosses the boundary. This
         # ensures the test really exercises the captured operands, rather
