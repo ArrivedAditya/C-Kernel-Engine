@@ -631,7 +631,7 @@ class BF16StorageProjectionTests(unittest.TestCase):
         exact = math.fsum(a * _bf16_to_float(b) for a, b in zip(x, w))
         self.assertEqual(_float_to_bf16(exact), fixture["expected_bf16_bits"])
         result = self._project(x, w, None, 1, 1, fixture["k"])
-        self.assertEqual(_float_to_bf16(result[0]), fixture["expected_bf16_bits"])
+        self.assertEqual(result[0], _bf16_to_float(fixture["expected_bf16_bits"]))
         x_array = (ctypes.c_float * len(x))(*x)
         w_array = (ctypes.c_uint16 * len(w))(*w)
         old_output = (ctypes.c_float * 1)(-999.0)
@@ -662,8 +662,9 @@ class BF16StorageProjectionTests(unittest.TestCase):
         self.assertLess(exact, midpoint)
         self.assertGreater(midpoint - exact, 0)
         self.assertEqual(_float_to_bf16(exact), lower)
-        self.assertEqual(_float_to_bf16(self._project(
-            x, weights, None, 1, 1, fixture["k"])[0]), lower)
+        self.assertNotEqual(exact, _bf16_to_float(lower))
+        self.assertEqual(self._project(
+            x, weights, None, 1, 1, fixture["k"])[0], _bf16_to_float(lower))
 
         # A one-ULP source-weight perturbation crosses the boundary. This
         # ensures the test really exercises the captured operands, rather
@@ -674,9 +675,9 @@ class BF16StorageProjectionTests(unittest.TestCase):
             a * _bf16_to_float(b) for a, b in zip(x, changed)
         )
         self.assertGreater(changed_exact, midpoint)
-        self.assertEqual(_float_to_bf16(self._project(
-            x, changed, None, 1, 1, fixture["k"])[0]),
-            _float_to_bf16(changed_exact))
+        self.assertEqual(self._project(
+            x, changed, None, 1, 1, fixture["k"])[0],
+            _bf16_to_float(_float_to_bf16(changed_exact)))
 
     def test_odd_width_bias_and_two_rows_match_independent_sum(self) -> None:
         k, n, m = 7, 3, 2
@@ -695,8 +696,8 @@ class BF16StorageProjectionTests(unittest.TestCase):
                     for i in range(k)
                 ) + bias[col]
                 self.assertEqual(
-                    _float_to_bf16(actual[row * n + col]),
-                    _float_to_bf16(exact),
+                    actual[row * n + col],
+                    _bf16_to_float(_float_to_bf16(exact)),
                 )
 
     def test_invalid_width_does_not_publish_output(self) -> None:
