@@ -1,6 +1,6 @@
 {
-  "schema": "cke.kokoro.runtime_decoder_hello_8.v6",
-  "scope": "direct pinned full-model eight-ID decoder, source and first generator join",
+  "schema": "cke.kokoro.runtime_decoder_hello_8.v7",
+  "scope": "direct pinned full-model eight-ID decoder, source, first generator join and residual blocks",
   "model_pin": "e8a90b41091c3c5b70375c47cc959799920fa4d6",
   "code_pin": "dfb907a02bba8152ca444717ca5d78747ccb4bec",
   "asset_sha256": {
@@ -40,8 +40,11 @@
     "generator_source_phase": "faba14b065459cabdf3c53218bc4fdb545b1cc4d1cae31b87844a77be9300810",
     "decoder_generator_noise_convs_0": "4eb0ec6a395f90a68272b301d7d93d873fbe65afcfb7caffac5600cc9a8b1f42",
     "decoder_generator_noise_res_0": "c21488f55045f0d0f00345e060e02ecd8e0457102b9bbfa34b12b26823eaf74c",
-    "decoder_generator_stage0_join": "7b3d8bd71cb54e8eab9ac2bd328d57fae55b003eb7ff618e91e2effcc30e1f7a"
+    "decoder_generator_stage0_join": "7b3d8bd71cb54e8eab9ac2bd328d57fae55b003eb7ff618e91e2effcc30e1f7a",
+    "decoder_generator_resblocks_0": "2731504a5397d2606b1fadc567683d54380d43d1034a38cfc0eccda6e901991b",
+    "decoder_generator_resblocks_1": "f69c24c143d5d738f1d81ee7b2cfd149852fd45e884ec2b313c3867d53d3aa69",
+    "decoder_generator_resblocks_2": "bc81f3c2538e93693ea0391ca4f935485c8076d93cb7aecea3c2d4aa98979483"
   },
-  "fixture_sha256": "a23c040f03ef94e2e8a34bc8e7a83403a65a381ce01949773901b6884fda3d95",
+  "fixture_sha256": "b3441cb07595cd34aa28dac3dd45b4d4469bf15b25bc5bd89146d7f9d8327df1",
   "reproduction_command": "python version/v8/tts/reference/capture_kokoro_v1.py --model-dir /path/to/pinned/kokoro --output-dir /tmp/hello --text 'Hello.'; python version/v8/tts/reference/build_kokoro_runtime_decoder_hello_fixture.py --capture /tmp/hello"
 }
