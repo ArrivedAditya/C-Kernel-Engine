@@ -97,6 +97,40 @@ int ck_kokoro_waveform_bounded(uint8_t *arena, size_t capacity,
             waveform_offset, 20, gaussian_offset, gaussian_count, 0))
         return path
 
+    def test_runtime_entry_uses_valid_sample_count(self):
+        stub = self.root / 'runtime-stub.c'
+        stub.write_text('''#include <stddef.h>
+#include <stdint.h>
+int ck_kokoro_runtime_waveform_bounded(uint8_t *arena, size_t capacity,
+    int32_t *a, int32_t *b, int32_t *c, int32_t *d, int32_t *e,
+    int32_t *f, int32_t *g, int32_t *h, int32_t *i) {
+    if (!arena || capacity < 256) return -1;
+    float *audio = (float *)arena;
+    for (int j = 0; j < 20; ++j) audio[j] = .25f;
+    *a = 8; *b = 6144; *c = 1; *d = 2; *e = 4;
+    *f = 20; *g = 5; *h = 4; *i = 5;
+    return 0;
+}
+''')
+        binary = self.root / 'runtime-wav-host'
+        subprocess.run(['cc', '-std=c11', '-O2', '-Wall', '-Wextra', '-Werror',
+            '-pedantic', '-DCK_TTS_RUNTIME_WAVEFORM',
+            '-I', str(ROOT / 'include'), '-I', str(ROOT / 'src/kernels'),
+            str(ROOT / 'version/v8/tts/native_kokoro_wav_host.c'),
+            str(ROOT / 'src/kernels/audio_noise_counter.c'), str(stub),
+            '-lm', '-o', str(binary)], check=True, capture_output=True)
+        package = self.root / 'runtime.cktts'
+        package.write_bytes(struct.pack('<8sQQQI', b'CKTTS001',
+            256, 0, 64, 0))
+        wav = self.root / 'runtime.wav'
+        run = subprocess.run([str(binary), str(package), str(wav)],
+                             capture_output=True, text=True)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        with wave.open(str(wav), 'rb') as audio:
+            self.assertEqual((audio.getnframes(), audio.getframerate()),
+                             (20, 24000))
+            self.assertTrue(any(audio.readframes(20)))
+
     def request_package(self, name, ids_offset=IDS_OFFSET, ids_count=8,
                         predictor_offset=PREDICTOR_OFFSET,
                         decoder_offset=DECODER_OFFSET):

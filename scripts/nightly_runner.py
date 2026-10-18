@@ -852,6 +852,11 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_kokoro_runtime_stage1_source_join.py",
         timeout_sec=420,
     ),
+    "tts_kokoro_runtime_waveform": TestSuite(
+        "TTS Kokoro Runtime-Length Diagnostic Waveform", "inference",
+        ROOT / "tests" / "test_v8_kokoro_runtime_waveform.py",
+        timeout_sec=900,
+    ),
     "tts_checked_op_constants": TestSuite(
         "Checked Per-Operation ABI Constants Generated Graph", "kernels",
         ROOT / "tests" / "test_v8_checked_op_constants.py",
