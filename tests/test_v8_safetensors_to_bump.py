@@ -517,6 +517,34 @@ def test_instella_style_zero_bos_and_one_eos_are_preserved(tmp_path: Path) -> No
     assert special["stop_token_ids"] == [1]
 
 
+def test_fast_bytelevel_postprocessor_overrides_stale_bos_flag(tmp_path: Path) -> None:
+    converter = _load_converter()
+    (tmp_path / "tokenizer.json").write_text(json.dumps({
+        "model": {"vocab": {"<bos>": 0, "hello": 1}},
+        "post_processor": {"type": "ByteLevel", "add_prefix_space": False},
+    }), encoding="utf-8")
+    (tmp_path / "tokenizer_config.json").write_text(json.dumps({
+        "tokenizer_class": "PreTrainedTokenizerFast",
+        "bos_token": "<bos>", "add_bos_token": True,
+    }), encoding="utf-8")
+    special = converter._special_tokens_from_tokenizer_config(tmp_path, "bpe")
+    assert special["bos_token_id"] == 0
+    assert special["add_bos_token"] is False
+
+
+def test_non_special_added_token_is_still_exact_matched(tmp_path: Path) -> None:
+    converter = _load_converter()
+    (tmp_path / "tokenizer.json").write_text(json.dumps({
+        "model": {"type": "BPE", "vocab": {"a": 0, "<|User|>": 1}, "merges": []},
+        "added_tokens": [{"id": 1, "content": "<|User|>", "special": False}],
+    }), encoding="utf-8")
+    offsets, strings, _merges, _scores, types = converter.load_tokenizer_json(
+        str(tmp_path / "tokenizer.json"), 2
+    )
+    assert strings[offsets[1]:].startswith(b"<|User|>\0")
+    assert types == [1, 4]
+
+
 def test_muse_style_message_boundary_is_not_a_stop(tmp_path: Path) -> None:
     converter = _load_converter()
     (tmp_path / "tokenizer.json").write_text(json.dumps({

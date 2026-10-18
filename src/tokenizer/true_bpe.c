@@ -105,8 +105,6 @@ typedef struct {
     size_t capacity;
 } CKBPETokenList;
 
-#define MAX_SPECIAL_TOKENS 512  /* Maximum number of special tokens */
-
 /* Special token entry for pre-BPE matching */
 typedef struct {
     char *token;      /* Token string to match */
@@ -135,8 +133,9 @@ struct CKTrueBPE {
     int32_t pad_id;
 
     /* Special tokens to match before BPE (sorted by length, longest first) */
-    CKSpecialToken special_tokens[MAX_SPECIAL_TOKENS];
+    CKSpecialToken *special_tokens;
     int num_special_tokens;
+    size_t special_tokens_capacity;
 
     /* Configuration */
     CKBPEConfig config;
@@ -386,13 +385,10 @@ CKTrueBPE *ck_true_bpe_create(void) {
     bpe->eos_id = -1;
     bpe->pad_id = -1;
 
-    /* Initialize special tokens array */
+    /* Special tokens grow with the publisher vocabulary's declared types. */
     bpe->num_special_tokens = 0;
-    for (int i = 0; i < MAX_SPECIAL_TOKENS; i++) {
-        bpe->special_tokens[i].token = NULL;
-        bpe->special_tokens[i].id = -1;
-        bpe->special_tokens[i].len = 0;
-    }
+    bpe->special_tokens = NULL;
+    bpe->special_tokens_capacity = 0;
 
     /* Default config */
     bpe->config.add_bos = false;
@@ -434,6 +430,7 @@ void ck_true_bpe_free(CKTrueBPE *bpe) {
             free(bpe->special_tokens[i].token);
         }
     }
+    free(bpe->special_tokens);
 
     free(bpe);
 }
@@ -568,6 +565,24 @@ void ck_true_bpe_set_suppress_dummy_prefix(CKTrueBPE *bpe, bool suppress) {
     if (bpe) bpe->suppress_dummy_prefix = suppress;
 }
 
+static int reserve_special_tokens(CKTrueBPE *bpe, size_t needed) {
+    if (!bpe || needed > INT_MAX || needed > SIZE_MAX / sizeof(CKSpecialToken)) return -1;
+    if (needed <= bpe->special_tokens_capacity) return 0;
+    size_t capacity = bpe->special_tokens_capacity ? bpe->special_tokens_capacity : 32;
+    while (capacity < needed) {
+        if (capacity > INT_MAX / 2) {
+            capacity = needed;
+            break;
+        }
+        capacity *= 2;
+    }
+    CKSpecialToken *items = realloc(bpe->special_tokens, capacity * sizeof(*items));
+    if (!items) return -1;
+    bpe->special_tokens = items;
+    bpe->special_tokens_capacity = capacity;
+    return 0;
+}
+
 int ck_true_bpe_add_special_token(CKTrueBPE *bpe, const char *token, int32_t id) {
     if (!bpe || !token || id < 0) return -1;
 
@@ -583,7 +598,7 @@ int ck_true_bpe_add_special_token(CKTrueBPE *bpe, const char *token, int32_t id)
             return 0;
         }
     }
-    if (bpe->num_special_tokens >= MAX_SPECIAL_TOKENS) return -1;
+    if (reserve_special_tokens(bpe, (size_t)bpe->num_special_tokens + 1) != 0) return -1;
 
     char *copy = strdup(token);
     if (!copy) return -1;
@@ -654,7 +669,8 @@ int ck_true_bpe_register_token_types(CKTrueBPE *bpe,
         if (!token || !*token) return -1;
         needed++;
     }
-    if (needed > MAX_SPECIAL_TOKENS - (size_t)bpe->num_special_tokens) return -1;
+    if (needed > (size_t)INT_MAX - (size_t)bpe->num_special_tokens ||
+        reserve_special_tokens(bpe, needed + (size_t)bpe->num_special_tokens) != 0) return -1;
     for (size_t id = 0; id < count; id++) {
         if (types[id] != 3 && types[id] != 4) continue;
         if (ck_true_bpe_add_special_token(bpe, bpe->id_to_token[id], (int32_t)id) != 0) return -1;

@@ -754,6 +754,38 @@ def test_imported_token_types():
         lib.ck_true_bpe_free(bpe)
 
 
+def test_large_imported_special_token_table():
+    """Publisher vocabularies can declare more than the old 512-token cap."""
+    bpe = lib.ck_true_bpe_create()
+    if not bpe:
+        return False
+    try:
+        special_count = 1100
+        for token_id in range(special_count):
+            token = f"<|s{token_id:04d}|>".encode("ascii")
+            if lib.ck_true_bpe_add_token(bpe, token, token_id, 0.0) != 0:
+                return False
+        if lib.ck_true_bpe_add_token(bpe, b"ordinary", special_count, 0.0) != 0:
+            return False
+        types = (ctypes.c_uint8 * (special_count + 1))(
+            *([4] * special_count + [1])
+        )
+        if lib.ck_true_bpe_register_token_types(bpe, types, special_count) != -1:
+            return False
+        if lib.ck_true_bpe_register_token_types(bpe, types, special_count + 1) != 0:
+            return False
+        out = (ctypes.c_int32 * 4)()
+        for token_id in (0, 511, 803, 1024, special_count - 1):
+            token = f"<|s{token_id:04d}|>".encode("ascii")
+            if lib.ck_true_bpe_encode(bpe, token, len(token), out, 4) != 1:
+                return False
+            if out[0] != token_id:
+                return False
+        return lib.ck_true_bpe_lookup(bpe, b"ordinary") == special_count
+    finally:
+        lib.ck_true_bpe_free(bpe)
+
+
 def test_explicit_bos_and_declared_space_prefix():
     bpe = lib.ck_true_bpe_create()
     if not bpe:
@@ -789,6 +821,7 @@ def main():
 
     results = []
     results.append(("Imported Token Types", test_imported_token_types()))
+    results.append(("Large Imported Special Token Table", test_large_imported_special_token_table()))
     results.append(("Explicit BOS and Space Prefix", test_explicit_bos_and_declared_space_prefix()))
 
     # Run tests
