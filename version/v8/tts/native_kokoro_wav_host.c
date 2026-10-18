@@ -62,8 +62,8 @@ static int verify_loaded_library(void) {
 }
 #endif
 
-/* Exact-length generated libraries have different buffer layouts. The host
- * build must declare the graph's token count before accepting CKTTS003. */
+/* The host build declares the graph's token capacity. CKTTS003 binds exactly
+ * that many IDs; CKTTS004 binds a checked valid length within capacity. */
 #ifndef CK_TTS_COMPILED_TOKEN_COUNT
 #define CK_TTS_COMPILED_TOKEN_COUNT 0
 #endif
@@ -121,6 +121,19 @@ static int parse_phoneme_ids(const char *text, int32_t *ids, size_t count) {
         }
     }
     return ids[0] == 0 && ids[count - 1] == 0;
+}
+
+static int parse_runtime_phoneme_ids(const char *text, int32_t ids[64],
+                                     size_t *valid_count) {
+    if (!text || !*text) return 0;
+    size_t count = 1;
+    for (const char *cursor = text; *cursor; ++cursor)
+        if (*cursor == ',' && ++count > 40) return 0;
+    if (count < 3 || count > 40 || !parse_phoneme_ids(text, ids, count))
+        return 0;
+    for (size_t index = count; index < 64; ++index) ids[index] = 178;
+    *valid_count = count;
+    return 1;
 }
 
 /* CKVOICE1: magic, LE row count, LE 256 columns, then row-major FP32.
@@ -229,11 +242,16 @@ int main(int argc, char **argv) {
     uint64_t gaussian_offset = 0, gaussian_capacity = 0;
     uint64_t ids_offset = 0, ids_count = 0;
     uint64_t predictor_offset = 0, decoder_offset = 0;
+    uint64_t request_length_offset = 0;
     uint32_t segments;
     if (fread(magic, 1, 8, input) != 8) {
         fclose(input); return 4;
     }
-    const int request = memcmp(magic, "CKTTS003", 8) == 0;
+    const int runtime_request = memcmp(magic, "CKTTS004", 8) == 0;
+#ifndef CK_TTS_RUNTIME_WAVEFORM
+    if (runtime_request) { fclose(input); return 4; }
+#endif
+    const int request = runtime_request || memcmp(magic, "CKTTS003", 8) == 0;
     const int native_noise = request || memcmp(magic, "CKTTS002", 8) == 0;
     if ((!native_noise && memcmp(magic, "CKTTS001", 8) != 0) ||
         (request ? argc != 6 : native_noise ? argc != 4 : argc != 3) ||
@@ -245,6 +263,7 @@ int main(int argc, char **argv) {
                      !read_u64(input, &ids_count) ||
                      !read_u64(input, &predictor_offset) ||
                      !read_u64(input, &decoder_offset))) ||
+        (runtime_request && !read_u64(input, &request_length_offset)) ||
         !read_u32(input, &segments) ||
         bytes64 > SIZE_MAX - 63u || bytes64 == 0 ||
         bytes64 > UINT64_C(4) * 1024u * 1024u * 1024u ||
@@ -256,7 +275,8 @@ int main(int argc, char **argv) {
             overlaps(gaussian_offset, gaussian_capacity * 4,
                 waveform_offset, waveform_capacity * 4))) ||
         (request && (CK_TTS_COMPILED_TOKEN_COUNT < 3 ||
-            ids_count != CK_TTS_COMPILED_TOKEN_COUNT || ids_count > 40 ||
+            ids_count != CK_TTS_COMPILED_TOKEN_COUNT ||
+            (runtime_request ? ids_count != 64 : ids_count > 40) ||
             !bounded_region(ids_offset, ids_count, 4, bytes64) ||
             !bounded_region(predictor_offset, 128, 4, bytes64) ||
             !bounded_region(decoder_offset, 128, 4, bytes64) ||
@@ -277,11 +297,23 @@ int main(int argc, char **argv) {
             overlaps(ids_offset, ids_count * 4, decoder_offset, 512)))) {
         fclose(input); return 4;
     }
-    int32_t request_ids[40];
+    if (runtime_request && (!bounded_region(request_length_offset, 1, 4, bytes64) ||
+            overlaps(request_length_offset, 4, ids_offset, ids_count * 4) ||
+            overlaps(request_length_offset, 4, predictor_offset, 512) ||
+            overlaps(request_length_offset, 4, decoder_offset, 512) ||
+            overlaps(request_length_offset, 4, gaussian_offset,
+                     gaussian_capacity * 4) ||
+            overlaps(request_length_offset, 4, waveform_offset,
+                     waveform_capacity * 4))) {
+        fclose(input); return 4;
+    }
+    int32_t request_ids[64];
     float request_voice[256];
-    if (request && (!parse_phoneme_ids(argv[4], request_ids,
-                                       (size_t)ids_count) ||
-                    !read_voice_row(argv[5], (size_t)ids_count - 3u,
+    size_t valid_count = (size_t)ids_count;
+    if (request && (!(runtime_request ?
+                    parse_runtime_phoneme_ids(argv[4], request_ids, &valid_count) :
+                    parse_phoneme_ids(argv[4], request_ids, valid_count)) ||
+                    !read_voice_row(argv[5], valid_count - 3u,
                                     request_voice))) {
         fclose(input); return 4;
     }
@@ -303,6 +335,10 @@ int main(int argc, char **argv) {
     if (request) {
         memcpy(arena + (size_t)ids_offset, request_ids,
                (size_t)ids_count * 4u);
+        if (runtime_request) {
+            const int32_t length = (int32_t)valid_count;
+            memcpy(arena + (size_t)request_length_offset, &length, 4);
+        }
         memcpy(arena + (size_t)decoder_offset, request_voice, 128u * 4u);
         memcpy(arena + (size_t)predictor_offset, request_voice + 128,
                128u * 4u);

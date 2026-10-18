@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pack pinned Kokoro weights and constants for a CKTTS003 native request.
+"""Pack pinned Kokoro weights and constants for a native request.
 
 This is offline import tooling. It does not execute the model. The native host
 binds request IDs, voice conditioning and noise before calling generated C.
@@ -52,7 +52,8 @@ def _nonoverlapping(regions: list[tuple[int, int, str]]) -> None:
 
 
 def package_request(layout_path: Path, bump_dir: Path, output: Path,
-                    bindings_path: Path = DEFAULT_BINDINGS) -> dict:
+                    bindings_path: Path = DEFAULT_BINDINGS,
+                    *, runtime_lengths: bool = False) -> dict:
     layout_bytes = layout_path.read_bytes()
     layout = json.loads(layout_bytes)
     bindings = json.loads(bindings_path.read_text())
@@ -77,15 +78,18 @@ def package_request(layout_path: Path, bump_dir: Path, output: Path,
     buffers = {item["name"]: item for item in activation_items}
     if len(buffers) != len(activation_items):
         raise ValueError("duplicate compiled activation names")
-    if any(name not in buffers for name in REQUIRED_BUFFERS):
+    required = (*REQUIRED_BUFFERS, "request_length") if runtime_lengths else REQUIRED_BUFFERS
+    if any(name not in buffers for name in required):
         raise ValueError("compiled graph lacks required request buffers")
     if (any(item.get("dtype") != "fp32" for item in weights) or
             any(buffers[name].get("dtype") !=
-                ("i32" if name == "word_ids" else "fp32")
-                for name in REQUIRED_BUFFERS)):
+                ("i32" if name in ("word_ids", "request_length") else "fp32")
+                for name in required)):
         raise ValueError("compiled request dtype differs from native ABI")
     tokens = buffers["word_ids"]["size"] // 4
-    if (buffers["word_ids"]["size"] != tokens * 4 or not 3 <= tokens <= 40 or
+    if (buffers["word_ids"]["size"] != tokens * 4 or
+            (tokens != 64 if runtime_lengths else not 3 <= tokens <= 40) or
+            (runtime_lengths and buffers["request_length"]["size"] != 4) or
             buffers["predictor_style"]["size"] != 512 or
             buffers["decoder_style"]["size"] != 512 or
             buffers["source_gaussian"]["size"] != 76800 * 9 * 4 or
@@ -97,7 +101,7 @@ def package_request(layout_path: Path, bump_dir: Path, output: Path,
     for item in weights:
         start, end = _extent(item, capacity)
         regions.append((start, end, item["name"]))
-    for name in REQUIRED_BUFFERS:
+    for name in required:
         start, end = _extent(buffers[name], capacity)
         regions.append((start, end, name))
     _nonoverlapping(regions)
@@ -156,7 +160,11 @@ def package_request(layout_path: Path, bump_dir: Path, output: Path,
                 buffers["predictor_style"]["abs_offset"],
                 buffers["decoder_style"]["abs_offset"],
             )
-            stream.write(b"CKTTS003" + struct.pack("<9QI", *fields, len(segments)))
+            if runtime_lengths:
+                fields += (buffers["request_length"]["abs_offset"],)
+            stream.write((b"CKTTS004" if runtime_lengths else b"CKTTS003") +
+                         struct.pack("<10QI" if runtime_lengths else "<9QI",
+                                     *fields, len(segments)))
             for offset, payload in segments:
                 stream.write(struct.pack("<QQ", offset, len(payload)))
                 stream.write(payload)
@@ -171,6 +179,7 @@ def package_request(layout_path: Path, bump_dir: Path, output: Path,
         "bindings_sha256": sha256_file(bindings_path),
         "bump_sha256": bindings["source_bump_sha256"],
         "phoneme_count": tokens,
+        "runtime_lengths": runtime_lengths,
         "arena_capacity": capacity,
         "weights": len(weights),
         "segments": len(segments),

@@ -15,6 +15,7 @@ import subprocess
 import sys
 
 from build_kokoro_waveform_circuit import build_circuit
+from build_kokoro_runtime_waveform_circuit import build_circuit as build_runtime_circuit
 from export_kokoro_bump import verify_bundle
 from export_kokoro_request_package import DEFAULT_BINDINGS, package_request, sha256_file
 
@@ -54,9 +55,12 @@ def select_conv_provider(graph: dict, provider: str) -> int:
 
 def compiler_manifest(bump_dir: Path, tokens: int,
                       bindings_path: Path = DEFAULT_BINDINGS,
-                      conv_provider: str = "scalar") -> dict:
+                      conv_provider: str = "scalar",
+                      runtime_lengths: bool = False) -> dict:
     """Make virtual graph-weight metadata; payloads stay in the source BUMP."""
-    graph = build_circuit(tokens)
+    if runtime_lengths and tokens != 64:
+        raise ValueError("runtime waveform circuit requires 64-token capacity")
+    graph = build_runtime_circuit() if runtime_lengths else build_circuit(tokens)
     selected_conv_calls = select_conv_provider(graph, conv_provider)
     bindings = json.loads(bindings_path.read_text())
     if bindings.get("schema") != "cke.kokoro.request_weight_bindings.v1":
@@ -117,6 +121,13 @@ def compiler_manifest(bump_dir: Path, tokens: int,
     }
     config["kokoro_conv_provider"] = conv_provider
     config["kokoro_selected_conv_calls"] = selected_conv_calls
+    if runtime_lengths:
+        config["activation_buffer_dtypes"].update({
+            "request_length": "i32", "valid_length": "i32",
+            "valid_residual_elements": "i32",
+            "generator_stage1_deconv_extent_value": "i32",
+            "generator_stage1_pad_extent_value": "i32",
+        })
     return {"config": config, "entries": entries, "quant_summary": {},
             "template": graph}
 
@@ -133,12 +144,13 @@ def _run(argv: list[str], *, log: Path | None = None) -> None:
 
 def build_runtime(bump_dir: Path, output: Path, tokens: int,
                   bindings_path: Path = DEFAULT_BINDINGS,
-                  conv_provider: str = "scalar") -> dict:
+                  conv_provider: str = "scalar",
+                  runtime_lengths: bool = False) -> dict:
     if output.exists() and any(output.iterdir()):
         raise ValueError("output directory must be empty")
     output.mkdir(parents=True, exist_ok=True)
     manifest = compiler_manifest(bump_dir, tokens, bindings_path,
-                                 conv_provider)
+                                 conv_provider, runtime_lengths)
     manifest_path = output / "compiler_manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
     _run([sys.executable, str(COMPILER), "--manifest", str(manifest_path),
@@ -187,11 +199,15 @@ def build_runtime(bump_dir: Path, output: Path, tokens: int,
         str(output / "audio_noise_counter.c"), "-L", str(output),
         "-l:generated.so", "-Wl,-rpath,$ORIGIN", "-lm", "-ldl", "-lcrypto",
         "-o", str(output / "native-kokoro-wav")]
+    if runtime_lengths:
+        host_command.insert(7, "-DCK_TTS_RUNTIME_WAVEFORM")
     _run(host_command, log=output / "host-compile.log")
     package = package_request(output / "layout.json", bump_dir,
-                              output / "request.cktts", bindings_path)
+                              output / "request.cktts", bindings_path,
+                              runtime_lengths=runtime_lengths)
     report = {"schema": "cke.kokoro.native_request_build.v1",
               "phoneme_count": tokens, "generated_operations": len(calls["operations"]),
+              "runtime_lengths": runtime_lengths,
               "conv_provider": conv_provider,
               "selected_conv_calls": manifest["config"]["kokoro_selected_conv_calls"],
               "selected_providers": sorted({op["call_abi"]["kernel_id"]
@@ -203,10 +219,14 @@ def build_runtime(bump_dir: Path, output: Path, tokens: int,
               "package_sha256": package["package_sha256"],
               "source_sha256": {path: sha256_file(ROOT / path) for path in sources},
               "weight_offset_contract": "compiler-planning offsets only; verified "
+                  "source BUMP payloads are placed by the CKTTS004 exporter"
+                  if runtime_lengths else "compiler-planning offsets only; verified "
                   "source BUMP payloads are placed by the CKTTS003 exporter",
               "compile_command": compile_command,
               "host_compile_command": host_command,
-              "scope": "exact phoneme count, supplied IDs and voice bank; no text frontend"}
+              "scope": ("64-token capacity with checked runtime request lengths"
+                        if runtime_lengths else "exact phoneme count") +
+                       "; supplied IDs and voice bank; no text frontend"}
     (output / "build-report.json").write_text(json.dumps(report, indent=2) + "\n")
     return report
 
@@ -218,9 +238,12 @@ def main() -> None:
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--conv-provider", choices=CONV_PROVIDERS,
                         default="scalar")
+    parser.add_argument("--runtime-lengths", action="store_true",
+                        help="compile the 64-token-capacity runtime waveform graph")
     args = parser.parse_args()
     print(json.dumps(build_runtime(args.bump_dir, args.output_dir, args.tokens,
-                                   conv_provider=args.conv_provider), indent=2))
+                                   conv_provider=args.conv_provider,
+                                   runtime_lengths=args.runtime_lengths), indent=2))
 
 
 if __name__ == "__main__":

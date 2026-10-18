@@ -131,6 +131,91 @@ int ck_kokoro_runtime_waveform_bounded(uint8_t *arena, size_t capacity,
                              (20, 24000))
             self.assertTrue(any(audio.readframes(20)))
 
+    def test_runtime_request_binds_length_padding_and_voice_row(self):
+        ids_offset = GAUSSIAN_BYTES + 128
+        predictor_offset = ids_offset + 64 * 4
+        decoder_offset = predictor_offset + 512
+        length_offset = decoder_offset + 512
+        arena_bytes = length_offset + 4
+        stub = self.root / 'runtime-request-stub.c'
+        stub.write_text('''#include <stddef.h>
+#include <stdint.h>
+int ck_kokoro_runtime_waveform_bounded(uint8_t *arena, size_t capacity,
+    int32_t *a, int32_t *b, int32_t *c, int32_t *d, int32_t *e,
+    int32_t *f, int32_t *g, int32_t *h, int32_t *i) {
+    if (!arena || capacity < ''' + str(arena_bytes) + ''') return -1;
+    const int32_t n = *(const int32_t *)(arena + ''' + str(length_offset) + ''');
+    const int32_t *ids = (const int32_t *)(arena + ''' + str(ids_offset) + ''');
+    const float *style = (const float *)(arena + ''' + str(predictor_offset) + ''');
+    if (n != 8 && n != 13 && n != 36) return -2;
+    for (int32_t j = n; j < 64; ++j) if (ids[j] != 178) return -3;
+    if (style[0] != (float)(n - 3) / 100.f) return -4;
+    const int32_t samples = n == 8 ? 20 : n == 13 ? 25 : 30;
+    float *audio = (float *)(arena + ''' + str(WAVEFORM_OFFSET) + ''');
+    for (int32_t j = 0; j < samples; ++j)
+        audio[j] = .1f + .001f * n + .0001f * ids[1];
+    *a = n; *b = n * 768; *c = 1; *d = 2; *e = 4;
+    *f = samples; *g = samples / 5 + 1; *h = samples / 5; *i = *g;
+    return 0;
+}
+''')
+        binary = self.root / 'runtime-request-host'
+        subprocess.run(['cc', '-std=c11', '-O2', '-Wall', '-Wextra', '-Werror',
+            '-pedantic', '-DCK_TTS_COMPILED_TOKEN_COUNT=64',
+            '-DCK_TTS_RUNTIME_WAVEFORM', '-I', str(ROOT / 'include'),
+            '-I', str(ROOT / 'src/kernels'),
+            str(ROOT / 'version/v8/tts/native_kokoro_wav_host.c'),
+            str(ROOT / 'src/kernels/audio_noise_counter.c'), str(stub),
+            '-lm', '-o', str(binary)], check=True, capture_output=True,
+            text=True)
+        bank = self.root / 'runtime-voice.ckvoice'
+        voices = [0.] * (34 * 256)
+        for row in range(34):
+            voices[row * 256 + 128] = row / 100.
+        bank.write_bytes(b'CKVOICE1' + struct.pack('<II', 34, 256) +
+                         struct.pack('<' + 'f' * len(voices), *voices))
+
+        def package(name, *, request_offset=length_offset, count=64):
+            path = self.root / name
+            path.write_bytes(struct.pack('<8s10QI', b'CKTTS004', arena_bytes,
+                WAVEFORM_OFFSET, 30, 0, GAUSSIAN_COUNT, ids_offset, count,
+                predictor_offset, decoder_offset, request_offset, 0))
+            return path
+
+        packed = package('runtime-request.cktts')
+        first = None
+        for count in (8, 13, 36, 8):
+            ids = ','.join(map(str, [0] + [50] * (count - 2) + [0]))
+            output = self.root / f'runtime-request-{count}.wav'
+            output.unlink(missing_ok=True)
+            run = subprocess.run([str(binary), str(packed), str(output), '7',
+                                  ids, str(bank)], capture_output=True, text=True)
+            self.assertEqual(run.returncode, 0, run.stderr)
+            with wave.open(str(output), 'rb') as audio:
+                self.assertEqual(audio.getnframes(),
+                                 {8: 20, 13: 25, 36: 30}[count])
+            if count == 8:
+                digest = hashlib.sha256(output.read_bytes()).hexdigest()
+                if first is None:
+                    first = digest
+                else:
+                    self.assertEqual(digest, first)
+        for bad in (package('bad-request-offset.cktts',
+                            request_offset=ids_offset),
+                    package('bad-id-capacity.cktts', count=40)):
+            output = self.root / 'rejected-runtime.wav'
+            run = subprocess.run([str(binary), str(bad), str(output), '7',
+                '0,50,50,50,50,50,50,0', str(bank)], capture_output=True)
+            self.assertEqual(run.returncode, 4)
+            self.assertFalse(output.exists())
+        for ids in ('0,50,0', '0,50,178,0', '1,50,0',
+                    ','.join(map(str, [0] + [50] * 39 + [0]))):
+            output = self.root / 'rejected-runtime.wav'
+            run = subprocess.run([str(binary), str(packed), str(output), '7',
+                                  ids, str(bank)], capture_output=True)
+            self.assertNotEqual(run.returncode, 0)
+            self.assertFalse(output.exists())
+
     def request_package(self, name, ids_offset=IDS_OFFSET, ids_count=8,
                         predictor_offset=PREDICTOR_OFFSET,
                         decoder_offset=DECODER_OFFSET):

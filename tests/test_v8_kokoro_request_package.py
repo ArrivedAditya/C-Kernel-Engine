@@ -115,6 +115,38 @@ class KokoroRequestPackageTest(unittest.TestCase):
             "reproduction_command": "python3 -m unittest tests.test_v8_kokoro_request_package",
         }, sort_keys=True))
 
+    def test_runtime_package_declares_length_slot_and_64_id_capacity(self):
+        buffers = self.layout["memory"]["activations"]["buffers"]
+        buffers[0]["abs_offset"] = 2_770_000
+        buffers[0]["size"] = 64 * 4
+        buffers.append(_buffer("request_length", 2_770_256, 4, "i32"))
+        self.layout_path.write_text(json.dumps(self.layout))
+        self.catalog_path.write_text(json.dumps(self.catalog))
+        report = request_export.package_request(self.layout_path,
+            self.bump_dir, self.output, self.catalog_path, runtime_lengths=True)
+        data = self.output.read_bytes()
+        self.assertEqual(data[:8], b"CKTTS004")
+        self.assertEqual(struct.unpack_from("<10QI", data, 8), (
+            4_000_000, 3_000_000, 20, 2048, 76800 * 9,
+            2_770_000, 64, 256, 768, 2_770_256, 4))
+        self.assertTrue(report["runtime_lengths"])
+        for mutation in ("missing", "wrong_dtype", "overlap"):
+            with self.subTest(mutation=mutation):
+                changed = copy.deepcopy(self.layout)
+                fields = changed["memory"]["activations"]["buffers"]
+                if mutation == "missing":
+                    fields.pop()
+                elif mutation == "wrong_dtype":
+                    fields[-1]["dtype"] = "fp32"
+                else:
+                    fields[-1]["abs_offset"] = 2_770_000
+                self.layout_path.write_text(json.dumps(changed))
+                with self.assertRaises(ValueError):
+                    request_export.package_request(self.layout_path,
+                        self.bump_dir, self.output, self.catalog_path,
+                        runtime_lengths=True)
+                self.assertEqual(self.output.read_bytes(), data)
+
     def test_rejects_wrong_geometry_and_artifact_identity(self):
         self.build()
         original = self.output.read_bytes()

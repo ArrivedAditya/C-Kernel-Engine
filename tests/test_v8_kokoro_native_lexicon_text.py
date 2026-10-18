@@ -4,10 +4,15 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import select
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
+import wave
+
+import numpy as np
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,20 +33,38 @@ class KokoroNativeLexiconTextTest(unittest.TestCase):
                             "kokoro_waveform_hello_8_pinned.json").read_text())
         long = json.loads((ROOT / "version/v8/tts/reference" /
                            "fixture_manifest.json").read_text())
+        medium_path = ROOT / "tests/fixtures/tts" / \
+            "kokoro_runtime_waveform_hello_there_13_pinned.npz"
+        medium_meta = json.loads(medium_path.with_suffix(".json").read_text())
+        self.assertEqual(_hash(medium_path), medium_meta["fixture_sha256"])
+        self.assertEqual(medium_meta["model_pin"], short["model_pin"]["revision"])
+        self.assertEqual(medium_meta["code_pin"], short["code_pin"]["kokoro"])
+        self.assertEqual(medium_meta["asset_sha256"], short["asset_sha256"])
+        self.assertEqual(medium_meta["asset_sha256"], long["assets"])
+        with np.load(medium_path) as capture:
+            medium_ids = capture["word_ids"].tolist()
         self.cases = (("Hello.", short["phonemes"], short["input_ids"]),
+                      ("Hello there.", None, medium_ids),
                       ("Read this assistant response aloud.",
                        long["phonemes"], long["input_ids"]))
         vocab = {" ": 16, ".": 4, ",": 3, "!": 5, "?": 6}
         for _, phones, ids in self.cases:
+            if phones is None:
+                continue
             self.assertEqual(len(phones) + 2, len(ids))
             for phone, token in zip(phones, ids[1:-1]):
                 self.assertEqual(vocab.setdefault(phone, token), token)
+        for token in medium_ids[7:-2]:
+            if token not in vocab.values():
+                vocab[chr(0xE000 + token)] = token
         config = self.root / "config.json"
         config.write_text(json.dumps({"vocab": vocab}))
         phones = {"hello": self.cases[0][1][:-1]}
+        by_id = {token: phone for phone, token in vocab.items()}
+        phones["there"] = "".join(by_id[token] for token in medium_ids[7:-2])
         for word, pronunciation in zip(
                 ("read", "this", "assistant", "response", "aloud"),
-                self.cases[1][1][:-1].split(" ")):
+            self.cases[2][1][:-1].split(" ")):
             phones[word] = pronunciation
         source = self.root / "us_gold.json"
         source.write_text(json.dumps(phones))
@@ -68,15 +91,15 @@ class KokoroNativeLexiconTextTest(unittest.TestCase):
                 self.assertEqual(run.returncode, 0, run.stderr)
                 self.assertEqual([int(value) for value in
                                   output.read_text().strip().split(",")], expected)
-        self.assertEqual(self.report["word_count"], 6)
+        self.assertEqual(self.report["word_count"], 7)
         print("CKE_NUMERICAL_CASE " + json.dumps({
-            "case_id": "kokoro.native-lexicon-text.two-pinned-phrases-v1",
-            "name": "Native dictionary frontend IDs for pinned Kokoro phrases",
+            "case_id": "kokoro.native-lexicon-text.three-pinned-phrases-v1",
+            "name": "Native dictionary frontend IDs for three pinned Kokoro phrases",
             "provider": "native_kokoro_lexicon_text", "dtype": "i32",
             "direction": "inference", "oracle": "pinned Misaki/Kokoro capture",
             "status": "pass", "gate": "session", "blocking": True,
             "max_diff": 0, "tolerance": 0,
-            "configuration": "synthetic six-word lexicon; Hello. and pinned 36-ID sentence",
+            "configuration": "synthetic seven-word lexicon; 8/13/36-ID phrases",
             "reproduction_command": "python3 -m unittest "
                 "tests.test_v8_kokoro_native_lexicon_text",
         }, sort_keys=True))
@@ -108,6 +131,158 @@ class KokoroNativeLexiconTextTest(unittest.TestCase):
                 config_sha256="0" * 64,
                 lexicon_sha256=_hash(self.root / "us_gold.json"))
         self.assertFalse(target.exists())
+
+    def test_runtime_asset_coverage_is_explicit(self):
+        if os.environ.get("CKE_TTS_RUN_RUNTIME_TEXT_FULL"):
+            return
+        for case_id, name in (
+            ("kokoro.native-runtime-text.three-length-wavs-v1",
+             "Native dictionary text through one variable-length generated graph"),
+            ("kokoro.native-runtime-text.session-recovery-v1",
+             "Generated Kokoro text session stop error and recovery"),
+        ):
+            print("CKE_NUMERICAL_CASE " + json.dumps({
+                "case_id": case_id, "name": name,
+                "provider": "generated_kokoro_runtime_waveform",
+                "dtype": "pcm16", "direction": "inference",
+                "oracle": "asset-backed pinned BUMP and voice bank",
+                "status": "not_tested", "gate": "execution", "blocking": False,
+                "reason": "pinned runtime bundle not supplied; set "
+                          "CKE_TTS_RUN_RUNTIME_TEXT_FULL and "
+                          "CKE_TTS_RUNTIME_TEXT_BUNDLE_DIR",
+                "configuration": "8/13/36-ID native text and session replay",
+                "reproduction_command": "CKE_TTS_RUN_RUNTIME_TEXT_FULL=1 "
+                    "CKE_TTS_RUNTIME_TEXT_BUNDLE_DIR=<pinned-bundle> "
+                    "python3 -m unittest tests.test_v8_kokoro_native_lexicon_text",
+            }, sort_keys=True))
+
+    @unittest.skipUnless(os.environ.get("CKE_TTS_RUN_RUNTIME_TEXT_FULL"),
+                         "pinned variable-length generated bundle not requested")
+    def test_one_runtime_bundle_speaks_three_text_lengths(self):
+        bundle = Path(os.environ["CKE_TTS_RUNTIME_TEXT_BUNDLE_DIR"])
+        manifest = json.loads((bundle / "bundle_manifest.json").read_text())
+        self.assertTrue(manifest["runtime_lengths"])
+        self.assertEqual(manifest["supported_phoneme_counts"], [8, 13, 36])
+        self.assertEqual(len({item["library_sha256"] for item in
+                              manifest["buckets"].values()}), 1)
+        expected = (
+            (0, 32400, "8f88a076382944cfd26826d964cf12f378ebc8c16f7ce98ea5ed24e98667eda1"),
+            (1, 36600, "6a60f4d72ced2e3dac9e6200835592d5c330adcdd161bbf015f410f9fee8c33a"),
+            (2, 61800, "187e777636f7071776968bb7a7c4ced52f3d0438bedc281b84416562c844015e"),
+            (0, 32400, "8f88a076382944cfd26826d964cf12f378ebc8c16f7ce98ea5ed24e98667eda1"),
+        )
+        for request, (index, samples, digest) in enumerate(expected):
+            text = self.cases[index][0]
+            wav = self.root / f"runtime-text-{request}.wav"
+            run = subprocess.run([str(self.export / "native-kokoro-text"),
+                str(bundle), str(self.export / "us-gold.cklex"),
+                str(wav), "7", text], capture_output=True, text=True)
+            self.assertEqual(run.returncode, 0, run.stderr)
+            self.assertIn("artifact SHA-256 verified", run.stderr)
+            with wave.open(str(wav), "rb") as audio:
+                self.assertEqual((audio.getnchannels(), audio.getsampwidth(),
+                    audio.getframerate(), audio.getnframes()),
+                    (1, 2, 24000, samples))
+            self.assertEqual(_hash(wav), digest)
+        print("CKE_NUMERICAL_CASE " + json.dumps({
+            "case_id": "kokoro.native-runtime-text.three-length-wavs-v1",
+            "name": "Native dictionary text through one variable-length generated graph",
+            "provider": "generated_kokoro_runtime_waveform", "dtype": "pcm16",
+            "direction": "inference", "oracle": "retained CKE seeded WAV baselines",
+            "status": "pass", "gate": "execution", "blocking": True,
+            "max_diff": 0, "tolerance": 0,
+            "configuration": "8/13/36/8 IDs; af_heart; native seed 7; one library artifact",
+            "library_sha256": manifest["buckets"]["8"]["library_sha256"],
+            "reproduction_command": "CKE_TTS_RUN_RUNTIME_TEXT_FULL=1 "
+                "CKE_TTS_RUNTIME_TEXT_BUNDLE_DIR=<pinned-bundle> "
+                "python3 -m unittest tests.test_v8_kokoro_native_lexicon_text."
+                "KokoroNativeLexiconTextTest."
+                "test_one_runtime_bundle_speaks_three_text_lengths",
+        }, sort_keys=True))
+
+    @unittest.skipUnless(os.environ.get("CKE_TTS_RUN_RUNTIME_TEXT_FULL"),
+                         "pinned variable-length generated bundle not requested")
+    def test_runtime_text_session_stop_error_and_recovery(self):
+        bundle = Path(os.environ["CKE_TTS_RUNTIME_TEXT_BUNDLE_DIR"])
+        process = subprocess.Popen([
+            str(self.export / "native-kokoro-session"),
+            str(self.export / "native-kokoro-text"), str(bundle),
+            str(self.export / "us-gold.cklex"), str(self.root), "-"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE)
+        pending = b""
+
+        def line(timeout=90):
+            nonlocal pending
+            deadline = time.monotonic() + timeout
+            while b"\n" not in pending:
+                remaining = deadline - time.monotonic()
+                self.assertGreater(remaining, 0, "native session event timed out")
+                readable, _, _ = select.select([process.stdout], [], [], remaining)
+                self.assertTrue(readable, "native session event timed out")
+                chunk = os.read(process.stdout.fileno(), 4096)
+                self.assertTrue(chunk, "native session closed unexpectedly")
+                pending += chunk
+            result, pending = pending.split(b"\n", 1)
+            return result.decode()
+
+        def send(command):
+            process.stdin.write(command.encode() + b"\n")
+            process.stdin.flush()
+
+        try:
+            ready = line()
+            self.assertTrue(ready.startswith("READY\t"), ready)
+            directory = Path(ready.split("\t", 1)[1])
+            send("SPEAK\t7\tHello.")
+            self.assertEqual(line(), "EVENT\t1\tSTARTED")
+            self.assertEqual(line(), f"EVENT\t1\tWAV_READY\t{directory / '1.wav'}")
+            self.assertEqual(line(), "EVENT\t1\tCOMPLETED")
+            short_hash = _hash(directory / "1.wav")
+            send("SPEAK\t7\tRead this assistant response aloud.")
+            self.assertEqual(line(), "EVENT\t2\tSTARTED")
+            send("STOP")
+            self.assertEqual(line(), "EVENT\t2\tCANCELLED")
+            self.assertFalse((directory / "2.wav").exists())
+            send("SPEAK\t7\tUnsupported word.")
+            self.assertEqual(line(), "EVENT\t3\tSTARTED")
+            self.assertEqual(line(), "EVENT\t3\tERROR\tnative child failed")
+            send("SPEAK\t7\tHello there.")
+            self.assertEqual(line(), "EVENT\t4\tSTARTED")
+            self.assertEqual(line(), f"EVENT\t4\tWAV_READY\t{directory / '4.wav'}")
+            self.assertEqual(line(), "EVENT\t4\tCOMPLETED")
+            with wave.open(str(directory / "4.wav"), "rb") as audio:
+                self.assertEqual(audio.getnframes(), 36600)
+            send("SPEAK\t7\tHello.")
+            self.assertEqual(line(), "EVENT\t5\tSTARTED")
+            self.assertEqual(line(), f"EVENT\t5\tWAV_READY\t{directory / '5.wav'}")
+            self.assertEqual(line(), "EVENT\t5\tCOMPLETED")
+            self.assertEqual(_hash(directory / "5.wav"), short_hash)
+            send("QUIT")
+            self.assertEqual(process.wait(timeout=5), 0)
+            print("CKE_NUMERICAL_CASE " + json.dumps({
+                "case_id": "kokoro.native-runtime-text.session-recovery-v1",
+                "name": "Generated Kokoro text session stop error and recovery",
+                "provider": "native_kokoro_speech_session+generated_kokoro_runtime_waveform",
+                "dtype": "pcm16", "direction": "inference",
+                "oracle": "session event order and seeded short-WAV replay",
+                "status": "pass", "gate": "session", "blocking": True,
+                "max_diff": 0, "tolerance": 0,
+                "configuration": "8-ID success; 36-ID cancellation; unsupported word; "
+                                 "13-ID success; 8-ID exact recovery; no player",
+                "reproduction_command": "CKE_TTS_RUN_RUNTIME_TEXT_FULL=1 "
+                    "CKE_TTS_RUNTIME_TEXT_BUNDLE_DIR=<pinned-bundle> "
+                    "python3 -m unittest tests.test_v8_kokoro_native_lexicon_text."
+                    "KokoroNativeLexiconTextTest."
+                    "test_runtime_text_session_stop_error_and_recovery",
+            }, sort_keys=True))
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
+            process.stdin.close()
+            process.stdout.close()
+            process.stderr.close()
 
 
 class KokoroNativeLexiconFullTest(unittest.TestCase):
