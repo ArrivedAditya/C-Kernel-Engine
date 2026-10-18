@@ -1,0 +1,26 @@
+{
+  "schema": "cke.instella.router_same_input_capture.v1",
+  "publisher_revision": "74d28c1a8425583d7805b58e2caa9c13d6b62929",
+  "publisher_config_sha256": "d5e1f9f410a835a86a61648a0f246f656181b2724ea97826f40b63f261c9c62b",
+  "capture_script": "version/v8/scripts/xray_decoder_pytorch_v8.py",
+  "capture_script_sha256": "fc6d1d01a3af79a6a3fee481f6ac91d4dffb2a50739df0573f83cbe87f9a18a7",
+  "source_run": "instella-pointwise-bf16-20261018/xray-prefix-1",
+  "capture_args": {
+    "token_ids": [
+      1
+    ],
+    "threads": 8,
+    "mla_replay_layer": 1
+  },
+  "input_checkpoint": "decoder.layer.7.moe_router_logits",
+  "output_checkpoints": [
+    "decoder.layer.7.moe_selected_experts",
+    "decoder.layer.7.moe_routing_weights"
+  ],
+  "source_bias": "model.layers.7.mlp.gate.e_score_correction_bias",
+  "source_weight_shard_sha256": "3e9c9f4613273ec24c3b1118242376647c00063726ad935ec92bc0ece209e58c",
+  "model_library_file_sha256": "3107a50b96bcfe6789899a43708383341fc7c14e810d75731d4db0ab07170291",
+  "engine_library_file_sha256": "d8a92a36aab579947e075ae390ef8b511b67f6d0f84287b0205496e1fa12ba6f",
+  "fixture_sha256": "3fd2a74adb31c30edf27c5176a703837117baf3619f598f9ade307b6cdc40e51",
+  "verdict": "The resolved C router matches each captured expert set and raw routing weights keyed by expert ID when fed that backend's logits and pinned correction bias. Publisher and C output-array orders differ and downstream expert accumulation order is not certified. The membership switch is upstream-input dependent for this one-token prefix."
+}
