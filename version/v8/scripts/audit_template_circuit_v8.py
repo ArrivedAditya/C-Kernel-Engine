@@ -11,8 +11,17 @@ The optional C audit is only a final codegen-preservation check.
 import argparse
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Any
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+from validate_circuit_interfaces_v8 import (
+    CircuitInterfaceError,
+    resolve_template_graph_slots,
+)
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -87,6 +96,26 @@ LINEAR_ACTIVATION_INPUTS = {
 }
 
 
+def _phase_required_ports(
+    template: dict[str, Any], op: str, phase: str, direction: str,
+) -> tuple[str, ...]:
+    """Read required ports from the phase's selected provider when available."""
+    kernels = template.get("kernels") if isinstance(template.get("kernels"), dict) else {}
+    kernel_id = kernels.get(f"{op}_{phase}") or kernels.get(op)
+    if isinstance(kernel_id, str) and kernel_id:
+        path = SCRIPT_DIR.parent / "kernel_maps" / f"{kernel_id}.json"
+        if path.is_file():
+            provider = _load_json(path)
+            if provider.get("op") == op:
+                return tuple(
+                    str(port["name"])
+                    for port in provider.get(direction, [])
+                    if isinstance(port, dict) and port.get("name")
+                    and port.get("consumption", "required") == "required"
+                )
+    return CRITICAL_TEMPLATE_INPUTS.get(op, ()) if direction == "inputs" else ()
+
+
 def audit_template_explicit_edges(template: dict[str, Any]) -> dict[str, Any]:
     missing: list[str] = []
     explicit: list[str] = []
@@ -109,25 +138,44 @@ def audit_template_explicit_edges(template: dict[str, Any]) -> dict[str, Any]:
             for index, item in enumerate(_template_op_items(raw_ops)):
                 op = str(item.get("op") or "")
                 required = CRITICAL_TEMPLATE_INPUTS.get(op)
-                if not required:
+                phase_specific = "graph_slots_by_phase" in item
+                if not required and not phase_specific:
                     ignored.append(f"{block_name}.{section_name}[{index}].{op}")
                     continue
-                graph_slots = item.get("graph_slots") if isinstance(item.get("graph_slots"), dict) else {}
-                inputs = graph_slots.get("inputs") if isinstance(graph_slots.get("inputs"), dict) else {}
-                for input_name in required:
-                    label = f"{block_name}.{section_name}[{index}].{op}.{input_name}"
-                    candidates = (
-                        ("x", "A")
-                        if input_name == "x" and op in LINEAR_ACTIVATION_INPUTS
-                        else (input_name,)
+                for phase in (("prefill", "decode") if phase_specific else (None,)):
+                    prefix = f"{block_name}.{section_name}[{index}].{op}"
+                    if phase is not None:
+                        prefix += f".{phase}"
+                    try:
+                        graph_slots = resolve_template_graph_slots(item, phase or "prefill")
+                    except CircuitInterfaceError as exc:
+                        missing.append(f"{prefix}: {exc.summary}: {exc.detail}")
+                        continue
+                    inputs = graph_slots.get("inputs", {})
+                    phase_required = (
+                        _phase_required_ports(template, op, phase, "inputs")
+                        if phase is not None else required
                     )
-                    declared = next((name for name in candidates if name in inputs), None)
-                    if declared is not None:
-                        explicit.append(
-                            f"{block_name}.{section_name}[{index}].{op}.{declared}={inputs[declared]}"
+                    for input_name in phase_required:
+                        label = f"{prefix}.{input_name}"
+                        candidates = (
+                            ("x", "A")
+                            if input_name == "x" and op in LINEAR_ACTIVATION_INPUTS
+                            else (input_name,)
                         )
-                    else:
-                        missing.append(label)
+                        declared = next((name for name in candidates if name in inputs), None)
+                        if declared is not None:
+                            explicit.append(f"{prefix}.{declared}={inputs[declared]}")
+                        else:
+                            missing.append(label)
+                    if phase is not None:
+                        outputs = graph_slots.get("outputs", {})
+                        for output_name in _phase_required_ports(template, op, phase, "outputs"):
+                            label = f"{prefix}.{output_name}"
+                            if output_name in outputs:
+                                explicit.append(f"{label}={outputs[output_name]}")
+                            else:
+                                missing.append(label)
     return {
         "template": template.get("name"),
         "explicit_count": len(explicit),

@@ -81,6 +81,7 @@ RESET = '\033[0m'
 from memory_planner_v8 import plan_memory, MemoryPlanner
 from validate_circuit_interfaces_v8 import (
     CircuitInterfaceError,
+    resolve_template_graph_slots,
     validate_graph_slots,
 )
 from resolve_layout_chain_v8 import rank_layout_routes
@@ -5104,26 +5105,7 @@ def _extract_template_ops(
 
 
 def _template_graph_slots(op_item: Dict[str, Any], phase: str) -> Dict[str, Any]:
-    phase_slots = op_item.get("graph_slots_by_phase")
-    if phase_slots is not None:
-        if "graph_slots" in op_item:
-            raise RuntimeError(
-                "HARD CIRCUIT INTERFACE FAULT: graph_slots conflicts with graph_slots_by_phase"
-            )
-        if (not isinstance(phase_slots, dict)
-                or not isinstance(phase_slots.get(phase), dict)):
-            raise RuntimeError(
-                f"HARD CIRCUIT INTERFACE FAULT: missing {phase!r} graph slots"
-            )
-        graph_slots = phase_slots[phase]
-    else:
-        graph_slots = op_item.get("graph_slots") if isinstance(op_item.get("graph_slots"), dict) else {}
-    out: Dict[str, Any] = {}
-    for section in ("inputs", "outputs"):
-        value = graph_slots.get(section)
-        if isinstance(value, dict) and value:
-            out[section] = copy.deepcopy(value)
-    return out
+    return resolve_template_graph_slots(op_item, phase)
 
 
 def _copy_template_runtime_annotations(op_item: Dict[str, Any], arranged: Dict[str, Any]) -> None:

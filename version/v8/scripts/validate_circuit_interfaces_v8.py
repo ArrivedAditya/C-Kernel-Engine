@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import copy
 from typing import Any, Dict, Optional
 
 
@@ -54,6 +55,81 @@ def _port_table(interface: Dict[str, Any], role: str) -> Dict[str, Dict[str, Any
         for port in interface.get("ports", [])
         if isinstance(port, dict) and port.get("role") == role and port.get("name")
     }
+
+
+def resolve_template_graph_slots(op_item: Dict[str, Any], phase: str) -> Dict[str, Any]:
+    """Resolve authored graph edges, rejecting ineffective phase declarations.
+
+    Legacy graph_slots may be a partial override. A phase-specific declaration
+    must have at least one valid edge; the selected provider subsequently checks
+    that all of its required ports are present.
+    """
+    if "graph_slots_by_phase" not in op_item:
+        graph_slots = op_item.get("graph_slots")
+        if not isinstance(graph_slots, dict):
+            return {}
+        out: Dict[str, Any] = {}
+        for section in ("inputs", "outputs"):
+            value = graph_slots.get(section)
+            if isinstance(value, dict) and value:
+                out[section] = copy.deepcopy(value)
+        return out
+
+    if "graph_slots" in op_item:
+        raise _fault(
+            "graph_slots conflicts with graph_slots_by_phase",
+            f"operation={op_item.get('op')!r}, phase={phase!r}",
+            "declare either one shared graph_slots mapping or phase-specific mappings.",
+        )
+    declarations = op_item["graph_slots_by_phase"]
+    if not isinstance(declarations, dict) or not declarations:
+        raise _fault(
+            "graph_slots_by_phase is not a non-empty object",
+            f"operation={op_item.get('op')!r}, value={declarations!r}",
+            "declare non-empty prefill/decode phase objects.",
+        )
+    unknown_phases = sorted(set(declarations) - {"prefill", "decode"})
+    if unknown_phases:
+        raise _fault(
+            "graph_slots_by_phase contains unsupported phases",
+            f"operation={op_item.get('op')!r}, phases={unknown_phases!r}",
+            "use only prefill and decode phase keys.",
+        )
+    if phase not in declarations:
+        raise _fault(
+            f"missing {phase!r} graph slots",
+            f"operation={op_item.get('op')!r}, phases={sorted(declarations)!r}",
+            "declare graph edges for the selected execution phase.",
+        )
+    graph_slots = declarations[phase]
+    if not isinstance(graph_slots, dict) or not graph_slots:
+        raise _fault(
+            "phase graph slots are not a non-empty object",
+            f"operation={op_item.get('op')!r}, phase={phase!r}, value={graph_slots!r}",
+            "declare at least one inputs or outputs mapping for this phase.",
+        )
+    unknown_sections = sorted(set(graph_slots) - {"inputs", "outputs"})
+    if unknown_sections:
+        raise _fault(
+            "phase graph slots contain unsupported sections",
+            f"operation={op_item.get('op')!r}, phase={phase!r}, sections={unknown_sections!r}",
+            "use only inputs and outputs sections.",
+        )
+    for section, edges in graph_slots.items():
+        if not isinstance(edges, dict) or not edges:
+            raise _fault(
+                f"phase graph_slots.{section} is not a non-empty object",
+                f"operation={op_item.get('op')!r}, phase={phase!r}, value={edges!r}",
+                "declare non-empty canonical provider port-to-slot edges.",
+            )
+        for port, slot in edges.items():
+            if not isinstance(port, str) or not port.strip() or not isinstance(slot, str) or not slot.strip():
+                raise _fault(
+                    "phase graph slots contain an invalid edge",
+                    f"operation={op_item.get('op')!r}, phase={phase!r}, section={section!r}, port={port!r}, slot={slot!r}",
+                    "use non-empty canonical port names and slot strings.",
+                )
+    return copy.deepcopy(graph_slots)
 
 
 def validate_graph_slots(

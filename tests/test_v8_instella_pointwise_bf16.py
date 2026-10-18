@@ -117,6 +117,17 @@ class InstellaPointwiseBf16Test(unittest.TestCase):
         conflicting["graph_slots"] = prefill
         with self.assertRaisesRegex(RuntimeError, "graph_slots conflicts"):
             _template_graph_slots(conflicting, "prefill")
+        malformed = (
+            None,
+            {"decode": {}},
+            {"decode": {"input": {"q": "wrong"}}},
+            {"decode": {"inputs": [], "outputs": {}}},
+        )
+        for declaration in malformed:
+            with self.subTest(declaration=declaration):
+                invalid = {"op": "mla_attention", "graph_slots_by_phase": declaration}
+                with self.assertRaisesRegex(RuntimeError, "HARD CIRCUIT INTERFACE FAULT"):
+                    _template_graph_slots(invalid, "decode")
 
 
 if __name__ == "__main__":
