@@ -175,6 +175,7 @@ class KokoroRuntimeSourceStftConvTest(unittest.TestCase):
                 'oracle': 'pinned PyTorch 2.8 direct full-model capture',
                 'status': 'fail' if float(conv_error[worst]) > 5e-5 else 'pass',
                 'gate': 'diagnostic', 'blocking': False,
+                'reason': 'Connected source-convolution parity remains unresolved: generated F0 drift and raw STFT phase differences propagate into this output',
                 'configuration': f'{count} IDs; af_heart row {row}; '
                     f'samples={samples}; captured Gaussian',
                 'max_magnitude_error': float(mag_error.max()),
