@@ -31,6 +31,72 @@ codegen_prefill_v8 = _load_module("codegen_prefill_v8_tests", CODEGEN_PREFILL_PA
 
 
 class TestV8PrefillCodegen(unittest.TestCase):
+    def test_embedding_scale_preserves_visual_rows_for_causal_mixed_prefill(self):
+        compiler = shutil.which("cc")
+        if compiler is None:
+            self.skipTest("C compiler unavailable")
+        emitted = codegen_prefill_v8._emit_embedding_scale_block(
+            "num_tokens", False, segment_plan_available=True
+        )
+        text_only = codegen_prefill_v8._emit_embedding_scale_block("num_tokens", False)
+        self.assertNotIn("ck_multimodal_prefill_has_segment_plan", text_only)
+        segmented_append = codegen_prefill_v8._emit_embedding_scale_block(
+            "num_tokens", False, segment_plan_available=True, segmented_append=True
+        )
+        self.assertIn("bridge_noncausal_visual_chunk", segmented_append)
+        self.assertNotIn("ck_multimodal_prefill_has_segment_plan", segmented_append)
+        source = r'''
+#include <math.h>
+#include <stddef.h>
+#define EMBED_DIM 4
+#define A_EMBEDDED_INPUT 0
+typedef struct { unsigned char *bump; } CKModel;
+static int g_multimodal_prefill_segment_lengths[3] = {2, 2, 1};
+static int g_multimodal_prefill_num_segments = 3;
+static int ck_multimodal_prefill_has_segment_plan(int n) {
+    return g_multimodal_prefill_num_segments == 3 &&
+        g_multimodal_prefill_segment_lengths[0] >= 0 &&
+        g_multimodal_prefill_segment_lengths[1] >= 0 &&
+        g_multimodal_prefill_segment_lengths[2] >= 0 &&
+        g_multimodal_prefill_segment_lengths[0] +
+        g_multimodal_prefill_segment_lengths[1] +
+        g_multimodal_prefill_segment_lengths[2] == n;
+}
+static void run(CKModel *model, int num_tokens) {
+__EMITTED__
+}
+int main(void) {
+    float data[20];
+    for (int i = 0; i < 20; ++i) data[i] = (float)(i + 1);
+    CKModel model = {(unsigned char *)data};
+    run(&model, 5);
+    for (int row = 0; row < 5; ++row) {
+        for (int channel = 0; channel < 4; ++channel) {
+            const int i = row * 4 + channel;
+            const float expected = (float)(i + 1) * (row >= 2 && row < 4 ? 1.0f : 2.0f);
+            if (data[i] != expected) return 1;
+        }
+    }
+    g_multimodal_prefill_num_segments = 0;
+    for (int i = 0; i < 20; ++i) data[i] = (float)(i + 1);
+    run(&model, 5);
+    for (int i = 0; i < 20; ++i) {
+        if (data[i] != (float)(i + 1) * 2.0f) return 2;
+    }
+    return 0;
+}
+'''.replace("__EMITTED__", emitted)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            c_path = root / "embedding_scale.c"
+            exe_path = root / "embedding_scale"
+            c_path.write_text(source, encoding="utf-8")
+            subprocess.run(
+                [compiler, "-std=c11", "-Wall", "-Werror", str(c_path), "-lm", "-o", str(exe_path)],
+                check=True, capture_output=True, text=True,
+            )
+            subprocess.run([str(exe_path)], check=True, capture_output=True, text=True)
+
     def test_chunk_local_attention_continuation_uses_decode_and_preserves_positions(self):
         compiler = shutil.which("cc")
         if compiler is None:
