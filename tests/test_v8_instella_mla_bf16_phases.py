@@ -33,6 +33,8 @@ class InstellaMlaBf16PhasesTest(unittest.TestCase):
         cls.prefill_parallel.argtypes = cls.prefill_args
         cls.old_prefill = cls.engine.deepseek_mla_attention_f32_workspace
         cls.old_prefill.argtypes = cls.prefill_args
+        cls.old_prefill_parallel = cls.engine.deepseek_mla_attention_f32_parallel_dispatch
+        cls.old_prefill_parallel.argtypes = cls.prefill_args
         cls.decode = cls.engine.deepseek_mla_attention_decode_bf16_phases_workspace
         cls.decode.argtypes = cls.decode_args
         cls.old_decode = cls.engine.deepseek_mla_attention_decode_f32_workspace
@@ -167,7 +169,8 @@ class InstellaMlaBf16PhasesTest(unittest.TestCase):
                              "the second worker's private score row must be used")
             self.assertEqual(scores[-1], -77)
 
-            for function in (self.prefill, self.prefill_parallel):
+            for function in (self.prefill, self.prefill_parallel,
+                             self.old_prefill, self.old_prefill_parallel):
                 for bad in ({"scale": -1.0}, {"scale": float("nan")},
                             {"kv": 0}, {"kv": 3}, {"qk": 0},
                             {"scores_bytes": 0}, {"q": None}):
