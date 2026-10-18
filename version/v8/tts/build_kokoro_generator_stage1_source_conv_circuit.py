@@ -15,13 +15,7 @@ INPUT_CHANNELS = 22
 OUTPUT_CHANNELS = 128
 
 
-def build_circuit(tokens=36):
-    graph = ingress_circuit(tokens)
-    graph['name'] = 'kokoro_generator_stage1_source_conv_bounded'
-    graph['native_entry']['function'] = 'ck_kokoro_generator_stage1_source_conv_bounded'
-    graph['contract']['runtime_invariants'].update(
-        generated_generator_stage1_source_conv=True,
-        complete_generator=False, complete_waveform=False)
+def add_source_conv(graph):
     name = 'generator_stage1_source_conv'
     graph['activation_buffers'][name] = {
         'shape': [OUTPUT_CHANNELS, PADDED_CAPACITY]}
@@ -68,6 +62,16 @@ def build_circuit(tokens=36):
             'producer': name, 'tensor': name,
             'logical_layout': 'channel_major',
             'axis_names': ['channel', 'frame'], 'storage_dtype': 'fp32'}]}
+    return graph
+
+
+def build_circuit(tokens=36):
+    graph = add_source_conv(ingress_circuit(tokens))
+    graph['name'] = 'kokoro_generator_stage1_source_conv_bounded'
+    graph['native_entry']['function'] = 'ck_kokoro_generator_stage1_source_conv_bounded'
+    graph['contract']['runtime_invariants'].update(
+        generated_generator_stage1_source_conv=True,
+        complete_generator=False, complete_waveform=False)
     return graph
 
 
