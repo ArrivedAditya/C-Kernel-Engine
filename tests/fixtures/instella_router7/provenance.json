@@ -22,5 +22,5 @@
   "model_library_file_sha256": "3107a50b96bcfe6789899a43708383341fc7c14e810d75731d4db0ab07170291",
   "engine_library_file_sha256": "d8a92a36aab579947e075ae390ef8b511b67f6d0f84287b0205496e1fa12ba6f",
   "fixture_sha256": "3fd2a74adb31c30edf27c5176a703837117baf3619f598f9ade307b6cdc40e51",
-  "verdict": "The resolved C router matches each backend captured output when fed that backend logits and the pinned correction bias; the selected expert change is upstream-input dependent for this one-token prefix."
+  "verdict": "The resolved C router matches each captured expert set and raw routing weights keyed by expert ID when fed that backend's logits and pinned correction bias. Publisher and C output-array orders differ and downstream expert accumulation order is not certified. The membership switch is upstream-input dependent for this one-token prefix."
 }
