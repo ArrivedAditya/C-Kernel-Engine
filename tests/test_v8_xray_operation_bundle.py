@@ -118,7 +118,7 @@ class OperationBundleTests(unittest.TestCase):
                      "scratch_capacity": 22 * frames, "n_fft": fft,
                      "hop": 5, "frames": frames, "state": "stateless",
                      "reference_identity": {"model_pin": "test", "code_pin": "test",
-                                            "asset_sha256": "test"}},
+                                            "asset_sha256": {"config.json": "a" * 64}}},
             tensors={"samples": (z(20), "fp32", ("sample",)),
                      "reference_samples": (z(20), "fp32", ("sample",)),
                      "window": (z(20), "fp32", ("tap",)),
@@ -139,6 +139,12 @@ class OperationBundleTests(unittest.TestCase):
                 (("context", "frames"), 4, "length, stride or capacity"),
                 (("context", "output_stride"), 4, "length, stride or capacity"),
                 (("context", "state"), "dirty", "no recurrent or RNG state"),
+                (("context", "reference_identity", "asset_sha256"), "test",
+                 "lacks reference identity"),
+                (("context", "reference_identity", "asset_sha256"), {},
+                 "lacks reference identity"),
+                (("context", "reference_identity", "asset_sha256"),
+                 {"config.json": "invalid"}, "lacks reference identity"),
                 (("tensors", "cke_output", "axes"), ["frame", "channel"],
                  "physical layout labels")):
             altered = json.loads(json.dumps(original))

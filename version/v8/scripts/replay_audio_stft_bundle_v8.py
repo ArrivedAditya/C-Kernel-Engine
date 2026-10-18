@@ -11,6 +11,7 @@ import ctypes
 import hashlib
 import json
 from pathlib import Path
+import re
 
 import numpy as np
 
@@ -38,10 +39,17 @@ def validate_stft_bundle(path: Path):
         raise BundleError("STFT packet has incomplete or unexpected scalar arguments")
     if context["state"] != "stateless":
         raise BundleError("STFT operation has no recurrent or RNG state")
-    if (not isinstance(context["reference_identity"], dict) or
-            any(not isinstance(context["reference_identity"].get(key), str) or
-                not context["reference_identity"][key] for key in
-                ("model_pin", "code_pin", "asset_sha256"))):
+    identity = context["reference_identity"]
+    if (not isinstance(identity, dict) or
+            set(identity) != {"model_pin", "code_pin", "asset_sha256"} or
+            any(not isinstance(identity[key], str) or not identity[key]
+                for key in ("model_pin", "code_pin")) or
+            not isinstance(identity["asset_sha256"], dict) or
+            not identity["asset_sha256"] or
+            any(not isinstance(name, str) or not name or
+                not isinstance(digest, str) or
+                re.fullmatch(r"[0-9a-f]{64}", digest) is None
+                for name, digest in identity["asset_sha256"].items())):
         raise BundleError("STFT packet lacks reference identity")
     if any(type(context[key]) is not int or context[key] <= 0 for key in SCALARS):
         raise BundleError("STFT scalar arguments must be positive integers")
