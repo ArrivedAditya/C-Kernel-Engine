@@ -1347,6 +1347,12 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_instella_moe_bringup.py",
         timeout_sec=300,
     ),
+    "v8_instella_mla_bf16_phases": TestSuite(
+        "Instella MLA BF16 Arithmetic",
+        "inference",
+        ROOT / "tests" / "test_v8_instella_mla_bf16_phases.py",
+        timeout_sec=300,
+    ),
     "pytorch_onednn_oracle_contract_bf16": TestSuite(
         "PyTorch/oneDNN Oracle Contract BF16",
         "bf16",

@@ -238,6 +238,18 @@ class DecoderPyTorchXRayTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "missing"):
             MODULE._literal_call_arg(operation, "num_heads")
 
+    def test_mla_same_input_replay_uses_selected_provider(self) -> None:
+        self.assertEqual(
+            MODULE._mla_replay_function_name("deepseek_mla_attention_f32"),
+            "deepseek_mla_attention_f32_workspace",
+        )
+        self.assertEqual(
+            MODULE._mla_replay_function_name("deepseek_mla_attention_bf16_phases"),
+            "deepseek_mla_attention_bf16_phases_workspace",
+        )
+        with self.assertRaisesRegex(RuntimeError, "no same-input MLA replay"):
+            MODULE._mla_replay_function_name("unknown_provider")
+
     def test_parse_token_ids_accepts_explicit_csv(self) -> None:
         self.assertEqual(MODULE.parse_token_ids("1, 2,3"), [1, 2, 3])
 
