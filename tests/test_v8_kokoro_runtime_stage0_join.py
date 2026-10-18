@@ -170,6 +170,7 @@ class KokoroRuntimeStage0JoinTest(unittest.TestCase):
                 'oracle': 'pinned PyTorch 2.8 direct full-model capture',
                 'status': 'fail' if metrics['max_abs'] > 2e-4 else 'pass',
                 'gate': 'diagnostic', 'blocking': False,
+                'reason': 'Connected source-branch parity is unresolved; the generated main/source join is exact but inherits the source numerical mismatch',
                 'configuration': f'{count} IDs; af_heart row {row}; '
                     f'frames={stage_frames}; captured Gaussian',
                 'max_diff': metrics['max_abs'], 'tolerance': 2e-4,
