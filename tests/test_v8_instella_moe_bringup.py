@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import ctypes
+import copy
 import json
 import math
 import struct
@@ -291,9 +292,31 @@ class InstellaMoEBringupTests(unittest.TestCase):
                 )
                 self.assertTrue(any(op.get("op") == "residual_add" for op in joined))
                 ops = call_ir.get("operations", call_ir.get("ops", []))
+                gate = next(op for op in ops if op.get("op") == "attn_gate_sigmoid_mul")
+                self.assertEqual(
+                    gate.get("call_abi", {}).get("kernel_id"),
+                    "attn_gate_sigmoid_mul_pytorch_bf16_storage",
+                )
+                swiglu = next(op for op in ops if op.get("op") == "silu_mul")
+                self.assertEqual(
+                    swiglu.get("call_abi", {}).get("kernel_id"),
+                    "swiglu_forward_pytorch_bf16_storage",
+                )
+                attention = [
+                    op for op in graph_ir.get("ops", [])
+                    if op.get("op") == "mla_attention"
+                ]
+                self.assertEqual(len(attention), 2)
+                expected_ports = (
+                    {"q", "k", "v"} if mode == "prefill"
+                    else {"q", "k_cache", "v_cache"}
+                )
+                self.assertTrue(all(
+                    set(op.get("graph_slots", {}).get("inputs", {})) == expected_ports
+                    for op in attention
+                ))
                 if mode == "prefill":
                     attention = [op for op in ops if op.get("op") == "mla_attention"]
-                    self.assertEqual(len(attention), 2)
                     self.assertTrue(all(
                         op.get("prefill_history_scope") == "current_chunk"
                         for op in attention
@@ -513,6 +536,33 @@ class InstellaMoEBringupTests(unittest.TestCase):
                 text=True,
             )
             self.assertEqual(syntax.returncode, 0, syntax.stdout + syntax.stderr)
+
+            original_manifest = json.loads(
+                (out / "weights_manifest.json").read_text(encoding="utf-8")
+            )
+            bad_cases = (
+                ([], "HARD CIRCUIT INTERFACE FAULT"),
+                ({"q": "q_scratch", "v_cache": "external:kv_cache_v_layer"},
+                 "circuit omits required input ports"),
+            )
+            for bad_inputs, expected_error in bad_cases:
+                with self.subTest(invalid_decode_inputs=bad_inputs):
+                    bad_manifest = copy.deepcopy(original_manifest)
+                    ops = bad_manifest["template"]["block_types"]["decoder"]["body"]["ops_by_kind"]["mla_gated_farskip_dense_mlp"]
+                    attention = next(op for op in ops if op.get("op") == "mla_attention")
+                    attention["graph_slots_by_phase"]["decode"]["inputs"] = bad_inputs
+                    bad_path = out / "invalid_phase_manifest.json"
+                    bad_path.write_text(json.dumps(bad_manifest), encoding="utf-8")
+                    invalid = subprocess.run(
+                        [
+                            sys.executable, str(builder), "--manifest", str(bad_path),
+                            "--mode", "decode", "--context-len", "8",
+                            "--output", str(out / "invalid_phase_ir.json"),
+                        ],
+                        cwd=ROOT, check=False, capture_output=True, text=True,
+                    )
+                    self.assertNotEqual(invalid.returncode, 0)
+                    self.assertIn(expected_error, invalid.stdout + invalid.stderr)
 
     def test_codegen_fails_closed_without_resolved_yarn_init(self) -> None:
         spec = importlib.util.spec_from_file_location(

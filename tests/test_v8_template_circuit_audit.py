@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import importlib.util
 import json
 import tempfile
@@ -30,6 +31,40 @@ def _op(op_id: int, layer: int, op: str, inputs: dict, outputs: dict) -> dict:
 
 
 class TemplateCircuitAuditTests(unittest.TestCase):
+    def test_instella_mla_phase_edges_are_audited_against_selected_ports(self) -> None:
+        audit = _load_module()
+        template = json.loads(
+            (REPO / "version/v8/circuits/instella_moe.json").read_text(encoding="utf-8")
+        )
+        prefix = "decoder.body:mla_gated_farskip_dense_mlp[7].mla_attention"
+        report = audit.audit_template_explicit_edges(template)
+        self.assertIn(f"{prefix}.prefill.q=q_scratch", report["explicit"])
+        self.assertIn(f"{prefix}.prefill.k=k_scratch", report["explicit"])
+        self.assertIn(f"{prefix}.prefill.v=v_scratch", report["explicit"])
+        self.assertIn(f"{prefix}.decode.k_cache=external:kv_cache_k_layer", report["explicit"])
+        self.assertIn(f"{prefix}.decode.v_cache=external:kv_cache_v_layer", report["explicit"])
+        self.assertIn(f"{prefix}.decode.out=attn_scratch", report["explicit"])
+        self.assertFalse(any("mla_attention" in entry for entry in report["missing"]), report["missing"])
+
+        invalid = copy.deepcopy(template)
+        ops = invalid["block_types"]["decoder"]["body"]["ops_by_kind"]["mla_gated_farskip_dense_mlp"]
+        attention = next(op for op in ops if op.get("op") == "mla_attention")
+        del attention["graph_slots_by_phase"]["decode"]["inputs"]["k_cache"]
+        report = audit.audit_template_explicit_edges(invalid)
+        self.assertIn(f"{prefix}.decode.k_cache", report["missing"])
+
+        attention["graph_slots_by_phase"]["decode"]["inputs"]["k_cache"] = None
+        report = audit.audit_template_explicit_edges(invalid)
+        self.assertTrue(any(
+            entry.startswith(prefix + ".decode:") and "k_cache" in entry
+            for entry in report["missing"]
+        ), report["missing"])
+
+        attention["graph_slots_by_phase"]["decode"]["inputs"]["k_cache"] = "external:kv_cache_k_layer"
+        del attention["graph_slots_by_phase"]["decode"]["outputs"]
+        report = audit.audit_template_explicit_edges(invalid)
+        self.assertIn(f"{prefix}.decode.out", report["missing"])
+
     def test_mamba_in_proj_must_consume_block_rmsnorm_output(self) -> None:
         audit = _load_module()
         ir = {
