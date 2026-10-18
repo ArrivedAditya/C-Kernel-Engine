@@ -1019,6 +1019,17 @@ def load_tokenizer_json(path: str, vocab_size: int) -> tuple[list[int], bytes, l
 
     added_tokens = data.get("added_tokens", [])
     exact_added_ids: set[int] = set()
+    def validate_raw_added_token(row: dict, source: str) -> None:
+        """Native type-4 matching is an exact raw substring, with no HF flags."""
+        for flag in ("single_word", "lstrip", "rstrip"):
+            if row.get(flag, False) is not False:
+                raise GGUFError(f"{source}: unsupported AddedToken {flag}={row.get(flag)!r}")
+        # Normalization changes matching only when the publisher has a normalizer.
+        if row.get("normalized", False) is True and data.get("normalizer") is not None:
+            raise GGUFError(f"{source}: normalized AddedToken requires unsupported normalization")
+        if "normalized" in row and not isinstance(row["normalized"], bool):
+            raise GGUFError(f"{source}: invalid AddedToken normalized flag")
+
     config_path = Path(path).with_name("tokenizer_config.json")
     tokenizer_config = json.loads(config_path.read_text(encoding="utf-8")) if config_path.is_file() else {}
     if not isinstance(tokenizer_config, dict):
@@ -1043,6 +1054,7 @@ def load_tokenizer_json(path: str, vocab_size: int) -> tuple[list[int], bytes, l
         for row in added_tokens:
             if not isinstance(row, dict):
                 continue
+            validate_raw_added_token(row, "tokenizer.json added_tokens")
             token = row.get("content")
             idx = row.get("id")
             if not isinstance(token, str) or not isinstance(idx, int):
@@ -1067,6 +1079,7 @@ def load_tokenizer_json(path: str, vocab_size: int) -> tuple[list[int], bytes, l
         for key, row in added_decoder.items():
             if not isinstance(row, dict):
                 continue
+            validate_raw_added_token(row, "tokenizer_config.json added_tokens_decoder")
             try:
                 idx = int(key)
             except (TypeError, ValueError):
