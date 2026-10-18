@@ -529,6 +529,45 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "outside decoder layers"):
             decoder_parity_v8._resolve_llama_dump_names("layer_out-5", layer_count=5)
 
+    def test_gemma_oracle_attn_out_is_residual_not_projection(self) -> None:
+        self.assertEqual(
+            decoder_parity_v8._resolve_llama_dump_names(
+                "after_attn-0", layer_count=1, oracle_graph="gemma4"
+            ),
+            "attn_out-0",
+        )
+        self.assertEqual(
+            decoder_parity_v8._resolve_llama_dump_names(
+                "after_attn-0", layer_count=1
+            ),
+            "attn_residual-0",
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            name = "attn_out-0-token-000000-occ-000"
+            (root / f"{name}.bin").write_bytes(np.array([1.0, 2.0], dtype=np.float32).tobytes())
+            (root / "index.json").write_text(json.dumps({
+                "name": name, "base_name": "attn_out-0", "token_id": 0,
+                "occurrence": 0, "dtype": 0, "rank": 1, "shape": [2],
+                "elem_count": 2, "nbytes": 8,
+            }) + "\n", encoding="utf-8")
+            gemma = decoder_parity_v8._load_llama_dump_dir(root, oracle_graph="gemma4")
+            ordinary = decoder_parity_v8._load_llama_dump_dir(root)
+
+        self.assertEqual(gemma[0].op_name, "after_attn")
+        self.assertEqual(ordinary[0].op_name, "attn_out")
+        ck = [decoder_parity_v8.parity_test_v7.ParityDump(
+            0, "after_attn", np.array([1.0, 2.0], dtype=np.float32), 0, "fp32"
+        )]
+        aligned = decoder_parity_v8._compare_dump_sets(
+            ck, gemma, atol=0.0, rtol=0.0, pass_filter="all"
+        )
+        self.assertEqual(aligned["summary"]["pass"], 1)
+        wrong = decoder_parity_v8._compare_dump_sets(
+            ck, ordinary, atol=0.0, rtol=0.0, pass_filter="all"
+        )
+        self.assertEqual(wrong["summary"]["pass"], 0)
+
     def test_post_layer_embedding_boundaries_follow_resolved_ir(self) -> None:
         with tempfile.TemporaryDirectory(prefix="v8_decoder_ir_boundary_") as tmpdir:
             tmp = Path(tmpdir)

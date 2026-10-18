@@ -31,6 +31,205 @@ codegen_prefill_v8 = _load_module("codegen_prefill_v8_tests", CODEGEN_PREFILL_PA
 
 
 class TestV8PrefillCodegen(unittest.TestCase):
+    def test_generated_embedded_prefill_scales_only_declared_text_rows(self):
+        compiler = shutil.which("cc")
+        if compiler is None:
+            self.skipTest("C compiler unavailable")
+        embedding = {"op": "dense_embedding_lookup", "layer": -1}
+        mixed_schedule = {
+            "segments": ["text_before", "visual", "text_after"],
+            "cache_transition": "single_pass",
+            "position_transition": "explicit_full_sequence",
+        }
+        segmented_schedule = dict(
+            mixed_schedule,
+            cache_transition="append_preserve",
+            position_transition="segment_defined",
+        )
+        cases = (
+            ("unified", {"prefill_batching": "unified_mixed", "prefill_schedule": mixed_schedule}),
+            ("segmented", {"prefill_batching": "segmented_append", "prefill_schedule": segmented_schedule}),
+            ("text", None),
+        )
+        for name, bridge in cases:
+            with self.subTest(name=name):
+                config = {"embed_dim": 4, "scale_embeddings_sqrt_dim": True}
+                if bridge is not None:
+                    config["multimodal_bridge_contract"] = dict(
+                        bridge, prefix_policy="mixed_visual_text_prefill"
+                    )
+                emitted = codegen_prefill_v8.emit_prefill_from_embedded_function(
+                    [embedding], config
+                )
+                if name == "unified":
+                    self.assertIn("ck_multimodal_prefill_has_segment_plan(rows)", emitted)
+                elif name == "segmented":
+                    self.assertIn("bridge_noncausal_visual_chunk &&", emitted)
+                    self.assertNotIn("ck_multimodal_prefill_has_segment_plan(rows)", emitted)
+                else:
+                    self.assertNotIn("ck_multimodal_prefill_has_segment_plan(rows)", emitted)
+                source = r'''
+#define _POSIX_C_SOURCE 200809L
+#include <math.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#define EMBED_DIM 4
+#define A_EMBEDDED_INPUT 0
+#define MAX_SEQ_LEN 16
+typedef struct { unsigned char *bump; int pos; int rope_pos; } CKModel;
+static int ck_env_truthy_or_qwen3vl_ocr_profile(const char *name) {
+    (void)name;
+    return 0;
+}
+__EMITTED__
+static int check(CKModel *model, float *data, int rows, int before, int visual) {
+    for (int i = 0; i < rows * EMBED_DIM; ++i) data[i] = (float)(i + 1);
+    model->pos = model->rope_pos = 0;
+    ck_prefill_from_embedded(model, rows);
+    if (model->pos != rows) return 1;
+    for (int row = 0; row < rows; ++row) {
+        for (int col = 0; col < EMBED_DIM; ++col) {
+            const int i = row * EMBED_DIM + col;
+            const float factor = row >= before && row < before + visual ? 1.0f : 2.0f;
+            if (data[i] != (float)(i + 1) * factor) return 2;
+        }
+    }
+    return 0;
+}
+int main(void) {
+    float data[MAX_SEQ_LEN * EMBED_DIM] = {0};
+    CKModel model = {(unsigned char *)data, 0, 0};
+    int rc;
+__CASES__
+    return 0;
+}
+'''
+                if name == "unified":
+                    checks = r'''
+    const int plans[][4] = {{0, 2, 1, 3}, {2, 2, 0, 4}, {0, 2, 0, 2}};
+    for (int i = 0; i < 3; ++i) {
+        g_multimodal_prefill_segment_lengths[0] = plans[i][0];
+        g_multimodal_prefill_segment_lengths[1] = plans[i][1];
+        g_multimodal_prefill_segment_lengths[2] = plans[i][2];
+        g_multimodal_prefill_num_segments = 3;
+        rc = check(&model, data, plans[i][3], plans[i][0], plans[i][1]);
+        if (rc) return 10 + i;
+    }
+    setenv("CK_BRIDGE_NONCAUSAL_VISUAL_CHUNK", "1", 1);
+    g_multimodal_prefill_segment_lengths[0] = 2;
+    g_multimodal_prefill_segment_lengths[1] = 2;
+    g_multimodal_prefill_segment_lengths[2] = 0;
+    rc = check(&model, data, 4, 2, 2);
+    if (rc) return 13;
+    unsetenv("CK_BRIDGE_NONCAUSAL_VISUAL_CHUNK");
+    g_multimodal_prefill_num_segments = 0;
+    rc = check(&model, data, 3, 0, 0);
+    if (rc) return 20;
+    g_multimodal_prefill_segment_lengths[0] = 1;
+    g_multimodal_prefill_segment_lengths[1] = 2;
+    g_multimodal_prefill_segment_lengths[2] = 1;
+    g_multimodal_prefill_num_segments = 3;
+    rc = check(&model, data, 3, 0, 0);
+    if (rc) return 21;
+    g_multimodal_prefill_segment_lengths[0] = -1;
+    rc = check(&model, data, 3, 0, 0);
+    if (rc) return 22;
+'''
+                elif name == "segmented":
+                    checks = r'''
+    setenv("CK_BRIDGE_NONCAUSAL_VISUAL_CHUNK", "1", 1);
+    setenv("CK_BRIDGE_VISUAL_START", "0", 1);
+    setenv("CK_BRIDGE_VISUAL_TOKENS", "2", 1);
+    rc = check(&model, data, 2, 0, 2);
+    if (rc) return 30;
+    setenv("CK_BRIDGE_NONCAUSAL_VISUAL_CHUNK", "0", 1);
+    rc = check(&model, data, 2, 0, 0);
+    if (rc) return 31;
+'''
+                else:
+                    checks = r'''
+    rc = check(&model, data, 3, 0, 0);
+    if (rc) return 40;
+'''
+                source = source.replace("__EMITTED__", emitted).replace("__CASES__", checks)
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    c_path = Path(tmpdir) / "prefill.c"
+                    exe_path = Path(tmpdir) / "prefill"
+                    c_path.write_text(source, encoding="utf-8")
+                    subprocess.run(
+                        [compiler, "-std=c11", "-w", str(c_path), "-lm", "-o", str(exe_path)],
+                        check=True, capture_output=True, text=True,
+                    )
+                    subprocess.run([str(exe_path)], check=True, capture_output=True, text=True)
+
+    def test_embedding_scale_preserves_visual_rows_for_causal_mixed_prefill(self):
+        compiler = shutil.which("cc")
+        if compiler is None:
+            self.skipTest("C compiler unavailable")
+        emitted = codegen_prefill_v8._emit_embedding_scale_block(
+            "num_tokens", False, segment_plan_available=True
+        )
+        text_only = codegen_prefill_v8._emit_embedding_scale_block("num_tokens", False)
+        self.assertNotIn("ck_multimodal_prefill_has_segment_plan", text_only)
+        segmented_append = codegen_prefill_v8._emit_embedding_scale_block(
+            "num_tokens", False, segment_plan_available=True, segmented_append=True
+        )
+        self.assertIn("bridge_noncausal_visual_chunk", segmented_append)
+        self.assertNotIn("ck_multimodal_prefill_has_segment_plan", segmented_append)
+        source = r'''
+#include <math.h>
+#include <stddef.h>
+#define EMBED_DIM 4
+#define A_EMBEDDED_INPUT 0
+typedef struct { unsigned char *bump; } CKModel;
+static int g_multimodal_prefill_segment_lengths[3] = {2, 2, 1};
+static int g_multimodal_prefill_num_segments = 3;
+static int ck_multimodal_prefill_has_segment_plan(int n) {
+    return g_multimodal_prefill_num_segments == 3 &&
+        g_multimodal_prefill_segment_lengths[0] >= 0 &&
+        g_multimodal_prefill_segment_lengths[1] >= 0 &&
+        g_multimodal_prefill_segment_lengths[2] >= 0 &&
+        g_multimodal_prefill_segment_lengths[0] +
+        g_multimodal_prefill_segment_lengths[1] +
+        g_multimodal_prefill_segment_lengths[2] == n;
+}
+static void run(CKModel *model, int num_tokens) {
+__EMITTED__
+}
+int main(void) {
+    float data[20];
+    for (int i = 0; i < 20; ++i) data[i] = (float)(i + 1);
+    CKModel model = {(unsigned char *)data};
+    run(&model, 5);
+    for (int row = 0; row < 5; ++row) {
+        for (int channel = 0; channel < 4; ++channel) {
+            const int i = row * 4 + channel;
+            const float expected = (float)(i + 1) * (row >= 2 && row < 4 ? 1.0f : 2.0f);
+            if (data[i] != expected) return 1;
+        }
+    }
+    g_multimodal_prefill_num_segments = 0;
+    for (int i = 0; i < 20; ++i) data[i] = (float)(i + 1);
+    run(&model, 5);
+    for (int i = 0; i < 20; ++i) {
+        if (data[i] != (float)(i + 1) * 2.0f) return 2;
+    }
+    return 0;
+}
+'''.replace("__EMITTED__", emitted)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            c_path = root / "embedding_scale.c"
+            exe_path = root / "embedding_scale"
+            c_path.write_text(source, encoding="utf-8")
+            subprocess.run(
+                [compiler, "-std=c11", "-Wall", "-Werror", str(c_path), "-lm", "-o", str(exe_path)],
+                check=True, capture_output=True, text=True,
+            )
+            subprocess.run([str(exe_path)], check=True, capture_output=True, text=True)
+
     def test_chunk_local_attention_continuation_uses_decode_and_preserves_positions(self):
         compiler = shutil.which("cc")
         if compiler is None:

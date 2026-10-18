@@ -678,7 +678,8 @@ def _capture_aware_status(logit_status: str, dump_report: dict[str, Any] | None)
 
 
 def _load_llama_dump_dir(
-    dump_dir: Path, *, post_layer_embedding_layers: frozenset[int] = frozenset()
+    dump_dir: Path, *, post_layer_embedding_layers: frozenset[int] = frozenset(),
+    oracle_graph: str = "",
 ) -> list[Any]:
     index_path = dump_dir / "index.json"
     if not index_path.exists():
@@ -770,6 +771,8 @@ def _load_llama_dump_dir(
             -1,
             str(row.get("base_name", row.get("name", ""))),
         )
+        if oracle_graph == "gemma4" and norm_op == "attn_out":
+            norm_op = "after_attn"
         if norm_layer in post_layer_embedding_layers:
             if norm_op == "pe_in":
                 norm_op = "layer_out"
@@ -905,6 +908,7 @@ _LLAMA_SEMANTIC_DUMP_NAMES = {
 def _resolve_llama_dump_names(
     dump_names: str, *, layer_count: int,
     post_layer_embedding_layers: frozenset[int] = frozenset(),
+    oracle_graph: str = "",
 ) -> str:
     """Resolve circuit boundary names to exact llama.cpp graph tensor names.
 
@@ -956,7 +960,11 @@ def _resolve_llama_dump_names(
                     f"requested post-layer embedding checkpoint is absent from decode IR layer {layer_id}"
                 )
             else:
-                append(f"{_LLAMA_SEMANTIC_DUMP_NAMES[semantic_name]}-{layer_id}")
+                graph_name = (
+                    "attn_out" if oracle_graph == "gemma4" and semantic_name == "after_attn"
+                    else _LLAMA_SEMANTIC_DUMP_NAMES[semantic_name]
+                )
+                append(f"{graph_name}-{layer_id}")
     return ",".join(expanded)
 
 
@@ -2043,11 +2051,13 @@ def _capture_dump_compare(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     runtime_config = dict((runtime.get("manifest") or {}).get("config") or {})
     layer_count = int(runtime_config.get("num_layers", 0) or 0)
+    oracle_graph = str(runtime_config.get("model") or "")
     post_layer_embedding_layers = _post_layer_embedding_layers(runtime)
     llama_dump_names = _resolve_llama_dump_names(
         dump_names,
         layer_count=layer_count,
         post_layer_embedding_layers=post_layer_embedding_layers,
+        oracle_graph=oracle_graph,
     )
     semantic_names = {
         re.sub(r"-\d+$", "", item.strip())
@@ -2132,7 +2142,9 @@ def _capture_dump_compare(
     ck_dump_path = ck_dump_dir / "dump.bin"
     ck_dumps = parity_test_v7.read_dump_file(ck_dump_path)
     llama_dumps = _load_llama_dump_dir(
-        llama_dump_dir, post_layer_embedding_layers=post_layer_embedding_layers
+        llama_dump_dir,
+        post_layer_embedding_layers=post_layer_embedding_layers,
+        oracle_graph=oracle_graph,
     )
     llama_dumps = _apply_requested_oracle_attention_semantics(
         llama_dumps, semantic_names

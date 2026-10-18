@@ -2038,23 +2038,43 @@ def _find_embedding_header_op(ops: List[Dict]) -> Optional[Dict]:
     return None
 
 
-def _emit_embedding_scale_block(num_tokens_expr: str, dump: bool) -> str:
+def _emit_embedding_scale_block(
+    num_tokens_expr: str, dump: bool, *, segment_plan_available: bool = False,
+    segmented_append: bool = False,
+) -> str:
+    visual_bounds = (
+        """        const int visual_begin = (ck_multimodal_prefill_has_segment_plan(rows) &&
+                                  g_multimodal_prefill_segment_lengths[1] > 0)
+            ? g_multimodal_prefill_segment_lengths[0] : -1;
+        const int visual_end = (visual_begin >= 0)
+            ? (visual_begin + g_multimodal_prefill_segment_lengths[1]) : -1;
+"""
+        if segment_plan_available and not segmented_append else
+        """        const int visual_begin = (bridge_noncausal_visual_chunk &&
+                                  bridge_visual_start >= 0 && bridge_visual_tokens > 0)
+            ? bridge_visual_start : -1;
+        const int visual_end = (visual_begin >= 0)
+            ? (visual_begin + bridge_visual_tokens) : -1;
+"""
+        if segmented_append else
+        """        const int visual_begin = -1;
+        const int visual_end = -1;
+"""
+    )
     lines: List[str] = [
         """    /* Gemma embedding contract:
      * llama.cpp scales token embeddings by sqrt(n_embd), but raw multimodal
-     * embedding chunks are not scaled.  In the mixed bridge path, the visual
-     * segment is marked by CK_BRIDGE_VISUAL_START/TOKENS.
+     * embedding chunks are not scaled.  Unified mixed prefill uses its
+     * resolved segment plan; segmented append retains its visual-span markers.
      */
     {
         const float emb_scale = sqrtf((float)EMBED_DIM);
         float *emb = (float*)(model->bump + A_EMBEDDED_INPUT);
         const int rows = """
         + num_tokens_expr
-        + """;
-        const int visual_begin = (bridge_noncausal_visual_chunk && bridge_visual_start >= 0 && bridge_visual_tokens > 0)
-            ? bridge_visual_start
-            : -1;
-        const int visual_end = (visual_begin >= 0) ? (visual_begin + bridge_visual_tokens) : -1;
+        + ";\n"
+        + visual_bounds
+        + """
         for (int row = 0; row < rows; ++row) {
             if (visual_begin >= 0 && row >= visual_begin && row < visual_end) {
                 continue;
@@ -2953,7 +2973,11 @@ static void ck_prefill_from_embedded_range(CKModel *model, int num_tokens, int p
                 and not embed_scale_emitted
                 and int(op.get("layer", -1)) == -1
             ):
-                lines.append(_emit_embedding_scale_block("num_tokens", dump))
+                lines.append(_emit_embedding_scale_block(
+                    "num_tokens", dump,
+                    segment_plan_available=has_mixed_prefill_segments,
+                    segmented_append=_has_segmented_append_prefill_contract(config),
+                ))
                 embed_scale_emitted = True
                 lines.append("")
             continue
