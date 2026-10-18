@@ -133,27 +133,46 @@ class KokoroNativeLexiconTextTest(unittest.TestCase):
         self.assertFalse(target.exists())
 
     def test_runtime_asset_coverage_is_explicit(self):
-        if os.environ.get("CKE_TTS_RUN_RUNTIME_TEXT_FULL"):
-            return
-        for case_id, name in (
-            ("kokoro.native-runtime-text.three-length-wavs-v1",
-             "Native dictionary text through one variable-length generated graph"),
-            ("kokoro.native-runtime-text.session-recovery-v1",
-             "Generated Kokoro text session stop error and recovery"),
-        ):
+        if not os.environ.get("CKE_TTS_RUN_RUNTIME_TEXT_FULL"):
+            for case_id, name in (
+                ("kokoro.native-runtime-text.three-length-wavs-v1",
+                 "Native dictionary text through one variable-length generated graph"),
+                ("kokoro.native-runtime-text.session-recovery-v1",
+                 "Generated Kokoro text session stop error and recovery"),
+            ):
+                print("CKE_NUMERICAL_CASE " + json.dumps({
+                    "case_id": case_id, "name": name,
+                    "provider": "generated_kokoro_runtime_waveform",
+                    "dtype": "pcm16", "direction": "inference",
+                    "oracle": "asset-backed pinned BUMP and voice bank",
+                    "status": "not_tested", "gate": "execution", "blocking": False,
+                    "reason": "pinned runtime bundle not supplied; set "
+                              "CKE_TTS_RUN_RUNTIME_TEXT_FULL and "
+                              "CKE_TTS_RUNTIME_TEXT_BUNDLE_DIR",
+                    "configuration": "8/13/36-ID native text and session replay",
+                    "reproduction_command": "CKE_TTS_RUN_RUNTIME_TEXT_FULL=1 "
+                        "CKE_TTS_RUNTIME_TEXT_BUNDLE_DIR=<pinned-bundle> "
+                        "python3 -m unittest tests.test_v8_kokoro_native_lexicon_text",
+                }, sort_keys=True))
+        if not os.environ.get("CKE_TTS_RUN_RUNTIME_PINNED_TEXT_FULL"):
             print("CKE_NUMERICAL_CASE " + json.dumps({
-                "case_id": case_id, "name": name,
-                "provider": "generated_kokoro_runtime_waveform",
+                "case_id": "kokoro.native-runtime-text.pinned-lexicon-v1",
+                "name": "Pinned full-lexicon routing through runtime Kokoro bundle",
+                "provider": "native_kokoro_lexicon_text+generated_kokoro_runtime_waveform",
                 "dtype": "pcm16", "direction": "inference",
-                "oracle": "asset-backed pinned BUMP and voice bank",
+                "oracle": "pinned frontend artifact and seeded CKE WAV baselines",
                 "status": "not_tested", "gate": "execution", "blocking": False,
-                "reason": "pinned runtime bundle not supplied; set "
-                          "CKE_TTS_RUN_RUNTIME_TEXT_FULL and "
+                "reason": "pinned full lexicon and runtime bundle not supplied; set "
+                          "CKE_TTS_RUN_RUNTIME_PINNED_TEXT_FULL, "
+                          "CKE_TTS_PINNED_FRONTEND_DIR and "
                           "CKE_TTS_RUNTIME_TEXT_BUNDLE_DIR",
-                "configuration": "8/13/36-ID native text and session replay",
-                "reproduction_command": "CKE_TTS_RUN_RUNTIME_TEXT_FULL=1 "
+                "configuration": "8/12/13/36-ID pinned dictionary behavior",
+                "reproduction_command": "CKE_TTS_RUN_RUNTIME_PINNED_TEXT_FULL=1 "
+                    "CKE_TTS_PINNED_FRONTEND_DIR=<pinned-frontend> "
                     "CKE_TTS_RUNTIME_TEXT_BUNDLE_DIR=<pinned-bundle> "
-                    "python3 -m unittest tests.test_v8_kokoro_native_lexicon_text",
+                    "python3 -m unittest tests.test_v8_kokoro_native_lexicon_text."
+                    "KokoroNativeLexiconFullTest."
+                    "test_pinned_dictionary_runtime_length_routes",
             }, sort_keys=True))
 
     @unittest.skipUnless(os.environ.get("CKE_TTS_RUN_RUNTIME_TEXT_FULL"),
@@ -286,6 +305,65 @@ class KokoroNativeLexiconTextTest(unittest.TestCase):
 
 
 class KokoroNativeLexiconFullTest(unittest.TestCase):
+    @unittest.skipUnless(os.environ.get("CKE_TTS_RUN_RUNTIME_PINNED_TEXT_FULL"),
+                         "pinned full lexicon and runtime bundle not requested")
+    def test_pinned_dictionary_runtime_length_routes(self):
+        frontend_dir = Path(os.environ["CKE_TTS_PINNED_FRONTEND_DIR"])
+        bundle = Path(os.environ["CKE_TTS_RUNTIME_TEXT_BUNDLE_DIR"])
+        identity = json.loads((frontend_dir / "frontend_manifest.json").read_text())
+        self.assertEqual(identity["schema"], "cke.kokoro.native_lexicon_text.v1")
+        self.assertEqual(identity["source_misaki_commit"], frontend.MISAKI_COMMIT)
+        self.assertEqual(identity["source_kokoro_asset_commit"],
+                         frontend.KOKORO_ASSET_COMMIT)
+        self.assertEqual(identity["exported_lexicon_sha256"],
+                         _hash(frontend_dir / "us-gold.cklex"))
+        self.assertEqual(identity["frontend_binary_sha256"],
+                         _hash(frontend_dir / "native-kokoro-text"))
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for label, phrase, samples, digest in (
+                ("hello", "Hello.", 32400,
+                 "8f88a076382944cfd26826d964cf12f378ebc8c16f7ce98ea5ed24e98667eda1"),
+                ("hello-comma-there", "Hello, there.", 36600,
+                 "3ede801cb0063d67ebea3bbf6a2ed16309f3debe3a7fd2edff445dd86029ca72"),
+                ("read-reply", "Read this assistant response aloud.", 61800,
+                 "187e777636f7071776968bb7a7c4ced52f3d0438bedc281b84416562c844015e"),
+            ):
+                output = root / f"{label}.wav"
+                run = subprocess.run([str(frontend_dir / "native-kokoro-text"),
+                    str(bundle), str(frontend_dir / "us-gold.cklex"),
+                    str(output), "7", phrase], capture_output=True, text=True)
+                self.assertEqual(run.returncode, 0, run.stderr)
+                with wave.open(str(output), "rb") as audio:
+                    self.assertEqual((audio.getframerate(), audio.getnframes()),
+                                     (24000, samples))
+                self.assertEqual(_hash(output), digest)
+            rejected = root / "unsupported-twelve.wav"
+            run = subprocess.run([str(frontend_dir / "native-kokoro-text"),
+                str(bundle), str(frontend_dir / "us-gold.cklex"),
+                str(rejected), "7", "Hello there."],
+                capture_output=True, text=True)
+            self.assertEqual(run.returncode, 2)
+            self.assertIn("unsupported phoneme count 12", run.stderr)
+            self.assertFalse(rejected.exists())
+        print("CKE_NUMERICAL_CASE " + json.dumps({
+            "case_id": "kokoro.native-runtime-text.pinned-lexicon-v1",
+            "name": "Pinned full-lexicon routing through runtime Kokoro bundle",
+            "provider": "native_kokoro_lexicon_text+generated_kokoro_runtime_waveform",
+            "dtype": "pcm16", "direction": "inference",
+            "oracle": "pinned frontend artifact and seeded CKE WAV baselines",
+            "status": "pass", "gate": "execution", "blocking": True,
+            "max_diff": 0, "tolerance": 0,
+            "configuration": "Hello. 8 IDs; Hello there. 12 IDs rejected; "
+                             "Hello, there. 13 IDs; pinned reply 36 IDs",
+            "reproduction_command": "CKE_TTS_RUN_RUNTIME_PINNED_TEXT_FULL=1 "
+                "CKE_TTS_PINNED_FRONTEND_DIR=<pinned-frontend> "
+                "CKE_TTS_RUNTIME_TEXT_BUNDLE_DIR=<pinned-bundle> "
+                "python3 -m unittest tests.test_v8_kokoro_native_lexicon_text."
+                "KokoroNativeLexiconFullTest."
+                "test_pinned_dictionary_runtime_length_routes",
+        }, sort_keys=True))
+
     @unittest.skipUnless(os.environ.get("CKE_TTS_RUN_TEXT_FULL"),
                          "pinned lexicon, config and generated bundle not requested")
     def test_real_native_text_to_two_generated_wavs(self):
