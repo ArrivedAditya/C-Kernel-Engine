@@ -1,9 +1,11 @@
 """Captured publisher BF16 MLA arithmetic at Instella decoder layer 11."""
 
 import ctypes
+import copy
 import hashlib
 import json
 import subprocess
+import sys
 import unittest
 from pathlib import Path
 
@@ -33,6 +35,8 @@ class InstellaMlaBf16PhasesTest(unittest.TestCase):
         cls.old_prefill.argtypes = cls.prefill_args
         cls.decode = cls.engine.deepseek_mla_attention_decode_bf16_phases_workspace
         cls.decode.argtypes = cls.decode_args
+        cls.old_decode = cls.engine.deepseek_mla_attention_decode_f32_workspace
+        cls.old_decode.argtypes = cls.decode_args
 
     def setUp(self):
         metadata = json.loads((FIXTURE / "provenance.json").read_text())
@@ -103,6 +107,102 @@ class InstellaMlaBf16PhasesTest(unittest.TestCase):
                          "deepseek_mla_attention_bf16_phases")
         self.assertEqual(circuit["kernels"]["mla_attention_decode"],
                          "deepseek_mla_attention_decode_bf16_phases")
+
+    def test_numerical_selector_rejects_fp32_arithmetic(self):
+        scripts = ROOT / "version/v8/scripts"
+        sys.path.insert(0, str(scripts))
+        import resolve_numerical_execution_contracts_v8 as resolver
+        v8 = ROOT / "version/v8"
+        circuit = json.loads((v8 / "circuits/instella_moe.json").read_text())
+        contracts = json.loads((v8 / "contracts/numerical_execution.json").read_text())
+        kernels = resolver.load_kernel_capabilities(v8 / "kernel_maps", contracts)
+        for phase, expected in (("prefill", "deepseek_mla_attention_bf16_phases"),
+                                ("decode", "deepseek_mla_attention_decode_bf16_phases")):
+            with self.subTest(phase=phase):
+                selected = resolver.resolve_contract(
+                    circuit, contracts, kernels, "decoder.mla_attention_bf16_phases",
+                    phase, mode="production")
+                self.assertEqual(selected["kernel"]["id"], expected)
+                broken = copy.deepcopy(kernels)
+                broken["kernels"][expected]["capabilities"] = []
+                with self.assertRaises(resolver.ContractError):
+                    resolver.resolve_contract(
+                        circuit, contracts, broken,
+                        "decoder.mla_attention_bf16_phases", phase,
+                        mode="production")
+
+    def test_parallel_gqa_unequal_widths_and_invalid_inputs(self):
+        get_threads = self.engine.ck_get_num_threads
+        get_threads.restype = ctypes.c_int
+        set_threads = self.engine.ck_set_num_threads
+        set_threads.argtypes = [ctypes.c_int]
+        destroy = self.engine.ck_threadpool_global_destroy
+        pool = self.engine.ck_threadpool_global
+        pool.restype = ctypes.c_void_p
+        count = self.engine.ck_threadpool_n_threads
+        count.argtypes = [ctypes.c_void_p]
+        count.restype = ctypes.c_int
+        original = get_threads()
+        try:
+            destroy()
+            set_threads(4)
+            self.assertGreaterEqual(count(pool()), 2)
+            t, h, kv, qk, width = 96, 8, 2, 64, 32
+            rng = np.random.default_rng(812)
+            q = rng.normal(size=(t, h, qk)).astype(np.float32)
+            k = rng.normal(size=(t, kv, qk)).astype(np.float32)
+            v = rng.normal(size=(t, kv, width)).astype(np.float32)
+            serial = np.full((t, h, width), -91, dtype=np.float32)
+            parallel = serial.copy()
+            scores = np.full(4 * t + 1, -77, dtype=np.float32)
+            args = (self.ptr(q), self.ptr(k), self.ptr(v), self.ptr(serial),
+                    h, kv, t, qk, width, self.scale, self.ptr(scores),
+                    scores.nbytes)
+            self.prefill(*args)
+            scores.fill(-77)
+            args = args[:3] + (self.ptr(parallel),) + args[4:]
+            self.prefill_parallel(*args)
+            np.testing.assert_array_equal(parallel, serial)
+            self.assertFalse(np.all(scores[t:2*t] == -77),
+                             "the second worker's private score row must be used")
+            self.assertEqual(scores[-1], -77)
+
+            for function in (self.prefill, self.prefill_parallel):
+                for bad in ({"scale": -1.0}, {"scale": float("nan")},
+                            {"kv": 0}, {"kv": 3}, {"qk": 0},
+                            {"scores_bytes": 0}, {"q": None}):
+                    with self.subTest(function=function.__name__, bad=bad):
+                        output = np.full_like(serial, -91)
+                        values = [self.ptr(q), self.ptr(k), self.ptr(v),
+                                  self.ptr(output), h, kv, t, qk, width,
+                                  self.scale, self.ptr(scores), scores.nbytes]
+                        for key, index in (("scale", 9), ("kv", 5), ("qk", 7),
+                                           ("scores_bytes", 11), ("q", 0)):
+                            if key in bad:
+                                values[index] = bad[key]
+                        function(*values)
+                        self.assertTrue(np.all(output == -91))
+        finally:
+            destroy()
+            set_threads(original)
+
+    def test_decode_rejects_over_capacity_without_read_or_write(self):
+        q = np.ones((2, 3), dtype=np.float32)
+        # One cache element per head beyond this allocation would hit the canary.
+        cache = np.full((2, 2, 4), 0.5, dtype=np.float32)
+        for function in (self.decode, self.old_decode):
+            for cache_len in (3, 2):
+                with self.subTest(function=function.__name__, cache_len=cache_len):
+                    out = np.full((2, 2), -91, dtype=np.float32)
+                    scores = np.full(4, -77, dtype=np.float32)
+                    function(self.ptr(q), self.ptr(cache), self.ptr(cache),
+                             self.ptr(out), 2, 2, cache_len, 3, 2,
+                             2, 4, self.scale, self.ptr(scores), scores.nbytes)
+                    if cache_len > 2:
+                        self.assertTrue(np.all(out == -91))
+                        self.assertTrue(np.all(scores == -77))
+                    else:
+                        self.assertTrue(np.isfinite(out).all())
 
 
 if __name__ == "__main__":

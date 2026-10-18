@@ -163,6 +163,34 @@
         "axis_names": ["token", "head", "feature"]
       }
     },
+    "decoder.mla_attention_bf16_phases": {
+      "op": "mla_attention",
+      "template_ops": [
+        "mla_attention"
+      ],
+      "phases": {
+        "prefill": {
+          "contract_id": "mla_attention_eager_bf16_phases_fp32_carrier_v1",
+          "validation": "validated",
+          "evidence": "tests/test_v8_instella_mla_bf16_phases.py captured publisher layer-11 prefill and parallel parity"
+        },
+        "decode": {
+          "contract_id": "mla_attention_eager_bf16_phases_fp32_carrier_v1",
+          "validation": "validated",
+          "evidence": "tests/test_v8_instella_mla_bf16_phases.py per-prefix decode parity and bounded-cache checks"
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.mla_attention.output",
+        "producer": "mla_attention",
+        "logical_layout": "token_head_feature",
+        "axis_names": [
+          "token",
+          "head",
+          "feature"
+        ]
+      }
+    },
     "decoder.projections_bf16_storage": {
       "op": "gemm",
       "template_ops": [

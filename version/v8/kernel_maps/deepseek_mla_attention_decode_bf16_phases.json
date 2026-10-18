@@ -16,7 +16,12 @@
         "H",
         "QK"
       ],
-      "desc": "Current-token MLA query"
+      "desc": "Current-token MLA query",
+      "layout": "head_feature_contiguous",
+      "placement": "local",
+      "access": "read",
+      "storage_class": "activation",
+      "consumption": "required"
     },
     {
       "name": "k_cache",
@@ -26,7 +31,12 @@
         "T",
         "S"
       ],
-      "desc": "MLA key cache"
+      "desc": "MLA key cache",
+      "layout": "head_cache_position_feature_strided",
+      "placement": "local",
+      "access": "read",
+      "storage_class": "state",
+      "consumption": "required"
     },
     {
       "name": "v_cache",
@@ -36,7 +46,12 @@
         "T",
         "S"
       ],
-      "desc": "MLA value cache"
+      "desc": "MLA value cache",
+      "layout": "head_cache_position_feature_strided",
+      "placement": "local",
+      "access": "read",
+      "storage_class": "state",
+      "consumption": "required"
     }
   ],
   "outputs": [
@@ -47,14 +62,21 @@
         "H",
         "V"
       ],
-      "desc": "Current-token MLA attention output"
+      "desc": "Current-token MLA attention output",
+      "layout": "head_feature_contiguous",
+      "placement": "local",
+      "access": "write",
+      "storage_class": "activation",
+      "consumption": "required"
     }
   ],
   "scratch": [
     {
       "name": "scores",
       "dtype": "fp32",
-      "shape": ["S"],
+      "shape": [
+        "S"
+      ],
       "size_resolution": "required",
       "lifetime": "kernel_call",
       "desc": "Reusable decode score row sized for the configured KV-cache capacity."
@@ -106,25 +128,118 @@
       "src/kernels/deepseek_kernels.c"
     ]
   },
+  "numerical_contract": "mla_attention_eager_bf16_phases_fp32_carrier_v1",
+  "numerical_capabilities": [
+    {
+      "contract_id": "mla_attention_eager_bf16_phases_fp32_carrier_v1",
+      "status": "validated",
+      "phases": [
+        "decode"
+      ],
+      "function": "deepseek_mla_attention_decode_bf16_phases_workspace",
+      "explicit_selector": true,
+      "implementation": {
+        "isa_dispatch": "scalar",
+        "threading": {
+          "runtime": "serial",
+          "work_partition": [
+            "independent_rows"
+          ],
+          "dispatch": [
+            "inline"
+          ],
+          "reduction_order_effect": "none"
+        }
+      },
+      "arithmetic": {
+        "partial_accumulator": "fp32",
+        "merge_order": "none",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false,
+        "split_strategy": "independent_outputs"
+      }
+    }
+  ],
   "call_abi": {
     "version": 1,
     "params": [
-      {"name": "q", "source": "scratch:q_scratch", "cast": "const float*"},
-      {"name": "k_cache", "source": "runtime:kv_cache_k_layer", "cast": "const float*"},
-      {"name": "v_cache", "source": "runtime:kv_cache_v_layer", "cast": "const float*"},
-      {"name": "output", "source": "output:out", "cast": "float*"},
-      {"name": "num_heads", "source": "dim:num_heads"},
-      {"name": "num_kv_heads", "source": "dim:num_kv_heads"},
-      {"name": "cache_len", "source": "runtime:cache_len"},
-      {"name": "qk_head_dim", "source": "dim:head_dim"},
-      {"name": "v_head_dim", "source": "dim:v_head_dim"},
-      {"name": "max_seq_len", "source": "dim:max_seq_len"},
-      {"name": "cache_stride", "source": "dim:kv_cache_head_dim"},
-      {"name": "scale", "source": "dim:attention_scale"},
-      {"name": "scores", "source": "scratch:scores", "cast": "float*"},
-      {"name": "scores_bytes", "source": "scratch_size:scores"}
+      {
+        "name": "q",
+        "source": "scratch:q_scratch",
+        "cast": "const float*",
+        "ports": [
+          "input:q"
+        ]
+      },
+      {
+        "name": "k_cache",
+        "source": "runtime:kv_cache_k_layer",
+        "cast": "const float*",
+        "ports": [
+          "input:k_cache"
+        ]
+      },
+      {
+        "name": "v_cache",
+        "source": "runtime:kv_cache_v_layer",
+        "cast": "const float*",
+        "ports": [
+          "input:v_cache"
+        ]
+      },
+      {
+        "name": "output",
+        "source": "output:out",
+        "cast": "float*",
+        "ports": [
+          "output:out"
+        ]
+      },
+      {
+        "name": "num_heads",
+        "source": "dim:num_heads"
+      },
+      {
+        "name": "num_kv_heads",
+        "source": "dim:num_kv_heads"
+      },
+      {
+        "name": "cache_len",
+        "source": "runtime:cache_len"
+      },
+      {
+        "name": "qk_head_dim",
+        "source": "dim:head_dim"
+      },
+      {
+        "name": "v_head_dim",
+        "source": "dim:v_head_dim"
+      },
+      {
+        "name": "max_seq_len",
+        "source": "dim:max_seq_len"
+      },
+      {
+        "name": "cache_stride",
+        "source": "dim:kv_cache_head_dim"
+      },
+      {
+        "name": "scale",
+        "source": "dim:attention_scale"
+      },
+      {
+        "name": "scores",
+        "source": "scratch:scores",
+        "cast": "float*"
+      },
+      {
+        "name": "scores_bytes",
+        "source": "scratch_size:scores"
+      }
     ]
   },
   "notes": "Publisher eager BF16 MLA decode over persistent K/V cache. Q/K/V operands, QK output, scaled score, softmax probability and PV output are BF16-rounded at their storage boundaries; softmax reduction remains FP32. K uses qk_head_dim; V uses v_head_dim; both use cache_stride.",
-  "name": "deepseek_mla_attention_decode_bf16_phases"
+  "name": "deepseek_mla_attention_decode_bf16_phases",
+  "operation_interface": "mla.attention.decode.bf16_phases.fp32_carrier.v1",
+  "weights": []
 }

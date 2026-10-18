@@ -780,6 +780,23 @@ static void ds_mla_attention_f32_query_range(const float *q,
     }
 }
 
+static int ds_mla_prefill_valid(const float *q, const float *k,
+                                const float *v, float *output,
+                                int num_heads, int num_kv_heads,
+                                int num_tokens, int qk_head_dim,
+                                int v_head_dim, float scale,
+                                float *scores, size_t scores_bytes)
+{
+    return q && k && v && output && scores && num_heads > 0 &&
+        num_kv_heads > 0 && num_heads >= num_kv_heads &&
+        num_heads % num_kv_heads == 0 && num_tokens > 0 &&
+        qk_head_dim > 0 && v_head_dim > 0 &&
+        num_tokens <= INT_MAX / num_heads &&
+        (size_t)num_tokens <= SIZE_MAX / sizeof(float) &&
+        scores_bytes >= (size_t)num_tokens * sizeof(float) &&
+        isfinite(scale) && scale > 0.0f;
+}
+
 void deepseek_mla_attention_f32_workspace(const float *q,
                                           const float *k,
                                           const float *v,
@@ -793,16 +810,9 @@ void deepseek_mla_attention_f32_workspace(const float *q,
                                           float *scores,
                                           size_t scores_bytes)
 {
-    if (!q || !k || !v || !output || num_heads <= 0 || num_kv_heads <= 0 ||
-        num_tokens <= 0 || qk_head_dim <= 0 || v_head_dim <= 0 ||
-        num_tokens > INT_MAX / num_heads ||
-        !isfinite(scale) || scale <= 0.0f) {
-        return;
-    }
-    if ((size_t)num_tokens > SIZE_MAX / sizeof(float) || !scores ||
-        scores_bytes < (size_t)num_tokens * sizeof(float)) {
-        return;
-    }
+    if (!ds_mla_prefill_valid(q, k, v, output, num_heads, num_kv_heads,
+            num_tokens, qk_head_dim, v_head_dim, scale, scores,
+            scores_bytes)) return;
 
     ds_mla_attention_f32_query_range(
         q, k, v, output, num_heads, num_kv_heads, num_tokens,
@@ -816,11 +826,9 @@ void deepseek_mla_attention_bf16_phases_workspace(
     int qk_head_dim, int v_head_dim, float scale,
     float *scores, size_t scores_bytes)
 {
-    if (!q || !k || !v || !output || num_heads <= 0 || num_kv_heads <= 0 ||
-        num_tokens <= 0 || qk_head_dim <= 0 || v_head_dim <= 0 ||
-        num_tokens > INT_MAX / num_heads || !isfinite(scale) || scale <= 0.0f ||
-        (size_t)num_tokens > SIZE_MAX / sizeof(float) || !scores ||
-        scores_bytes < (size_t)num_tokens * sizeof(float)) return;
+    if (!ds_mla_prefill_valid(q, k, v, output, num_heads, num_kv_heads,
+            num_tokens, qk_head_dim, v_head_dim, scale, scores,
+            scores_bytes)) return;
     ds_mla_attention_f32_query_range(
         q, k, v, output, num_heads, num_kv_heads, num_tokens,
         qk_head_dim, v_head_dim, scale, scores,
@@ -884,6 +892,9 @@ static void ds_mla_attention_parallel_dispatch(
     size_t scores_bytes,
     int bf16_phases)
 {
+    if (!ds_mla_prefill_valid(q, k, v, output, num_heads, num_kv_heads,
+            num_tokens, qk_head_dim, v_head_dim, scale, scores,
+            scores_bytes)) return;
     ck_threadpool_t *pool = ck_threadpool_global();
     const char *disabled = getenv("CK_DISABLE_MLA_PARALLEL_PREFILL");
     int active = pool ? ck_threadpool_n_threads(pool) : 1;
@@ -1055,7 +1066,9 @@ static void ds_mla_attention_decode_workspace(const float *q,
                                                int bf16_phases)
 {
     if (!q || !k_cache || !v_cache || !output || num_heads <= 0 ||
-        num_kv_heads <= 0 || cache_len <= 0 || qk_head_dim <= 0 ||
+        num_kv_heads <= 0 || num_heads < num_kv_heads ||
+        num_heads % num_kv_heads != 0 || cache_len <= 0 ||
+        cache_len > max_seq_len || qk_head_dim <= 0 ||
         v_head_dim <= 0 || max_seq_len <= 0 || cache_stride <= 0 ||
         !isfinite(scale) || scale <= 0.0f) {
         return;

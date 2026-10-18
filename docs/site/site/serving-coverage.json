@@ -607,7 +607,7 @@
       "chat_scope_reason": "circuit references a resolved serving profile",
       "circuit": "instella_moe",
       "circuit_path": "version/v8/circuits/instella_moe.json",
-      "circuit_sha256": "d6ccb8d110d02ba295ebc6121224ecc5dd32f745c7bdc1cb4ed8b07c7b6445f4",
+      "circuit_sha256": "e1ce1b29b8db0b8ff3cac8eadf2bb355479a7df9d2805d1031b150ceda61ba59",
       "evidence": {
         "cancellation_recovery": "not_assessed",
         "exact_token_ids": "not_assessed",

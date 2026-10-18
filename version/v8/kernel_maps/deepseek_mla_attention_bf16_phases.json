@@ -10,27 +10,94 @@
     "output": "fp32"
   },
   "inputs": [
-    {"name": "q", "dtype": "fp32", "shape": ["T", "H", "QK"]},
-    {"name": "k", "dtype": "fp32", "shape": ["T", "KV", "QK"]},
-    {"name": "v", "dtype": "fp32", "shape": ["T", "KV", "V"]}
+    {
+      "name": "q",
+      "dtype": "fp32",
+      "shape": [
+        "T",
+        "H",
+        "QK"
+      ],
+      "layout": "token_head_feature_contiguous",
+      "placement": "local",
+      "access": "read",
+      "storage_class": "activation",
+      "consumption": "required"
+    },
+    {
+      "name": "k",
+      "dtype": "fp32",
+      "shape": [
+        "T",
+        "KV",
+        "QK"
+      ],
+      "layout": "token_head_feature_contiguous",
+      "placement": "local",
+      "access": "read",
+      "storage_class": "activation",
+      "consumption": "required"
+    },
+    {
+      "name": "v",
+      "dtype": "fp32",
+      "shape": [
+        "T",
+        "KV",
+        "V"
+      ],
+      "layout": "token_head_feature_contiguous",
+      "placement": "local",
+      "access": "read",
+      "storage_class": "activation",
+      "consumption": "required"
+    }
   ],
   "outputs": [
-    {"name": "out", "dtype": "fp32", "shape": ["T", "H", "V"]}
+    {
+      "name": "out",
+      "dtype": "fp32",
+      "shape": [
+        "T",
+        "H",
+        "V"
+      ],
+      "layout": "token_head_feature_contiguous",
+      "placement": "local",
+      "access": "write",
+      "storage_class": "activation",
+      "consumption": "required"
+    }
   ],
   "scratch": [
     {
       "name": "scores",
       "dtype": "fp32",
-      "shape": ["H", "T"],
+      "shape": [
+        "H",
+        "T"
+      ],
       "size_resolution": "required",
       "lifetime": "kernel_call",
       "desc": "Planner-owned causal score row per query-head worker."
     }
   ],
-  "dims": ["T", "H", "KV", "QK", "V", "attention_scale"],
+  "dims": [
+    "T",
+    "H",
+    "KV",
+    "QK",
+    "V",
+    "attention_scale"
+  ],
   "parallelization": {
-    "supported": ["query_head"],
-    "preferred": {"prefill": "token_row", "decode": "serial"},
+    "supported": [
+      "query_head"
+    ],
+    "preferred": {
+      "prefill": "token_row",
+      "decode": "serial"
+    },
     "strategies": [
       {
         "name": "token_row",
@@ -43,24 +110,113 @@
   "impl": {
     "function": "deepseek_mla_attention_bf16_phases_parallel_dispatch",
     "c_declaration": "void deepseek_mla_attention_bf16_phases_parallel_dispatch(const float *q, const float *k, const float *v, float *output, int num_heads, int num_kv_heads, int num_tokens, int qk_head_dim, int v_head_dim, float scale, float *scores, size_t scores_bytes);",
-    "sources": ["src/kernels/deepseek_kernels.c"]
+    "sources": [
+      "src/kernels/deepseek_kernels.c"
+    ]
   },
+  "numerical_contract": "mla_attention_eager_bf16_phases_fp32_carrier_v1",
+  "numerical_capabilities": [
+    {
+      "contract_id": "mla_attention_eager_bf16_phases_fp32_carrier_v1",
+      "status": "validated",
+      "phases": [
+        "prefill"
+      ],
+      "function": "deepseek_mla_attention_bf16_phases_parallel_dispatch",
+      "explicit_selector": true,
+      "implementation": {
+        "isa_dispatch": "scalar",
+        "threading": {
+          "runtime": "ck_threadpool",
+          "work_partition": [
+            "independent_rows"
+          ],
+          "dispatch": [
+            "ck_threadpool_dispatch_n"
+          ],
+          "reduction_order_effect": "none"
+        }
+      },
+      "arithmetic": {
+        "partial_accumulator": "fp32",
+        "merge_order": "none",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false,
+        "split_strategy": "independent_outputs"
+      }
+    }
+  ],
   "call_abi": {
     "version": 1,
     "params": [
-      {"name": "q", "source": "scratch:q_scratch", "cast": "const float*"},
-      {"name": "k", "source": "scratch:k_scratch", "cast": "const float*"},
-      {"name": "v", "source": "scratch:v_scratch", "cast": "const float*"},
-      {"name": "output", "source": "output:out", "cast": "float*"},
-      {"name": "num_heads", "source": "dim:num_heads"},
-      {"name": "num_kv_heads", "source": "dim:num_kv_heads"},
-      {"name": "num_tokens", "source": "dim:seq_len"},
-      {"name": "qk_head_dim", "source": "dim:head_dim"},
-      {"name": "v_head_dim", "source": "dim:v_head_dim"},
-      {"name": "scale", "source": "dim:attention_scale"},
-      {"name": "scores", "source": "scratch:scores", "cast": "float*"},
-      {"name": "scores_bytes", "source": "scratch_size:scores"}
+      {
+        "name": "q",
+        "source": "scratch:q_scratch",
+        "cast": "const float*",
+        "ports": [
+          "input:q"
+        ]
+      },
+      {
+        "name": "k",
+        "source": "scratch:k_scratch",
+        "cast": "const float*",
+        "ports": [
+          "input:k"
+        ]
+      },
+      {
+        "name": "v",
+        "source": "scratch:v_scratch",
+        "cast": "const float*",
+        "ports": [
+          "input:v"
+        ]
+      },
+      {
+        "name": "output",
+        "source": "output:out",
+        "cast": "float*",
+        "ports": [
+          "output:out"
+        ]
+      },
+      {
+        "name": "num_heads",
+        "source": "dim:num_heads"
+      },
+      {
+        "name": "num_kv_heads",
+        "source": "dim:num_kv_heads"
+      },
+      {
+        "name": "num_tokens",
+        "source": "dim:seq_len"
+      },
+      {
+        "name": "qk_head_dim",
+        "source": "dim:head_dim"
+      },
+      {
+        "name": "v_head_dim",
+        "source": "dim:v_head_dim"
+      },
+      {
+        "name": "scale",
+        "source": "dim:attention_scale"
+      },
+      {
+        "name": "scores",
+        "source": "scratch:scores",
+        "cast": "float*"
+      },
+      {
+        "name": "scores_bytes",
+        "source": "scratch_size:scores"
+      }
     ]
   },
-  "notes": "Publisher eager BF16 causal MLA prefill over the current token sequence. Q/K/V operands, QK output, scaled score, softmax probability and PV output are BF16-rounded at their storage boundaries; softmax reduction remains FP32. Workers claim complete token rows with private score scratch. This provider does not read persistent KV history, so appended prefill rows require history-aware execution or decode replay."
+  "notes": "Publisher eager BF16 causal MLA prefill over the current token sequence. Q/K/V operands, QK output, scaled score, softmax probability and PV output are BF16-rounded at their storage boundaries; softmax reduction remains FP32. Workers claim complete token rows with private score scratch. This provider does not read persistent KV history, so appended prefill rows require history-aware execution or decode replay.",
+  "operation_interface": "mla.attention.prefill.bf16_phases.fp32_carrier.v1",
+  "weights": []
 }
