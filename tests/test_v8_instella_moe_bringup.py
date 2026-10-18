@@ -291,9 +291,31 @@ class InstellaMoEBringupTests(unittest.TestCase):
                 )
                 self.assertTrue(any(op.get("op") == "residual_add" for op in joined))
                 ops = call_ir.get("operations", call_ir.get("ops", []))
+                gate = next(op for op in ops if op.get("op") == "attn_gate_sigmoid_mul")
+                self.assertEqual(
+                    gate.get("call_abi", {}).get("kernel_id"),
+                    "attn_gate_sigmoid_mul_pytorch_bf16_storage",
+                )
+                swiglu = next(op for op in ops if op.get("op") == "silu_mul")
+                self.assertEqual(
+                    swiglu.get("call_abi", {}).get("kernel_id"),
+                    "swiglu_forward_pytorch_bf16_storage",
+                )
+                attention = [
+                    op for op in graph_ir.get("ops", [])
+                    if op.get("op") == "mla_attention"
+                ]
+                self.assertEqual(len(attention), 2)
+                expected_ports = (
+                    {"q", "k", "v"} if mode == "prefill"
+                    else {"q", "k_cache", "v_cache"}
+                )
+                self.assertTrue(all(
+                    set(op.get("graph_slots", {}).get("inputs", {})) == expected_ports
+                    for op in attention
+                ))
                 if mode == "prefill":
                     attention = [op for op in ops if op.get("op") == "mla_attention"]
-                    self.assertEqual(len(attention), 2)
                     self.assertTrue(all(
                         op.get("prefill_history_scope") == "current_chunk"
                         for op in attention

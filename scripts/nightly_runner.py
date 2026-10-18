@@ -1358,6 +1358,12 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_instella_mla_bf16_phases.py",
         timeout_sec=300,
     ),
+    "v8_instella_pointwise_bf16": TestSuite(
+        "Instella Pointwise BF16 Boundaries",
+        "inference",
+        ROOT / "tests" / "test_v8_instella_pointwise_bf16.py",
+        timeout_sec=300,
+    ),
     "pytorch_onednn_oracle_contract_bf16": TestSuite(
         "PyTorch/oneDNN Oracle Contract BF16",
         "bf16",

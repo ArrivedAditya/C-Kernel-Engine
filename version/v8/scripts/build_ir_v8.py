@@ -5103,8 +5103,21 @@ def _extract_template_ops(
     ]
 
 
-def _template_graph_slots(op_item: Dict[str, Any]) -> Dict[str, Any]:
-    graph_slots = op_item.get("graph_slots") if isinstance(op_item.get("graph_slots"), dict) else {}
+def _template_graph_slots(op_item: Dict[str, Any], phase: str) -> Dict[str, Any]:
+    phase_slots = op_item.get("graph_slots_by_phase")
+    if phase_slots is not None:
+        if "graph_slots" in op_item:
+            raise RuntimeError(
+                "HARD CIRCUIT INTERFACE FAULT: graph_slots conflicts with graph_slots_by_phase"
+            )
+        if (not isinstance(phase_slots, dict)
+                or not isinstance(phase_slots.get(phase), dict)):
+            raise RuntimeError(
+                f"HARD CIRCUIT INTERFACE FAULT: missing {phase!r} graph slots"
+            )
+        graph_slots = phase_slots[phase]
+    else:
+        graph_slots = op_item.get("graph_slots") if isinstance(op_item.get("graph_slots"), dict) else {}
     out: Dict[str, Any] = {}
     for section in ("inputs", "outputs"):
         value = graph_slots.get(section)
@@ -10245,7 +10258,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
                         "index": collect_index,
                     }
 
-                graph_slots = _template_graph_slots(producer_item)
+                graph_slots = _template_graph_slots(producer_item, mode)
                 if output_view is not None:
                     declared_outputs = graph_slots.get("outputs", {}) if graph_slots else {}
                     if output_name not in declared_outputs:
@@ -10428,7 +10441,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
                                                 "layer": layer_idx,
                                                 "instance": 0,
                                             }
-                                            graph_slots = _template_graph_slots(op_item)
+                                            graph_slots = _template_graph_slots(op_item, mode)
                                             graph_inputs = graph_slots.get("inputs", {})
                                             projection_input = (
                                                 graph_inputs.get("x")
@@ -10524,7 +10537,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
                                     op_item.get("params"), config
                                 ),
                             }
-                            graph_slots = _template_graph_slots(op_item)
+                            graph_slots = _template_graph_slots(op_item, mode)
                             if graph_slots:
                                 arranged["graph_slots"] = graph_slots
                             _copy_template_runtime_annotations(op_item, arranged)
@@ -10728,7 +10741,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
                                 op_item.get("params"), config
                             ),
                         }
-                        graph_slots = _template_graph_slots(op_item)
+                        graph_slots = _template_graph_slots(op_item, mode)
                         if graph_slots:
                             arranged["graph_slots"] = graph_slots
                         _copy_template_runtime_annotations(op_item, arranged)

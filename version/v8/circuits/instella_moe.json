@@ -191,6 +191,52 @@
         ]
       }
     },
+    "decoder.attn_gate_bf16_pytorch": {
+      "op": "attn_gate_sigmoid_mul",
+      "operation_interface": "attn_gate_sigmoid_mul.fp32.v1",
+      "template_ops": ["attn_gate_sigmoid_mul"],
+      "phases": {
+        "prefill": {
+          "contract_id": "attention_gate_pytorch_sleef_bf16_storage",
+          "validation": "validated",
+          "evidence": "Captured Instella layer-0 context and gate replay through the selected BF16 provider matches all 2048 publisher output values."
+        },
+        "decode": {
+          "contract_id": "attention_gate_pytorch_sleef_bf16_storage",
+          "validation": "validated",
+          "evidence": "The pointwise BF16 gate storage boundary is shared by prefill and decode."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.attention.gated_context",
+        "producer": "attn_gate_sigmoid_mul",
+        "logical_layout": "token_major",
+        "axis_names": ["token", "channel"]
+      }
+    },
+    "decoder.swiglu_bf16_pytorch": {
+      "op": "swiglu",
+      "operation_interface": "swiglu.fp32_bf16_values.v1",
+      "template_ops": ["silu_mul"],
+      "phases": {
+        "prefill": {
+          "contract_id": "swiglu_pytorch_sleef_bf16_intermediate_bf16_output",
+          "validation": "validated",
+          "evidence": "Captured Instella layer-0 gate/up replay through the selected BF16 provider matches all 10944 publisher output values."
+        },
+        "decode": {
+          "contract_id": "swiglu_pytorch_sleef_bf16_intermediate_bf16_output",
+          "validation": "validated",
+          "evidence": "The pointwise BF16 SiLU intermediate and product storage boundaries are shared by prefill and decode."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.swiglu.output",
+        "producer": "silu_mul",
+        "logical_layout": "token_major",
+        "axis_names": ["token", "channel"]
+      }
+    },
     "decoder.projections_bf16_storage": {
       "op": "gemm",
       "template_ops": [
@@ -233,6 +279,8 @@
     "mla_kv_cache_batch_store": "deepseek_mla_kv_cache_batch_store_f32",
     "mla_attention_prefill": "deepseek_mla_attention_bf16_phases",
     "mla_attention_decode": "deepseek_mla_attention_decode_bf16_phases",
+    "attn_gate_sigmoid_mul": "attn_gate_sigmoid_mul_pytorch_bf16_storage",
+    "silu_mul": "swiglu_forward_pytorch_bf16_storage",
     "moe_router": "gemm_nt_fp32_exact",
     "group_limited_topk_router": "group_limited_topk_router_sigmoid_f32",
     "moe_swiglu_expert": "moe_swiglu_expert_forward_bf16",
@@ -255,14 +303,14 @@
             {"op":"kv_a_layernorm","graph_slots":{"inputs":{"input":"compressed_kv"},"outputs":{"output":"compressed_kv_normed"}}},
             {"op":"kv_lora_decompress","graph_slots":{"inputs":{"compressed_kv":"compressed_kv_normed"},"outputs":{"k_nope":"k_nope","value":"v_scratch"}}},
             {"op":"partial_rope_concat","graph_slots":{"inputs":{"q_packed":"q_scratch","k_nope":"k_nope","kv_a_packed":"compressed_kv","cos":"external:rope_cos_mla_positioned","sin":"external:rope_sin_mla_positioned"},"outputs":{"query":"q_scratch","key":"k_scratch"}}},
-            {"op":"mla_attention","graph_slots":{"inputs":{"q":"q_scratch","k":"k_scratch","v":"v_scratch"},"outputs":{"out":"attn_scratch"}}},
+            {"op":"mla_attention","graph_slots_by_phase":{"prefill":{"inputs":{"q":"q_scratch","k":"k_scratch","v":"v_scratch"},"outputs":{"out":"attn_scratch"}},"decode":{"inputs":{"q":"q_scratch","k_cache":"external:kv_cache_k_layer","v_cache":"external:kv_cache_v_layer"},"outputs":{"out":"attn_scratch"}}}},
             {"op":"attention_gate_projection","graph_slots":{"inputs":{"x":"normalized_stream"},"outputs":{"y":"attn_gate"}}},
             {"op":"attn_gate_sigmoid_mul","graph_slots":{"inputs":{"x":"attn_scratch","gate":"attn_gate"},"outputs":{"out":"attn_scratch"}}},
             {"op":"out_proj","graph_slots":{"inputs":{"x":"attn_scratch"},"outputs":{"y":"post_attention_stream"}}},
             {"op":"residual_add","graph_slots":{"inputs":{"a":"post_attention_stream","b":"attention_residual"},"outputs":{"out":"main_stream"}}},
             {"op":"block_rmsnorm","auto_residual_save":false,"graph_slots":{"inputs":{"input":"attention_residual"},"outputs":{"output":"normalized_stream"}}},
             {"op":"mlp_gate_up","graph_slots":{"inputs":{"x":"normalized_stream"},"outputs":{"y":"mlp_scratch"}}},
-            {"op":"silu_mul","graph_slots":{"inputs":{"gate":"mlp_scratch"},"outputs":{"out":"mlp_scratch"}}},
+            {"op":"silu_mul"},
             {"op":"mlp_down","graph_slots":{"inputs":{"x":"mlp_scratch"},"outputs":{"y":"dense_mlp_output"}}},
             {"op":"residual_add","graph_slots":{"inputs":{"a":"main_stream","b":"dense_mlp_output"},"outputs":{"out":"main_stream"}}}
           ],
@@ -274,7 +322,7 @@
             {"op":"kv_a_layernorm","graph_slots":{"inputs":{"input":"compressed_kv"},"outputs":{"output":"compressed_kv_normed"}}},
             {"op":"kv_lora_decompress","graph_slots":{"inputs":{"compressed_kv":"compressed_kv_normed"},"outputs":{"k_nope":"k_nope","value":"v_scratch"}}},
             {"op":"partial_rope_concat","graph_slots":{"inputs":{"q_packed":"q_scratch","k_nope":"k_nope","kv_a_packed":"compressed_kv","cos":"external:rope_cos_mla_positioned","sin":"external:rope_sin_mla_positioned"},"outputs":{"query":"q_scratch","key":"k_scratch"}}},
-            {"op":"mla_attention","graph_slots":{"inputs":{"q":"q_scratch","k":"k_scratch","v":"v_scratch"},"outputs":{"out":"attn_scratch"}}},
+            {"op":"mla_attention","graph_slots_by_phase":{"prefill":{"inputs":{"q":"q_scratch","k":"k_scratch","v":"v_scratch"},"outputs":{"out":"attn_scratch"}},"decode":{"inputs":{"q":"q_scratch","k_cache":"external:kv_cache_k_layer","v_cache":"external:kv_cache_v_layer"},"outputs":{"out":"attn_scratch"}}}},
             {"op":"attention_gate_projection","graph_slots":{"inputs":{"x":"normalized_stream"},"outputs":{"y":"attn_gate"}}},
             {"op":"attn_gate_sigmoid_mul","graph_slots":{"inputs":{"x":"attn_scratch","gate":"attn_gate"},"outputs":{"out":"attn_scratch"}}},
             {"op":"out_proj","graph_slots":{"inputs":{"x":"attn_scratch"},"outputs":{"y":"post_attention_stream"}}},
@@ -282,7 +330,7 @@
             {"op":"residual_save","graph_slots":{"inputs":{"src":"main_stream"},"outputs":{"dst":"attention_residual"}}},
             {"op":"block_rmsnorm","graph_slots":{"inputs":{"input":"main_stream"},"outputs":{"output":"normalized_stream"}}},
             {"op":"mlp_gate_up","graph_slots":{"inputs":{"x":"normalized_stream"},"outputs":{"y":"mlp_scratch"}}},
-            {"op":"silu_mul","graph_slots":{"inputs":{"gate":"mlp_scratch"},"outputs":{"out":"mlp_scratch"}}},
+            {"op":"silu_mul"},
             {"op":"mlp_down","graph_slots":{"inputs":{"x":"mlp_scratch"},"outputs":{"y":"post_attention_stream"}}},
             {"op":"residual_add","graph_slots":{"inputs":{"a":"post_attention_stream","b":"attention_residual"},"outputs":{"out":"main_stream"}}}
           ],
@@ -294,7 +342,7 @@
             {"op":"kv_a_layernorm","graph_slots":{"inputs":{"input":"compressed_kv"},"outputs":{"output":"compressed_kv_normed"}}},
             {"op":"kv_lora_decompress","graph_slots":{"inputs":{"compressed_kv":"compressed_kv_normed"},"outputs":{"k_nope":"k_nope","value":"v_scratch"}}},
             {"op":"partial_rope_concat","graph_slots":{"inputs":{"q_packed":"q_scratch","k_nope":"k_nope","kv_a_packed":"compressed_kv","cos":"external:rope_cos_mla_positioned","sin":"external:rope_sin_mla_positioned"},"outputs":{"query":"q_scratch","key":"k_scratch"}}},
-            {"op":"mla_attention","graph_slots":{"inputs":{"q":"q_scratch","k":"k_scratch","v":"v_scratch"},"outputs":{"out":"attn_scratch"}}},
+            {"op":"mla_attention","graph_slots_by_phase":{"prefill":{"inputs":{"q":"q_scratch","k":"k_scratch","v":"v_scratch"},"outputs":{"out":"attn_scratch"}},"decode":{"inputs":{"q":"q_scratch","k_cache":"external:kv_cache_k_layer","v_cache":"external:kv_cache_v_layer"},"outputs":{"out":"attn_scratch"}}}},
             {"op":"attention_gate_projection","graph_slots":{"inputs":{"x":"normalized_stream"},"outputs":{"y":"attn_gate"}}},
             {"op":"attn_gate_sigmoid_mul","graph_slots":{"inputs":{"x":"attn_scratch","gate":"attn_gate"},"outputs":{"out":"attn_scratch"}}},
             {"op":"out_proj","graph_slots":{"inputs":{"x":"attn_scratch"},"outputs":{"y":"post_attention_stream"}}},
@@ -313,7 +361,7 @@
             {"op":"kv_a_layernorm","graph_slots":{"inputs":{"input":"compressed_kv"},"outputs":{"output":"compressed_kv_normed"}}},
             {"op":"kv_lora_decompress","graph_slots":{"inputs":{"compressed_kv":"compressed_kv_normed"},"outputs":{"k_nope":"k_nope","value":"v_scratch"}}},
             {"op":"partial_rope_concat","graph_slots":{"inputs":{"q_packed":"q_scratch","k_nope":"k_nope","kv_a_packed":"compressed_kv","cos":"external:rope_cos_mla_positioned","sin":"external:rope_sin_mla_positioned"},"outputs":{"query":"q_scratch","key":"k_scratch"}}},
-            {"op":"mla_attention","graph_slots":{"inputs":{"q":"q_scratch","k":"k_scratch","v":"v_scratch"},"outputs":{"out":"attn_scratch"}}},
+            {"op":"mla_attention","graph_slots_by_phase":{"prefill":{"inputs":{"q":"q_scratch","k":"k_scratch","v":"v_scratch"},"outputs":{"out":"attn_scratch"}},"decode":{"inputs":{"q":"q_scratch","k_cache":"external:kv_cache_k_layer","v_cache":"external:kv_cache_v_layer"},"outputs":{"out":"attn_scratch"}}}},
             {"op":"attention_gate_projection","graph_slots":{"inputs":{"x":"normalized_stream"},"outputs":{"y":"attn_gate"}}},
             {"op":"attn_gate_sigmoid_mul","graph_slots":{"inputs":{"x":"attn_scratch","gate":"attn_gate"},"outputs":{"out":"attn_scratch"}}},
             {"op":"out_proj","graph_slots":{"inputs":{"x":"attn_scratch"},"outputs":{"y":"post_attention_stream"}}},

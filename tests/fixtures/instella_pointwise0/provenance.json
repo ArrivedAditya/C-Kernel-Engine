@@ -1,0 +1,10 @@
+{
+  "schema": "cke.instella.pointwise_capture.v1",
+  "publisher_revision": "74d28c1a8425583d7805b58e2caa9c13d6b62929",
+  "source_run": "instella-mla-bf16-phases-20261018/xray-final-mla11",
+  "source_checkpoint": "decoder.layer.0",
+  "fixture_sha256": "58c43dfe8300e5c2b0c0038313a27a15abcdcc9fd903481a136892471140dd8a",
+  "model_library_sha256": "260b61a0b5127f4508048464a8bdc032d5f89ac53ce924975e141bcf4d8c960a",
+  "input_equality": "CKE and publisher captured inputs are byte-exact for four pointwise operands",
+  "output_evidence": "Existing BF16 providers replay exactly against publisher gated context (2048/2048) and SwiGLU (10944/10944); old selected FP32 providers differ."
+}
