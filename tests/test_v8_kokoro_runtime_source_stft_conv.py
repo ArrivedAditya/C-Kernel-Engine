@@ -3,6 +3,7 @@
 import ctypes
 import hashlib
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -17,6 +18,8 @@ from tests.test_v8_kokoro_generated_decoder_complete import (
     require_matching_reference_identity)
 from tests.test_v8_kokoro_generated_prosody_complete import verified_fixture
 from tests import test_v8_kokoro_generated_albert_layer as xray_support
+from version.v8.scripts.replay_audio_stft_bundle_v8 import replay
+from version.v8.scripts.xray_operation_bundle_v8 import write_bundle
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,6 +42,7 @@ class KokoroRuntimeSourceStftConvTest(unittest.TestCase):
         cls.hello8, cls.hello_meta = verified_fixture('runtime_decoder_hello_8')
         cls.generator36, generator_meta = verified_fixture('generator_stage0')
         cls.source36, source_meta = verified_fixture('source')
+        cls.source_meta = source_meta
         for meta in (encode_meta, *decode_meta.values(), cls.hello_meta,
                      generator_meta, source_meta):
             require_matching_reference_identity(direct_meta, meta)
@@ -57,7 +61,8 @@ class KokoroRuntimeSourceStftConvTest(unittest.TestCase):
             'valid_residual_elements': 'i32'})
         cls.fixture.source['config']['context_length'] = 64
         cls.layout, cls.calls, cls.library, cls.loaded, cls.fn = (
-            compile_native_graph(cls.root, cls.fixture.source, circuit))
+            compile_native_graph(cls.root, cls.fixture.source, circuit,
+                extra_exports=('audio_stft_mag_phase_checked_f32',)))
         cls.fn.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t] + [
             ctypes.POINTER(ctypes.c_int32)] * 8
         cls.buffers = {item['name']: item for item in
@@ -160,6 +165,9 @@ class KokoroRuntimeSourceStftConvTest(unittest.TestCase):
             magnitude = reference[magnitude_name].reshape(11, stft_frames)
             phase = reference[phase_name].reshape(11, stft_frames)
             expected_conv = reference[conv_name].reshape(256, conv_frames)
+            if count == 36:
+                self.capture_and_replay_stft(arena, reference, samples,
+                                             stft_frames, channels)
             mag_error = np.abs(channels[:11, :stft_frames] - magnitude)
             phase_error = np.abs(channels[11:, :stft_frames] - phase)
             conv_error = np.abs(conv[:, :conv_frames] - expected_conv)
@@ -208,6 +216,94 @@ class KokoroRuntimeSourceStftConvTest(unittest.TestCase):
         self.assertEqual((status, lengths[-1]), (0, 1080))
         np.testing.assert_array_equal(
             self.view(arena, 'source_conv0', (256, 2560)), first8)
+
+    def capture_and_replay_stft(self, arena, reference, samples,
+                                frames, channels):
+        """Keep full STFT context at the first unresolved source boundary."""
+        selected = [op for op in self.calls['operations']
+                    if op.get('op') == 'audio_stft_mag_phase_checked']
+        self.assertEqual(len(selected), 1)
+        map_path = ROOT / 'version/v8/kernel_maps' / selected[0]['call_abi']['source_file']
+        provider = json.loads(map_path.read_text())
+        self.assertEqual(selected[0]['call_abi']['kernel_id'], provider['id'])
+        self.assertEqual(selected[0]['function'], provider['impl']['function'])
+        self.assertEqual(len(provider['numerical_capabilities']), 1)
+        contract = provider['numerical_capabilities'][0]['contract_id']
+        args = {item['name']: item for item in selected[0]['args']}
+        static = {key: int(args[key]['expr']) for key in (
+            'samples_capacity', 'window_capacity', 'table_capacity',
+            'output_capacity', 'output_stride', 'scratch_capacity',
+            'n_fft', 'hop')}
+        self.assertEqual(args['samples_count']['source'], 'runtime:stft_samples_count')
+        self.assertEqual(args['frames']['source'], 'runtime:stft_frames')
+        samples_actual = self.view(arena, 'source_waveform',
+                                   (static['samples_capacity'],))
+        reference_samples = np.zeros_like(samples_actual)
+        reference_samples[:samples] = reference['source'].reshape(-1)
+        expected = np.ascontiguousarray(np.concatenate((
+            reference['magnitude'].reshape(11, frames),
+            reference['phase'].reshape(11, frames)), axis=0))
+        retained = os.environ.get('CK_PRIVATE_STFT_PACKET_DIR')
+        packet_dir = (Path(retained).expanduser() if retained else
+                      self.root / 'source-stft-private-replay')
+        packet = write_bundle(
+            packet_dir,
+            operation=provider['op'], provider=selected[0]['function'],
+            contract=contract, runtime=self.library, embed_runtime=True,
+            context={
+                **static, 'samples_count': samples, 'frames': frames,
+                'state': 'stateless',
+                'reference_identity': {key: self.source_meta[key]
+                    for key in ('model_pin', 'code_pin', 'asset_sha256')},
+            },
+            tensors={
+                'samples': (samples_actual.copy(), 'fp32', ('sample',)),
+                'reference_samples': (reference_samples,
+                                      'fp32', ('sample',)),
+                'window': (self.view(arena, 'source_stft_window', (20,)).copy(),
+                           'fp32', ('tap',)),
+                'cos_table': (self.view(arena, 'source_stft_cos', (11, 20)).copy(),
+                              'fp32', ('bin', 'tap')),
+                'sin_table': (self.view(arena, 'source_stft_sin', (11, 20)).copy(),
+                              'fp32', ('bin', 'tap')),
+                'cke_output': (channels.copy(), 'fp32',
+                               ('channel', 'physical_frame')),
+                'reference_output': (expected, 'fp32',
+                                     ('channel', 'valid_frame')),
+            })
+        try:
+            import torch
+        except ImportError:
+            torch = None
+        if torch is not None and not torch.__version__.startswith('2.8.'):
+            torch = None
+        result = replay(packet, runtime=self.library, torch_module=torch)
+        self.assertEqual(result['capture_reproduced']['status'], 'PASS')
+        print('CKE_NUMERICAL_CASE ' + json.dumps({
+            'case_id': 'kokoro.runtime-source-stft.same-input-packet.36',
+            'name': 'private STFT packet: capture, same-input oracle, connected model',
+            'provider': result['provider'], 'dtype': 'fp32',
+            'numerical_contract': result['contract'],
+            'runtime_sha256': result['runtime_sha256'],
+            'direction': 'inference', 'oracle': 'pinned PyTorch 2.8',
+            'status': 'fail' if result['same_input_oracle']['status'] == 'FAIL'
+                else 'not_tested' if result['same_input_oracle']['status'] == 'NOT_TESTED'
+                else 'pass',
+            'max_diff': result['same_input_oracle'].get('max_abs'),
+            'tolerance': result['same_input_oracle'].get('ceiling'),
+            'gate': 'diagnostic', 'blocking': False,
+            'configuration': '36 IDs; captured Gaussian; 61,800 samples; 12,361 frames',
+            'capture_reproduced': result['capture_reproduced'],
+            'upstream_source': result['upstream_source'],
+            'same_input_oracle': result['same_input_oracle'],
+            'same_input_magnitude': result.get('same_input_magnitude'),
+            'same_input_raw_phase': result.get('same_input_raw_phase'),
+            'cke_on_reference_inputs': result['cke_on_reference_inputs'],
+            'reference_input_raw_phase': result.get('reference_input_raw_phase'),
+            'connected_model': result['connected_model'],
+            'reproduction_command': 'python3 -m unittest '
+                'tests.test_v8_kokoro_runtime_source_stft_conv',
+        }, sort_keys=True))
 
 
 if __name__ == '__main__':

@@ -11,6 +11,7 @@ import json
 import math
 import os
 import re
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +38,7 @@ def write_bundle(
     directory: Path, *, operation: str, provider: str, contract: str,
     runtime: Path, context: dict[str, Any],
     tensors: dict[str, tuple[np.ndarray, str, tuple[str, ...]]],
+    embed_runtime: bool = False,
 ) -> Path:
     if any(not isinstance(value, str) or not value for value in (operation, provider, contract)) or not tensors:
         raise BundleError("operation, provider, contract and tensors are required")
@@ -44,7 +46,9 @@ def write_bundle(
         raise BundleError("runtime library is missing")
     if directory.exists() and any(directory.iterdir()):
         raise BundleError("bundle directory must be empty")
-    directory.mkdir(parents=True, exist_ok=True)
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if directory.stat().st_mode & 0o077:
+        raise BundleError("bundle directory must be private (mode 0700)")
     entries = {}
     for role, (values, dtype_name, axes) in tensors.items():
         if not _ROLE.fullmatch(role) or dtype_name not in _DTYPES:
@@ -66,19 +70,28 @@ def write_bundle(
         name = f"{role}.bin"
         path = directory / name
         path.write_bytes(raw)
+        path.chmod(0o600)
         entries[role] = {
             "file": name, "dtype": dtype_name, "shape": list(array.shape),
             "axes": list(axes), "size_bytes": len(raw), "sha256": sha256(path),
         }
+    if embed_runtime:
+        embedded = directory / "runtime.so"
+        shutil.copyfile(runtime, embedded)
+        embedded.chmod(0o600)
+        runtime_entry = "runtime.so"
+    else:
+        runtime_entry = str(runtime.resolve())
     manifest = {
         "schema": "cke.xray_operation_bundle", "schema_version": 1,
         "operation": operation, "provider": provider, "contract": contract,
-        "runtime": {"path": str(runtime.resolve()), "sha256": sha256(runtime)},
+        "runtime": {"path": runtime_entry, "sha256": sha256(runtime)},
         "context": context, "tensors": entries,
     }
     destination = directory / "bundle.json"
     temporary = directory / "bundle.json.tmp"
     temporary.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    temporary.chmod(0o600)
     os.replace(temporary, destination)
     return destination
 
@@ -97,7 +110,11 @@ def load_bundle(path: Path) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
     if not isinstance(runtime, dict) or not isinstance(runtime.get("path"), str):
         raise BundleError("missing runtime identity")
     runtime_path = Path(runtime["path"])
-    if not runtime_path.is_absolute() or not runtime_path.is_file() or sha256(runtime_path) != runtime.get("sha256"):
+    if not runtime_path.is_absolute():
+        if runtime_path.as_posix() != "runtime.so":
+            raise BundleError("invalid embedded runtime path")
+        runtime_path = path.parent / runtime_path
+    if not runtime_path.is_file() or sha256(runtime_path) != runtime.get("sha256"):
         raise BundleError("runtime library identity changed")
     if not isinstance(manifest.get("context"), dict):
         raise BundleError("bundle context must be an object")
