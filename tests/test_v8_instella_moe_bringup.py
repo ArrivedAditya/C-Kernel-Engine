@@ -611,6 +611,54 @@ class BF16StorageProjectionTests(unittest.TestCase):
     def test_invalid_width_does_not_publish_output(self) -> None:
         self.assertEqual(self._project([1.0], [0x3F80], None, 1, 1, 0), [-999.0])
 
+    def test_parallel_large_odd_width_matches_serial_and_preserves_ranges(self) -> None:
+        m, n, k = 65, 65, 9  # Cross the M*N > 4096 dispatch boundary.
+        x = (ctypes.c_float * (m * k))(*(
+            _bf16_to_float((0x3E00, 0xBF00, 0x3F80, 0xBE80)[(r * 3 + c) % 4])
+            for r in range(m) for c in range(k)
+        ))
+        w = (ctypes.c_uint16 * (n * k))(*(
+            (0x3D80, 0xBF20, 0x3F40, 0xBE00)[(r + c * 3) % 4]
+            for r in range(n) for c in range(k)
+        ))
+        bias = (ctypes.c_float * n)(*(0.125 * ((c % 5) - 2) for c in range(n)))
+        serial = (ctypes.c_float * (m * n))()
+        ranged = (ctypes.c_float * (m * n))(*([-123.0] * (m * n)))
+        parallel_guard = (ctypes.c_float * (m * n + 2))(*([-123.0] * (m * n + 2)))
+        row_range = self.library.gemm_nt_bf16_accurate_storage_row_range
+        row_range.argtypes = self.project.argtypes + [ctypes.c_int, ctypes.c_int]
+        row_range(x, w, bias, serial, m, n, k, 0, m)
+        row_range(x, w, bias, ranged, m, n, k, 3, m - 4)
+        self.assertEqual(list(ranged[:3 * n]), [-123.0] * (3 * n))
+        self.assertEqual(list(ranged[(m - 4) * n:]), [-123.0] * (4 * n))
+        self.assertEqual(list(ranged[3 * n:(m - 4) * n]),
+                         list(serial[3 * n:(m - 4) * n]))
+
+        get_threads = self.library.ck_get_num_threads
+        get_threads.restype = ctypes.c_int
+        set_threads = self.library.ck_set_num_threads
+        set_threads.argtypes = [ctypes.c_int]
+        destroy = self.library.ck_threadpool_global_destroy
+        original = get_threads()
+        try:
+            destroy()
+            set_threads(4)
+            pool = self.library.ck_threadpool_global
+            pool.restype = ctypes.c_void_p
+            count = self.library.ck_threadpool_n_threads
+            count.argtypes = [ctypes.c_void_p]
+            count.restype = ctypes.c_int
+            self.assertGreaterEqual(count(pool()), 2)
+            out = ctypes.cast(ctypes.byref(parallel_guard, ctypes.sizeof(ctypes.c_float)),
+                              ctypes.POINTER(ctypes.c_float))
+            self.project(x, w, bias, out, m, n, k)
+            self.assertEqual(list(parallel_guard[1:-1]), list(serial))
+            self.assertEqual(parallel_guard[0], -123.0)
+            self.assertEqual(parallel_guard[-1], -123.0)
+        finally:
+            destroy()
+            set_threads(original)
+
 
 if __name__ == "__main__":
     unittest.main()
