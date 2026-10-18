@@ -127,13 +127,18 @@ def _sha256(path: Path) -> str:
 
 
 def _unique_tensor(dumps: list[parity_test.ParityDump], layer: int, name: str) -> np.ndarray:
-    found = [dump for dump in dumps if dump.layer_id == layer and dump.op_name == name]
-    if len(found) != 1:
-        raise ValueError(f"expected one layer={layer} {name} capture, found {len(found)}")
-    result = np.asarray(found[0].data, dtype=np.float32)
+    found = _unique_capture(dumps, layer, name)
+    result = np.asarray(found.data, dtype=np.float32)
     if not result.size or not np.isfinite(result).all():
         raise ValueError(f"layer={layer} {name} capture is empty or nonfinite")
     return result
+
+
+def _unique_capture(dumps: list[parity_test.ParityDump], layer: int, name: str) -> parity_test.ParityDump:
+    found = [dump for dump in dumps if dump.layer_id == layer and dump.op_name == name]
+    if len(found) != 1:
+        raise ValueError(f"expected one layer={layer} {name} capture, found {len(found)}")
+    return found[0]
 
 
 def _resolved_segmented_call(call_ir: dict, layer: int) -> dict:
@@ -226,7 +231,8 @@ def _validate_replay_artifacts(report: dict, call_ir: Path, engine_so: Path) -> 
 
 def replay_resolved_segmented_prefill(
     dumps: list[parity_test.ParityDump], layer: int, call: dict,
-    segments: list[int], engine_so: Path,
+    segments: list[int], engine_so: Path, *, require_direct_cache: bool = True,
+    independent_fp64: bool = False,
 ) -> dict:
     if not segments or any(isinstance(n, bool) or not isinstance(n, int) or n <= 0 for n in segments):
         raise ValueError("segment lengths must be positive integers")
@@ -242,12 +248,39 @@ def replay_resolved_segmented_prefill(
     v = _to_head_major(_unique_tensor(dumps, layer, "Vcur_normed"), tokens, kv_heads, dim)
     captured = _reshape_token_major_qhd(_unique_tensor(dumps, layer, "kqv_out"), tokens, heads, dim)
 
-    # These dumps precede the cache store. The fidelity gate detects whether
-    # reconstructing its FP16 storage is sufficient for this captured call.
-    k_cache = np.zeros((kv_heads, capacity, aligned), dtype=np.float16)
-    v_cache = np.zeros_like(k_cache)
-    k_cache[:, :tokens, :dim] = k
-    v_cache[:, :tokens, :dim] = v
+    reconstructed_k = np.zeros((kv_heads, capacity, aligned), dtype=np.float16)
+    reconstructed_v = np.zeros_like(reconstructed_k)
+    reconstructed_k[:, :tokens, :dim] = k
+    reconstructed_v[:, :tokens, :dim] = v
+    cache_source = "reconstructed_fp16_from_pre_store_captures"
+    reconstruction = None
+    k_cache, v_cache = reconstructed_k, reconstructed_v
+    if require_direct_cache:
+        direct = {}
+        for role in ("K", "V"):
+            name = f"{role}cache_post_store"
+            capture = _unique_capture(dumps, layer, name)
+            if (capture.dtype != "fp16" or capture.token_id != 0 or
+                    tuple(capture.data.shape) != (tokens, kv_heads, dim)):
+                raise ValueError(f"{name} must be FP16 [token,kv_head,channel] from position zero")
+            values = np.asarray(capture.data, dtype=np.float32)
+            if not np.isfinite(values).all():
+                raise ValueError(f"{name} contains nonfinite values")
+            cache = np.zeros((kv_heads, capacity, aligned), dtype=np.float16)
+            cache[:, :tokens, :dim] = values.transpose(1, 0, 2)
+            direct[role] = cache
+        k_cache, v_cache = direct["K"], direct["V"]
+        cache_source = "captured_post_store_fp16"
+        reconstruction = {
+            "k_bitwise_equal": bool(np.array_equal(
+                k_cache[:, :tokens, :dim].view(np.uint16), reconstructed_k[:, :tokens, :dim].view(np.uint16))),
+            "v_bitwise_equal": bool(np.array_equal(
+                v_cache[:, :tokens, :dim].view(np.uint16), reconstructed_v[:, :tokens, :dim].view(np.uint16))),
+            "k_metrics": _metrics(k_cache[:, :tokens, :dim].astype(np.float32),
+                                  reconstructed_k[:, :tokens, :dim].astype(np.float32)),
+            "v_metrics": _metrics(v_cache[:, :tokens, :dim].astype(np.float32),
+                                  reconstructed_v[:, :tokens, :dim].astype(np.float32)),
+        }
     output = np.zeros((heads, tokens, aligned), dtype=np.float32)
     workspace = np.zeros((call["workspace_bytes"] + 3) // 4, dtype=np.float32)
     segment_array = (ctypes.c_int * len(segments))(*segments)
@@ -275,22 +308,49 @@ def replay_resolved_segmented_prefill(
     if not np.isfinite(replayed).all():
         raise RuntimeError("selected attention provider produced nonfinite output")
     bitwise = np.array_equal(replayed.view(np.uint32), captured.view(np.uint32))
+    cache_matches = reconstruction is None or (
+        reconstruction["k_bitwise_equal"] and reconstruction["v_bitwise_equal"])
+    reference = None
+    if independent_fp64:
+        reference_out = np.zeros((tokens, heads, dim), dtype=np.float32)
+        group_size = heads // kv_heads
+        for query_pos in range(tokens):
+            first_key = max(0, query_pos + 1 - call["sliding_window"])
+            for head in range(heads):
+                kv_head = head // group_size
+                query = q[head, query_pos, :dim].astype(np.float64)
+                keys = k_cache[kv_head, first_key:query_pos + 1, :dim].astype(np.float64)
+                values = v_cache[kv_head, first_key:query_pos + 1, :dim].astype(np.float64)
+                scores = keys @ query
+                weights = np.exp(scores - np.max(scores))
+                weights /= np.sum(weights)
+                reference_out[query_pos, head] = weights @ values
+        reference = {
+            "contract": "unscaled causal sliding GQA, FP64 scores/softmax/value sum, FP32 output",
+            "vs_captured_cke": _metrics(reference_out, captured),
+            "vs_replayed_cke": _metrics(reference_out, replayed),
+            "interpretation": "mathematical diagnostic; not the pinned oracle's reduction contract",
+        }
     return {
-        "status": "pass" if bitwise else "fail_replay_fidelity",
+        "status": "fail_replay_fidelity" if not bitwise else
+                  "fail_cache_reconstruction" if not cache_matches else "pass",
         "interpretation": "replay fidelity only; not oracle parity or a local kernel-cause verdict",
         "layer": layer,
         "provider": call["function"],
         "kernel_id": call["kernel_id"],
         "reduction_selector": call["selector"],
         "segments": segments,
-        "cache_source": "reconstructed_fp16_from_pre_store_captures",
-        "cache_capture_is_direct": False,
+        "cache_source": cache_source,
+        "cache_capture_is_direct": require_direct_cache,
+        "cache_reconstruction": reconstruction,
         "original_runtime_loaded_identity_verified": False,
         "engine_so_sha256": _sha256(engine_so),
         "geometry": {"tokens": tokens, "heads": heads, "kv_heads": kv_heads,
-                     "head_dim": dim, "cache_capacity": capacity},
+                     "head_dim": dim, "cache_capacity": capacity,
+                     "query_position_start": 0, "valid_cache_positions": [0, tokens]},
         "metrics": _metrics(replayed, captured),
         "bitwise_equal": bool(bitwise),
+        "independent_fp64": reference,
     }
 
 
@@ -320,6 +380,10 @@ def main(argv: list[str] | None = None) -> int:
                     help="Engine library used for resolved-call replay")
     ap.add_argument("--parity-report", type=Path, default=None,
                     help="Report that records the dump and actual prefill segment plan")
+    ap.add_argument("--allow-reconstructed-cache", action="store_true",
+                    help="Diagnostic fallback for older dumps without post-store cache captures")
+    ap.add_argument("--independent-fp64", action="store_true",
+                    help="Compare captured operands with an explicit FP64 causal sliding reference")
     args = ap.parse_args(argv)
 
     dumps = parity_test.read_dump_file(args.dump)
@@ -336,7 +400,11 @@ def main(argv: list[str] | None = None) -> int:
             if args.segments is not None and args.segments != segments:
                 raise ValueError("requested segments do not match the retained parity report")
             call = _resolved_segmented_call(call_ir, args.layer)
-            report = replay_resolved_segmented_prefill(dumps, args.layer, call, segments, args.engine_so)
+            report = replay_resolved_segmented_prefill(
+                dumps, args.layer, call, segments, args.engine_so,
+                require_direct_cache=not args.allow_reconstructed_cache,
+                independent_fp64=args.independent_fp64,
+            )
         except (ValueError, KeyError, AttributeError, OSError) as exc:
             report = {
                 "status": "incomplete",
@@ -351,7 +419,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(report, indent=2))
         if args.output is not None:
             args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-        return {"pass": 0, "fail_replay_fidelity": 1}.get(report["status"], 2)
+        return {"pass": 0, "fail_replay_fidelity": 1, "fail_cache_reconstruction": 1}.get(report["status"], 2)
     if args.segments is not None or args.engine_so is not None or args.parity_report is not None:
         ap.error("--segments, --engine-so and --parity-report require --resolved-call-ir")
     q_flat = _require_tensor_any(dumps, args.layer, ["Qcur_rope"])

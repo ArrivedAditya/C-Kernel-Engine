@@ -2038,6 +2038,7 @@ def _capture_dump_compare(
     threads: int,
     dump_root: Path,
     dump_names: str,
+    ck_extra_dump_names: str = "",
     dump_pass: str,
     dump_atol: float,
     dump_rtol: float,
@@ -2094,6 +2095,12 @@ def _capture_dump_compare(
     ck_dump_names = _ck_dump_filter_names(
         dump_names, post_layer_embedding_layers=post_layer_embedding_layers
     )
+    if ck_extra_dump_names:
+        extra_names = _ck_dump_filter_names(
+            ck_extra_dump_names,
+            post_layer_embedding_layers=post_layer_embedding_layers,
+        )
+        ck_dump_names = ",".join(filter(None, (ck_dump_names, extra_names)))
     old_ck_op_filter = os.environ.get("CK_PARITY_OP_FILTER")
     if ck_dump_names:
         os.environ["CK_PARITY_OP_FILTER"] = ck_dump_names
@@ -2283,6 +2290,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Comma-separated llama dump names for sequential decoder dump capture",
     )
     ap.add_argument("--dump-pass", choices=("all", "prefill", "decode"), default="decode")
+    ap.add_argument(
+        "--ck-extra-dump-names",
+        type=str,
+        default="",
+        help="Additional CKE-only dump names; not passed to the llama.cpp capture helper",
+    )
     ap.add_argument("--dump-atol", type=float, default=1.0e-4)
     ap.add_argument("--dump-rtol", type=float, default=1.0e-3)
     ap.add_argument("--ck-strict-parity", action=argparse.BooleanOptionalAction, default=True)
@@ -2461,6 +2474,7 @@ def main(argv: list[str] | None = None) -> int:
             threads=int(args.threads),
             dump_root=dump_root,
             dump_names=str(args.dump_names),
+            ck_extra_dump_names=str(args.ck_extra_dump_names),
             dump_pass=str(args.dump_pass),
             dump_atol=float(args.dump_atol),
             dump_rtol=float(args.dump_rtol),

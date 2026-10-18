@@ -264,6 +264,47 @@ static inline void ck_dump_tensor_head_major_token_major(
     );
 }
 
+/* Dump only initialized logical cache positions. This is opt-in because the
+ * cache can be large and may contain private prompt-derived activations. */
+static inline void ck_dump_f16_cache_token_major(
+    const uint16_t *cache, int layer_id, const char *op_name,
+    int num_heads, int valid_tokens, int cache_capacity, int head_dim
+) {
+    const char *enabled = getenv("CK_PARITY_CAPTURE_F16_CACHE");
+    if (!enabled || strcmp(enabled, "1") != 0 || !g_ck_dump_file || !cache ||
+        num_heads <= 0 || valid_tokens <= 0 || cache_capacity < valid_tokens ||
+        head_dim <= 0 || !ck_dump_should_emit(layer_id, op_name)) return;
+
+    const size_t heads = (size_t)num_heads;
+    const size_t tokens = (size_t)valid_tokens;
+    const size_t width = (size_t)head_dim;
+    const size_t capacity = (size_t)cache_capacity;
+    if (heads > UINT32_MAX / tokens || heads * tokens > UINT32_MAX / width ||
+        heads > SIZE_MAX / capacity || heads * capacity > SIZE_MAX / width) return;
+
+    CKDumpFileHeader header = {0};
+    memcpy(header.magic, CKDUMP_MAGIC, 8);
+    header.version = CKDUMP_VERSION;
+    header.layer_id = layer_id;
+    strncpy(header.op_name, op_name, sizeof(header.op_name) - 1);
+    header.dtype = 1;  /* Actual FP16 cache bits, not converted FP32 values. */
+    header.rank = 3;
+    header.shape[0] = valid_tokens;
+    header.shape[1] = num_heads;
+    header.shape[2] = head_dim;
+    header.elem_count = (uint32_t)(heads * tokens * width);
+    header.token_id = 0;  /* The captured logical cache range is [0, valid_tokens). */
+    fwrite(&header, sizeof(header), 1, g_ck_dump_file);
+    for (int token = 0; token < valid_tokens; ++token) {
+        for (int head = 0; head < num_heads; ++head) {
+            const uint16_t *row = cache +
+                ((size_t)head * capacity + (size_t)token) * width;
+            fwrite(row, sizeof(uint16_t), width, g_ck_dump_file);
+        }
+    }
+    fflush(g_ck_dump_file);
+}
+
 /**
  * Close dump file. Call after inference completes.
  */
@@ -287,6 +328,7 @@ static inline void ck_dump_close(void) {
 #define ck_dump_tensor_2d(data, layer, name, d0, d1)
 #define ck_dump_tensor_head_major_token_major(data, layer, name, h, t, d)
 #define ck_dump_tensor_head_major_token_major_strided(data, layer, name, h, t, d, stride)
+#define ck_dump_f16_cache_token_major(data, layer, name, h, t, capacity, d)
 #define ck_dump_close()
 
 #endif  /* CK_PARITY_DUMP */

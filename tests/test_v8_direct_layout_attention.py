@@ -1049,8 +1049,8 @@ class DirectLayoutAttentionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not from"):
             replay._validate_replay_artifacts(parity_report, call_ir_path, self._lib_path)
 
-        def dump(name, data):
-            return SimpleNamespace(layer_id=0, op_name=name, data=data)
+        def dump(name, data, dtype="fp32"):
+            return SimpleNamespace(layer_id=0, op_name=name, data=data, dtype=dtype, token_id=0)
 
         def token_major(values):
             return values.transpose(1, 0, 2).copy().reshape(-1)
@@ -1060,20 +1060,49 @@ class DirectLayoutAttentionTests(unittest.TestCase):
             dump("Kcur_rope", token_major(k)),
             dump("Vcur_normed", token_major(v)),
             dump("kqv_out", token_major(output)),
+            dump("Kcache_post_store", k_cache[:, :tokens, :].transpose(1, 0, 2).astype(np.float32), "fp16"),
+            dump("Vcache_post_store", v_cache[:, :tokens, :].transpose(1, 0, 2).astype(np.float32), "fp16"),
         ]
-        result = replay.replay_resolved_segmented_prefill(dumps, 0, resolved, segments, self._lib_path)
+        result = replay.replay_resolved_segmented_prefill(
+            dumps, 0, resolved, segments, self._lib_path, independent_fp64=True,
+        )
         self.assertEqual(result["status"], "pass")
-        self.assertFalse(result["cache_capture_is_direct"])
+        self.assertTrue(result["cache_capture_is_direct"])
+        self.assertTrue(result["cache_reconstruction"]["k_bitwise_equal"])
+        self.assertTrue(result["cache_reconstruction"]["v_bitwise_equal"])
         self.assertEqual(result["metrics"]["max_abs"], 0.0)
+        self.assertEqual(result["independent_fp64"]["vs_captured_cke"],
+                         result["independent_fp64"]["vs_replayed_cke"])
+        self.assertLess(result["independent_fp64"]["vs_captured_cke"]["rmse"], 0.01)
+        with self.assertRaisesRegex(ValueError, "expected one"):
+            replay.replay_resolved_segmented_prefill(dumps[:4], 0, resolved, segments, self._lib_path)
+        self.assertEqual(
+            replay.replay_resolved_segmented_prefill(
+                dumps[:4], 0, resolved, segments, self._lib_path, require_direct_cache=False,
+            )["status"], "pass",
+        )
+        wrong_dtype = list(dumps)
+        wrong_dtype[4] = dump("Kcache_post_store", dumps[4].data, "fp32")
+        with self.assertRaisesRegex(ValueError, "must be FP16"):
+            replay.replay_resolved_segmented_prefill(wrong_dtype, 0, resolved, segments, self._lib_path)
+        changed_cache = list(dumps)
+        changed_k = dumps[4].data.copy()
+        changed_k[0, 0, 0] += 0.25
+        changed_cache[4] = dump("Kcache_post_store", changed_k, "fp16")
+        self.assertFalse(
+            replay.replay_resolved_segmented_prefill(
+                changed_cache, 0, resolved, segments, self._lib_path,
+            )["cache_reconstruction"]["k_bitwise_equal"]
+        )
         self.assertEqual(
             replay.replay_resolved_segmented_prefill(dumps, 0, resolved, [35, 35], self._lib_path)["status"],
             "fail_replay_fidelity",
         )
 
         corrupted = list(dumps)
-        changed = dumps[-1].data.copy()
+        changed = dumps[3].data.copy()
         changed[0] += 0.25
-        corrupted[-1] = dump("kqv_out", changed)
+        corrupted[3] = dump("kqv_out", changed)
         self.assertEqual(
             replay.replay_resolved_segmented_prefill(corrupted, 0, resolved, segments, self._lib_path)["status"],
             "fail_replay_fidelity",
