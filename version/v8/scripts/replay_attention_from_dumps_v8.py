@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import hashlib
 import json
 import os
 import sys
@@ -108,6 +109,191 @@ def _default_ggml_cpu_so() -> str | None:
     return None
 
 
+_SEGMENTED_F16_SLIDING = (
+    "attention_forward_causal_head_major_gqa_prefill_segmented_f16cache_sliding_gemma4_workspace"
+)
+_F16_REDUCTIONS = {
+    "CK_ATTN_REDUCTION_F16_REGULAR_NOSCALE": 5,
+    "CK_ATTN_REDUCTION_F16_FLASH_AUTO_QTILE64_REGULAR_TAIL_NOSCALE": 6,
+}
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _unique_tensor(dumps: list[parity_test.ParityDump], layer: int, name: str) -> np.ndarray:
+    found = [dump for dump in dumps if dump.layer_id == layer and dump.op_name == name]
+    if len(found) != 1:
+        raise ValueError(f"expected one layer={layer} {name} capture, found {len(found)}")
+    result = np.asarray(found[0].data, dtype=np.float32)
+    if not result.size or not np.isfinite(result).all():
+        raise ValueError(f"layer={layer} {name} capture is empty or nonfinite")
+    return result
+
+
+def _resolved_segmented_call(call_ir: dict, layer: int) -> dict:
+    matches = [
+        op for op in call_ir.get("operations", [])
+        if op.get("layer") == layer
+        and op.get("section") == "body"
+        and op.get("op") in ("attn_sliding", "attention_sliding")
+    ]
+    if len(matches) != 1:
+        raise ValueError(f"expected one layer={layer} sliding attention call, found {len(matches)}")
+    call = matches[0]
+    contract = call.get("resolved_contract") or {}
+    if not contract.get("kernel_id") or contract.get("kernel_id") != (call.get("call_abi") or {}).get("kernel_id"):
+        raise ValueError("resolved kernel identity does not match the generated call ABI")
+    if contract.get("function") != call.get("function"):
+        raise ValueError("resolved provider function does not match the generated call")
+    provider = (contract.get("implementation") or {}).get("segmented_query_provider") or {}
+    if provider.get("function") != _SEGMENTED_F16_SLIDING:
+        raise ValueError("resolved call has no supported segmented FP16 sliding provider")
+    args = {arg["name"]: arg for arg in call.get("args", [])}
+    expected_args = (
+        "q", "k_cache", "v_cache", "output", "num_heads", "num_kv_heads",
+        "q_tokens", "past_tokens", "cache_capacity", "head_dim", "aligned_head_dim",
+        "sliding_window", "reduction", "token_workspace", "token_workspace_bytes",
+    )
+    if tuple(args) != expected_args or tuple(provider.get("base_args", ())) != expected_args:
+        raise ValueError("resolved provider ABI does not match the replayed call")
+    selector = contract.get("selector")
+    if selector not in _F16_REDUCTIONS or args["reduction"].get("expr") != selector:
+        raise ValueError("unsupported or contradictory resolved reduction selector")
+    required = call.get("required_contract") or {}
+    if required.get("tensor.kv.dtype") != "fp16" or required.get("tensor.layout") != "head_major":
+        raise ValueError("resolved attention storage/layout contract is not FP16 head-major")
+    def dimension(name: str) -> int:
+        raw = args[name].get("expr")
+        if not isinstance(raw, str) or not raw.isdecimal() or int(raw) <= 0:
+            raise ValueError(f"missing positive resolved {name}")
+        return int(raw)
+    return {
+        "function": provider["function"],
+        "selector": selector,
+        "reduction": _F16_REDUCTIONS[selector],
+        "kernel_id": contract.get("kernel_id"),
+        "num_heads": dimension("num_heads"),
+        "num_kv_heads": dimension("num_kv_heads"),
+        "head_dim": dimension("head_dim"),
+        "aligned_head_dim": dimension("aligned_head_dim"),
+        "cache_capacity": dimension("cache_capacity"),
+        "sliding_window": dimension("sliding_window"),
+        "workspace_bytes": dimension("token_workspace_bytes"),
+    }
+
+
+def _segments_from_parity_report(report: dict, dump_path: Path) -> list[int]:
+    compare = report.get("dump_compare") or {}
+    recorded_dump = compare.get("ck_dump_path")
+    if not isinstance(recorded_dump, str) or Path(recorded_dump).resolve() != dump_path.resolve():
+        raise ValueError("parity report does not identify the selected CKE dump")
+    entries = compare.get("prefill_segments")
+    if not isinstance(entries, list) or not entries:
+        raise ValueError("parity report has no prefill segment plan")
+    segments = []
+    offset = 0
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ValueError("malformed prefill segment")
+        rows = entry.get("rows")
+        start = entry.get("physical_start")
+        if (isinstance(rows, bool) or not isinstance(rows, int) or rows <= 0
+                or isinstance(start, bool) or not isinstance(start, int) or start != offset):
+            raise ValueError("invalid or noncontiguous prefill segment plan")
+        segments.append(rows)
+        offset += rows
+    return segments
+
+
+def _validate_replay_artifacts(report: dict, call_ir: Path, engine_so: Path) -> None:
+    decoder = report.get("decoder_runtime") or {}
+    decoder_so = decoder.get("so_path")
+    if not isinstance(decoder_so, str) or Path(decoder_so).resolve().parent != call_ir.resolve().parent:
+        raise ValueError("lowered call is not from the parity report's decoder bundle")
+    if engine_so.resolve().parent != call_ir.resolve().parent:
+        raise ValueError("replay engine is not adjacent to the selected decoder bundle")
+    manifest_path = engine_so.with_name(engine_so.name + ".build.json")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("sha256") != _sha256(engine_so):
+        raise ValueError("replay engine does not match its build manifest")
+
+
+def replay_resolved_segmented_prefill(
+    dumps: list[parity_test.ParityDump], layer: int, call: dict,
+    segments: list[int], engine_so: Path,
+) -> dict:
+    if not segments or any(isinstance(n, bool) or not isinstance(n, int) or n <= 0 for n in segments):
+        raise ValueError("segment lengths must be positive integers")
+    heads, kv_heads, dim = call["num_heads"], call["num_kv_heads"], call["head_dim"]
+    aligned = call["aligned_head_dim"]
+    tokens = sum(segments)
+    capacity = call["cache_capacity"]
+    if tokens > capacity or heads % kv_heads or aligned != dim:
+        raise ValueError("capture tokens or head geometry exceed the resolved call contract")
+
+    q = _to_head_major(_unique_tensor(dumps, layer, "Qcur_rope"), tokens, heads, dim)
+    k = _to_head_major(_unique_tensor(dumps, layer, "Kcur_rope"), tokens, kv_heads, dim)
+    v = _to_head_major(_unique_tensor(dumps, layer, "Vcur_normed"), tokens, kv_heads, dim)
+    captured = _reshape_token_major_qhd(_unique_tensor(dumps, layer, "kqv_out"), tokens, heads, dim)
+
+    # These dumps precede the cache store. The fidelity gate detects whether
+    # reconstructing its FP16 storage is sufficient for this captured call.
+    k_cache = np.zeros((kv_heads, capacity, aligned), dtype=np.float16)
+    v_cache = np.zeros_like(k_cache)
+    k_cache[:, :tokens, :dim] = k
+    v_cache[:, :tokens, :dim] = v
+    output = np.zeros((heads, tokens, aligned), dtype=np.float32)
+    workspace = np.zeros((call["workspace_bytes"] + 3) // 4, dtype=np.float32)
+    segment_array = (ctypes.c_int * len(segments))(*segments)
+    float_p = ctypes.POINTER(ctypes.c_float)
+    half_p = ctypes.POINTER(ctypes.c_uint16)
+    lib = ctypes.CDLL(str(engine_so.resolve()))
+    fn = getattr(lib, call["function"])
+    fn.argtypes = [
+        float_p, half_p, half_p, float_p,
+        *([ctypes.c_int] * 9), float_p, ctypes.c_size_t,
+        ctypes.POINTER(ctypes.c_int), ctypes.c_int,
+    ]
+    fn.restype = ctypes.c_int
+    status = fn(
+        q.ctypes.data_as(float_p), k_cache.ctypes.data_as(half_p),
+        v_cache.ctypes.data_as(half_p), output.ctypes.data_as(float_p),
+        heads, kv_heads, tokens, 0, capacity, dim, aligned,
+        call["sliding_window"], call["reduction"],
+        workspace.ctypes.data_as(float_p), call["workspace_bytes"],
+        segment_array, len(segments),
+    )
+    if status != 0:
+        raise RuntimeError(f"selected attention provider returned {status}")
+    replayed = _to_token_major(output, tokens, heads, aligned)[..., :dim]
+    if not np.isfinite(replayed).all():
+        raise RuntimeError("selected attention provider produced nonfinite output")
+    bitwise = np.array_equal(replayed.view(np.uint32), captured.view(np.uint32))
+    return {
+        "status": "pass" if bitwise else "fail_replay_fidelity",
+        "interpretation": "replay fidelity only; not oracle parity or a local kernel-cause verdict",
+        "layer": layer,
+        "provider": call["function"],
+        "kernel_id": call["kernel_id"],
+        "reduction_selector": call["selector"],
+        "segments": segments,
+        "cache_source": "reconstructed_fp16_from_pre_store_captures",
+        "cache_capture_is_direct": False,
+        "original_runtime_loaded_identity_verified": False,
+        "engine_so_sha256": _sha256(engine_so),
+        "geometry": {"tokens": tokens, "heads": heads, "kv_heads": kv_heads,
+                     "head_dim": dim, "cache_capacity": capacity},
+        "metrics": _metrics(replayed, captured),
+        "bitwise_equal": bool(bitwise),
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Replay full-attention kernels from parity dumps")
     ap.add_argument("--dump", type=Path, required=True, help="Path to dump.bin")
@@ -115,7 +301,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--mode",
         choices=("ggml", "exact", "flash", "tiled_f16kv"),
-        default="ggml",
+        default=None,
     )
     ap.add_argument("--strict", action="store_true")
     ap.add_argument("--disable-multihead-oracle", action="store_true")
@@ -126,9 +312,48 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--aligned-head-dim", type=int, default=None)
     ap.add_argument("--output", type=Path, default=None)
     ap.add_argument("--raw-output", type=Path, default=None)
+    ap.add_argument("--resolved-call-ir", type=Path, default=None,
+                    help="Replay the selected segmented FP16 prefill call from lowered IR")
+    ap.add_argument("--segments", type=int, nargs="+", default=None,
+                    help="Actual positive runtime segment lengths, in execution order")
+    ap.add_argument("--engine-so", type=Path, default=None,
+                    help="Engine library used for resolved-call replay")
+    ap.add_argument("--parity-report", type=Path, default=None,
+                    help="Report that records the dump and actual prefill segment plan")
     args = ap.parse_args(argv)
 
     dumps = parity_test.read_dump_file(args.dump)
+    if args.resolved_call_ir is not None:
+        if args.engine_so is None or args.parity_report is None:
+            ap.error("--resolved-call-ir requires --engine-so and --parity-report")
+        if args.mode is not None or args.raw_output is not None:
+            ap.error("--mode and --raw-output are not supported with resolved-call replay")
+        try:
+            call_ir = json.loads(args.resolved_call_ir.read_text(encoding="utf-8"))
+            parity_report = json.loads(args.parity_report.read_text(encoding="utf-8"))
+            _validate_replay_artifacts(parity_report, args.resolved_call_ir, args.engine_so)
+            segments = _segments_from_parity_report(parity_report, args.dump)
+            if args.segments is not None and args.segments != segments:
+                raise ValueError("requested segments do not match the retained parity report")
+            call = _resolved_segmented_call(call_ir, args.layer)
+            report = replay_resolved_segmented_prefill(dumps, args.layer, call, segments, args.engine_so)
+        except (ValueError, KeyError, AttributeError, OSError) as exc:
+            report = {
+                "status": "incomplete",
+                "interpretation": "replay evidence is missing or inconsistent; no kernel-cause verdict",
+                "error": str(exc),
+            }
+        report["artifacts"] = {
+            "dump_sha256": _sha256(args.dump),
+            "call_ir_sha256": _sha256(args.resolved_call_ir),
+            "parity_report_sha256": _sha256(args.parity_report),
+        }
+        print(json.dumps(report, indent=2))
+        if args.output is not None:
+            args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        return {"pass": 0, "fail_replay_fidelity": 1}.get(report["status"], 2)
+    if args.segments is not None or args.engine_so is not None or args.parity_report is not None:
+        ap.error("--segments, --engine-so and --parity-report require --resolved-call-ir")
     q_flat = _require_tensor_any(dumps, args.layer, ["Qcur_rope"])
     num_tokens = _infer_num_tokens(q_flat, args.num_heads, args.head_dim)
     num_kv_heads = args.num_kv_heads if args.num_kv_heads is not None else args.num_heads
@@ -161,7 +386,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             os.environ.pop("CK_STRICT_DISABLE_REGULAR_ATTN_ORACLE", None)
 
-        fn = _resolve_attention_fn(lib, args.mode)
+        fn = _resolve_attention_fn(lib, args.mode or "ggml")
         out = np.zeros((args.num_heads, num_tokens, aligned_head_dim), dtype=np.float32)
         fn(
             q.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
@@ -195,7 +420,7 @@ def main(argv: list[str] | None = None) -> int:
     bitwise_equal = token_major.view(np.uint32) == ref.view(np.uint32)
     worst_idx = np.unravel_index(np.argmax(np.abs(token_major - ref)), token_major.shape)
     report = {
-        "mode": args.mode,
+        "mode": args.mode or "ggml",
         "strict": args.strict,
         "num_tokens": num_tokens,
         "num_heads": args.num_heads,

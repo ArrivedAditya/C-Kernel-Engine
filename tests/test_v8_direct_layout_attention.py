@@ -1,4 +1,5 @@
 import ctypes
+import json
 import math
 import os
 import struct
@@ -7,6 +8,11 @@ import tempfile
 import unittest
 from array import array
 from pathlib import Path
+from types import SimpleNamespace
+
+import numpy as np
+
+from version.v8.scripts import replay_attention_from_dumps_v8 as replay
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -969,6 +975,120 @@ class DirectLayoutAttentionTests(unittest.TestCase):
         self.assertEqual(outputs[0], outputs[1])
         self.assertEqual(outputs[0], outputs[2])
         self.assertEqual(outputs[0], outputs[3])
+
+    def test_resolved_segmented_replay_requires_fidelity_and_contract_identity(self):
+        heads, kv_heads, tokens, dim, capacity = 2, 1, 70, 8, 72
+        segments = [5, 65]
+        q = np.sin(np.arange(heads * tokens * dim, dtype=np.float32) * 0.013).reshape(heads, tokens, dim)
+        k = np.cos(np.arange(kv_heads * tokens * dim, dtype=np.float32) * 0.011).reshape(kv_heads, tokens, dim)
+        v = np.sin(np.arange(kv_heads * tokens * dim, dtype=np.float32) * 0.017 + 0.2).reshape(kv_heads, tokens, dim)
+        k_cache = np.zeros((kv_heads, capacity, dim), dtype=np.float16)
+        v_cache = np.zeros_like(k_cache)
+        k_cache[:, :tokens, :] = k
+        v_cache[:, :tokens, :] = v
+        output = np.zeros_like(q)
+        workspace = np.zeros(256, dtype=np.float32)
+        plan = (ctypes.c_int * len(segments))(*segments)
+        fp = ctypes.POINTER(ctypes.c_float)
+        hp = ctypes.POINTER(ctypes.c_uint16)
+        status = self._lib.attention_forward_causal_head_major_gqa_prefill_segmented_f16cache_sliding_gemma4_workspace(
+            q.ctypes.data_as(fp), k_cache.ctypes.data_as(hp), v_cache.ctypes.data_as(hp),
+            output.ctypes.data_as(fp), heads, kv_heads, tokens, 0, capacity, dim, dim,
+            capacity, 6, workspace.ctypes.data_as(fp), workspace.nbytes, plan, len(segments),
+        )
+        self.assertEqual(status, 0)
+
+        names = ("q", "k_cache", "v_cache", "output", "num_heads", "num_kv_heads",
+                 "q_tokens", "past_tokens", "cache_capacity", "head_dim", "aligned_head_dim",
+                 "sliding_window", "reduction", "token_workspace", "token_workspace_bytes")
+        expressions = ("q", "k", "v", "out", str(heads), str(kv_heads), str(capacity),
+                       "model->pos", str(capacity), str(dim), str(dim), str(capacity),
+                       "CK_ATTN_REDUCTION_F16_FLASH_AUTO_QTILE64_REGULAR_TAIL_NOSCALE",
+                       "workspace", str(workspace.nbytes))
+        kernel_id = "attention_forward_causal_head_major_gqa_prefill_append_f16cache_sliding_gemma4"
+        function = kernel_id + "_workspace"
+        call_ir = {"operations": [{
+            "layer": 0, "section": "body", "op": "attn_sliding", "function": function,
+            "args": [{"name": name, "expr": expr} for name, expr in zip(names, expressions)],
+            "call_abi": {"kernel_id": kernel_id},
+            "required_contract": {"tensor.kv.dtype": "fp16", "tensor.layout": "head_major"},
+            "resolved_contract": {
+                "kernel_id": kernel_id, "function": function,
+                "selector": expressions[12],
+                "implementation": {"segmented_query_provider": {
+                    "function": replay._SEGMENTED_F16_SLIDING, "base_args": list(names),
+                }},
+            },
+        }]}
+        resolved = replay._resolved_segmented_call(call_ir, 0)
+        parity_report = {"dump_compare": {
+            "ck_dump_path": str(self._lib_path),
+            "prefill_segments": [
+                {"name": "text_before", "physical_start": 0, "rows": 5},
+                {"name": "visual", "physical_start": 5, "rows": 65},
+            ],
+        }}
+        self.assertEqual(replay._segments_from_parity_report(parity_report, self._lib_path), segments)
+        parity_report["dump_compare"]["prefill_segments"][1]["physical_start"] = 6
+        with self.assertRaisesRegex(ValueError, "noncontiguous"):
+            replay._segments_from_parity_report(parity_report, self._lib_path)
+        parity_report["dump_compare"]["prefill_segments"][1]["physical_start"] = 5
+        parity_report["dump_compare"]["ck_dump_path"] = str(self._lib_path.parent / "stale-dump.bin")
+        with self.assertRaisesRegex(ValueError, "does not identify"):
+            replay._segments_from_parity_report(parity_report, self._lib_path)
+
+        call_ir_path = self._lib_path.parent / "call_prefill.json"
+        manifest_path = self._lib_path.with_name(self._lib_path.name + ".build.json")
+        parity_report["decoder_runtime"] = {"so_path": str(self._lib_path.parent / "libdecoder.so")}
+        manifest_path.write_text(json.dumps({"sha256": replay._sha256(self._lib_path)}), encoding="utf-8")
+        replay._validate_replay_artifacts(parity_report, call_ir_path, self._lib_path)
+        manifest_path.write_text(json.dumps({"sha256": "0" * 64}), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            replay._validate_replay_artifacts(parity_report, call_ir_path, self._lib_path)
+        parity_report["decoder_runtime"]["so_path"] = str(self._lib_path.parent.parent / "stale/libdecoder.so")
+        with self.assertRaisesRegex(ValueError, "not from"):
+            replay._validate_replay_artifacts(parity_report, call_ir_path, self._lib_path)
+
+        def dump(name, data):
+            return SimpleNamespace(layer_id=0, op_name=name, data=data)
+
+        def token_major(values):
+            return values.transpose(1, 0, 2).copy().reshape(-1)
+
+        dumps = [
+            dump("Qcur_rope", token_major(q)),
+            dump("Kcur_rope", token_major(k)),
+            dump("Vcur_normed", token_major(v)),
+            dump("kqv_out", token_major(output)),
+        ]
+        result = replay.replay_resolved_segmented_prefill(dumps, 0, resolved, segments, self._lib_path)
+        self.assertEqual(result["status"], "pass")
+        self.assertFalse(result["cache_capture_is_direct"])
+        self.assertEqual(result["metrics"]["max_abs"], 0.0)
+        self.assertEqual(
+            replay.replay_resolved_segmented_prefill(dumps, 0, resolved, [35, 35], self._lib_path)["status"],
+            "fail_replay_fidelity",
+        )
+
+        corrupted = list(dumps)
+        changed = dumps[-1].data.copy()
+        changed[0] += 0.25
+        corrupted[-1] = dump("kqv_out", changed)
+        self.assertEqual(
+            replay.replay_resolved_segmented_prefill(corrupted, 0, resolved, segments, self._lib_path)["status"],
+            "fail_replay_fidelity",
+        )
+        with self.assertRaisesRegex(ValueError, "expected one"):
+            replay.replay_resolved_segmented_prefill(dumps + dumps[0:1], 0, resolved, segments, self._lib_path)
+        with self.assertRaisesRegex(ValueError, "segment lengths"):
+            replay.replay_resolved_segmented_prefill(dumps, 0, resolved, [5, 0, 65], self._lib_path)
+        call_ir["operations"][0]["resolved_contract"]["selector"] = "CK_ATTN_REDUCTION_F16_REGULAR_NOSCALE"
+        with self.assertRaisesRegex(ValueError, "contradictory"):
+            replay._resolved_segmented_call(call_ir, 0)
+        call_ir["operations"][0]["resolved_contract"]["selector"] = expressions[12]
+        call_ir["operations"][0]["required_contract"]["tensor.kv.dtype"] = "bf16"
+        with self.assertRaisesRegex(ValueError, "storage/layout"):
+            replay._resolved_segmented_call(call_ir, 0)
 
 
 if __name__ == "__main__":
