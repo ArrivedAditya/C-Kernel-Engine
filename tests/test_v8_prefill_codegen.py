@@ -1210,6 +1210,33 @@ int main(void) {
         self.assertIn('"after_attn"', emitted_after_attention)
         self.assertNotIn('"layer_input"', emitted_after_attention)
 
+    def test_fp16_cache_store_dump_uses_resolved_cache_geometry(self) -> None:
+        op = {
+            "function": "kv_cache_store_batch_f16",
+            "op": "kv_cache_store_batch_f16",
+            "layer": 3,
+            "args": [
+                {"name": "kv_cache_k", "expr": "K_CACHE"},
+                {"name": "kv_cache_v", "expr": "V_CACHE"},
+                {"name": "k", "expr": "K_SOURCE"},
+                {"name": "v", "expr": "V_SOURCE"},
+                {"name": "start_pos", "expr": "model->pos"},
+                {"name": "num_tokens", "expr": "96"},
+                {"name": "num_kv_heads", "expr": "2"},
+                {"name": "head_dim", "expr": "256"},
+                {"name": "max_seq_len", "expr": "108"},
+            ],
+        }
+        source = codegen_prefill_v8.emit_prefill_op(op, 7, {"embed_dim": 2560}, dump=True)
+        self.assertIn(
+            'ck_dump_f16_cache_token_major((const uint16_t*)K_CACHE, 3, '
+            '"Kcache_post_store", 2, ((model->pos) + (num_tokens)), 108, 256);',
+            source,
+        )
+        self.assertIn('"Vcache_post_store"', source)
+        self.assertLess(source.index("kv_cache_store_batch_f16("), source.index("Kcache_post_store"))
+        self.assertNotIn("Kcache_post_store", codegen_prefill_v8.emit_prefill_op(op, 7, {}, dump=False))
+
     @staticmethod
     def _bridge_embedding_ops() -> list[dict]:
         return [{

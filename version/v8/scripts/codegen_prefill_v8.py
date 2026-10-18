@@ -1725,6 +1725,26 @@ def emit_prefill_op(
             k_expr = _get_arg("k")
             _emit_head_major_dump(q_expr, "Qcur_rope", num_heads, tokens, head_dim)
             _emit_head_major_dump(k_expr, "Kcur_rope", num_kv_heads, tokens, head_dim)
+        elif op_type == "kv_cache_store_batch_f16":
+            cache_k = _get_arg("kv_cache_k")
+            cache_v = _get_arg("kv_cache_v")
+            start = _get_arg("start_pos")
+            heads = _get_arg("num_kv_heads")
+            dim = _get_arg("head_dim")
+            capacity = _get_arg("max_seq_len")
+            if not all((cache_k, cache_v, start, heads, dim, capacity)):
+                raise ValueError("FP16 cache capture requires the resolved store ABI")
+            valid = f"(({start}) + (num_tokens))"
+            lines.append("    #ifdef CK_PARITY_DUMP")
+            lines.append(
+                f'    ck_dump_f16_cache_token_major((const uint16_t*){cache_k}, {layer}, '
+                f'"Kcache_post_store", {heads}, {valid}, {capacity}, {dim});'
+            )
+            lines.append(
+                f'    ck_dump_f16_cache_token_major((const uint16_t*){cache_v}, {layer}, '
+                f'"Vcache_post_store", {heads}, {valid}, {capacity}, {dim});'
+            )
+            lines.append("    #endif")
         elif op_type == "final_rmsnorm":
             _emit_dump(
                 _get_arg("output", "out", "x", "y"),
