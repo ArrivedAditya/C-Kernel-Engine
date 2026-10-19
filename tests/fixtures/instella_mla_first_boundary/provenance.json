@@ -1,0 +1,9 @@
+{
+  "schema": "cke.fixture.provenance.v1",
+  "capture": "Instella-MoE BF16 layer-0 KV LoRA decompression, 21-token code prompt, position 0",
+  "source_commit": "f46d554a7062a8dab7059dcd101c5ed0d210d1e6",
+  "weights_bump_sha256": "df62a52ab7338b8a3164c745ad6ba3ce904221f3c4b5a8bcbe00a9030aca662d",
+  "libmodel_sha256": "fc29101cd5aaeef23bff924dfe35d461f5a5f28eb15a83a58b0591fcd63fbd95",
+  "provider": "deepseek_mla_kv_decompress_bf16",
+  "fixture_sha256": "61003aa26eaf0c0f864ec4c0c4a5c2b1d527b8d13538802d2030a041eaa9561b"
+}

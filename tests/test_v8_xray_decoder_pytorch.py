@@ -18,6 +18,50 @@ SPEC.loader.exec_module(MODULE)
 
 
 class DecoderPyTorchXRayTests(unittest.TestCase):
+    def test_full_prefix_finds_earlier_row_when_last_row_matches(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            reference = np.ones((3, 4), dtype=np.float32)
+            earlier = reference.copy()
+            earlier[1, 2] += np.float32(0.001)
+            later = reference.copy()
+            later[0, :] = 2.0
+
+            def capture(name: str, values: np.ndarray) -> dict[str, object]:
+                return MODULE._write_tensor(root / f"{name}.f32", values)
+
+            ck = {
+                0: {"layer_out_full": capture("ck0", earlier)},
+                1: {"layer_out_full": capture("ck1", later)},
+            }
+            publisher = {
+                0: {"layer_out_full": capture("ref0", reference)},
+                1: {"layer_out_full": capture("ref1", reference)},
+            }
+            result = MODULE.compare_full_prefix_layer_outputs(ck, publisher, 3)
+            self.assertEqual(result["captured_layers"], [0, 1])
+            self.assertEqual(
+                (result["first_non_exact"]["layer"],
+                 result["first_non_exact"]["token_position"]),
+                (0, 1),
+            )
+            self.assertEqual(
+                (result["first_material"]["layer"],
+                 result["first_material"]["token_position"]),
+                (1, 0),
+            )
+            self.assertTrue(np.array_equal(earlier[-1], reference[-1]))
+
+    def test_full_prefix_rejects_unproven_extent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            entry = MODULE._write_tensor(
+                root / "rows.f32", np.ones((2, 4), dtype=np.float32)
+            )
+            tensors = {0: {"layer_out_full": entry}}
+            with self.assertRaisesRegex(RuntimeError, "full-prefix shape mismatch"):
+                MODULE.compare_full_prefix_layer_outputs(tensors, tensors, 3)
+
     def test_structured_module_output_uses_primary_tensor(self) -> None:
         primary = np.asarray([1.0, 2.0], dtype=np.float32)
         auxiliary = np.asarray([3.0, 4.0], dtype=np.float32)
