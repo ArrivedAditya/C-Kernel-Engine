@@ -174,6 +174,38 @@ class KokoroNativeLexiconTextTest(unittest.TestCase):
                     "KokoroNativeLexiconFullTest."
                     "test_pinned_dictionary_runtime_length_routes",
             }, sort_keys=True))
+        if not os.environ.get("CKE_TTS_RUN_RUNTIME_EXPERIMENTAL_TEXT_FULL"):
+            print("CKE_NUMERICAL_CASE " + json.dumps({
+                "case_id": "kokoro.native-runtime-text.experimental-twelve-v1",
+                "name": "Pinned dictionary 12-ID text through one runtime graph",
+                "provider": "native_kokoro_lexicon_text+generated_kokoro_runtime_waveform",
+                "dtype": "pcm16", "direction": "inference",
+                "oracle": "deterministic native seeded replay; model parity unavailable",
+                "status": "not_tested", "gate": "execution", "blocking": False,
+                "reason": "opt-in range bundle and pinned frontend not supplied; set "
+                          "CKE_TTS_RUN_RUNTIME_EXPERIMENTAL_TEXT_FULL, "
+                          "CKE_TTS_RUNTIME_TEXT_EXPERIMENTAL_BUNDLE_DIR and "
+                          "CKE_TTS_PINNED_FRONTEND_DIR",
+                "configuration": "12-ID Hello there.; bounded execution only",
+                "reproduction_command": "CKE_TTS_RUN_RUNTIME_EXPERIMENTAL_TEXT_FULL=1 "
+                    "CKE_TTS_RUNTIME_TEXT_EXPERIMENTAL_BUNDLE_DIR=<range-bundle> "
+                    "CKE_TTS_PINNED_FRONTEND_DIR=<pinned-frontend> "
+                    "python3 -m unittest tests.test_v8_kokoro_native_lexicon_text."
+                    "KokoroNativeLexiconFullTest."
+                    "test_experimental_twelve_id_generated_wav",
+            }, sort_keys=True))
+        print("CKE_NUMERICAL_CASE " + json.dumps({
+            "case_id": "kokoro.native-runtime-text.experimental-twelve-model-parity-v1",
+            "name": "Direct pinned-model parity for experimental 12-ID text",
+            "provider": "generated_kokoro_runtime_waveform", "dtype": "fp32",
+            "direction": "inference", "oracle": "pinned full Kokoro model",
+            "status": "not_tested", "gate": "numerical", "blocking": False,
+            "reason": "no direct full-model 12-ID capture with identical excitation "
+                      "and voice row; deterministic native replay is execution evidence",
+            "configuration": "12-ID Hello there.; connected model trajectory",
+            "reproduction_command": "python3 -m unittest "
+                "tests.test_v8_kokoro_native_lexicon_text",
+        }, sort_keys=True))
 
     @unittest.skipUnless(os.environ.get("CKE_TTS_RUN_RUNTIME_TEXT_FULL"),
                          "pinned variable-length generated bundle not requested")
@@ -305,6 +337,67 @@ class KokoroNativeLexiconTextTest(unittest.TestCase):
 
 
 class KokoroNativeLexiconFullTest(unittest.TestCase):
+    @unittest.skipUnless(os.environ.get("CKE_TTS_RUN_RUNTIME_EXPERIMENTAL_TEXT_FULL"),
+                         "opt-in range bundle and pinned frontend not requested")
+    def test_experimental_twelve_id_generated_wav(self):
+        frontend_dir = Path(os.environ["CKE_TTS_PINNED_FRONTEND_DIR"])
+        bundle = Path(os.environ["CKE_TTS_RUNTIME_TEXT_EXPERIMENTAL_BUNDLE_DIR"])
+        manifest = json.loads((bundle / "bundle_manifest.json").read_text())
+        self.assertTrue(manifest["runtime_lengths"])
+        self.assertEqual(manifest["captured_phoneme_counts"], [8, 13, 36])
+        self.assertIn(12, manifest["execution_only_phoneme_counts"])
+        self.assertEqual(len({item["library_sha256"] for item in
+                              manifest["buckets"].values()}), 1)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            hashes = []
+            sample_counts = []
+            for index in range(2):
+                wav = root / f"twelve-{index}.wav"
+                run = subprocess.run([str(frontend_dir / "native-kokoro-text"),
+                    str(bundle), str(frontend_dir / "us-gold.cklex"),
+                    str(wav), "7", "Hello there."],
+                    capture_output=True, text=True)
+                self.assertEqual(run.returncode, 0, run.stderr)
+                with wave.open(str(wav), "rb") as audio:
+                    self.assertEqual((audio.getnchannels(), audio.getsampwidth(),
+                                      audio.getframerate()), (1, 2, 24000))
+                    samples = np.frombuffer(audio.readframes(audio.getnframes()),
+                                            dtype="<i2")
+                    self.assertEqual(samples.size, audio.getnframes())
+                    self.assertGreater(samples.size, 0)
+                    self.assertTrue(np.any(samples))
+                    sample_counts.append(samples.size)
+                hashes.append(_hash(wav))
+            self.assertEqual(hashes[0], hashes[1])
+            self.assertEqual(sample_counts[0], sample_counts[1])
+            rejected = root / "unknown.wav"
+            run = subprocess.run([str(frontend_dir / "native-kokoro-text"),
+                str(bundle), str(frontend_dir / "us-gold.cklex"),
+                str(rejected), "7", "Unknownword there."],
+                capture_output=True, text=True)
+            self.assertNotEqual(run.returncode, 0)
+            self.assertFalse(rejected.exists())
+        print("CKE_NUMERICAL_CASE " + json.dumps({
+            "case_id": "kokoro.native-runtime-text.experimental-twelve-v1",
+            "name": "Pinned dictionary 12-ID text through one runtime graph",
+            "provider": "native_kokoro_lexicon_text+generated_kokoro_runtime_waveform",
+            "dtype": "pcm16", "direction": "inference",
+            "oracle": "deterministic native seeded replay; model parity unavailable",
+            "status": "pass", "gate": "execution", "blocking": True,
+            "max_diff": 0, "tolerance": 0,
+            "configuration": "12-ID Hello there.; seed 7; two native runs; "
+                             f"{sample_counts[0]} samples; hash {hashes[0]}; "
+                             "connected numerical parity NOT_TESTED",
+            "library_sha256": manifest["buckets"]["12"]["library_sha256"],
+            "reproduction_command": "CKE_TTS_RUN_RUNTIME_EXPERIMENTAL_TEXT_FULL=1 "
+                "CKE_TTS_RUNTIME_TEXT_EXPERIMENTAL_BUNDLE_DIR=<range-bundle> "
+                "CKE_TTS_PINNED_FRONTEND_DIR=<pinned-frontend> "
+                "python3 -m unittest tests.test_v8_kokoro_native_lexicon_text."
+                "KokoroNativeLexiconFullTest."
+                "test_experimental_twelve_id_generated_wav",
+        }, sort_keys=True))
+
     @unittest.skipUnless(os.environ.get("CKE_TTS_RUN_RUNTIME_PINNED_TEXT_FULL"),
                          "pinned full lexicon and runtime bundle not requested")
     def test_pinned_dictionary_runtime_length_routes(self):

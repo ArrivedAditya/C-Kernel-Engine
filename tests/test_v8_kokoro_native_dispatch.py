@@ -90,6 +90,10 @@ class KokoroNativeDispatchTest(unittest.TestCase):
     def test_experimental_counts_validate_before_export(self):
         self.assertEqual(bundle_builder.selected_counts(()), (8, 36))
         self.assertEqual(bundle_builder.selected_counts((12,)), (8, 12, 36))
+        self.assertEqual(bundle_builder.selected_runtime_counts((12,), False),
+                         (8, 12, 13, 36))
+        self.assertEqual(bundle_builder.selected_runtime_counts((), True),
+                         tuple(range(3, 41)))
         for counts in ((8,), (36,), (12, 12), (2,), (41,), (True,),
                        (12.0,), (3, 4, 5, 6, 7)):
             with self.subTest(counts=counts), self.assertRaises(ValueError):
@@ -97,6 +101,22 @@ class KokoroNativeDispatchTest(unittest.TestCase):
                     self.root / "af_heart.ckvoice", self.root / "not-published",
                     experimental_counts=counts)
             self.assertFalse((self.root / "not-published").exists())
+        for counts in ((8,), (13,), (36,), (12, 12), (2,), (41,),
+                       (True,), (12.0,), (3, 4, 5, 6, 7)):
+            with self.subTest(runtime_counts=counts), self.assertRaises(ValueError):
+                bundle_builder.build_bundle(self.root / "missing-bump",
+                    self.root / "af_heart.ckvoice", self.root / "not-published",
+                    runtime_lengths=True, experimental_counts=counts)
+        with self.assertRaisesRegex(ValueError, "range requires"):
+            bundle_builder.build_bundle(self.root / "missing-bump",
+                self.root / "af_heart.ckvoice", self.root / "not-published",
+                runtime_experimental_range=True)
+        with self.assertRaisesRegex(ValueError, "range or explicit"):
+            bundle_builder.build_bundle(self.root / "missing-bump",
+                self.root / "af_heart.ckvoice", self.root / "not-published",
+                runtime_lengths=True, runtime_experimental_range=True,
+                experimental_counts=(12,))
+        self.assertFalse((self.root / "not-published").exists())
 
     def test_opt_in_third_bucket_routes_distinguishable_native_host(self):
         voice = self.root / "valid-voice.ckvoice"
@@ -157,9 +177,9 @@ class KokoroNativeDispatchTest(unittest.TestCase):
 
     def test_runtime_bundle_routes_three_lengths_to_one_generated_artifact(self):
         voice = self.root / "runtime-voice.ckvoice"
-        voice.write_bytes(b"CKVOICE1" + (34).to_bytes(4, "little") +
+        voice.write_bytes(b"CKVOICE1" + (38).to_bytes(4, "little") +
                           (256).to_bytes(4, "little") +
-                          b"\0" * (34 * 256 * 4))
+                          b"\0" * (38 * 256 * 4))
         bindings = self.root / "runtime-bindings.json"
         bindings.write_text(json.dumps({
             "native_voice_sha256": _hash(voice),
@@ -221,6 +241,52 @@ class KokoroNativeDispatchTest(unittest.TestCase):
         self.assertEqual(run.returncode, 4)
         self.assertIn("artifact identity mismatch", run.stderr)
         self.assertFalse(rejected.exists())
+        range_output = self.root / "runtime-range-bundle"
+        with mock.patch.object(bundle_builder, "DEFAULT_BINDINGS", bindings), \
+             mock.patch.object(bundle_builder, "build_runtime",
+                               side_effect=fake_runtime):
+            range_report = bundle_builder.build_bundle(
+                self.root / "synthetic-bump", voice, range_output,
+                runtime_lengths=True, runtime_experimental_range=True)
+        self.assertEqual(built, [64, 64])
+        self.assertEqual(range_report["captured_phoneme_counts"], [8, 13, 36])
+        self.assertEqual(range_report["execution_only_phoneme_counts"],
+                         [count for count in range(3, 41)
+                          if count not in (8, 13, 36)])
+        short_voice = self.root / "short-range-voice.ckvoice"
+        short_voice.write_bytes(b"CKVOICE1" + (37).to_bytes(4, "little") +
+                                (256).to_bytes(4, "little") +
+                                b"\0" * (37 * 256 * 4))
+        short_bindings = self.root / "short-range-bindings.json"
+        short_bindings.write_text(json.dumps({
+            "native_voice_sha256": _hash(short_voice),
+            "source_bump_sha256": "synthetic",
+        }))
+        with mock.patch.object(bundle_builder, "DEFAULT_BINDINGS", short_bindings), \
+             self.assertRaisesRegex(ValueError, "voice bank geometry"):
+            bundle_builder.build_bundle(self.root / "synthetic-bump",
+                short_voice, self.root / "rejected-range-bundle",
+                runtime_lengths=True, runtime_experimental_range=True)
+        self.assertFalse((self.root / "rejected-range-bundle").exists())
+        self.assertEqual(len({item["library_sha256"] for item in
+                              range_report["buckets"].values()}), 1)
+        for count in (3, 12, 40, 8, 12):
+            ids = ",".join(map(str, [0] + [4] * (count - 2) + [0]))
+            wav = self.root / f"range-{count}.wav"
+            wav.unlink(missing_ok=True)
+            run = subprocess.run([str(range_output / "native-kokoro-dispatch"),
+                str(range_output), str(wav), "7", ids],
+                capture_output=True, text=True)
+            self.assertEqual(run.returncode, 0, run.stderr)
+            self.assertEqual(wav.read_text().strip(), f"runtime:{ids}")
+        for count in (2, 41):
+            ids = ",".join(map(str, [0] + [4] * (count - 2) + [0]))
+            wav = self.root / f"rejected-{count}.wav"
+            run = subprocess.run([str(range_output / "native-kokoro-dispatch"),
+                str(range_output), str(wav), "7", ids],
+                capture_output=True, text=True)
+            self.assertEqual(run.returncode, 2)
+            self.assertFalse(wav.exists())
 
     def test_explicit_avx2_selection_preserves_graph_ownership(self):
         scalar = build_circuit(8)
