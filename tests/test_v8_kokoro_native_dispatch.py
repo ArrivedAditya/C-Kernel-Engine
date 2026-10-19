@@ -155,6 +155,73 @@ class KokoroNativeDispatchTest(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertFalse(unsupported.exists())
 
+    def test_runtime_bundle_routes_three_lengths_to_one_generated_artifact(self):
+        voice = self.root / "runtime-voice.ckvoice"
+        voice.write_bytes(b"CKVOICE1" + (34).to_bytes(4, "little") +
+                          (256).to_bytes(4, "little") +
+                          b"\0" * (34 * 256 * 4))
+        bindings = self.root / "runtime-bindings.json"
+        bindings.write_text(json.dumps({
+            "native_voice_sha256": _hash(voice),
+            "source_bump_sha256": "synthetic",
+        }))
+        built = []
+
+        def fake_runtime(_bump, directory, count, *, conv_provider,
+                         runtime_lengths):
+            self.assertEqual((count, conv_provider, runtime_lengths),
+                             (64, "scalar", True))
+            built.append(count)
+            directory.mkdir()
+            host = directory / "native-kokoro-wav"
+            host.write_text("#!/bin/sh\nprintf 'runtime:%s\\n' \"$4\" > \"$2\"\n")
+            host.chmod(0o755)
+            library = directory / "generated.so"
+            library.write_bytes(b"one synthetic runtime library")
+            package = directory / "request.cktts"
+            package.write_bytes(b"one synthetic runtime package")
+            return {"host_sha256": _hash(host),
+                    "library_sha256": _hash(library),
+                    "package_sha256": _hash(package),
+                    "compiler_manifest_sha256": "synthetic",
+                    "generated_c_sha256": "synthetic",
+                    "generated_operations": 1, "selected_conv_calls": 0}
+
+        output = self.root / "runtime-bundle"
+        with mock.patch.object(bundle_builder, "DEFAULT_BINDINGS", bindings), \
+             mock.patch.object(bundle_builder, "build_runtime",
+                               side_effect=fake_runtime):
+            report = bundle_builder.build_bundle(self.root / "synthetic-bump",
+                voice, output, runtime_lengths=True)
+        self.assertEqual(built, [64])
+        self.assertEqual(report["supported_phoneme_counts"], [8, 13, 36])
+        self.assertTrue(report["runtime_lengths"])
+        self.assertEqual(len({item["library_sha256"] for item in
+                              report["buckets"].values()}), 1)
+        for count in (8, 13, 36, 8):
+            ids = ",".join(map(str, [0] + [4] * (count - 2) + [0]))
+            wav = self.root / f"runtime-{count}.wav"
+            wav.unlink(missing_ok=True)
+            run = subprocess.run([str(output / "native-kokoro-dispatch"),
+                str(output), str(wav), "7", ids], capture_output=True, text=True)
+            self.assertEqual(run.returncode, 0, run.stderr)
+            self.assertEqual(wav.read_text().strip(), f"runtime:{ids}")
+        ids = ",".join(map(str, [0] + [4] * 10 + [0]))
+        rejected = self.root / "unsupported-runtime.wav"
+        run = subprocess.run([str(output / "native-kokoro-dispatch"),
+            str(output), str(rejected), "7", ids], capture_output=True, text=True)
+        self.assertEqual(run.returncode, 2)
+        self.assertFalse(rejected.exists())
+        library = output / "64" / "generated.so"
+        library.write_bytes(library.read_bytes() + b"tamper")
+        allowed = ",".join(map(str, [0] + [4] * 6 + [0]))
+        run = subprocess.run([str(output / "native-kokoro-dispatch"),
+            str(output), str(rejected), "7", allowed],
+            capture_output=True, text=True)
+        self.assertEqual(run.returncode, 4)
+        self.assertIn("artifact identity mismatch", run.stderr)
+        self.assertFalse(rejected.exists())
+
     def test_explicit_avx2_selection_preserves_graph_ownership(self):
         scalar = build_circuit(8)
         candidate = build_circuit(8)
@@ -230,7 +297,7 @@ class KokoroNativeDispatchTest(unittest.TestCase):
             self.assertFalse(output.exists())
 
     def test_wrong_host_route_is_rejected_before_execution(self):
-        original_call = 'joined(host, sizeof(host), argv[1], count, "native-kokoro-wav")'
+        original_call = 'joined(host, sizeof(host), argv[1], directory_count, "native-kokoro-wav")'
         wrong_call = 'joined(host, sizeof(host), argv[1], 8u, "native-kokoro-wav")'
         source = SOURCE.read_text()
         self.assertEqual(source.count(original_call), 1)

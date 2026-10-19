@@ -1,5 +1,5 @@
-/* Exact-length Kokoro request selector. The bundle builder emits the pinned
- * identities; each selected native host performs the generated model call. */
+/* Kokoro request selector. The bundle builder emits pinned artifact identities;
+ * each selected native host performs the generated model call. */
 #define _POSIX_C_SOURCE 200809L
 #include "bundle_identity.h"
 #include <errno.h>
@@ -87,9 +87,15 @@ int main(int argc, char **argv) {
     }
     char host[4096], library[4096], package[4096], voice[4096];
     int voice_length = snprintf(voice, sizeof(voice), "%s/af_heart.ckvoice", argv[1]);
-    if (!joined(host, sizeof(host), argv[1], count, "native-kokoro-wav") ||
-        !joined(library, sizeof(library), argv[1], count, "generated.so") ||
-        !joined(package, sizeof(package), argv[1], count, "request.cktts") ||
+    const unsigned directory_count =
+#ifdef CK_TTS_RUNTIME_BUNDLE
+        64;
+#else
+        count;
+#endif
+    if (!joined(host, sizeof(host), argv[1], directory_count, "native-kokoro-wav") ||
+        !joined(library, sizeof(library), argv[1], directory_count, "generated.so") ||
+        !joined(package, sizeof(package), argv[1], directory_count, "request.cktts") ||
         voice_length <= 0 || (size_t)voice_length >= sizeof(voice)) return 3;
     if (!digest_matches(host, selected->host_sha256) ||
         !digest_matches(library, selected->library_sha256) ||

@@ -1071,11 +1071,11 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_native_kokoro_wav_host.py",
     ),
     "tts_kokoro_request_package": TestSuite(
-        "Kokoro Static Request Package BUMP and Bounds Contract", "inference",
+        "Kokoro Static and Runtime Request Package BUMP and Bounds Contract", "inference",
         ROOT / "tests" / "test_v8_kokoro_request_package.py",
     ),
     "tts_kokoro_native_dispatch": TestSuite(
-        "Kokoro Native Exact-Length Dispatch and Artifact Identity", "inference",
+        "Kokoro Native Exact and Runtime Length Dispatch and Artifact Identity", "inference",
         ROOT / "tests" / "test_v8_kokoro_native_dispatch.py",
     ),
     "tts_kokoro_native_lexicon_text": TestSuite(
