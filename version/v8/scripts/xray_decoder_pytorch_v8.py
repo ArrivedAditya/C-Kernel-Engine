@@ -1230,6 +1230,64 @@ def profile(order: list[str], intervals: dict[str, list[str]]) -> dict[str, Any]
     }
 
 
+def compare_full_prefix_layer_outputs(
+    ck_tensors: dict[int, dict[str, dict[str, Any]]],
+    torch_tensors: dict[int, dict[str, dict[str, Any]]],
+    token_count: int,
+) -> dict[str, Any] | None:
+    """Locate drift in retained prompt rows, including rows before the last one."""
+    layers = sorted(
+        layer for layer in set(ck_tensors) & set(torch_tensors)
+        if "layer_out_full" in ck_tensors[layer]
+        and "layer_out_full" in torch_tensors[layer]
+    )
+    if not layers:
+        return None
+    threshold = profile([], {})["dtype_thresholds"]["bf16"]
+    result: dict[str, Any] = {
+        "captured_layers": layers,
+        "token_count": token_count,
+        "scan_order": "layer_then_token_position",
+        "first_non_exact": None,
+        "first_material": None,
+    }
+    for layer in layers:
+        ck_entry = ck_tensors[layer]["layer_out_full"]
+        torch_entry = torch_tensors[layer]["layer_out_full"]
+        ck_shape = tuple(ck_entry["shape"])
+        torch_shape = tuple(torch_entry["shape"])
+        if ck_shape != torch_shape or len(ck_shape) != 2 or ck_shape[0] != token_count:
+            raise RuntimeError(
+                f"layer {layer} full-prefix shape mismatch: {ck_shape} vs "
+                f"{torch_shape}, expected {token_count} tokens"
+            )
+        ck_values = np.fromfile(ck_entry["path"], dtype=np.float32)
+        torch_values = np.fromfile(torch_entry["path"], dtype=np.float32)
+        if ck_values.size != int(np.prod(ck_shape)) or torch_values.size != ck_values.size:
+            raise RuntimeError(f"layer {layer} full-prefix capture has an invalid extent")
+        ck_rows = ck_values.reshape(ck_shape)
+        torch_rows = torch_values.reshape(torch_shape)
+        for token in range(token_count):
+            if np.array_equal(ck_rows[token], torch_rows[token]):
+                continue
+            if result["first_non_exact"] is not None and result["first_material"] is not None:
+                continue
+            metrics = xray._metrics(torch_rows[token], ck_rows[token], ["channel"])
+            status, failed_metrics = xray._metric_status(metrics, threshold)
+            finding = {
+                "layer": layer,
+                "token_position": token,
+                "checkpoint_id": f"decoder.layer.{layer}.layer_out",
+                "metrics": metrics,
+                "failed_metrics": failed_metrics,
+            }
+            if result["first_non_exact"] is None:
+                result["first_non_exact"] = finding
+            if status == "fail" and result["first_material"] is None:
+                result["first_material"] = finding
+    return result
+
+
 def run(args: argparse.Namespace) -> dict[str, Any]:
     token_ids = parse_token_ids(args.token_ids)
     if not token_ids:
@@ -1252,6 +1310,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         token_ids,
         args.output_dir / "ck",
         mla_replay_layer,
+    )
+    full_prefix = compare_full_prefix_layer_outputs(
+        ck_tensors, torch_tensors, len(token_ids)
     )
     canonicalize_router_snapshots(torch_tensors, args.output_dir / "pytorch")
     canonicalize_router_snapshots(ck_tensors, args.output_dir / "ck")
@@ -1520,6 +1581,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "sparse_first_material": sparse_report.get("first_divergence"),
         "all_layers_first_non_exact": all_report.get("first_non_exact_checkpoint"),
         "all_layers_first_material": all_report.get("first_divergence"),
+        "full_prefix_layer_outputs": full_prefix,
         "granular_layer": target_layer,
         "granular_first_non_exact": (
             granular_report.get("first_non_exact_checkpoint")

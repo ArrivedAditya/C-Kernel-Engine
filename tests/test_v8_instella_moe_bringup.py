@@ -627,6 +627,45 @@ class BF16StorageProjectionTests(unittest.TestCase):
         self.project(x, w, b, out, m, n, k)
         return list(out)
 
+    def test_captured_mla_kv_decompression_rounding_boundary(self) -> None:
+        fixture_dir = ROOT / "tests" / "fixtures" / "instella_mla_first_boundary"
+        fixture_bytes = (fixture_dir / "captured_kv_decompress.json").read_bytes()
+        provenance = json.loads((fixture_dir / "provenance.json").read_text())
+        self.assertEqual(hashlib.sha256(fixture_bytes).hexdigest(),
+                         provenance["fixture_sha256"])
+        fixture = json.loads(fixture_bytes)
+        self.assertEqual(provenance["provider"], "deepseek_mla_kv_decompress_bf16")
+        x = np.asarray(fixture["input_bf16_bits"], dtype=np.uint16)
+        input_values = (x.astype(np.uint32) << 16).view(np.float32)
+        weights = np.zeros((2, fixture["kv_lora_rank"]), dtype=np.uint16)
+        weights[0] = fixture["weight_bf16_bits"]
+        self.assertEqual(input_values.size, fixture["kv_lora_rank"])
+
+        native = self.library.deepseek_mla_kv_decompress_bf16
+        native.argtypes = [ctypes.c_void_p] * 4 + [ctypes.c_int] * 5
+        key = np.empty(1, dtype=np.float32)
+        value = np.empty(1, dtype=np.float32)
+
+        def replay() -> float:
+            native(input_values.ctypes.data, weights.ctypes.data,
+                   key.ctypes.data, value.ctypes.data,
+                   1, 1, fixture["kv_lora_rank"], 1, 1)
+            return float(key[0])
+
+        cke = _bf16_to_float(fixture["cke_output_bf16_bits"])
+        publisher = _bf16_to_float(fixture["publisher_output_bf16_bits"])
+        self.assertEqual(replay(), cke)
+        self.assertNotEqual(cke, publisher)
+        exact = math.fsum(float(a) * _bf16_to_float(int(b))
+                          for a, b in zip(input_values, weights[0]))
+        self.assertLess(abs(exact - publisher), abs(exact - cke))
+
+        # A one-step source-weight perturbation changes the native output.
+        # The captured mismatch is tied to these operands, not just a label.
+        index = fixture["perturb_weight_index"]
+        weights[0, index] += np.uint16(1)
+        self.assertNotEqual(replay(), cke)
+
     def test_synthetic_rounding_boundary_matches_independent_sum(self) -> None:
         fixture = json.loads((ROOT / "tests" / "fixtures" / "v8" /
                               "bf16_gemm_storage_rounding.json").read_text())
