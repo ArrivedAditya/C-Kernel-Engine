@@ -19,6 +19,8 @@ from export_kokoro_request_package import DEFAULT_BINDINGS, sha256_file
 
 SUPPORTED_COUNTS = (8, 36)
 RUNTIME_EXECUTION_COUNTS = (8, 13, 36)
+RUNTIME_MIN_COUNT = 3
+RUNTIME_MAX_COUNT = 40  # Native frontend, CSV parser, and voice-row contract.
 DISPATCH_SOURCE = ROOT / "version/v8/tts/native_kokoro_dispatch.c"
 
 
@@ -35,15 +37,38 @@ def selected_counts(experimental_counts: tuple[int, ...]) -> tuple[int, ...]:
     return tuple(sorted((*SUPPORTED_COUNTS, *experimental_counts)))
 
 
+def selected_runtime_counts(experimental_counts: tuple[int, ...],
+                            experimental_range: bool) -> tuple[int, ...]:
+    if experimental_range and experimental_counts:
+        raise ValueError("select an experimental runtime range or explicit counts")
+    if experimental_range:
+        return tuple(range(RUNTIME_MIN_COUNT, RUNTIME_MAX_COUNT + 1))
+    if any(isinstance(count, bool) or not isinstance(count, int) or
+           count < RUNTIME_MIN_COUNT or count > RUNTIME_MAX_COUNT or
+           count in RUNTIME_EXECUTION_COUNTS for count in experimental_counts):
+        raise ValueError("experimental runtime counts must be distinct integers "
+                         "from 3 to 40 outside the captured 8/13/36 counts")
+    if len(experimental_counts) > 4 or len(set(experimental_counts)) != len(experimental_counts):
+        raise ValueError("at most four distinct experimental runtime counts")
+    return tuple(sorted((*RUNTIME_EXECUTION_COUNTS, *experimental_counts)))
+
+
 def build_bundle(bump_dir: Path, voice_bank: Path, output: Path,
                  *, conv_provider: str = "scalar",
                  experimental_counts: tuple[int, ...] = (),
-                 runtime_lengths: bool = False) -> dict:
+                 runtime_lengths: bool = False,
+                 runtime_experimental_range: bool = False) -> dict:
     if conv_provider not in CONV_PROVIDERS:
         raise ValueError(f"unsupported Kokoro Conv1D provider: {conv_provider}")
-    if runtime_lengths and experimental_counts:
-        raise ValueError("runtime bundle uses its own verified count set")
-    counts = RUNTIME_EXECUTION_COUNTS if runtime_lengths else selected_counts(experimental_counts)
+    if runtime_experimental_range and not runtime_lengths:
+        raise ValueError("experimental runtime range requires --runtime-lengths")
+    counts = (selected_runtime_counts(experimental_counts, runtime_experimental_range)
+              if runtime_lengths else selected_counts(experimental_counts))
+    if runtime_lengths:
+        execution_only = tuple(count for count in counts
+                               if count not in RUNTIME_EXECUTION_COUNTS)
+    else:
+        execution_only = experimental_counts
     if output.is_symlink() or (output.exists() and
             (not output.is_dir() or any(output.iterdir()))):
         raise ValueError("output directory must be empty")
@@ -53,7 +78,8 @@ def build_bundle(bump_dir: Path, voice_bank: Path, output: Path,
         raise ValueError("native voice bank differs from pinned af_heart artifact")
     with voice_bank.open("rb") as stream:
         header = stream.read(16)
-    if header[:8] != b"CKVOICE1" or int.from_bytes(header[8:12], "little") < 34 or \
+    if header[:8] != b"CKVOICE1" or \
+            int.from_bytes(header[8:12], "little") < max(counts) - 2 or \
             int.from_bytes(header[12:16], "little") != 256:
         raise ValueError("unsupported native af_heart voice bank geometry")
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -62,7 +88,7 @@ def build_bundle(bump_dir: Path, voice_bank: Path, output: Path,
         staging = Path(temporary) / "bundle"
         report = _build_into(bump_dir, voice_bank, staging, bindings,
                              expected_voice, conv_provider, counts,
-                             experimental_counts, runtime_lengths)
+                             execution_only, runtime_lengths)
         # The complete bundle becomes visible in one same-filesystem rename.
         # Replacing an existing empty directory preserves the prior API.
         if output.is_symlink() or (output.exists() and
@@ -128,7 +154,11 @@ def _build_into(bump_dir: Path, voice_bank: Path, output: Path,
         "conv_provider": conv_provider,
         "supported_phoneme_counts": list(counts),
         "baseline_phoneme_counts": list(SUPPORTED_COUNTS),
+        "captured_phoneme_counts": (list(RUNTIME_EXECUTION_COUNTS)
+                                    if runtime_lengths else list(SUPPORTED_COUNTS)),
         "experimental_phoneme_counts": list(sorted(experimental_counts)),
+        "execution_only_phoneme_counts": (list(sorted(experimental_counts))
+                                           if runtime_lengths else []),
         "voice_sha256": expected_voice,
         "source_bump_sha256": bindings["source_bump_sha256"],
         "binding_catalog_sha256": sha256_file(DEFAULT_BINDINGS),
@@ -136,8 +166,9 @@ def _build_into(bump_dir: Path, voice_bank: Path, output: Path,
         "bundle_identity_sha256": sha256_file(output / "bundle_identity.h"),
         "buckets": buckets,
         "dispatcher_compile_command": command,
-        "scope": ("one generated 64-token-capacity graph accepts tested 8/13/36 "
-                  "request counts; waveform numerical parity remains FAIL"
+        "scope": ("one generated 64-token-capacity graph; 8/13/36 have "
+                  "captured request evidence; optional other counts have "
+                  "bounded execution only; connected waveform parity remains FAIL"
                   if runtime_lengths else
                   "exact compiled phoneme counts only; additional counts require "
                   "independent model-level evidence before numerical certification"),
@@ -154,15 +185,19 @@ def main() -> None:
     parser.add_argument("--conv-provider", choices=CONV_PROVIDERS,
                         default="scalar")
     parser.add_argument("--experimental-count", type=int, action="append",
-                        default=[], help="add an exact-length experimental bucket "
-                        "(3..40, excluding baseline 8/36); no runtime recompilation")
+                        default=[], help="add an experimental count (3..40); "
+                        "runtime mode reuses one generated graph")
     parser.add_argument("--runtime-lengths", action="store_true",
-                        help="one 64-token-capacity generated graph for 8/13/36 requests")
+                        help="one 64-token-capacity generated graph for checked requests")
+    parser.add_argument("--runtime-experimental-range", action="store_true",
+                        help="opt in to execution-only counts 3..40 with one runtime graph; "
+                        "independent model parity is not established")
     args = parser.parse_args()
     print(json.dumps(build_bundle(args.bump_dir, args.voice_bank,
                                  args.output_dir, conv_provider=args.conv_provider,
                                  experimental_counts=tuple(args.experimental_count),
-                                 runtime_lengths=args.runtime_lengths),
+                                 runtime_lengths=args.runtime_lengths,
+                                 runtime_experimental_range=args.runtime_experimental_range),
                      indent=2))
 
 
