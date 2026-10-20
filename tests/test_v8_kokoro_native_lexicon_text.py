@@ -20,6 +20,14 @@ sys.path.insert(0, str(ROOT / "version/v8/tts"))
 import build_kokoro_lexicon_frontend as frontend
 
 
+CARDINALS = (
+    "zero", "one", "two", "three", "four", "five", "six", "seven",
+    "eight", "nine", "ten", "eleven", "twelve", "thirteen",
+    "fourteen", "fifteen", "sixteen", "seventeen", "eighteen",
+    "nineteen", "twenty",
+)
+
+
 def _hash(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -66,6 +74,10 @@ class KokoroNativeLexiconTextTest(unittest.TestCase):
                 ("read", "this", "assistant", "response", "aloud"),
             self.cases[2][1][:-1].split(" ")):
             phones[word] = pronunciation
+        # The synthetic lexicon tests number-to-word routing. Pinned full
+        # dictionary pronunciation is covered by the optional asset lane.
+        for word in CARDINALS:
+            phones[word] = phones["hello"]
         source = self.root / "us_gold.json"
         source.write_text(json.dumps(phones))
         self.export = self.root / "frontend"
@@ -91,7 +103,7 @@ class KokoroNativeLexiconTextTest(unittest.TestCase):
                 self.assertEqual(run.returncode, 0, run.stderr)
                 self.assertEqual([int(value) for value in
                                   output.read_text().strip().split(",")], expected)
-        self.assertEqual(self.report["word_count"], 7)
+        self.assertEqual(self.report["word_count"], 28)
         print("CKE_NUMERICAL_CASE " + json.dumps({
             "case_id": "kokoro.native-lexicon-text.three-pinned-phrases-v1",
             "name": "Native dictionary frontend IDs for three pinned Kokoro phrases",
@@ -99,18 +111,33 @@ class KokoroNativeLexiconTextTest(unittest.TestCase):
             "direction": "inference", "oracle": "pinned Misaki/Kokoro capture",
             "status": "pass", "gate": "session", "blocking": True,
             "max_diff": 0, "tolerance": 0,
-            "configuration": "synthetic seven-word lexicon; 8/13/36-ID phrases",
+            "configuration": "synthetic 28-word lexicon; 8/13/36-ID phrases",
             "reproduction_command": "python3 -m unittest "
                 "tests.test_v8_kokoro_native_lexicon_text",
         }, sort_keys=True))
 
     def test_unsupported_text_and_tampered_lexicon_reject(self):
-        for index, text in enumerate(("", "A missing word.", "Hello 2.",
+        for index, text in enumerate(("", "A missing word.", "Hello 21.",
                                       "Hello;", "Hello..", "hello " * 8,
                                       "Hello" * 120)):
             with self.subTest(text=text[:30]):
                 run, output = self.invoke(text, f"bad-{index}.wav")
                 self.assertEqual(run.returncode, 2, run.stderr)
+                self.assertFalse(output.exists())
+        for index, (text, reason) in enumerate((
+            ("Hello 02.", "leading zero"),
+            ("Hello 2.5.", "decimals and grouped digits"),
+            ("Hello 1,000.", "decimals and grouped digits"),
+            ("Hello 2026.", "only 0 through 20"),
+            ("Hello 2x.", "missing word boundary"),
+            ("Hello @.", "unsupported character"),
+            ("Hello Dr.", "unsupported Kokoro lexicon word: dr"),
+            ("hello " * 8, "phoneme capacity exceeded"),
+        )):
+            with self.subTest(text=text):
+                run, output = self.invoke(text, f"unsupported-form-{index}.wav")
+                self.assertEqual(run.returncode, 2, run.stderr)
+                self.assertIn(reason, run.stderr)
                 self.assertFalse(output.exists())
         lexicon = self.export / "us-gold.cklex"
         lexicon.write_bytes(lexicon.read_bytes() + b"tamper")
@@ -122,6 +149,31 @@ class KokoroNativeLexiconTextTest(unittest.TestCase):
         run, output = self.invoke("Hello.", protected.name)
         self.assertEqual(run.returncode, 3, run.stderr)
         self.assertEqual(output.read_bytes(), b"existing output")
+
+    def test_bounded_cardinals_use_dictionary_pronunciations(self):
+        for index, word in enumerate(CARDINALS):
+            number = str(index)
+            spoken, spoken_output = self.invoke(f"Hello {word}.",
+                                                f"spoken-{index}.txt")
+            numeric, numeric_output = self.invoke(f"Hello {number}.",
+                                                  f"numeric-{index}.txt")
+            self.assertEqual(spoken.returncode, 0, spoken.stderr)
+            self.assertEqual(numeric.returncode, 0, numeric.stderr)
+            self.assertEqual(numeric_output.read_bytes(),
+                             spoken_output.read_bytes())
+        print("CKE_NUMERICAL_CASE " + json.dumps({
+            "case_id": "kokoro.native-lexicon-text.cardinals-zero-to-twenty-v1",
+            "name": "Native 0..20 cardinals route through dictionary words",
+            "provider": "native_kokoro_lexicon_text", "dtype": "i32",
+            "direction": "inference", "oracle": "declared English cardinal spellings",
+            "status": "pass", "gate": "text", "blocking": True,
+            "max_diff": 0, "tolerance": 0,
+            "configuration": "all 21 isolated unsigned cardinals; synthetic pronunciation",
+            "reproduction_command": "python3 -m unittest "
+                "tests.test_v8_kokoro_native_lexicon_text."
+                "KokoroNativeLexiconTextTest."
+                "test_bounded_cardinals_use_dictionary_pronunciations",
+        }, sort_keys=True))
 
     def test_export_rejects_wrong_source_before_publication(self):
         target = self.root / "rejected-export"

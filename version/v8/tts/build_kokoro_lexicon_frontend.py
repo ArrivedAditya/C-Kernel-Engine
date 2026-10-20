@@ -110,8 +110,9 @@ def build_frontend(config_path: Path, lexicon_path: Path, output: Path,
             "frontend_binary_sha256": sha256(binary),
             "session_binary_sha256": sha256(session_binary),
             "word_count": len(entries),
-            "scope": "US gold DEFAULT pronunciation, ASCII words and basic punctuation; "
-                     "unsupported words/forms rejected; model supports only bundled ID counts",
+            "scope": "US gold DEFAULT pronunciation, ASCII words, isolated unsigned "
+                     "cardinals 0..20 and basic punctuation; unsupported words/forms "
+                     "rejected; model supports only bundled ID counts",
         }
         (stage / "frontend_manifest.json").write_text(json.dumps(report, indent=2) + "\n")
         if output.is_symlink() or (output.exists() and
