@@ -436,9 +436,14 @@ def test_muse_eager_attention_workspace_budget_is_enforced() -> None:
         "scratch": provider["scratch"],
         "params": {"num_heads": 32, "num_kv_heads": 2, "head_dim": 128},
     }
+    bounded = builder._required_kernel_call_scratch_bytes(
+        [op], {"context_length": 32768}, 2048
+    )
+    assert bounded > 0
+    assert bounded <= 1073741824
     with pytest.raises(RuntimeError, match="HARD SCRATCH BUDGET FAULT"):
         builder._required_kernel_call_scratch_bytes(
-            [op], {"context_length": 131072}, 2048
+            [op], {"context_length": 262144}, 2048
         )
 
 

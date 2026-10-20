@@ -9045,6 +9045,11 @@ static size_t ck_muse_attention_checked_product(
     return left * right;
 }
 
+/* Keep the full softmax width while bounding the number of query rows held
+ * in planner-owned scratch.  The first tile retains the eager arithmetic for
+ * prompts of at most this many tokens. */
+#define CK_MUSE_PREFILL_QUERY_TILE 1024
+
 static void ck_attention_muse_eager_bf16_storage_impl(
     const float *q,
     const float *k,
@@ -9078,12 +9083,14 @@ static void ck_attention_muse_eager_bf16_storage_impl(
         abort();
     }
 
+    const int workspace_rows = query_tokens < CK_MUSE_PREFILL_QUERY_TILE
+        ? query_tokens : CK_MUSE_PREFILL_QUERY_TILE;
     const size_t score_count = ck_muse_attention_checked_product(
-        (size_t)query_tokens, (size_t)kv_tokens, "score");
+        (size_t)workspace_rows, (size_t)kv_tokens, "score");
     const size_t kv_matrix_count = ck_muse_attention_checked_product(
         (size_t)kv_tokens, (size_t)head_dim, "KV matrix");
     const size_t row_count = ck_muse_attention_checked_product(
-        (size_t)query_tokens, (size_t)head_dim, "row matrix");
+        (size_t)workspace_rows, (size_t)head_dim, "row matrix");
     if (score_count > SIZE_MAX / sizeof(*scores) ||
         kv_matrix_count > SIZE_MAX / sizeof(*key_rows) ||
         row_count > SIZE_MAX / sizeof(*gemm_rows)) {
@@ -9143,35 +9150,42 @@ static void ck_attention_muse_eager_bf16_storage_impl(
 
         const float *query_head = q + (size_t)head * query_head_stride;
         float *output_head = output + (size_t)head * query_head_stride;
-        gemm_nt_bf16_pytorch_onednn_3_12_brgemm_bf16_storage_workspace(
-            query_head, key_rows, NULL, scores,
-            query_tokens, kv_tokens, head_dim,
-            gemm_rows, gemm_rows_bytes, gemm_scores, gemm_scores_bytes,
-            NULL, 0);
+        for (int query_start = 0; query_start < query_tokens;
+             query_start += CK_MUSE_PREFILL_QUERY_TILE) {
+            const int tile_rows = query_tokens - query_start < CK_MUSE_PREFILL_QUERY_TILE
+                ? query_tokens - query_start : CK_MUSE_PREFILL_QUERY_TILE;
+            gemm_nt_bf16_pytorch_onednn_3_12_brgemm_bf16_storage_workspace(
+                query_head + (size_t)query_start * (size_t)head_dim,
+                key_rows, NULL, scores,
+                tile_rows, kv_tokens, head_dim,
+                gemm_rows, gemm_rows_bytes, gemm_scores, gemm_scores_bytes,
+                NULL, 0);
 
-        for (int query_token = 0; query_token < query_tokens; ++query_token) {
-            const int query_position = query_position_offset + query_token;
-            const int visible_end = query_position + 1;
-            int visible_begin = 0;
-            if (sliding_window > 0 && visible_end > sliding_window) {
-                visible_begin = visible_end - sliding_window;
-            }
-            float *score_row = scores +
-                (size_t)query_token * (size_t)kv_tokens;
-            for (int token = 0; token < kv_tokens; ++token) {
-                score_row[token] = bf16_to_float(
-                    float_to_bf16(score_row[token] * scale));
-                if (token < visible_begin || token >= visible_end) {
-                    score_row[token] = -INFINITY;
+            for (int query_token = 0; query_token < tile_rows; ++query_token) {
+                const int query_position = query_position_offset + query_start + query_token;
+                const int visible_end = query_position + 1;
+                int visible_begin = 0;
+                if (sliding_window > 0 && visible_end > sliding_window) {
+                    visible_begin = visible_end - sliding_window;
                 }
+                float *score_row = scores +
+                    (size_t)query_token * (size_t)kv_tokens;
+                for (int token = 0; token < kv_tokens; ++token) {
+                    score_row[token] = bf16_to_float(
+                        float_to_bf16(score_row[token] * scale));
+                    if (token < visible_begin || token >= visible_end) {
+                        score_row[token] = -INFINITY;
+                    }
+                }
+                (void)ck_pytorch_softmax_f32(score_row, kv_tokens);
             }
-            (void)ck_pytorch_softmax_f32(score_row, kv_tokens);
+            gemm_nt_bf16_pytorch_onednn_3_12_brgemm_bf16_storage_workspace(
+                scores, value_columns, NULL,
+                output_head + (size_t)query_start * (size_t)head_dim,
+                tile_rows, head_dim, kv_tokens,
+                gemm_scores, gemm_scores_bytes, gemm_rows, gemm_rows_bytes,
+                NULL, 0);
         }
-        gemm_nt_bf16_pytorch_onednn_3_12_brgemm_bf16_storage_workspace(
-            scores, value_columns, NULL, output_head,
-            query_tokens, head_dim, kv_tokens,
-            gemm_scores, gemm_scores_bytes, gemm_rows, gemm_rows_bytes,
-            NULL, 0);
     }
 #else
     (void)q; (void)k; (void)v; (void)output; (void)num_heads;
