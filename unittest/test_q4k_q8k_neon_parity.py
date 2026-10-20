@@ -259,10 +259,17 @@ class TestQ4KQ8KNeonParity(unittest.TestCase):
                 self._check_gemv(M, K)
 
     def test_gemm_nt_neon_matches_oracle(self) -> None:
-        # The provider-name check alone cannot prove GEMM executed the NEON
-        # kernel; this test verifies the arithmetic directly against the
-        # independent oracle AND that the GEMM entry funnels through the
-        # dispatched GEMV row kernel bit-exactly (gemm_nt -> gemm -> gemv).
+        # What each assertion here does and does not prove:
+        # - Dispatch evidence comes ONLY from ck_q4_k_q8_k_provider_name,
+        #   whose compile-time branch is the same preprocessor condition the
+        #   gemv dispatcher uses. Equal outputs can never prove NEON
+        #   executed: the reference and NEON kernels are integer-exact
+        #   against each other by design.
+        # - The oracle comparison is independent arithmetic evidence.
+        # - The GEMM-vs-GEMV comparison is ARITHMETIC CONSISTENCY between
+        #   entry points (gemm_nt -> gemm -> gemv funneling), done on
+        #   zero-bias executions because (gemm_out - bias) is not a
+        #   bit-exact operation in FP32.
         self._require_or_skip_neon()
         M, N, K = 3, 5, 2 * QK_K  # 3 activation rows, 5 weight rows
         rng = self.rng
@@ -270,31 +277,42 @@ class TestQ4KQ8KNeonParity(unittest.TestCase):
         w = _random_q4k_blocks(rng, nb * N)
         a = b"".join(_random_q8k_blocks(rng, nb) for _ in range(M))
         bias = np.linspace(-0.5, 0.5, N, dtype=np.float32)
-        c = np.full((M, N), np.nan, dtype=np.float32)
-        self.lib.gemm_nt_q4_k_q8_k(_buf(a), _buf(w),
-                                   bias.ctypes.data_as(F32P),
-                                   c.ctypes.data_as(F32P),
+
+        # Zero-bias execution: oracle check + entry consistency.
+        c0 = np.full((M, N), np.nan, dtype=np.float32)
+        self.lib.gemm_nt_q4_k_q8_k(_buf(a), _buf(w), None,
+                                   c0.ctypes.data_as(F32P),
                                    M, N, K)
-        self.assertFalse(np.isnan(c).any(), "GEMM left outputs unwritten")
+        self.assertFalse(np.isnan(c0).any(), "GEMM left outputs unwritten")
         for m in range(M):
             a_row = a[m * nb * BLOCK_Q8_K_SIZE:(m + 1) * nb * BLOCK_Q8_K_SIZE]
             for n in range(N):
                 w_row = w[n * nb * BLOCK_Q4_K_SIZE:(n + 1) * nb * BLOCK_Q4_K_SIZE]
-                oracle = _oracle_dot_q4k_q8k(w_row, a_row, K) + float(bias[n])
+                oracle = _oracle_dot_q4k_q8k(w_row, a_row, K)
                 self.assertTrue(
-                    np.isclose(c[m, n], oracle, rtol=1e-4, atol=ATOL),
-                    f"C[{m},{n}]: NEON {c[m, n]} vs oracle {oracle}")
-        # Entry-linkage proof: the GEMM entry must produce exactly what the
-        # dispatched GEMV produces row-by-row (bias aside), so a NEON GEMV
-        # result cannot come from a stale scalar GEMM path or vice versa.
+                    np.isclose(c0[m, n], oracle, rtol=1e-4, atol=ATOL),
+                    f"C0[{m},{n}]: GEMM {c0[m, n]} vs oracle {oracle}")
+        # Arithmetic consistency between entries (no FP subtract round-trip):
+        # zero-bias GEMM rows must equal the dispatched GEMV bit-exactly.
         for m in range(M):
             a_row = a[m * nb * BLOCK_Q8_K_SIZE:(m + 1) * nb * BLOCK_Q8_K_SIZE]
             y_row = np.zeros(N, dtype=np.float32)
             self.lib.gemv_q4_k_q8_k(y_row.ctypes.data_as(F32P), _buf(w),
                                     _buf(a_row), N, K)
             np.testing.assert_array_equal(
-                c[m] - bias, y_row,
-                err_msg=f"GEMM row {m} diverged from the dispatched GEMV")
+                c0[m], y_row,
+                err_msg=f"zero-bias GEMM row {m} inconsistent with GEMV entry")
+
+        # Bias is tested separately against the declared FP32 epilogue:
+        # one IEEE float32 addition per element, same as np.float32 addition.
+        c1 = np.full((M, N), np.nan, dtype=np.float32)
+        self.lib.gemm_nt_q4_k_q8_k(_buf(a), _buf(w),
+                                   bias.ctypes.data_as(F32P),
+                                   c1.ctypes.data_as(F32P),
+                                   M, N, K)
+        np.testing.assert_array_equal(
+            c1, (c0 + bias).astype(np.float32),
+            err_msg="bias application diverged from the FP32 epilogue")
 
 
 if __name__ == "__main__":
