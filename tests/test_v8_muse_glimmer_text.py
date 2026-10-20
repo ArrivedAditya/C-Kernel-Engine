@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -445,6 +446,22 @@ def test_muse_eager_attention_workspace_budget_is_enforced() -> None:
         builder._required_kernel_call_scratch_bytes(
             [op], {"context_length": 262144}, 2048
         )
+
+
+def test_muse_prefill_tile_size_matches_both_kernel_maps() -> None:
+    source = (ROOT / "src/kernels/attention_kernels.c").read_text(encoding="utf-8")
+    match = re.search(r"(?m)^#define CK_MUSE_PREFILL_QUERY_TILE (\d+)$", source)
+    assert match, "Muse attention query tile size is missing from the kernel"
+    tile_rows = int(match.group(1))
+    assert tile_rows > 0
+    for suffix in ("", "_sliding"):
+        provider = json.loads((
+            ROOT / "version/v8/kernel_maps"
+            / f"attention_forward_causal_head_major_gqa_muse_eager_bf16_storage{suffix}.json"
+        ).read_text(encoding="utf-8"))
+        scratch = {entry["name"]: entry for entry in provider["scratch"]}
+        for name in ("scores", "gemm_rows", "gemm_scores"):
+            assert scratch[name]["shape"][0] == tile_rows
 
 
 def test_muse_attention_adds_no_kernel_allocation_debt() -> None:
