@@ -47,6 +47,7 @@ struct Args {
     bool no_repack = false;
     bool dump_list_only = false;
     bool dump_flash_inputs = false;
+    bool dump_nonflash_inputs = false;
 };
 
 struct LayerProfileEntry {
@@ -69,6 +70,7 @@ struct DumpState {
     int current_greedy_decode_step = -1;
     int requested_greedy_decode_step = -1;
     bool dump_flash_inputs = false;
+    bool dump_nonflash_inputs = false;
     std::unordered_map<std::string, int> occurrences;
     std::unordered_set<std::string> matched_names;
     std::string profile_layers_out_path;
@@ -264,6 +266,10 @@ static bool parse_args(int argc, char ** argv, Args & args, std::string & err) {
         }
         if (a == "--dump-flash-inputs") {
             args.dump_flash_inputs = true;
+            continue;
+        }
+        if (a == "--dump-nonflash-inputs") {
+            args.dump_nonflash_inputs = true;
             continue;
         }
         if (a == "--decode-mode") {
@@ -702,6 +708,26 @@ static const ggml_tensor * find_flash_attention_ancestor(
     return nullptr;
 }
 
+static const ggml_tensor * find_nonflash_value_matmul(
+    const ggml_tensor * tensor,
+    int remaining_depth
+) {
+    if (!tensor || remaining_depth < 0) {
+        return nullptr;
+    }
+    if (tensor->op == GGML_OP_MUL_MAT && tensor->src[1] &&
+        tensor->src[1]->op == GGML_OP_SOFT_MAX) {
+        return tensor;
+    }
+    for (const ggml_tensor * source : tensor->src) {
+        if (const ggml_tensor * value =
+                find_nonflash_value_matmul(source, remaining_depth - 1)) {
+            return value;
+        }
+    }
+    return nullptr;
+}
+
 static void append_tensor_shape(std::ostream & out, const ggml_tensor * tensor) {
     if (!tensor) {
         out << "null";
@@ -738,6 +764,76 @@ static bool dump_tensor_bytes(
     output.write(reinterpret_cast<const char *>(raw.data()),
                  static_cast<std::streamsize>(raw.size()));
     return output.good();
+}
+
+static bool dump_nonflash_attention_inputs(
+    const std::filesystem::path & directory,
+    const std::string & dump_name,
+    const ggml_tensor * output,
+    std::string & error
+) {
+    const ggml_tensor * value = find_nonflash_value_matmul(output, 12);
+    const ggml_tensor * softmax = value ? value->src[1] : nullptr;
+    const ggml_tensor * scores = softmax ? softmax->src[0] : nullptr;
+    if (!scores || scores->op != GGML_OP_MUL_MAT || !scores->src[0] ||
+        !scores->src[1] || !softmax->src[1] || !value->src[0]) {
+        error = "non-flash attention Q/K/V/mask graph is absent or unsupported for " + dump_name;
+        return false;
+    }
+    const ggml_tensor * q = scores->src[1];
+    const ggml_tensor * k = scores->src[0];
+    const ggml_tensor * v = value->src[0];
+    if (q->ne[0] != k->ne[0] || v->ne[0] != k->ne[1] ||
+        v->ne[1] != k->ne[0] || v->ne[2] != k->ne[2] ||
+        q->ne[2] % k->ne[2] != 0 || scores->ne[0] != k->ne[1] ||
+        scores->ne[1] != q->ne[1] || scores->ne[2] != q->ne[2] ||
+        softmax->src[1]->type != GGML_TYPE_F32) {
+        error = "non-flash attention geometry or mask type is unsupported for " + dump_name;
+        return false;
+    }
+    struct Capture {
+        const char * role;
+        const ggml_tensor * tensor;
+    };
+    const Capture captures[] = {
+        {"q", q}, {"k", k}, {"v", v}, {"mask", softmax->src[1]},
+    };
+    constexpr size_t max_capture_bytes = 64u * 1024u * 1024u;
+    size_t total = 0;
+    for (const Capture & capture : captures) {
+        const size_t bytes = ggml_nbytes(capture.tensor);
+        if (!bytes || bytes > max_capture_bytes - total) {
+            error = "non-flash attention operand extent exceeds diagnostic limit for " + dump_name;
+            return false;
+        }
+        total += bytes;
+    }
+    for (const Capture & capture : captures) {
+        const std::filesystem::path base = directory /
+            (dump_name + ".nonflash_" + capture.role);
+        if (!dump_tensor_bytes(base.string() + ".bin", capture.tensor)) {
+            error = "failed capturing non-flash attention " + std::string(capture.role);
+            return false;
+        }
+        std::ofstream meta(base.string() + ".json", std::ios::binary | std::ios::trunc);
+        if (!meta) {
+            error = "failed writing non-flash attention metadata";
+            return false;
+        }
+        meta << "{\"role\":\"" << capture.role << "\",\"op\":\""
+             << json_escape(ggml_op_name(capture.tensor->op)) << "\",\"type\":"
+             << static_cast<int>(capture.tensor->type) << ",\"nbytes\":"
+             << ggml_nbytes(capture.tensor) << ",\"ne\":";
+        append_tensor_shape(meta, capture.tensor);
+        meta << ",\"nb\":";
+        append_tensor_strides(meta, capture.tensor);
+        meta << "}\n";
+        if (!meta.good()) {
+            error = "incomplete non-flash attention metadata";
+            return false;
+        }
+    }
+    return true;
 }
 
 static void append_flash_attention_metadata(std::ostream & out, const ggml_tensor * tensor) {
@@ -899,6 +995,11 @@ static bool dump_eval_callback(struct ggml_tensor * t, bool ask, void * user_dat
                 return true;
             }
         }
+    }
+
+    if (mut->dump_nonflash_inputs && base_name.rfind("kqv_out-", 0) == 0 &&
+        !dump_nonflash_attention_inputs(mut->dump_dir, dump_name, t, mut->capture_error)) {
+        return true;
     }
 
     if (!append_index_entry(mut, dump_name, base_name, t, occurrence)) {
@@ -1208,6 +1309,7 @@ int main(int argc, char ** argv) {
     DumpState dump_state;
     dump_state.requested_greedy_decode_step = args.dump_greedy_decode_step;
     dump_state.dump_flash_inputs = args.dump_flash_inputs;
+    dump_state.dump_nonflash_inputs = args.dump_nonflash_inputs;
     dump_state.profile_layers_out_path = args.profile_layers_out_path;
     if (!args.dump_dir.empty()) {
         dump_state.dump_dir = args.dump_dir;
