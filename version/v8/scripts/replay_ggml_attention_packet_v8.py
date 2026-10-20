@@ -144,7 +144,7 @@ def compare_packet(bundle: Path, tree: Path) -> dict:
     worst = np.unravel_index(np.argmax(np.abs(cke - oracle)), cke.shape)
     return {
         "status": "incomplete_oracle_runtime_fidelity",
-        "interpretation": "Identical-input pinned GGML non-flash graph comparison; actual llama.cpp runtime replay is unverified because complete oracle post-store KV was not captured",
+        "interpretation": "Compact valid-key GGML diagnostic only; the executed llama.cpp graph may use a larger masked physical cache and cannot be inferred from this result",
         "first_proven_local_divergence": None,
         "missing_oracle_capability": "oracle post-RoPE Q, complete post-store K/V and resolved mask for replay fidelity; CKE and oracle score/softmax captures for first-stage attribution",
         "bundle_sha256": _sha256(bundle),
@@ -153,7 +153,8 @@ def compare_packet(bundle: Path, tree: Path) -> dict:
         "oracle_graph": identity,
         "contract": {"mode": "non_flash", "effective_mask_assumption": "causal prefix, valid keys 0..query_position; oracle mask not captured",
                      "scale": 1.0, "cache_dtype": "fp16", "heads": q.shape[1],
-                     "kv_heads": k.shape[1], "head_dim": q.shape[2], "segments": segments},
+                     "kv_heads": k.shape[1], "head_dim": q.shape[2], "segments": segments,
+                     "key_extent": "compact valid keys; not the oracle's physical cache extent"},
         "cke_vs_ggml": _metrics(cke, oracle),
         "cke_vs_fp64": _metrics(cke, reference),
         "ggml_vs_fp64": _metrics(oracle, reference),
