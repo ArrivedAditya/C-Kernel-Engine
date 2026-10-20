@@ -7,17 +7,19 @@ waveform comparison against the pinned PyTorch model.
 import hashlib
 import json
 import os
+import pickle
 from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 import wave
 
 
 ROOT = Path(__file__).resolve().parents[1]
-WHISPER = ROOT / "version/v8/scripts/run_whisper_v8.py"
+WHISPER = ROOT / "version/v8/scripts/ck_run_v8.py"
 CASES = (("hello", "Hello.", 8, 32400),
          ("hello_there", "Hello there.", 12, 36000))
 REQUIRED_ENV = ("CKE_TTS_ROUNDTRIP_BUNDLE_DIR",
@@ -63,6 +65,34 @@ def _report(case: str, stage: str, status: str, reason: str,
 
 
 class KokoroWhisperRoundTripTest(unittest.TestCase):
+    def test_public_audio_entry_uses_importable_worker_target(self):
+        scripts = str(ROOT / "version/v8/scripts")
+        if scripts not in sys.path:
+            sys.path.insert(0, scripts)
+        import ck_run_v8
+        import run_whisper_v8
+
+        def check_entry(argv):
+            self.assertEqual(argv[0], "run")
+            worker = run_whisper_v8._persistent_worker_main
+            self.assertIs(pickle.loads(pickle.dumps(worker)), worker)
+            return 0
+
+        args = type("AudioArgs", (), {
+            "encoder_run_dir": Path("encoder"),
+            "decoder_run_dir": Path("decoder"),
+            "model": None,
+            "wav": Path("speech.wav"),
+            "language": "en",
+            "task": "transcribe",
+            "max_tokens": 48,
+            "timestamps": False,
+            "output": None,
+            "temp_dir": None,
+        })()
+        with mock.patch.object(run_whisper_v8, "main", side_effect=check_entry):
+            self.assertEqual(ck_run_v8.run_audio_pipeline(args), 0)
+
     def test_asset_coverage_is_explicit(self):
         missing = [key for key in REQUIRED_ENV if not os.environ.get(key)]
         if os.environ.get("CKE_TTS_RUN_WHISPER_ROUNDTRIP") and not missing:
@@ -129,7 +159,7 @@ class KokoroWhisperRoundTripTest(unittest.TestCase):
                     _report(case, "fidelity", "not_tested", "ASR could not run")
                     continue
                 asr = subprocess.run([
-                    sys.executable, str(WHISPER), "run",
+                    sys.executable, str(WHISPER), "audio",
                     "--encoder-run-dir", str(encoder),
                     "--decoder-run-dir", str(decoder),
                     "--wav", str(wav), "--language", "en",

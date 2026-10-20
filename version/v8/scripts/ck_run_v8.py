@@ -2568,12 +2568,14 @@ def run_audio_pipeline(args: argparse.Namespace) -> int:
             "--encoder-run-dir and --decoder-run-dir"
         )
 
-    module_path = SCRIPTS_DIR / "run_whisper_v8.py"
-    spec = importlib.util.spec_from_file_location("ck_v8_audio_runtime", module_path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"cannot load v8 audio runtime: {module_path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    # Whisper's persistent workers use the spawn start method. Their target
+    # function must live in a module the child process can import by name.
+    import run_whisper_v8
+    expected_runtime = (SCRIPTS_DIR / "run_whisper_v8.py").resolve()
+    if Path(run_whisper_v8.__file__).resolve() != expected_runtime:
+        raise RuntimeError(
+            f"unexpected v8 audio runtime: {run_whisper_v8.__file__}"
+        )
     argv = [
         "run",
         "--encoder-run-dir",
@@ -2595,7 +2597,7 @@ def run_audio_pipeline(args: argparse.Namespace) -> int:
         argv.extend(["--output", str(args.output)])
     if args.temp_dir is not None:
         argv.extend(["--temp-dir", str(args.temp_dir)])
-    return int(module.main(argv))
+    return int(run_whisper_v8.main(argv))
 
 
 def main(argv: list[str] | None = None) -> int:
