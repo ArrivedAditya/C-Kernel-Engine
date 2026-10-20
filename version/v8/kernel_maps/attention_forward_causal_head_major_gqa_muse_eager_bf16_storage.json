@@ -231,6 +231,7 @@
     },
     "notes": "Bounded eager-parity provider. Requires AVX-512F, oneDNN 3.12.0, PyTorch SLEEF expf16, D == aligned D, and at most 1 GiB of declared call workspace."
   },
+  "runtime_dependencies": ["sleef_expf16_u10"],
   "impl": {
     "function": "attention_forward_causal_head_major_gqa_muse_eager_bf16_storage",
     "c_declaration": "void attention_forward_causal_head_major_gqa_muse_eager_bf16_storage(const float *q, const float *k, const float *v, float *output, int num_heads, int num_kv_heads, int num_tokens, int head_dim, int aligned_head_dim, int kv_stride_tokens, float *scores, size_t scores_bytes, uint16_t *key_rows, size_t key_rows_bytes, uint16_t *value_columns, size_t value_columns_bytes, uint16_t *gemm_rows, size_t gemm_rows_bytes, uint16_t *gemm_scores, size_t gemm_scores_bytes);",

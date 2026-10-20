@@ -20,6 +20,7 @@
     "preferred": {"prefill": "row", "decode": "row"},
     "strategies": [{"name": "row", "partition_dim": "R", "param_style": "range", "range": {"min_chunk": 1}}]
   },
+  "runtime_dependencies": ["sleef_expf16_u10"],
   "impl": {
     "function": "attn_gate_sigmoid_mul_pytorch_bf16_storage",
     "c_declaration": "void attn_gate_sigmoid_mul_pytorch_bf16_storage(const float *x, const float *gate, float *out, int rows, int num_heads, int state_dim);",

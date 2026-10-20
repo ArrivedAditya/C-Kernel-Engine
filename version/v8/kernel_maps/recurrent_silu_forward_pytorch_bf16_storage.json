@@ -27,6 +27,7 @@
     "alignment": {"D": 16},
     "notes": "Requires Sleef_expf16_u10 from CK_SLEEF_LIBRARY or the process symbol table."
   },
+  "runtime_dependencies": ["sleef_expf16_u10"],
   "impl": {
     "function": "recurrent_silu_forward_pytorch_bf16_storage",
     "c_declaration": "void recurrent_silu_forward_pytorch_bf16_storage(const float *x, float *out, int rows, int dim);",

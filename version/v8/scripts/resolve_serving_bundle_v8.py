@@ -114,6 +114,52 @@ def _verify_compilation_lineage(run_dir: Path, circuit: dict, *, allow_serving_u
             "compiled_circuit_sha256": hashlib.sha256(json.dumps(compiled, sort_keys=True, separators=(",", ":")).encode()).hexdigest()}
 
 
+def _runtime_dependencies(run_dir: Path, v8_root: Path) -> list[str]:
+    """Resolve selected calls against the registry used for generated code."""
+    registry_path = v8_root / "kernel_maps/KERNEL_REGISTRY.json"
+    registry_hash = sha256_file(registry_path)
+    sources = _json(run_dir / ".ck_codegen_bundle.json").get("inputs", {}).get("generator_sources", {})
+    if not isinstance(sources, dict):
+        raise ValueError("missing compiled kernel registry identity")
+    compiled_hashes = [digest for path, digest in sources.items()
+                       if Path(path).name == "KERNEL_REGISTRY.json"]
+    if compiled_hashes != [registry_hash]:
+        raise ValueError("kernel registry differs from compiled generated runtime; rebuild before serving")
+    registry = _json(registry_path)
+    kernels = registry.get("kernels")
+    if not isinstance(kernels, list) or any(not isinstance(item, dict) for item in kernels):
+        raise ValueError("invalid compiled kernel registry")
+    maps = {item.get("_source_file"): item for item in kernels}
+    if len(maps) != len(kernels):
+        raise ValueError("ambiguous compiled kernel registry")
+    dependencies: set[str] = set()
+    for phase in ("prefill", "decode"):
+        lowered = _json(run_dir / f"lowered_{phase}_call.json")
+        operations = lowered.get("operations")
+        if not isinstance(operations, list):
+            raise ValueError(f"invalid {phase} lowered kernel calls")
+        for operation in operations:
+            call = operation.get("call_abi") if isinstance(operation, dict) else None
+            if not isinstance(call, dict) or call.get("owner") != "kernel_map":
+                continue
+            source = call.get("source_file")
+            if not isinstance(source, str) or Path(source).name != source or not source.endswith(".json"):
+                raise ValueError("invalid selected kernel map source")
+            mapping = maps.get(source)
+            if not isinstance(mapping, dict):
+                raise ValueError(f"missing compiled kernel map: {source}")
+            implementation = mapping.get("impl")
+            if (mapping.get("id") != call.get("kernel_id")
+                    or not isinstance(implementation, dict)
+                    or implementation.get("function") != operation.get("function")):
+                raise ValueError(f"selected kernel map changed after compilation: {source}")
+            declared = mapping.get("runtime_dependencies", [])
+            if not isinstance(declared, list) or any(not isinstance(item, str) for item in declared):
+                raise ValueError(f"invalid runtime dependencies: {source}")
+            dependencies.update(declared)
+    return sorted(dependencies)
+
+
 def resolve_serving_bundle(run_dir: Path, circuit_path: Path, *, variant: str | None = None, v8_root: Path = V8_ROOT, allow_serving_update: bool = False) -> dict:
     run_dir, circuit_path, v8_root = Path(run_dir), Path(circuit_path), Path(v8_root)
     circuit = _json(circuit_path)
@@ -148,6 +194,7 @@ def resolve_serving_bundle(run_dir: Path, circuit_path: Path, *, variant: str | 
     if config.get("model") is None and _json(run_dir / "weights_manifest.json").get("model") != circuit.get("name"):
         raise ValueError("circuit does not match compiled manifest model")
     lineage = _verify_compilation_lineage(run_dir, circuit, allow_serving_update=allow_serving_update)
+    runtime_dependencies = _runtime_dependencies(run_dir, v8_root)
     publisher = _publisher_templates(run_dir)
     assets: dict[str, dict] = {}
 
@@ -195,7 +242,8 @@ def resolve_serving_bundle(run_dir: Path, circuit_path: Path, *, variant: str | 
                 "stop_text": stop_text,
                 "message_role_map": message_role_map,
                 "input_modalities": profile["input_modalities"], "context_capacity": capacity,
-                "assets": assets, "compilation_lineage": lineage, "certification": "NOT_TESTED"}
+                "assets": assets, "compilation_lineage": lineage,
+                "runtime_dependencies": runtime_dependencies, "certification": "NOT_TESTED"}
     document["identity"] = contract_identity(document)
     load_resolved_serving(run_dir, document=document)
     # Publish last: an interrupted asset write cannot publish a new contract.
