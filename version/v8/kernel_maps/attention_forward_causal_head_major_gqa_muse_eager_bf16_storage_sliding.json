@@ -121,7 +121,7 @@
       "name": "scores",
       "dtype": "fp32",
       "shape": [
-        "T",
+        1024,
         "C"
       ],
       "size_resolution": "required",
@@ -167,7 +167,7 @@
       "name": "gemm_rows",
       "dtype": "bf16",
       "shape": [
-        "T",
+        1024,
         "D"
       ],
       "size_resolution": "required",
@@ -182,7 +182,7 @@
       "name": "gemm_scores",
       "dtype": "bf16",
       "shape": [
-        "T",
+        1024,
         "C"
       ],
       "size_resolution": "required",
@@ -226,7 +226,7 @@
     "alignment": {
       "D": 64
     },
-    "notes": "Bounded eager-parity provider. Requires AVX-512F, oneDNN 3.12.0, PyTorch SLEEF expf16, D == aligned D, and at most 1 GiB of declared call workspace. Sliding masks retain full softmax width."
+    "notes": "Query-row tiles of at most 1024 keep the full softmax width while bounding scratch. Requires AVX-512F, oneDNN 3.12.0, PyTorch SLEEF expf16, D == aligned D, and at most 1 GiB of declared call workspace. Sliding masks retain full softmax width."
   },
   "runtime_dependencies": ["sleef_expf16_u10"],
   "impl": {

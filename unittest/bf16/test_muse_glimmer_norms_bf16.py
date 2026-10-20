@@ -260,11 +260,12 @@ def run_attention_case(tokens: int, sliding_window: int, seed: int) -> None:
         rng.standard_normal((kv_heads, tokens, head_dim), dtype=np.float32)
     )
     actual = np.empty_like(q)
-    scores = np.empty((tokens, tokens), dtype=np.float32)
+    scratch_rows = min(tokens, 1024)
+    scores = np.empty((scratch_rows, tokens), dtype=np.float32)
     key_rows = np.empty((tokens, head_dim), dtype=np.uint16)
     value_columns = np.empty((head_dim, tokens), dtype=np.uint16)
-    gemm_rows = np.empty((tokens, head_dim), dtype=np.uint16)
-    gemm_scores = np.empty((tokens, tokens), dtype=np.uint16)
+    gemm_rows = np.empty((scratch_rows, head_dim), dtype=np.uint16)
+    gemm_scores = np.empty((scratch_rows, tokens), dtype=np.uint16)
     ATTENTION(
         q.ctypes.data_as(FLOAT_P),
         k.ctypes.data_as(FLOAT_P),
@@ -303,26 +304,38 @@ def run_attention_case(tokens: int, sliding_window: int, seed: int) -> None:
     np.testing.assert_array_equal(actual, expected)
 
 
-def run_undersized_attention_probe() -> None:
-    tokens, heads, kv_heads, head_dim = 2, 4, 2, 128
+def run_undersized_attention_probe(tokens: int, workspace: str) -> None:
+    heads, kv_heads, head_dim = 4, 2, 128
     q = np.zeros((heads, tokens, head_dim), dtype=np.float32)
     k = np.zeros((kv_heads, tokens, head_dim), dtype=np.float32)
     v = np.zeros_like(k)
     out = np.empty_like(q)
-    scores = np.empty((tokens, tokens), dtype=np.float32)
+    scratch_rows = min(tokens, 1024)
+    scores = np.empty((scratch_rows, tokens), dtype=np.float32)
     key_rows = np.empty((tokens, head_dim), dtype=np.uint16)
     value_columns = np.empty((head_dim, tokens), dtype=np.uint16)
-    gemm_rows = np.empty((tokens, head_dim), dtype=np.uint16)
-    gemm_scores = np.empty((tokens, tokens), dtype=np.uint16)
+    gemm_rows = np.empty((scratch_rows, head_dim), dtype=np.uint16)
+    gemm_scores = np.empty((scratch_rows, tokens), dtype=np.uint16)
+    workspaces = {
+        "scores": scores,
+        "key_rows": key_rows,
+        "value_columns": value_columns,
+        "gemm_rows": gemm_rows,
+        "gemm_scores": gemm_scores,
+    }
+    if workspace not in workspaces:
+        raise ValueError(f"unknown Muse workspace: {workspace}")
+    lengths = {name: array.nbytes for name, array in workspaces.items()}
+    lengths[workspace] -= 1
     ATTENTION(
         q.ctypes.data_as(FLOAT_P), k.ctypes.data_as(FLOAT_P),
         v.ctypes.data_as(FLOAT_P), out.ctypes.data_as(FLOAT_P),
         heads, kv_heads, tokens, head_dim, head_dim, tokens, 0,
-        scores.ctypes.data_as(FLOAT_P), scores.nbytes - 1,
-        key_rows.ctypes.data_as(U16_P), key_rows.nbytes,
-        value_columns.ctypes.data_as(U16_P), value_columns.nbytes,
-        gemm_rows.ctypes.data_as(U16_P), gemm_rows.nbytes,
-        gemm_scores.ctypes.data_as(U16_P), gemm_scores.nbytes,
+        scores.ctypes.data_as(FLOAT_P), lengths["scores"],
+        key_rows.ctypes.data_as(U16_P), lengths["key_rows"],
+        value_columns.ctypes.data_as(U16_P), lengths["value_columns"],
+        gemm_rows.ctypes.data_as(U16_P), lengths["gemm_rows"],
+        gemm_scores.ctypes.data_as(U16_P), lengths["gemm_scores"],
     )
     raise AssertionError("undersized Muse workspace was accepted")
 
@@ -368,8 +381,10 @@ def run_decode_stride_case(seed: int) -> None:
 
 
 def main() -> int:
-    if os.environ.get("CK_MUSE_UNDERSIZED_PROBE") == "1":
-        run_undersized_attention_probe()
+    probe_spec = os.environ.get("CK_MUSE_UNDERSIZED_PROBE")
+    if probe_spec:
+        token_count, workspace = probe_spec.split(":", 1)
+        run_undersized_attention_probe(int(token_count), workspace)
         return 1
     if torch.backends.cpu.get_cpu_capability() not in {"AVX2", "AVX512"}:
         print("Muse-Glimmer BF16 normalization contracts [SKIP: AVX2 unavailable]")
@@ -395,18 +410,25 @@ def main() -> int:
             )
         os.environ["CK_SLEEF_LIBRARY"] = str(torch_cpu)
     run_attention_case(4, 3, 96)
+    run_attention_case(1025, 0, 196)
+    run_attention_case(1025, 256, 197)
+    run_attention_case(2051, 0, 198)
+    run_attention_case(2051, 256, 199)
     run_decode_stride_case(97)
     probe_env = dict(os.environ)
-    probe_env["CK_MUSE_UNDERSIZED_PROBE"] = "1"
-    probe = subprocess.run(
-        [sys.executable, str(Path(__file__).resolve())],
-        env=probe_env,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    assert probe.returncode != 0
-    assert "undersized planner-owned workspace" in probe.stderr
+    for probe_kind in ("2:scores", *(f"1025:{name}" for name in (
+        "scores", "key_rows", "value_columns", "gemm_rows", "gemm_scores"
+    ))):
+        probe_env["CK_MUSE_UNDERSIZED_PROBE"] = probe_kind
+        probe = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve())],
+            env=probe_env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        assert probe.returncode != 0
+        assert "undersized planner-owned workspace" in probe.stderr
     print("Muse-Glimmer BF16 numerical contracts, including oneDNN attention: exact")
     return 0
 
