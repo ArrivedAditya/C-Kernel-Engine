@@ -1086,6 +1086,17 @@ TEST_SUITES = {
         "Generated Kokoro to Whisper Known-Text Round Trip", "inference",
         ROOT / "tests" / "test_v8_kokoro_whisper_roundtrip.py",
         timeout_sec=300,
+        unittest_targets=(
+            "tests.test_v8_kokoro_whisper_roundtrip.KokoroWhisperRoundTripTest.test_asset_coverage_is_explicit",
+            "tests.test_v8_kokoro_whisper_roundtrip.KokoroWhisperRoundTripTest.test_generated_speech_round_trip",
+        ),
+    ),
+    "whisper_public_audio_spawn": TestSuite(
+        "Whisper Public Audio Spawn Contract", "inference",
+        ROOT / "tests" / "test_v8_kokoro_whisper_roundtrip.py",
+        unittest_targets=(
+            "tests.test_v8_kokoro_whisper_roundtrip.KokoroWhisperRoundTripTest.test_public_audio_entry_uses_importable_worker_target",
+        ),
     ),
     "tts_kokoro_native_speech_session": TestSuite(
         "Kokoro Native Speech Stop, Replace and Recovery", "inference",
