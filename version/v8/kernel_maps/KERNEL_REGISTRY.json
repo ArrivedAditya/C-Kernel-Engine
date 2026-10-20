@@ -3832,6 +3832,9 @@
         },
         "notes": "Bounded eager-parity provider. Requires AVX-512F, oneDNN 3.12.0, PyTorch SLEEF expf16, D == aligned D, and at most 1 GiB of declared call workspace."
       },
+      "runtime_dependencies": [
+        "sleef_expf16_u10"
+      ],
       "impl": {
         "function": "attention_forward_causal_head_major_gqa_muse_eager_bf16_storage",
         "c_declaration": "void attention_forward_causal_head_major_gqa_muse_eager_bf16_storage(const float *q, const float *k, const float *v, float *output, int num_heads, int num_kv_heads, int num_tokens, int head_dim, int aligned_head_dim, int kv_stride_tokens, float *scores, size_t scores_bytes, uint16_t *key_rows, size_t key_rows_bytes, uint16_t *value_columns, size_t value_columns_bytes, uint16_t *gemm_rows, size_t gemm_rows_bytes, uint16_t *gemm_scores, size_t gemm_scores_bytes);",
@@ -4209,6 +4212,9 @@
         },
         "notes": "Bounded eager-parity provider. Requires AVX-512F, oneDNN 3.12.0, PyTorch SLEEF expf16, D == aligned D, and at most 1 GiB of declared call workspace. Sliding masks retain full softmax width."
       },
+      "runtime_dependencies": [
+        "sleef_expf16_u10"
+      ],
       "impl": {
         "function": "attention_forward_causal_head_major_gqa_muse_eager_bf16_storage_sliding",
         "c_declaration": "void attention_forward_causal_head_major_gqa_muse_eager_bf16_storage_sliding(const float *q, const float *k, const float *v, float *output, int num_heads, int num_kv_heads, int num_tokens, int head_dim, int aligned_head_dim, int kv_stride_tokens, int sliding_window, float *scores, size_t scores_bytes, uint16_t *key_rows, size_t key_rows_bytes, uint16_t *value_columns, size_t value_columns_bytes, uint16_t *gemm_rows, size_t gemm_rows_bytes, uint16_t *gemm_scores, size_t gemm_scores_bytes);",
@@ -7771,6 +7777,9 @@
         "head_dim",
         "aligned_head_dim"
       ],
+      "runtime_dependencies": [
+        "sleef_expf16_u10"
+      ],
       "impl": {
         "function": "attention_forward_decode_head_major_gqa_muse_eager_bf16_storage",
         "c_declaration": "void attention_forward_decode_head_major_gqa_muse_eager_bf16_storage(const float *q_token, const float *k_cache, const float *v_cache, float *out_token, int num_heads, int num_kv_heads, int kv_tokens, int cache_capacity, int head_dim, int aligned_head_dim, float *scores, size_t scores_bytes, uint16_t *key_rows, size_t key_rows_bytes, uint16_t *value_columns, size_t value_columns_bytes, uint16_t *gemm_rows, size_t gemm_rows_bytes, uint16_t *gemm_scores, size_t gemm_scores_bytes);",
@@ -8124,6 +8133,9 @@
           "dtype": "int32",
           "desc": "Sliding window size (0 = no limit)"
         }
+      ],
+      "runtime_dependencies": [
+        "sleef_expf16_u10"
       ],
       "impl": {
         "function": "attention_forward_decode_head_major_gqa_muse_eager_bf16_storage_sliding",
@@ -11968,6 +11980,9 @@
           }
         ]
       },
+      "runtime_dependencies": [
+        "sleef_expf16_u10"
+      ],
       "impl": {
         "function": "attn_gate_sigmoid_mul_pytorch_bf16_storage",
         "c_declaration": "void attn_gate_sigmoid_mul_pytorch_bf16_storage(const float *x, const float *gate, float *out, int rows, int num_heads, int state_dim);",
@@ -35328,6 +35343,9 @@
       ],
       "dims": [
         "N"
+      ],
+      "runtime_dependencies": [
+        "sleef_expf16_u10"
       ],
       "impl": {
         "function": "gelu_pytorch_erf_sleef_bf16_storage",
@@ -67483,6 +67501,9 @@
         },
         "notes": "Validated for scalar state gates (S=1). Requires AVX-512 plus PyTorch's SLEEF exp/log1p symbols."
       },
+      "runtime_dependencies": [
+        "sleef_expf16_u10"
+      ],
       "impl": {
         "function": "recurrent_dt_gate_forward_pytorch_fp32",
         "c_declaration": "void recurrent_dt_gate_forward_pytorch_fp32(const float *alpha, const float *dt_bias, const float *a, float *gate, int rows, int num_heads, int state_dim);",
@@ -70297,6 +70318,9 @@
         },
         "notes": "Requires Sleef_expf16_u10 from CK_SLEEF_LIBRARY or the process symbol table."
       },
+      "runtime_dependencies": [
+        "sleef_expf16_u10"
+      ],
       "impl": {
         "function": "recurrent_silu_forward_pytorch_bf16_storage",
         "c_declaration": "void recurrent_silu_forward_pytorch_bf16_storage(const float *x, float *out, int rows, int dim);",
@@ -81743,6 +81767,9 @@
         },
         "notes": "The validated PyTorch AVX-512 CPU lane requires Sleef_expf16_u10 from CK_SLEEF_LIBRARY or the process symbol table."
       },
+      "runtime_dependencies": [
+        "sleef_expf16_u10"
+      ],
       "impl": {
         "function": "swiglu_forward_pytorch_bf16_storage",
         "c_declaration": "void swiglu_forward_pytorch_bf16_storage(const float *input, float *output, int tokens, int dim);",

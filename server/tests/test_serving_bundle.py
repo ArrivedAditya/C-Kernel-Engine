@@ -16,7 +16,7 @@ from server.live import create_app
 from server.runtime import load_manifest_templates, load_tool_protocol
 from server.serving_bundle import (
     contract_identity, load_resolved_serving, loaded_serving_identity, resolved_renderer_tokens,
-    verify_loaded_libraries,
+    verify_loaded_libraries, verify_runtime_dependencies,
 )
 from server.tests.test_native_qwen_jinja_contract import RecordingSession
 
@@ -62,13 +62,31 @@ def setup(tmp_path):
     (run / "chat_template.jinja").write_bytes(b"{% for message in messages %}{{ message.role }}:{{ message.content }}\r\n{% endfor %}assistant:")
     (run / "weights_manifest.json").write_text(json.dumps({"template": json.loads(circuit.read_text())}))
     (run / "model_v8.c").write_text("generated test source")
+    maps = source / "kernel_maps"
+    maps.mkdir()
+    selected_map = {
+        "id": "test_kernel", "impl": {"function": "test_kernel"},
+    }
+    (maps / "test_kernel.json").write_text(json.dumps(selected_map))
+    registry = maps / "KERNEL_REGISTRY.json"
+    registry.write_text(json.dumps({"kernels": [{**selected_map, "_source_file": "test_kernel.json"}]}))
+    for phase in ("prefill", "decode"):
+        (run / f"lowered_{phase}_call.json").write_text(json.dumps({
+            "operations": [{"function": "test_kernel", "call_abi": {
+                "owner": "kernel_map", "kernel_id": "test_kernel", "source_file": "test_kernel.json",
+            }}],
+        }))
     def identity(path):
         return {"path": str(path), "size": path.stat().st_size, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
-    ir_outputs = {"decode_layout": identity(run / "layout_decode.json")}
+    ir_outputs = {"decode_layout": identity(run / "layout_decode.json"),
+                  **{f"{phase}_lowered": identity(run / f"lowered_{phase}_call.json")
+                     for phase in ("prefill", "decode")}}
     model = identity(run / "model_v8.c")
     stamps = {
         "ir": {"inputs": {"schema": "ck-v8-ir-bundle-v1", "manifest": identity(run / "weights_manifest.json")}, "outputs": ir_outputs},
-        "codegen": {"inputs": {"schema": "ck-v8-codegen-bundle-v1", "artifacts": ir_outputs}, "outputs": {"model_v8.c": model}},
+        "codegen": {"inputs": {"schema": "ck-v8-codegen-bundle-v1", "artifacts": ir_outputs,
+                               "generator_sources": {str(registry): hashlib.sha256(registry.read_bytes()).hexdigest()}},
+                    "outputs": {"model_v8.c": model}},
         "runtime": {"inputs": {"schema": "ck-v8-runtime-bundle-v2", "model_source": model}, "outputs": {name: identity(run / name) for name in ("libmodel.so", "libckernel_engine.so", "libckernel_tokenizer.so")}}}
     for phase, stamp in stamps.items():
         (run / f".ck_{phase}_bundle.json").write_text(json.dumps(stamp))
@@ -78,6 +96,52 @@ def setup(tmp_path):
 def resolve(setup, variant=None, *, allow_serving_update=False):
     run, circuit, source = setup
     return resolver.resolve_serving_bundle(run, circuit, variant=variant, v8_root=source, allow_serving_update=allow_serving_update)
+
+
+def _update_test_registry(setup, *, dependencies=None, function=None):
+    registry = setup[2] / "kernel_maps/KERNEL_REGISTRY.json"
+    data = json.loads(registry.read_text())
+    if dependencies is not None:
+        data["kernels"][0]["runtime_dependencies"] = dependencies
+    if function is not None:
+        data["kernels"][0]["impl"]["function"] = function
+    registry.write_text(json.dumps(data))
+    stamp = setup[0] / ".ck_codegen_bundle.json"
+    compiled = json.loads(stamp.read_text())
+    compiled["inputs"]["generator_sources"][str(registry)] = hashlib.sha256(registry.read_bytes()).hexdigest()
+    stamp.write_text(json.dumps(compiled))
+
+
+def test_selected_native_dependency_fails_before_first_request(setup, monkeypatch, tmp_path):
+    _update_test_registry(setup, dependencies=["sleef_expf16_u10"])
+    doc = resolve(setup)
+    assert doc["runtime_dependencies"] == ["sleef_expf16_u10"]
+    monkeypatch.setenv("CK_SLEEF_LIBRARY", str(tmp_path / "missing.so"))
+    with pytest.raises(ValueError, match="Sleef_expf16_u10"):
+        verify_runtime_dependencies(load_resolved_serving(setup[0]))
+    source = tmp_path / "provider.c"
+    source.write_text("float Sleef_expf16_u10(float x) { return x; }\n")
+    library = tmp_path / "provider.so"
+    subprocess.run(["cc", "-shared", "-fPIC", "-o", str(library), str(source)], check=True)
+    monkeypatch.setenv("CK_SLEEF_LIBRARY", str(library))
+    verify_runtime_dependencies(doc)
+
+
+def test_selected_kernel_dependency_is_bound_to_compiled_call(setup):
+    resolve(setup)
+    _update_test_registry(setup, function="different_kernel")
+    with pytest.raises(ValueError, match="selected kernel map changed"):
+        resolve(setup)
+
+
+def test_changed_registry_requires_rebuild_before_serving(setup):
+    resolve(setup)
+    registry = setup[2] / "kernel_maps/KERNEL_REGISTRY.json"
+    data = json.loads(registry.read_text())
+    data["kernels"][0]["runtime_dependencies"] = []
+    registry.write_text(json.dumps(data))
+    with pytest.raises(ValueError, match="kernel registry differs"):
+        resolve(setup)
 
 
 def test_gguf_config_uses_verified_manifest_circuit_identity(setup):
@@ -740,6 +804,29 @@ def test_cli_exposes_loaded_identity_after_runtime_verification(setup, monkeypat
     assert response.status_code == 200
     assert response.json()["serving_identity"] == doc["identity"]
     assert response.json()["model"] == "test-model"
+
+
+def test_cli_rejects_missing_selected_dependency_before_listening(setup, monkeypatch):
+    import ck_serve_v8
+    import server.serving_bundle as bundle
+    import uvicorn
+
+    _update_test_registry(setup, dependencies=["sleef_expf16_u10"])
+    resolve(setup)
+    closed = []
+    class Session:
+        lib = object()
+        def close(self):
+            closed.append(True)
+    monkeypatch.setattr(ck_serve_v8, "_ensure_native_session_lib", lambda: None)
+    monkeypatch.setattr(ck_serve_v8, "_resolve_run_dir", lambda *_: setup[0])
+    monkeypatch.setattr(ck_serve_v8.SessionV8, "open", lambda *a, **k: Session())
+    monkeypatch.setattr(bundle, "verify_loaded_libraries", lambda *_: None)
+    monkeypatch.setattr(uvicorn, "run", lambda *_a, **_k: pytest.fail("served without dependency"))
+    monkeypatch.setenv("CK_SLEEF_LIBRARY", str(setup[0] / "missing.so"))
+    with pytest.raises(ValueError, match="Sleef_expf16_u10"):
+        ck_serve_v8.main([str(setup[0]), "--no-build", "--no-viz"])
+    assert closed == [True]
 
 
 def test_raw_build_without_chat_assets_and_normal_chat_rejection(setup, monkeypatch):

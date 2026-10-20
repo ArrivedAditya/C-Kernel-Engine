@@ -35,6 +35,7 @@
     }
   ],
   "dims": ["N"],
+  "runtime_dependencies": ["sleef_expf16_u10"],
   "impl": {
     "function": "gelu_pytorch_erf_sleef_bf16_storage",
     "c_declaration": "void gelu_pytorch_erf_sleef_bf16_storage(float *data, size_t n);",

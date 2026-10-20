@@ -52,6 +52,7 @@
     "alignment": {"I": 16},
     "notes": "The validated PyTorch AVX-512 CPU lane requires Sleef_expf16_u10 from CK_SLEEF_LIBRARY or the process symbol table."
   },
+  "runtime_dependencies": ["sleef_expf16_u10"],
   "impl": {
     "function": "swiglu_forward_pytorch_bf16_storage",
     "c_declaration": "void swiglu_forward_pytorch_bf16_storage(const float *input, float *output, int tokens, int dim);",

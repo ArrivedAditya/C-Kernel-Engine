@@ -11,6 +11,7 @@ from typing import Any
 
 PROTOCOLS = frozenset({"none", "tagged_json", "bare_json", "qwen_xml", "qwen_code_xml", "qwen_code_xml_raw_v2", "gemma4_dsl_v1", "muse_atem_v1"})
 SCHEMA = "cke.resolved_serving.v1"
+RUNTIME_DEPENDENCIES = frozenset({"sleef_expf16_u10"})
 
 
 def sha256_file(path: Path) -> str:
@@ -96,6 +97,10 @@ def load_resolved_serving(run_dir: Path, *, document: dict[str, Any] | None = No
             raise ValueError("unsupported serving output protocol")
         if doc.get("input_modalities") != ["text"]:
             raise ValueError("this resolved serving path supports text only")
+        dependencies = doc.get("runtime_dependencies", [])
+        if (not isinstance(dependencies, list) or len(dependencies) != len(set(dependencies))
+                or any(item not in RUNTIME_DEPENDENCIES for item in dependencies)):
+            raise ValueError("unsupported serving runtime dependencies")
         assets = doc.get("assets")
         if not isinstance(assets, dict) or not assets:
             raise ValueError("missing serving asset inventory")
@@ -154,6 +159,24 @@ def load_resolved_serving(run_dir: Path, *, document: dict[str, Any] | None = No
         return doc
     except (OSError, UnicodeError, TypeError, KeyError, AttributeError, json.JSONDecodeError) as exc:
         raise ValueError(f"invalid resolved serving bundle {sidecar}: {exc}") from exc
+
+
+def verify_runtime_dependencies(doc: dict[str, Any]) -> None:
+    """Reject missing lazy native dependencies before accepting HTTP traffic."""
+    for dependency in doc.get("runtime_dependencies", []):
+        if dependency != "sleef_expf16_u10":
+            raise ValueError(f"unsupported serving runtime dependency: {dependency}")
+        library_path = os.environ.get("CK_SLEEF_LIBRARY")
+        try:
+            library = ctypes.CDLL(library_path) if library_path else ctypes.CDLL(None)
+            symbol = getattr(library, "Sleef_expf16_u10")
+            if not ctypes.cast(symbol, ctypes.c_void_p).value:
+                raise ValueError("empty SLEEF symbol")
+        except (OSError, AttributeError, TypeError, ValueError) as exc:
+            raise ValueError(
+                "selected native kernels require Sleef_expf16_u10; set CK_SLEEF_LIBRARY "
+                "to a library exporting that symbol before starting the server"
+            ) from exc
 
 
 def resolved_templates(run_dir: Path, doc: dict[str, Any]) -> tuple[str, dict[str, str], dict[str, Any]]:

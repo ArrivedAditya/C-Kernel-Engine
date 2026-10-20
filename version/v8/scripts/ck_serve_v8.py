@@ -572,9 +572,10 @@ def main(argv: list[str] | None = None) -> int:
     auto_bos_token_text = runtime_auto_bos_token(run_dir)
     loaded_identity = None
     if resolved_serving is not None:
-        from server.serving_bundle import loaded_serving_identity, verify_loaded_libraries
+        from server.serving_bundle import loaded_serving_identity, verify_loaded_libraries, verify_runtime_dependencies
         try:
             verify_loaded_libraries(resolved_serving)
+            verify_runtime_dependencies(resolved_serving)
             loaded_identity = loaded_serving_identity(
                 resolved_serving,
                 model=args.model_name,

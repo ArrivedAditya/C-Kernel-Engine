@@ -202,6 +202,7 @@
     "head_dim",
     "aligned_head_dim"
   ],
+  "runtime_dependencies": ["sleef_expf16_u10"],
   "impl": {
     "function": "attention_forward_decode_head_major_gqa_muse_eager_bf16_storage",
     "c_declaration": "void attention_forward_decode_head_major_gqa_muse_eager_bf16_storage(const float *q_token, const float *k_cache, const float *v_cache, float *out_token, int num_heads, int num_kv_heads, int kv_tokens, int cache_capacity, int head_dim, int aligned_head_dim, float *scores, size_t scores_bytes, uint16_t *key_rows, size_t key_rows_bytes, uint16_t *value_columns, size_t value_columns_bytes, uint16_t *gemm_rows, size_t gemm_rows_bytes, uint16_t *gemm_scores, size_t gemm_scores_bytes);",
