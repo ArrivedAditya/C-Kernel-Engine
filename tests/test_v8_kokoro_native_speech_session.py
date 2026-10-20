@@ -278,6 +278,79 @@ if kind in fields or kind in ('short-header', 'empty-data',
                 "python3 -m unittest tests.test_v8_kokoro_native_speech_session",
         }, sort_keys=True))
 
+    def test_number_session_asset_coverage_is_explicit(self):
+        required = ("CKE_TTS_ROUNDTRIP_BUNDLE_DIR",
+                    "CKE_TTS_ROUNDTRIP_FRONTEND_DIR")
+        requested = bool(os.environ.get("CKE_TTS_RUN_NUMBER_SESSION_FULL"))
+        missing = [key for key in required if not os.environ.get(key)]
+        if requested and not missing:
+            return
+        reason = ("asset-backed run not requested" if not requested else
+                  "missing required assets: " + ", ".join(missing))
+        print("CKE_NUMERICAL_CASE " + json.dumps({
+            "case_id": "kokoro.native-speech-session.number-cancel-recover-v1",
+            "name": "Cancel generated speech then repeat native bounded-number text",
+            "provider": "native_kokoro_speech_session+generated_kokoro_waveform",
+            "dtype": "pcm16", "direction": "inference",
+            "oracle": "retained seeded 13-ID native WAV hash",
+            "status": "not_tested", "gate": "session", "blocking": False,
+            "reason": reason,
+            "configuration": "22-ID request cancelled; two 13-ID number requests completed, seed 7",
+            "reproduction_command": "CKE_TTS_RUN_NUMBER_SESSION_FULL=1 "
+                "python3 -m unittest tests.test_v8_kokoro_native_speech_session",
+        }, sort_keys=True))
+
+    @unittest.skipUnless(os.environ.get("CKE_TTS_RUN_NUMBER_SESSION_FULL"),
+                         "bounded-number generated session assets not requested")
+    def test_real_generated_cancel_then_number_text_recovers(self):
+        required = ("CKE_TTS_ROUNDTRIP_BUNDLE_DIR",
+                    "CKE_TTS_ROUNDTRIP_FRONTEND_DIR")
+        missing = [key for key in required if not os.environ.get(key)]
+        if missing:
+            self.skipTest("missing required assets: " + ", ".join(missing))
+        bundle = Path(os.environ[required[0]])
+        frontend = Path(os.environ[required[1]])
+        process, directory = self.start(
+            frontend=frontend / "native-kokoro-text", bundle=bundle,
+            lexicon=frontend / "us-gold.cklex")
+        self.send(process, "SPEAK\t7\tI can help you now.")
+        self.assertEqual(self.line(process), "EVENT\t1\tSTARTED")
+        time.sleep(0.1)
+        started = time.monotonic()
+        self.send(process, "STOP")
+        self.assertEqual(self.line(process), "EVENT\t1\tCANCELLED")
+        cancellation_seconds = time.monotonic() - started
+        self.assertLess(cancellation_seconds, 2.0)
+        self.assertFalse((directory / "1.wav").exists())
+        expected_hash = "d2f0a4819972eb1d6728b5ae8de83c2957504e58ba0a5368fe2f008ee3863149"
+        for request_id in (2, 3):
+            self.send(process, "SPEAK\t7\tI have 2.")
+            self.assertEqual(self.line(process), f"EVENT\t{request_id}\tSTARTED")
+            wav = directory / f"{request_id}.wav"
+            self.assertEqual(self.line(process, timeout=180),
+                             f"EVENT\t{request_id}\tWAV_READY\t{wav}")
+            self.assertEqual(self.line(process), f"EVENT\t{request_id}\tCOMPLETED")
+            self.assertEqual(hashlib.sha256(wav.read_bytes()).hexdigest(), expected_hash)
+            with wave.open(str(wav), "rb") as audio:
+                self.assertEqual((audio.getnchannels(), audio.getsampwidth(),
+                                  audio.getframerate(), audio.getnframes()),
+                                 (1, 2, 24000, 39000))
+        print("CKE_NUMERICAL_CASE " + json.dumps({
+            "case_id": "kokoro.native-speech-session.number-cancel-recover-v1",
+            "name": "Cancel generated speech then repeat native bounded-number text",
+            "provider": "native_kokoro_speech_session+generated_kokoro_waveform",
+            "dtype": "pcm16", "direction": "inference",
+            "oracle": "retained seeded 13-ID native WAV hash",
+            "status": "pass", "gate": "session", "blocking": True,
+            "max_diff": 0, "tolerance": 0,
+            "metric": "retained WAV hash mismatches",
+            "cancellation_seconds": cancellation_seconds,
+            "wav_sha256": expected_hash,
+            "configuration": "22-ID request cancelled; two 13-ID number requests completed, seed 7",
+            "reproduction_command": "CKE_TTS_RUN_NUMBER_SESSION_FULL=1 "
+                "python3 -m unittest tests.test_v8_kokoro_native_speech_session",
+        }, sort_keys=True))
+
     @unittest.skipUnless(os.environ.get("CKE_TTS_RUN_THIRD_LENGTH_FULL"),
                          "three-length generated bundle not requested")
     def test_real_generated_short_third_short_session(self):

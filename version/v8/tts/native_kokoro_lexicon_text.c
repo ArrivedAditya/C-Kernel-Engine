@@ -31,7 +31,11 @@ static int digest_matches(FILE *stream) {
 }
 
 static int append(int32_t ids[40], size_t *count, int32_t id) {
-    if (*count >= 39 || id <= 0 || id >= 178) return 0;
+    if (*count >= 39) {
+        fprintf(stderr, "phoneme capacity exceeded: maximum 40 IDs including boundaries\n");
+        return 0;
+    }
+    if (id <= 0 || id >= 178) return 0;
     ids[(*count)++] = id;
     return 1;
 }
@@ -74,6 +78,19 @@ static int punctuation(unsigned char character) {
     }
 }
 
+/* This bounded cardinal table follows the pinned reference's num2words
+ * spelling for isolated unsigned integers 0..20. Pronunciation still comes
+ * from the hash-pinned CKLEX dictionary, including its DEFAULT selection. */
+static const char *cardinal_word(unsigned value) {
+    static const char *const words[] = {
+        "zero", "one", "two", "three", "four", "five", "six", "seven",
+        "eight", "nine", "ten", "eleven", "twelve", "thirteen",
+        "fourteen", "fifteen", "sixteen", "seventeen", "eighteen",
+        "nineteen", "twenty"
+    };
+    return value < sizeof(words) / sizeof(words[0]) ? words[value] : NULL;
+}
+
 static int encode_text(FILE *lexicon, const char *text,
                        int32_t ids[40], size_t *count) {
     const size_t length = strlen(text);
@@ -98,16 +115,69 @@ static int encode_text(FILE *lexicon, const char *text,
                       (value == '\'' && used && i + 1 < length &&
                        ((text[i + 1] >= 'A' && text[i + 1] <= 'Z') ||
                         (text[i + 1] >= 'a' && text[i + 1] <= 'z'))))) break;
-                if (used == sizeof(word) - 1) return 0;
+                if (used == sizeof(word) - 1) {
+                    fprintf(stderr, "unsupported word: more than 64 characters\n");
+                    return 0;
+                }
                 word[used++] = (char)value;
                 ++i;
             }
             word[used] = 0;
-            if (have_token && !pending_space) return 0;
+            if (have_token && !pending_space) {
+                fprintf(stderr, "unsupported text: missing word boundary\n");
+                return 0;
+            }
             if (pending_space && !append(ids, count, CK_TTS_SPACE_ID)) return 0;
             const int found = lookup(lexicon, word, ids, count);
             if (found != 1) {
-                fprintf(stderr, "unsupported Kokoro lexicon word: %s\n", word);
+                if (found == 0)
+                    fprintf(stderr, "unsupported Kokoro lexicon word: %s\n", word);
+                return 0;
+            }
+            have_token = 1;
+            pending_space = 0;
+            word_ended = 1;
+            continue;
+        }
+        if (ch >= '0' && ch <= '9') {
+            unsigned value = 0;
+            const size_t start = i;
+            while (i < length && text[i] >= '0' && text[i] <= '9') {
+                if (i - start >= 2) break;
+                value = value * 10 + (unsigned)(text[i++] - '0');
+            }
+            if (i - start > 1 && text[start] == '0') {
+                fprintf(stderr, "unsupported number: leading zero\n");
+                return 0;
+            }
+            if (i < length && text[i] >= '0' && text[i] <= '9') {
+                fprintf(stderr, "unsupported number: only 0 through 20\n");
+                return 0;
+            }
+            if (i < length && (text[i] == '.' || text[i] == ',') &&
+                i + 1 < length && text[i + 1] >= '0' && text[i + 1] <= '9') {
+                fprintf(stderr, "unsupported number: decimals and grouped digits\n");
+                return 0;
+            }
+            if (i < length && ((text[i] >= 'A' && text[i] <= 'Z') ||
+                               (text[i] >= 'a' && text[i] <= 'z'))) {
+                fprintf(stderr, "unsupported number: missing word boundary\n");
+                return 0;
+            }
+            const char *word = cardinal_word(value);
+            if (!word) {
+                fprintf(stderr, "unsupported number: only 0 through 20\n");
+                return 0;
+            }
+            if (have_token && !pending_space) {
+                fprintf(stderr, "unsupported number: missing word boundary\n");
+                return 0;
+            }
+            if (pending_space && !append(ids, count, CK_TTS_SPACE_ID)) return 0;
+            const int found = lookup(lexicon, word, ids, count);
+            if (found != 1) {
+                if (found == 0)
+                    fprintf(stderr, "unsupported number: %s absent from lexicon\n", word);
                 return 0;
             }
             have_token = 1;
@@ -116,8 +186,16 @@ static int encode_text(FILE *lexicon, const char *text,
             continue;
         }
         const int id = punctuation(ch);
-        if (!id || !word_ended || pending_space ||
-            !append(ids, count, id)) return 0;
+        if (!id) {
+            fprintf(stderr, "unsupported character: 0x%02x at byte %zu\n",
+                    ch, i);
+            return 0;
+        }
+        if (!word_ended || pending_space) {
+            fprintf(stderr, "unsupported punctuation placement at byte %zu\n", i);
+            return 0;
+        }
+        if (!append(ids, count, id)) return 0;
         word_ended = 0;
         have_token = 1;
         ++i;

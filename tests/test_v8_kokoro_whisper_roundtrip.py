@@ -20,8 +20,9 @@ import wave
 
 ROOT = Path(__file__).resolve().parents[1]
 WHISPER = ROOT / "version/v8/scripts/ck_run_v8.py"
-CASES = (("hello", "Hello.", 8, 32400),
-         ("hello_there", "Hello there.", 12, 36000))
+CASES = (("hello", "Hello.", 8, 32400, "Hello."),
+         ("hello_there", "Hello there.", 12, 36000, "Hello there."))
+NUMBER_CASE = ("i_have_2", "I have 2.", 13, 39000, "I have two.")
 REQUIRED_ENV = ("CKE_TTS_ROUNDTRIP_BUNDLE_DIR",
                 "CKE_TTS_ROUNDTRIP_FRONTEND_DIR",
                 "CKE_TTS_ROUNDTRIP_WHISPER_ENCODER_DIR",
@@ -44,13 +45,15 @@ def _report(case: str, stage: str, status: str, reason: str,
     data = {
         "case_id": f"kokoro.whisper-roundtrip.{case}.{stage}-v1",
         "name": f"Generated Kokoro to Whisper {case} {stage}",
-        "provider": ("generated_kokoro_runtime_waveform" if stage == "tts"
+        "provider": ("generated_kokoro_runtime_waveform" if stage in ("tts", "waveform_parity")
                      else "generated_whisper_encoder_decoder" if stage == "asr"
                      else "native_kokoro_text+generated_whisper"),
         "dtype": "pcm16" if stage != "fidelity" else "utf8",
         "direction": "inference",
-        "oracle": "known source text and generated-runtime artifact identities",
-        "gate": "transcript" if stage == "fidelity" else "execution",
+        "oracle": ("pinned PyTorch Kokoro waveform" if stage == "waveform_parity"
+                   else "known source text and generated-runtime artifact identities"),
+        "gate": ("numerical" if stage == "waveform_parity" else
+                 "transcript" if stage == "fidelity" else "execution"),
         "status": status,
         "blocking": status != "not_tested",
         "configuration": "pinned af_heart; seed 7; 24 kHz mono PCM16; English",
@@ -100,16 +103,24 @@ class KokoroWhisperRoundTripTest(unittest.TestCase):
         reason = ("asset-backed run not requested" if not
                   os.environ.get("CKE_TTS_RUN_WHISPER_ROUNDTRIP") else
                   "missing required assets: " + ", ".join(missing))
-        for case, _, _, _ in CASES:
-            for stage in ("tts", "asr", "fidelity"):
+        cases = CASES + ((NUMBER_CASE,) if os.environ.get(
+            "CKE_TTS_RUN_NUMBER_TEXT_FULL") else ())
+        for case, _, _, _, _ in cases:
+            for stage in ("tts", "waveform_parity", "asr", "fidelity"):
                 _report(case, stage, "not_tested", reason)
+        if not os.environ.get("CKE_TTS_RUN_NUMBER_TEXT_FULL"):
+            for stage in ("tts", "asr", "fidelity"):
+                _report(NUMBER_CASE[0], stage, "not_tested",
+                        "bounded-number frontend not supplied; set "
+                        "CKE_TTS_RUN_NUMBER_TEXT_FULL with a freshly exported frontend")
         self.skipTest(reason)
 
     @unittest.skipUnless(os.environ.get("CKE_TTS_RUN_WHISPER_ROUNDTRIP"),
                          "generated Kokoro and Whisper assets not requested")
     def test_generated_speech_round_trip(self):
         missing = [key for key in REQUIRED_ENV if not os.environ.get(key)]
-        self.assertFalse(missing, "missing assets: " + ", ".join(missing))
+        if missing:
+            self.skipTest("missing required assets: " + ", ".join(missing))
         bundle, frontend, encoder, decoder = (Path(os.environ[key])
                                                for key in REQUIRED_ENV)
         manifest = json.loads((bundle / "bundle_manifest.json").read_text())
@@ -117,7 +128,7 @@ class KokoroWhisperRoundTripTest(unittest.TestCase):
         self.assertIn(12, manifest["execution_only_phoneme_counts"])
         self.assertEqual(len({item["library_sha256"] for item in
                               manifest["buckets"].values()}), 1)
-        for _, _, count, _ in CASES:
+        for _, _, count, _, _ in CASES:
             self.assertIn(count, manifest["supported_phoneme_counts"])
             self.assertEqual(
                 _hash(bundle / "64" / "generated.so"),
@@ -127,7 +138,14 @@ class KokoroWhisperRoundTripTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             failures = []
-            for case, text, count, expected_samples in CASES:
+            cases = CASES + ((NUMBER_CASE,) if os.environ.get(
+                "CKE_TTS_RUN_NUMBER_TEXT_FULL") else ())
+            if not os.environ.get("CKE_TTS_RUN_NUMBER_TEXT_FULL"):
+                for stage in ("tts", "waveform_parity", "asr", "fidelity"):
+                    _report(NUMBER_CASE[0], stage, "not_tested",
+                            "bounded-number frontend not supplied; set "
+                            "CKE_TTS_RUN_NUMBER_TEXT_FULL with a freshly exported frontend")
+            for case, text, count, expected_samples, expected_transcript in cases:
                 wav = directory / f"{case}.wav"
                 report_path = directory / f"{case}-whisper.json"
                 tts = subprocess.run([
@@ -153,6 +171,10 @@ class KokoroWhisperRoundTripTest(unittest.TestCase):
                         tts_reason, phoneme_count=count,
                         generated_library_sha256=manifest["buckets"][str(count)][
                             "library_sha256"], wav_sha256=wav_hash)
+                _report(case, "waveform_parity", "not_tested",
+                        "this round trip has no same-noise pinned waveform oracle; "
+                        "connected PyTorch parity remains a separate failing suite",
+                        wav_sha256=wav_hash)
                 if tts_reason:
                     failures.append(f"{case} TTS: {tts_reason}")
                     _report(case, "asr", "not_tested", "TTS did not produce valid WAV")
@@ -191,10 +213,12 @@ class KokoroWhisperRoundTripTest(unittest.TestCase):
                     _report(case, "fidelity", "not_tested", "ASR did not return valid transcript")
                     continue
                 transcript = result.get("decoder", {}).get("transcript_text")
-                matched = isinstance(transcript, str) and transcript.strip().casefold() == text.casefold()
+                matched = (isinstance(transcript, str) and
+                           transcript.strip().casefold() == expected_transcript.casefold())
                 _report(case, "fidelity", "pass" if matched else "fail",
-                        "" if matched else f"expected {text!r}; got {transcript!r}",
-                        source_text=text, transcript=transcript,
+                        "" if matched else f"expected {expected_transcript!r}; got {transcript!r}",
+                        source_text=text, expected_transcript=expected_transcript,
+                        transcript=transcript,
                         wav_sha256=wav_hash)
                 if not matched:
                     failures.append(f"{case} transcript: {transcript!r}")
