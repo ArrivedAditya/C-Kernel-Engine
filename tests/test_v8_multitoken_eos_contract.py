@@ -1316,6 +1316,66 @@ class MultitokenEOSContractTests(unittest.TestCase):
             self.assertEqual(inputs["runtime"]["engine_so"], str(engine.resolve()))
             sync.assert_called_once_with(engine.resolve(), runtime["so_path"])
 
+    def test_trajectory_context_reserves_entire_requested_generation(self) -> None:
+        self.assertEqual(self.runner._trajectory_context_length(256, 1102, 19, 64), 1185)
+        self.assertEqual(self.runner._trajectory_context_length(2048, 1102, 19, 64), 2048)
+        with self.assertRaisesRegex(ValueError, "positive capacity"):
+            self.runner._trajectory_context_length(256, 1102, 19, 0)
+
+    def test_exact_runtime_rejects_short_generation_capacity_before_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime = {"embed_dim": 2560, "input_embed_dim": 2560,
+                       "context_length": 1137, "so_path": root / "decoder.so"}
+            bridge_report = {
+                "decoder_runtime": {"gguf": str(root / "model.gguf"),
+                                    "workdir": str(root / "decoder")},
+                "decoder_context_len": 1137,
+            }
+            args = Namespace(
+                bridge_report=root / "bridge.json", workdir=root / "work",
+                reuse_bridge_decoder_runtime=False,
+                reuse_bridge_decoder_runtime_exact=True,
+                ck_runtime_so=None, ck_runtime_manifest_map=None,
+                ctx_len=256, max_new_tokens=64, prefix_f32=root / "prefix.f32",
+                prefix_row_dim=None,
+            )
+            with mock.patch.object(self.runner.first_token, "_load_bridge_report", return_value=bridge_report), \
+                 mock.patch.object(self.runner, "_load_exact_decoder_runtime", return_value=runtime), \
+                 mock.patch.object(self.runner, "GGUFTokenizer") as tokenizer_cls, \
+                 mock.patch.object(self.runner.first_token, "_resolve_prompt_token_segments", return_value=(None, [1] * 5, [2] * 14, {})), \
+                 mock.patch.object(self.runner.first_token, "_load_prefix_embeddings", return_value=(array("f"), 1102, 2560, "file")):
+                tokenizer_cls.from_gguf.return_value = object()
+                with self.assertRaisesRegex(RuntimeError, "required=1185 effective=1137"):
+                    self.runner._prepare_inputs(args)
+
+    def test_exact_runtime_rejects_explicit_context_above_compiled_capacity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime = {"embed_dim": 2560, "input_embed_dim": 2560,
+                       "context_length": 1137, "so_path": root / "decoder.so"}
+            bridge_report = {
+                "decoder_runtime": {"gguf": str(root / "model.gguf"),
+                                    "workdir": str(root / "decoder")},
+                "decoder_context_len": 1137,
+            }
+            args = Namespace(
+                bridge_report=root / "bridge.json", workdir=root / "work",
+                reuse_bridge_decoder_runtime=False,
+                reuse_bridge_decoder_runtime_exact=True,
+                ck_runtime_so=None, ck_runtime_manifest_map=None,
+                ctx_len=2048, max_new_tokens=64, prefix_f32=root / "prefix.f32",
+                prefix_row_dim=None,
+            )
+            with mock.patch.object(self.runner.first_token, "_load_bridge_report", return_value=bridge_report), \
+                 mock.patch.object(self.runner, "_load_exact_decoder_runtime", return_value=runtime), \
+                 mock.patch.object(self.runner, "GGUFTokenizer") as tokenizer_cls, \
+                 mock.patch.object(self.runner.first_token, "_resolve_prompt_token_segments", return_value=(None, [1] * 5, [2] * 14, {})), \
+                 mock.patch.object(self.runner.first_token, "_load_prefix_embeddings", return_value=(array("f"), 1102, 2560, "file")):
+                tokenizer_cls.from_gguf.return_value = object()
+                with self.assertRaisesRegex(RuntimeError, "required=2048 effective=1137"):
+                    self.runner._prepare_inputs(args)
+
     def test_runner_records_eos_step_without_decoding_past_it(self) -> None:
         class Tokenizer:
             def decode(self, tokens, skip_special=False):

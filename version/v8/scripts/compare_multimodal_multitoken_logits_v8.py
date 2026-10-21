@@ -937,6 +937,14 @@ def _resolve_decoder_runtime_request(
     return workdir / "decoder", False
 
 
+def _trajectory_context_length(
+    requested: int, prefix_tokens: int, prompt_tokens: int, max_new_tokens: int,
+) -> int:
+    if requested <= 0 or prefix_tokens < 0 or prompt_tokens < 0 or max_new_tokens <= 0:
+        raise ValueError("trajectory context requires positive capacity and token budget")
+    return max(requested, prefix_tokens + prompt_tokens + max_new_tokens)
+
+
 def _prepare_inputs(args: argparse.Namespace, *, parity_dump: bool = False) -> dict[str, Any]:
     bridge_report = first_token._load_bridge_report(args.bridge_report.resolve())
     gguf_value = str(((bridge_report.get("decoder_runtime") or {}).get("gguf") or "")).strip()
@@ -986,8 +994,11 @@ def _prepare_inputs(args: argparse.Namespace, *, parity_dump: bool = False) -> d
         int(args.prefix_row_dim) if args.prefix_row_dim is not None else None,
     )
     total_prompt_tokens = len(tokens_before) + len(tokens_after)
-    resolved_ctx_len = max(int(requested_ctx_len), int(prefix_tokens) + total_prompt_tokens, 1)
-    if resolved_ctx_len != requested_ctx_len and exact_runtime:
+    resolved_ctx_len = _trajectory_context_length(
+        requested_ctx_len, int(prefix_tokens), total_prompt_tokens,
+        int(getattr(args, "max_new_tokens", 1)),
+    )
+    if exact_runtime:
         effective_context = int(runtime.get("context_length", 0) or 0)
         if effective_context < resolved_ctx_len:
             raise RuntimeError(

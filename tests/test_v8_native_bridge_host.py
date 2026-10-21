@@ -2669,6 +2669,8 @@ class V8NativeBridgeHostTests(unittest.TestCase):
                             "32",
                             "--max-tokens",
                             "8",
+                            "--reserve-generation-tokens",
+                            "64",
                             "--top-k",
                             "2",
                         ]
@@ -2679,13 +2681,14 @@ class V8NativeBridgeHostTests(unittest.TestCase):
             prepare_decoder.assert_called_once_with(
                 fake_decoder_gguf.resolve(),
                 workdir.resolve() / "decoder",
-                context_override=61,
+                context_override=109,
                 profile=False,
                 runtime_config_overrides=None,
             )
 
             report = json.loads((workdir / "bridge_report.json").read_text(encoding="utf-8"))
-            self.assertEqual(report["decoder_context_len"], 61)
+            self.assertEqual(report["decoder_context_len"], 109)
+            self.assertEqual(report["decoder_context_budget"]["reserved_generation_tokens"], 64)
             self.assertEqual(report["total_prefill_tokens"], 45)
 
     def test_explicit_decoder_context_reserves_generation_capacity(self) -> None:
@@ -2701,6 +2704,14 @@ class V8NativeBridgeHostTests(unittest.TestCase):
             ),
             64,
         )
+
+    def test_negative_reserved_generation_is_rejected_before_model_loading(self) -> None:
+        with self.assertRaises(SystemExit) as error:
+            bridge_runner_v8.main([
+                "--decoder-gguf", "unused.gguf", "--workdir", "unused",
+                "--reserve-generation-tokens", "-1",
+            ])
+        self.assertEqual(error.exception.code, 2)
 
     def test_decoder_context_cap_rejects_image_and_output_overflow(self) -> None:
         derive = bridge_runner_v8._derive_decoder_context_len
