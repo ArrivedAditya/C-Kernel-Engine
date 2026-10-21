@@ -199,8 +199,9 @@ Special chars: @#$%^&*()[]{}|\\/:;\"'<>?,.`~
 
     def encode_c(tok, text):
         text_bytes = text.encode('utf-8')
-        ids = (ctypes.c_int32 * 256)()
-        num = lib.ck_tokenizer_encode(tok, text_bytes, len(text_bytes), ids, 256)
+        capacity = max(256, len(text_bytes) + 2)
+        ids = (ctypes.c_int32 * capacity)()
+        num = lib.ck_tokenizer_encode(tok, text_bytes, len(text_bytes), ids, capacity)
         return list(ids[:num])
 
     passed = 0
@@ -266,6 +267,7 @@ Special chars: @#$%^&*()[]{}|\\/:;\"'<>?,.`~
         ("", "Empty string"),
         ("special chars @#$%", "Special characters"),
         ("123 456 789", "Numbers with spaces"),
+        ("Hello world " * 720, "Above former 8192-byte limit"),
     ]
 
     # Default SPM (add_dummy_prefix=true, no BOS/EOS)

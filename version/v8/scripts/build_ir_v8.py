@@ -3227,6 +3227,28 @@ CK_EXPORT int ck_model_encode_text(const char *text, int text_len) {
     return ck_true_bpe_encode(g_model->tokenizer, text, text_len, token_buf, max_tokens);
 }
 
+/* Count without writing past the generated context-sized token buffer. The
+ * worst case is one token per input byte, plus BOS/EOS. Serving can therefore
+ * reject an oversized prompt before a generation call mutates model state. */
+CK_EXPORT int ck_model_count_text_tokens(const char *text, int text_len) {
+    if (!g_model || !g_model->tokenizer || !text) return -1;
+    if (text_len < 0) {
+        size_t inferred = strlen(text);
+        if (inferred > INT32_MAX - 2) return -1;
+        text_len = (int)inferred;
+    }
+    if (text_len == 0) return 0;
+    if (text_len > INT32_MAX - 2) return -1;
+    size_t capacity = (size_t)text_len + 2;
+    if (capacity > SIZE_MAX / sizeof(int32_t)) return -1;
+    int32_t *tokens = (int32_t *)malloc(capacity * sizeof(int32_t));
+    if (!tokens) return -1;
+    int count = ck_true_bpe_encode(g_model->tokenizer, text, text_len,
+                                   tokens, (int)capacity);
+    free(tokens);
+    return count;
+}
+
 static const char *ck_model_vocab_piece(int32_t id, int *len_out) {
 #ifndef W_VOCAB_OFFSETS
     (void)id; (void)len_out;
@@ -3514,6 +3536,25 @@ CK_EXPORT int ck_model_encode_text(const char *text, int text_len) {
     );
 
     return num_tokens;
+}
+
+CK_EXPORT int ck_model_count_text_tokens(const char *text, int text_len) {
+    if (!g_model || !g_model->tokenizer || !text) return -1;
+    if (text_len < 0) {
+        size_t inferred = strlen(text);
+        if (inferred > INT32_MAX - 2) return -1;
+        text_len = (int)inferred;
+    }
+    if (text_len == 0) return 0;
+    if (text_len > INT32_MAX - 2) return -1;
+    size_t capacity = (size_t)text_len + 2;
+    if (capacity > SIZE_MAX / sizeof(int32_t)) return -1;
+    int32_t *tokens = (int32_t *)malloc(capacity * sizeof(int32_t));
+    if (!tokens) return -1;
+    int count = ck_tokenizer_encode(g_model->tokenizer, text, text_len,
+                                    tokens, (int)capacity);
+    free(tokens);
+    return count;
 }
 
 /* Decode tokens back to text */

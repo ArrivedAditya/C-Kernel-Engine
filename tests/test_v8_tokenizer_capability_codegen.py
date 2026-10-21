@@ -157,6 +157,8 @@ class TestV8TokenizerCapabilityCodegen(unittest.TestCase):
         self.assertIn("CK_EXPORT int ck_model_can_encode_text(void)", c_code)
         self.assertIn("return (g_model && g_model->tokenizer) ? 1 : 0;", c_code)
         self.assertIn("ck_true_bpe_add_special_token", str(generated["init"]))
+        self.assertIn("CK_EXPORT int ck_model_count_text_tokens(", c_code)
+        self.assertIn("ck_true_bpe_encode(g_model->tokenizer, text, text_len,", c_code)
 
     def test_bpe_imported_types_select_metadata_registration(self) -> None:
         generated = build_ir_v8._generate_tokenizer_c_code(
@@ -215,6 +217,8 @@ class TestV8TokenizerCapabilityCodegen(unittest.TestCase):
         self.assertIn("CK_EXPORT int ck_model_can_encode_text(void)", c_code)
         self.assertIn("return (g_model && g_model->tokenizer) ? 1 : 0;", c_code)
         self.assertIn('printf("[Tokenizer] Registered special: %s -> %d\\n",', str(generated["init"]))
+        self.assertIn("CK_EXPORT int ck_model_count_text_tokens(", c_code)
+        self.assertIn("ck_tokenizer_encode(g_model->tokenizer, text, text_len,", c_code)
 
     def test_chat_contract_exports_generated_native_formatter(self) -> None:
         generated = build_ir_v8._generate_tokenizer_c_code(
