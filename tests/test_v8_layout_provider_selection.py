@@ -1,6 +1,8 @@
 import importlib.util
 import ctypes
 import copy
+import contextlib
+import io
 import json
 import subprocess
 import sys
@@ -93,6 +95,36 @@ class LayoutProviderSelectionTests(unittest.TestCase):
             head_ptr, restored_ptr, heads, tokens, dim
         )
         self.assertEqual(source.tobytes(), restored.tobytes())
+
+    def test_prefill_transpose_temporary_covers_wide_q_at_context_boundary(self):
+        # Qwen3-0.6B has a 1024-wide hidden stream but a 2048-wide Q view.
+        # The generated layout bridge writes the full Q view to A_LAYER_OUTPUT.
+        config = {
+            "model": "qwen3", "embed_dim": 1024, "num_heads": 16,
+            "num_kv_heads": 8, "head_dim": 128,
+            "intermediate_size": 3072, "context_length": 1024,
+            "vocab_size": 151936, "num_layers": 1,
+        }
+        for tokens in (1, 880, 1024):
+            with self.subTest(tokens=tokens):
+                specs = build_ir.build_activation_specs(dict(config), "prefill", tokens)
+                manifest = {"config": dict(config), "entries": [], "template": {}}
+                with contextlib.redirect_stdout(io.StringIO()):
+                    layout = build_ir.generate_memory_layout(
+                        [], manifest, {}, "prefill", tokens,
+                    )
+                buffers = {
+                    item["name"]: item
+                    for item in layout["memory"]["activations"]["buffers"]
+                }
+                expected = tokens * 16 * 128 * 4
+                self.assertGreater(expected, tokens * config["embed_dim"] * 4)
+                self.assertEqual(specs["layer_output"]["size"], expected)
+                self.assertEqual(buffers["layer_output"]["size"], expected)
+                self.assertGreaterEqual(buffers["layer_output"]["size"],
+                                        buffers["q_scratch"]["size"])
+                self.assertGreaterEqual(buffers["layer_output"]["size"],
+                                        buffers["attn_scratch"]["size"])
 
     def test_emitted_prefill_layout_bridges_execute_resolved_geometry(self):
         tokens, heads, layer_dim, global_dim = 4, 3, 5, 9
