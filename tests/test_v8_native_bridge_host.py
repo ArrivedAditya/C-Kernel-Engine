@@ -896,6 +896,12 @@ class V8NativeBridgeHostTests(unittest.TestCase):
         self.assertEqual(overrides["spatial_merge_factor"], 9)
         self.assertEqual(overrides["image_min_pixels"], 161280)
 
+        with mock.patch.object(bridge_runner_v8, "_image_source_size", return_value=(120, 120)):
+            half_step = bridge_runner_v8._gemma4_geometry_overrides(
+                {**contract, "image_min_pixels": 1}, Path("square.ppm"),
+            )
+        self.assertEqual((half_step["image_width"], half_step["image_height"]), (144, 144))
+
         for invalid in (
             {"image_min_pixels": None},
             {"image_min_pixels": True},
@@ -928,6 +934,45 @@ class V8NativeBridgeHostTests(unittest.TestCase):
             self.assertEqual(pixels[(row * 6) * 3:(row * 6 + 1) * 3], [0.0, 0.0, 0.0])
             self.assertEqual(pixels[(row * 6 + 5) * 3:(row * 6 + 6) * 3], [0.0, 0.0, 0.0])
             self.assertGreater(sum(pixels[(row * 6 + 1) * 3:(row * 6 + 2) * 3]), 0.0)
+
+    def test_gemma4_padding_geometry_and_normalization_boundaries(self) -> None:
+        self.assertIsNotNone(bridge_runner_v8.Image, "Pillow is required for bicubic preprocessing")
+        mean = [0.2, 0.3, 0.4]
+        std = [0.5, 0.25, 0.2]
+        black = [-0.4, -1.2, -2.0]
+        cases = (
+            ("portrait", 1, 2, 4, 5, (3, 0)),
+            ("landscape", 2, 1, 5, 4, (0, 3)),
+            ("square", 2, 2, 4, 4, None),
+        )
+        with tempfile.TemporaryDirectory(prefix="v8_gemma4_padding_boundaries_") as tmpdir:
+            for name, src_w, src_h, out_w, out_h, padded_xy in cases:
+                with self.subTest(name=name):
+                    image = Path(tmpdir) / f"{name}.ppm"
+                    image.write_bytes(
+                        f"P6\n{src_w} {src_h}\n255\n".encode()
+                        + bytes([255, 255, 255] * (src_w * src_h))
+                    )
+                    result = bridge_runner_v8._load_image_file(
+                        image, out_h, out_w, image_mean=mean, image_std=std,
+                        resize_algorithm="bicubic", resize_padding="center_ceil",
+                    )
+                    self.assertEqual(len(result["interleaved"]), out_w * out_h * 3)
+                    self.assertEqual(len(result["planar"]), out_w * out_h * 3)
+                    self.assertNotEqual(result["interleaved"][:3], black)
+                    if padded_xy is None:
+                        self.assertTrue(all(value > 0 for value in result["interleaved"]))
+                        continue
+                    x, y = padded_xy
+                    index = y * out_w + x
+                    legacy = bridge_runner_v8._load_image_file(
+                        image, out_h, out_w, image_mean=mean, image_std=std,
+                        resize_algorithm="bicubic", resize_padding="none",
+                    )
+                    for channel in range(3):
+                        self.assertAlmostEqual(result["interleaved"][index * 3 + channel], black[channel])
+                        self.assertAlmostEqual(result["planar"][channel * out_w * out_h + index], black[channel])
+                        self.assertNotAlmostEqual(legacy["interleaved"][index * 3 + channel], black[channel])
 
     def test_gemma4_prebuilt_encoder_rejects_old_resize_policy(self) -> None:
         with tempfile.TemporaryDirectory(prefix="v8_gemma4_legacy_encoder_") as tmpdir:
