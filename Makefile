@@ -765,6 +765,7 @@ PY_TESTS := unittest/test_layernorm.py \
             unittest/test_attention_full.py \
             unittest/test_attention_sliding_contract.py \
             unittest/test_attention_llama_regular.py \
+            unittest/test_attention_flash_prefill_continuation.py \
             unittest/test_attention_backward.py \
             unittest/test_kv_cache_attention.py \
             unittest/test_kv_cache_layer_decode.py \

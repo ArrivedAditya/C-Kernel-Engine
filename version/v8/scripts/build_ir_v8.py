@@ -16664,6 +16664,31 @@ def load_kernel_call_abis(
                 f"HARD CALL ABI FAULT: kernel {kernel_id!r} in {path.name} declares "
                 f"unsupported prefill_history_scope={prefill_history_scope!r}."
             )
+        prefill_continuation = doc.get("prefill_continuation")
+        numerical_capabilities = doc.get("numerical_capabilities")
+        numerical_reduction_order = (
+            numerical_capabilities.get("reduction_order")
+            if isinstance(numerical_capabilities, dict) else None
+        )
+        if prefill_continuation is not None:
+            alternative = (
+                prefill_continuation.get("function")
+                if isinstance(prefill_continuation, dict) else None
+            )
+            reduction = (
+                prefill_continuation.get("reduction_order")
+                if isinstance(prefill_continuation, dict) else None
+            )
+            if (doc.get("mode") != "decode" or
+                    not str(doc.get("op", "")).startswith("attention") or
+                    not isinstance(alternative, str) or
+                    re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", alternative) is None or
+                    alternative == function or
+                    not isinstance(reduction, str) or not reduction.strip()):
+                raise RuntimeError(
+                    f"HARD CALL ABI FAULT: kernel {kernel_id!r} in {path.name} "
+                    "has an invalid prefill_continuation contract."
+                )
         legacy_keys = [key for key in {kernel_id, function} if key and key in legacy]
         if legacy_keys:
             raise RuntimeError(
@@ -16676,6 +16701,10 @@ def load_kernel_call_abis(
             "call_abi": copy.deepcopy(call_abi),
             "source_file": path.name,
             **({"prefill_history_scope": prefill_history_scope} if prefill_history_scope else {}),
+            **({"prefill_continuation": copy.deepcopy(prefill_continuation)}
+               if prefill_continuation else {}),
+            **({"numerical_reduction_order": numerical_reduction_order}
+               if isinstance(numerical_reduction_order, str) and numerical_reduction_order else {}),
         }
     return result
 
@@ -17508,6 +17537,12 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
         }
         if call_abi_entry and call_abi_entry.get("prefill_history_scope"):
             call_op["prefill_history_scope"] = call_abi_entry["prefill_history_scope"]
+        if call_abi_entry and call_abi_entry.get("prefill_continuation"):
+            call_op["prefill_continuation"] = copy.deepcopy(
+                call_abi_entry["prefill_continuation"])
+        if call_abi_entry and call_abi_entry.get("numerical_reduction_order"):
+            call_op["numerical_reduction_order"] = (
+                call_abi_entry["numerical_reduction_order"])
         if op.get("template_op_id") is not None:
             call_op["template_op_id"] = str(op["template_op_id"])
         for key in ("runtime_extent_contract", "produces_runtime_lengths",

@@ -10,6 +10,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import numpy as np
+
 
 ROOT = Path(__file__).resolve().parents[1]
 CODEGEN_PREFILL_PATH = ROOT / "version" / "v8" / "scripts" / "codegen_prefill_v8.py"
@@ -28,9 +30,74 @@ def _load_module(name: str, path: Path):
 
 
 codegen_prefill_v8 = _load_module("codegen_prefill_v8_tests", CODEGEN_PREFILL_PATH)
+codegen_v8 = _load_module(
+    "codegen_v8_prefill_phase_tests",
+    ROOT / "version" / "v8" / "scripts" / "codegen_v8.py",
+)
+chunked_compare = _load_module(
+    "compare_chunked_prefill_v8_tests",
+    ROOT / "version" / "v8" / "scripts" / "compare_chunked_prefill_v8.py",
+)
 
 
 class TestV8PrefillCodegen(unittest.TestCase):
+    def test_chunked_comparison_detects_logit_and_kv_corruption(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            left, right = root / "left", root / "right"
+            left.mkdir()
+            right.mkdir()
+            np.array([1.0, 2.0], dtype="<f4").tofile(left / "prefill.f32")
+            np.array([1.0, 3.0], dtype="<f4").tofile(right / "prefill.f32")
+            a = {"position": 2, "top_token": 1, "kv_sha256": ["a", "b"]}
+            b = {"position": 2, "top_token": 1, "kv_sha256": ["a", "changed"]}
+            result = chunked_compare._comparison(left, right, "prefill", a, b)
+            self.assertFalse(result["logits_exact"])
+            self.assertEqual(result["max_logit_abs"], 1.0)
+            self.assertEqual(result["kv_exact_layers"], 1)
+            with self.assertRaisesRegex(RuntimeError, "state geometry differs"):
+                chunked_compare._comparison(
+                    left, right, "prefill", a, dict(b, position=3))
+            np.array([0.0], dtype="<f4").tofile(left / "prefill.f32")
+            np.array([-0.0], dtype="<f4").tofile(right / "prefill.f32")
+            self.assertFalse(chunked_compare._comparison(
+                left, right, "prefill", a, a)["logits_exact"])
+
+    def test_prefill_phase_decode_uses_only_matching_map_declared_provider(self):
+        group = {"provider_selection": {"equivalence_group": "attention.test.v1"}}
+        prefill = [{
+            "op": "attn_sliding", "layer": 0, "instance": 0,
+            "prefill_history_scope": "current_chunk",
+            "numerical_reduction_order": "padded_256",
+            "resolved_execution": group,
+        }]
+        decode = [
+            {"op": "dense_embedding_lookup", "layer": -1, "function": "embed"},
+            {
+                "op": "attn_sliding", "layer": 0, "instance": 0,
+                "function": "attention_decode",
+                "prefill_continuation": {
+                    "function": "attention_decode_prefill_phase",
+                    "reduction_order": "padded_256",
+                },
+                "resolved_execution": group,
+            },
+        ]
+        selected = codegen_v8._prefill_phase_decode_ops(decode, prefill)
+        self.assertEqual(
+            [op["function"] for op in selected],
+            ["embed", "attention_decode_prefill_phase"],
+        )
+        self.assertEqual(decode[1]["function"], "attention_decode")
+        self.assertIsNone(codegen_v8._prefill_phase_decode_ops(
+            [decode[0], {k: v for k, v in decode[1].items()
+                         if k != "prefill_continuation"}], prefill))
+        with self.assertRaisesRegex(RuntimeError, "does not match"):
+            codegen_v8._prefill_phase_decode_ops(
+                decode, [dict(prefill[0], numerical_reduction_order="other")])
+        self.assertIsNone(codegen_v8._prefill_phase_decode_ops(
+            decode, [dict(prefill[0], layer=1)]))
+
     def test_generated_embedded_prefill_scales_only_declared_text_rows(self):
         compiler = shutil.which("cc")
         if compiler is None:

@@ -10,6 +10,7 @@ minimal safe defaults and then delegate to the local v8 emitter copy.
 """
 
 import argparse
+import copy
 import json
 import re
 import sys
@@ -1817,6 +1818,58 @@ def _uses_generated_batched_prefill(
     return policy not in {"sequential_decode", "decode"}
 
 
+def _prefill_phase_decode_ops(
+    decode_ops: list[Dict[str, Any]],
+    prefill_ops: list[Dict[str, Any]],
+) -> list[Dict[str, Any]] | None:
+    """Derive a complete decode step with map-declared prefill arithmetic.
+
+    Only the selected attention function may change. A missing or mismatched
+    declaration leaves the existing history-safe decode fallback in place.
+    """
+    def key(op: Dict[str, Any]) -> tuple[int, str, int]:
+        return (int(op.get("layer", -1)), str(op.get("op", "")),
+                int(op.get("instance", 0) or 0))
+
+    def attention(op: Dict[str, Any]) -> bool:
+        return str(op.get("op", "")) in {
+            "attn", "attn_sliding", "mla_attention",
+        } or str(op.get("op", "")).startswith("attention")
+
+    prefill_attention = [op for op in prefill_ops if attention(op)]
+    decode_attention = [op for op in decode_ops if attention(op)]
+    if not prefill_attention or len(prefill_attention) != len(decode_attention):
+        return None
+    prefill_by_key = {key(op): op for op in prefill_attention}
+    if len(prefill_by_key) != len(prefill_attention):
+        return None
+    transformed = []
+    for op in decode_ops:
+        replacement = dict(op)
+        if attention(op):
+            source = prefill_by_key.get(key(op))
+            alternate = op.get("prefill_continuation")
+            if source is None or source.get("prefill_history_scope") != "current_chunk":
+                return None
+            if alternate is None:
+                return None
+            selected_group = ((op.get("resolved_execution") or {}).get(
+                "provider_selection") or {}).get("equivalence_group")
+            prefill_group = ((source.get("resolved_execution") or {}).get(
+                "provider_selection") or {}).get("equivalence_group")
+            if (not isinstance(alternate, dict) or not selected_group or
+                    selected_group != prefill_group or
+                    alternate.get("reduction_order") !=
+                    source.get("numerical_reduction_order")):
+                raise RuntimeError(
+                    "prefill continuation arithmetic does not match the "
+                    f"selected prefill provider at {key(op)!r}"
+                )
+            replacement["function"] = alternate["function"]
+        transformed.append(replacement)
+    return transformed
+
+
 def _extract_c_function(code: str, signature: str) -> tuple[int, int, str] | None:
     start = code.find(signature)
     if start < 0:
@@ -2621,6 +2674,15 @@ def main(argv: list[str] | None = None) -> int:
         prefill_obj = _normalize_prefill_for_decode_layout(
             supplied_prefill_obj, layout_obj
         )
+    prefill_continuation_ops = (
+        _prefill_phase_decode_ops(
+            ir_obj.get("operations", []), prefill_obj.get("operations", []))
+        if prefill_obj is not None else None
+    )
+    if prefill_continuation_ops is not None:
+        prefill_obj = copy.deepcopy(prefill_obj)
+        prefill_obj.setdefault("config", {})[
+            "prefill_continuation_entry"] = "ck_decode_prefill_continuation"
 
     init_call_obj = None
     init_path = args.init if args.init is not None else args.ir.parent / "init_call.json"
@@ -2697,6 +2759,7 @@ def main(argv: list[str] | None = None) -> int:
             profile=args.profile,
             dump=emit_parity_dumps,
             strict_contracts=args.strict_contracts,
+            prefill_continuation_ops=prefill_continuation_ops,
         )
         sequential_mixed_bridge_emitted = False
         if prefill_code:

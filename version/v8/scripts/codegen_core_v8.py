@@ -4129,6 +4129,7 @@ def generate(
     strict_contracts: bool = False,
     minimum_total_size: int = 0,
     layout_override: Optional[Dict] = None,
+    prefill_continuation_ops: Optional[List[Dict]] = None,
 ) -> str:
     """Generate complete C code.
 
@@ -4426,6 +4427,24 @@ static void _ck_profile_dump(void) {
             scale_embeddings_sqrt_dim=scale_embeddings_sqrt_dim,
         )
     )
+    if prefill_continuation_ops is not None:
+        if len(prefill_continuation_ops) != len(ops):
+            raise RuntimeError(
+                "prefill continuation must preserve the complete decode operation sequence"
+            )
+        parts.append(
+            emit_decode_function(
+                prefill_continuation_ops,
+                token_offset,
+                token_base,
+                config=config,
+                debug=debug,
+                profile=profile,
+                dump=dump,
+                scale_embeddings_sqrt_dim=scale_embeddings_sqrt_dim,
+                function_name="ck_decode_prefill_continuation",
+            )
+        )
 
     if logits_stride == 0:
         from batch_decode_contract_v8 import resolve_two_row_batch_contract
