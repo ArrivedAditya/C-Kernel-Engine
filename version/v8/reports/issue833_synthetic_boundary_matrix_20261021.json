@@ -1,0 +1,483 @@
+{
+  "schema": "cke.issue833.synthetic_boundary_matrix.v1",
+  "status": "DIAGNOSTIC_INCOMPLETE_NOT_CERTIFIED",
+  "source_revision": "d17c9e6d0097a7bd03a74b8cf7fd2b77072ad985",
+  "host": "dgx-hb10 aarch64",
+  "omp_threads": 4,
+  "token_ids": "9707 + position % 17",
+  "chunk_length": 128,
+  "artifacts": {
+    "gemma": {
+      "full": {
+        "model_sha256": "4b9de23024ddeacbb9300010504ccea7dcafb1e1bfdc7e942fc72e7bfa6e15a9",
+        "engine_sha256": "947a3303943cc473076078e0a5700cf2556b5e8a163daade9411c2de14268aa8"
+      },
+      "chunk128": {
+        "model_sha256": "2852220966ba0b260c65d7aec95dc53e33c44b47a34eda89c064300838118c95",
+        "engine_sha256": "947a3303943cc473076078e0a5700cf2556b5e8a163daade9411c2de14268aa8"
+      },
+      "gguf_sha256": "0d29b1a23a4cb1f14fda28c9e63563fa4bbefb6f34db4f7e873bb72edd932b00",
+      "weights_manifest_sha256": "9ae45ee1a8416fc33c17a2fcbd8e63e3d0e4b087e252aff07fe30ad1ac7bf623"
+    },
+    "qwen2": {
+      "full": {
+        "model_sha256": "a8d3727e047153f3c2e0001d0793fa13866797ed3ddf4011ca3f2f47c1486de9",
+        "engine_sha256": "947a3303943cc473076078e0a5700cf2556b5e8a163daade9411c2de14268aa8"
+      },
+      "chunk128": {
+        "model_sha256": "0a03ce64da2f9e15be324cd827c31e6267eec14d092bfdb2cd2896915395fa14",
+        "engine_sha256": "947a3303943cc473076078e0a5700cf2556b5e8a163daade9411c2de14268aa8"
+      },
+      "gguf_sha256": "f0a42bb979ca62b5e61f3bf924ab4b6a40aa091825ee7dcb4039949980ab81a8",
+      "weights_manifest_sha256": "b15697ca123ddc06a4a160332f302f46fa5716a41b77b4dd33d0f0ab8a57e500"
+    },
+    "qwen3": {
+      "full": {
+        "model_sha256": "a346a2bcde25357bf5a3bf8b0c7de4dab3568d65fe8a9965ebc35d736e2df0e3",
+        "engine_sha256": "947a3303943cc473076078e0a5700cf2556b5e8a163daade9411c2de14268aa8"
+      },
+      "chunk128": {
+        "model_sha256": "de0fc25d59b7b9d430f4711ecd156b0be9afde124923addcf22e9467ee7ce454",
+        "engine_sha256": "947a3303943cc473076078e0a5700cf2556b5e8a163daade9411c2de14268aa8"
+      },
+      "gguf_sha256": "9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031",
+      "weights_manifest_sha256": "1c257919de42dab74d0cca8672cc20b6b7a8c64560ee8becb4393cb8bc6e903b"
+    }
+  },
+  "cases": [
+    {
+      "model": "gemma",
+      "length": 127,
+      "same_engine": true,
+      "prefill": {
+        "max_abs": 0.0,
+        "cosine": 1.0000000000000002,
+        "top_equal": true,
+        "top_full": 9715,
+        "top_chunk": 9715,
+        "kv_exact_layers": 18,
+        "total_kv_layers": 18
+      },
+      "continuation": {
+        "max_abs": 0.0,
+        "cosine": 1.0,
+        "top_equal": true,
+        "top_full": 9716,
+        "top_chunk": 9716,
+        "kv_exact_layers": 18,
+        "total_kv_layers": 18
+      }
+    },
+    {
+      "model": "gemma",
+      "length": 128,
+      "same_engine": true,
+      "prefill": {
+        "max_abs": 0.0,
+        "cosine": 1.0,
+        "top_equal": true,
+        "top_full": 9716,
+        "top_chunk": 9716,
+        "kv_exact_layers": 18,
+        "total_kv_layers": 18
+      },
+      "continuation": {
+        "max_abs": 0.0,
+        "cosine": 0.9999999999999999,
+        "top_equal": true,
+        "top_full": 9717,
+        "top_chunk": 9717,
+        "kv_exact_layers": 18,
+        "total_kv_layers": 18
+      }
+    },
+    {
+      "model": "gemma",
+      "length": 129,
+      "same_engine": true,
+      "prefill": {
+        "max_abs": 2.585735321044922,
+        "cosine": 0.9999489092644813,
+        "top_equal": true,
+        "top_full": 9717,
+        "top_chunk": 9717,
+        "kv_exact_layers": 4,
+        "total_kv_layers": 18
+      },
+      "continuation": {
+        "max_abs": 2.4005489349365234,
+        "cosine": 0.9999044085008035,
+        "top_equal": true,
+        "top_full": 9718,
+        "top_chunk": 9718,
+        "kv_exact_layers": 4,
+        "total_kv_layers": 18
+      }
+    },
+    {
+      "model": "gemma",
+      "length": 256,
+      "same_engine": true,
+      "prefill": {
+        "max_abs": 4.312503814697266,
+        "cosine": 0.9997851756534708,
+        "top_equal": true,
+        "top_full": 1156,
+        "top_chunk": 1156,
+        "kv_exact_layers": 1,
+        "total_kv_layers": 18
+      },
+      "continuation": {
+        "max_abs": 3.489837646484375,
+        "cosine": 0.9996145838301443,
+        "top_equal": true,
+        "top_full": 9709,
+        "top_chunk": 9709,
+        "kv_exact_layers": 1,
+        "total_kv_layers": 18
+      }
+    },
+    {
+      "model": "gemma",
+      "length": 257,
+      "same_engine": true,
+      "prefill": {
+        "max_abs": 4.628807067871094,
+        "cosine": 0.999473581697627,
+        "top_equal": true,
+        "top_full": 9709,
+        "top_chunk": 9709,
+        "kv_exact_layers": 1,
+        "total_kv_layers": 18
+      },
+      "continuation": {
+        "max_abs": 3.806020736694336,
+        "cosine": 0.9996659146173953,
+        "top_equal": true,
+        "top_full": 9710,
+        "top_chunk": 9710,
+        "kv_exact_layers": 1,
+        "total_kv_layers": 18
+      }
+    },
+    {
+      "model": "gemma",
+      "length": 429,
+      "same_engine": true,
+      "prefill": {
+        "max_abs": 2.833759307861328,
+        "cosine": 0.9998834058201984,
+        "top_equal": true,
+        "top_full": 9711,
+        "top_chunk": 9711,
+        "kv_exact_layers": 1,
+        "total_kv_layers": 18
+      },
+      "continuation": {
+        "max_abs": 4.297471046447754,
+        "cosine": 0.999514920285648,
+        "top_equal": true,
+        "top_full": 9712,
+        "top_chunk": 9712,
+        "kv_exact_layers": 1,
+        "total_kv_layers": 18
+      }
+    },
+    {
+      "model": "qwen2",
+      "length": 127,
+      "same_engine": true,
+      "prefill": {
+        "max_abs": 0.0,
+        "cosine": 1.0,
+        "top_equal": true,
+        "top_full": 9715,
+        "top_chunk": 9715,
+        "kv_exact_layers": 24,
+        "total_kv_layers": 24
+      },
+      "continuation": {
+        "max_abs": 0.0,
+        "cosine": 1.0,
+        "top_equal": true,
+        "top_full": 9716,
+        "top_chunk": 9716,
+        "kv_exact_layers": 24,
+        "total_kv_layers": 24
+      }
+    },
+    {
+      "model": "qwen2",
+      "length": 128,
+      "same_engine": true,
+      "prefill": {
+        "max_abs": 0.0,
+        "cosine": 1.0000000000000002,
+        "top_equal": true,
+        "top_full": 9716,
+        "top_chunk": 9716,
+        "kv_exact_layers": 24,
+        "total_kv_layers": 24
+      },
+      "continuation": {
+        "max_abs": 0.0,
+        "cosine": 1.0,
+        "top_equal": true,
+        "top_full": 9717,
+        "top_chunk": 9717,
+        "kv_exact_layers": 24,
+        "total_kv_layers": 24
+      }
+    },
+    {
+      "model": "qwen2",
+      "length": 129,
+      "same_engine": true,
+      "prefill": {
+        "max_abs": 0.0,
+        "cosine": 1.0,
+        "top_equal": true,
+        "top_full": 9717,
+        "top_chunk": 9717,
+        "kv_exact_layers": 24,
+        "total_kv_layers": 24
+      },
+      "continuation": {
+        "max_abs": 0.0,
+        "cosine": 1.0000000000000002,
+        "top_equal": true,
+        "top_full": 9718,
+        "top_chunk": 9718,
+        "kv_exact_layers": 24,
+        "total_kv_layers": 24
+      }
+    },
+    {
+      "model": "qwen2",
+      "length": 256,
+      "same_engine": true,
+      "prefill": {
+        "max_abs": 0.40245723724365234,
+        "cosine": 0.9997154361179733,
+        "top_equal": true,
+        "top_full": 9708,
+        "top_chunk": 9708,
+        "kv_exact_layers": 2,
+        "total_kv_layers": 24
+      },
+      "continuation": {
+        "max_abs": 0.5120334625244141,
+        "cosine": 0.9997943792478612,
+        "top_equal": true,
+        "top_full": 9709,
+        "top_chunk": 9709,
+        "kv_exact_layers": 2,
+        "total_kv_layers": 24
+      }
+    },
+    {
+      "model": "qwen2",
+      "length": 257,
+      "same_engine": true,
+      "prefill": {
+        "max_abs": 0.5120334625244141,
+        "cosine": 0.9997943792478612,
+        "top_equal": true,
+        "top_full": 9709,
+        "top_chunk": 9709,
+        "kv_exact_layers": 2,
+        "total_kv_layers": 24
+      },
+      "continuation": {
+        "max_abs": 0.42819976806640625,
+        "cosine": 0.9998321759587132,
+        "top_equal": true,
+        "top_full": 9710,
+        "top_chunk": 9710,
+        "kv_exact_layers": 2,
+        "total_kv_layers": 24
+      }
+    },
+    {
+      "model": "qwen2",
+      "length": 429,
+      "same_engine": true,
+      "prefill": {
+        "max_abs": 0.48931121826171875,
+        "cosine": 0.9996923340516928,
+        "top_equal": true,
+        "top_full": 9711,
+        "top_chunk": 9711,
+        "kv_exact_layers": 1,
+        "total_kv_layers": 24
+      },
+      "continuation": {
+        "max_abs": 0.5051442980766296,
+        "cosine": 0.9996494450595474,
+        "top_equal": true,
+        "top_full": 9712,
+        "top_chunk": 9712,
+        "kv_exact_layers": 1,
+        "total_kv_layers": 24
+      }
+    },
+    {
+      "model": "qwen3",
+      "length": 127,
+      "same_engine": true,
+      "prefill": {
+        "max_abs": 0.0,
+        "cosine": 1.0,
+        "top_equal": true,
+        "top_full": 9715,
+        "top_chunk": 9715,
+        "kv_exact_layers": 28,
+        "total_kv_layers": 28
+      },
+      "continuation": {
+        "max_abs": 0.0,
+        "cosine": 1.0,
+        "top_equal": true,
+        "top_full": 9716,
+        "top_chunk": 9716,
+        "kv_exact_layers": 28,
+        "total_kv_layers": 28
+      }
+    },
+    {
+      "model": "qwen3",
+      "length": 128,
+      "same_engine": true,
+      "prefill": {
+        "max_abs": 0.0,
+        "cosine": 1.0,
+        "top_equal": true,
+        "top_full": 9716,
+        "top_chunk": 9716,
+        "kv_exact_layers": 28,
+        "total_kv_layers": 28
+      },
+      "continuation": {
+        "max_abs": 0.0,
+        "cosine": 1.0000000000000002,
+        "top_equal": true,
+        "top_full": 9717,
+        "top_chunk": 9717,
+        "kv_exact_layers": 28,
+        "total_kv_layers": 28
+      }
+    },
+    {
+      "model": "qwen3",
+      "length": 129,
+      "same_engine": true,
+      "prefill": {
+        "max_abs": 0.0,
+        "cosine": 1.0000000000000002,
+        "top_equal": true,
+        "top_full": 9717,
+        "top_chunk": 9717,
+        "kv_exact_layers": 28,
+        "total_kv_layers": 28
+      },
+      "continuation": {
+        "max_abs": 0.0,
+        "cosine": 1.0,
+        "top_equal": true,
+        "top_full": 9718,
+        "top_chunk": 9718,
+        "kv_exact_layers": 28,
+        "total_kv_layers": 28
+      }
+    },
+    {
+      "model": "qwen3",
+      "length": 256,
+      "same_engine": true,
+      "prefill": {
+        "max_abs": 0.31492114067077637,
+        "cosine": 0.9998877984623219,
+        "top_equal": true,
+        "top_full": 9708,
+        "top_chunk": 9708,
+        "kv_exact_layers": 1,
+        "total_kv_layers": 28
+      },
+      "continuation": {
+        "max_abs": 0.2807426452636719,
+        "cosine": 0.9998815950716831,
+        "top_equal": true,
+        "top_full": 9709,
+        "top_chunk": 9709,
+        "kv_exact_layers": 1,
+        "total_kv_layers": 28
+      }
+    },
+    {
+      "model": "qwen3",
+      "length": 257,
+      "same_engine": true,
+      "prefill": {
+        "max_abs": 0.2807426452636719,
+        "cosine": 0.9998815950716831,
+        "top_equal": true,
+        "top_full": 9709,
+        "top_chunk": 9709,
+        "kv_exact_layers": 1,
+        "total_kv_layers": 28
+      },
+      "continuation": {
+        "max_abs": 0.23540496826171875,
+        "cosine": 0.9999271235317984,
+        "top_equal": true,
+        "top_full": 9710,
+        "top_chunk": 9710,
+        "kv_exact_layers": 1,
+        "total_kv_layers": 28
+      }
+    },
+    {
+      "model": "qwen3",
+      "length": 429,
+      "same_engine": true,
+      "prefill": {
+        "max_abs": 0.3058938980102539,
+        "cosine": 0.9999357545021085,
+        "top_equal": true,
+        "top_full": 9711,
+        "top_chunk": 9711,
+        "kv_exact_layers": 1,
+        "total_kv_layers": 28
+      },
+      "continuation": {
+        "max_abs": 0.23898792266845703,
+        "cosine": 0.9999104658636179,
+        "top_equal": true,
+        "top_full": 9712,
+        "top_chunk": 9712,
+        "kv_exact_layers": 1,
+        "total_kv_layers": 28
+      }
+    }
+  ],
+  "limitations": [
+    "Synthetic token pattern from the retained current-main diagnostic, not the unretained exact inputs of the original failure.",
+    "The full and chunked artifacts deliberately use different valid attention reduction phases after the first chunk; logit equality is not the gate.",
+    "Top-token agreement does not certify full numerical parity or a general tolerance.",
+    "Only one generated continuation token was tested at each length; odd chunk sizes and additional continuation remain untested.",
+    "Library hashes describe selected artifact files; this diagnostic did not independently verify their loaded backing mappings."
+  ],
+  "method": {
+    "prefill": "fresh ck_model_init(weights.bump), ck_model_embed_tokens(all tokens), ck_model_forward; copy complete float32 vocabulary logits and export logical KV for every layer",
+    "continuation": "teacher force one additional token 9707 + (prompt_length % 17) through ck_model_decode; copy complete logits and export every KV layer",
+    "comparison": "full-context and 128-token-chunk generated model libraries share the same engine and converted weights; compare complete logits and SHA-256 of each exported KV layer",
+    "lengths": [
+      127,
+      128,
+      129,
+      256,
+      257,
+      429
+    ]
+  }
+}

@@ -1800,7 +1800,18 @@ def emit_prefill_function(ops: List[Dict], config: Dict, profile: bool = False, 
                       if op.get("prefill_history_scope") is not None}
     if history_scopes - {"current_chunk"}:
         raise RuntimeError(f"unsupported prefill history scope: {sorted(history_scopes)!r}")
-    chunk_local_history = "current_chunk" in history_scopes
+    # A selected attention provider without a history declaration has not
+    # proven it can consume KV from a previous prefill chunk. Treat it like a
+    # current-chunk-only provider when scheduling continuation. This keeps an
+    # omitted map contract from silently dropping prior conversation state.
+    unknown_attention_history = any(
+        str(op.get("op", "")).startswith("attention") or
+        str(op.get("op", "")) == "mla_attention"
+        for op in ops if op.get("prefill_history_scope") is None
+    )
+    requires_decode_continuation = (
+        "current_chunk" in history_scopes or unknown_attention_history
+    )
     context_capacity = int(config.get("context_length", config.get("context_len", 0)) or 0)
     prefill_chunk_length = int(config.get("prefill_chunk_length", context_capacity) or context_capacity)
     if context_capacity <= 0 or prefill_chunk_length <= 0:
@@ -2024,9 +2035,9 @@ static void ck_prefill_range(CKModel *model, const int32_t *tokens, int num_toke
     lines.append("    while (consumed < num_tokens) {")
     lines.append("        if (ck_model_cancel_requested()) return;")
     lines.append(f"        int chunk = num_tokens - consumed > {prefill_chunk_length} ? {prefill_chunk_length} : num_tokens - consumed;")
-    if chunk_local_history:
+    if requires_decode_continuation:
         lines.append("        if (consumed > 0 || start_pos > 0) {")
-        lines.append("            /* This selected prefill provider sees only its own chunk.")
+        lines.append("            /* This prefill provider is not proven to read prior KV.")
         lines.append("             * Continue through decode so attention reads prior KV and")
         lines.append("             * cache writes append at absolute positions. */")
         lines.append("            for (int i = 0; i < chunk; ++i) {")

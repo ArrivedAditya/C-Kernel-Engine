@@ -361,7 +361,8 @@ int main(void) {
             root = Path(temp)
             for label, scope, expected_exit in (
                 ("declared", "current_chunk", 0),
-                ("missing_scope_control", None, 2),
+                ("undeclared_falls_back", None, 0),
+                ("unsafe_chunk_replay_control", None, 2),
             ):
                 op = dict(base_op)
                 if scope is not None:
@@ -369,6 +370,10 @@ int main(void) {
                 emitted = codegen_prefill_v8.emit_prefill_function([op], config)
                 schedule = "static void ck_prefill(CKModel" + emitted.split(
                     "static void ck_prefill(CKModel", 1)[1]
+                if label == "unsafe_chunk_replay_control":
+                    schedule = schedule.replace(
+                        "if (consumed > 0 || start_pos > 0)", "if (0)"
+                    )
                 source = root / f"{label}.c"
                 binary = root / label
                 source.write_text(program.replace("__SCHEDULE__", schedule))
