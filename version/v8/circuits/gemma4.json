@@ -147,6 +147,9 @@
     "multimodal_bridge": {
       "image_begin_marker": "<|image>",
       "image_end_marker": "<image|>",
+      "runtime_policy": "decode_staged",
+      "generation_policy": "incremental_decode_after_prefill",
+      "cache_policy": "persistent_decoder_kv",
       "prefill_schedules": {
         "segmented_append": {
           "segments": ["text_before", "visual", "text_after"],

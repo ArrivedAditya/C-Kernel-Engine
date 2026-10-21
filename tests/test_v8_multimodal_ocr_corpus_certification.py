@@ -30,6 +30,180 @@ PUBLIC_SPEC.loader.exec_module(PUBLIC)
 
 
 class MultimodalOcrCorpusCertificationTest(unittest.TestCase):
+    def test_gguf_source_bridge_command_uses_shared_generated_workspace(self) -> None:
+        args = SimpleNamespace(
+            decoder_gguf=Path("decoder.gguf"), encoder_gguf=Path("encoder.gguf"),
+            decoder_runtime=None, encoder_runtime=None, composition_circuit=None,
+            output_dir=Path("results"), chat_template="auto", thinking_mode="suppressed",
+            context_len=4096, max_new_tokens=32, generation_progress_every=8,
+            adapt_encoder_geometry=False,
+        )
+        command = MODULE._bridge_command(args, {"image": Path("image.jpg")}, Path("case"), "extract")
+        self.assertEqual(command[command.index("--decoder-gguf") + 1], "decoder.gguf")
+        self.assertEqual(command[command.index("--encoder-gguf") + 1], "encoder.gguf")
+        self.assertEqual(Path(command[command.index("--workdir") + 1]),
+                         Path("results/gguf_runtime").resolve())
+        self.assertNotIn("--composition-circuit", command)
+
+    def test_mixed_source_modes_reject_before_manifest_loading(self) -> None:
+        with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as error:
+            MODULE.main([
+                "--manifest", "unused.json", "--decoder-gguf", "decoder.gguf",
+                "--encoder-runtime", "encoder", "--adapter-id", "fixture",
+                "--model-label", "fixture", "--output-dir", "out",
+            ])
+        self.assertEqual(error.exception.code, 2)
+
+    def test_gguf_execution_rejects_swapped_source_and_library(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            image = root / "image.jpg"
+            image.write_bytes(b"image")
+            workspace = root / "runtime"
+            report = {"status": "ok", "prefix_source": "encoder", "prefix_tokens": 2,
+                      "encoder_report": {"image_source": "file", "image_path": str(image),
+                                         "prefix_tokens": 2}}
+            config = {"source_mode": "gguf", "gguf_runtime_dir": str(workspace)}
+            for role in ("encoder", "decoder"):
+                gguf = root / f"{role}.gguf"
+                gguf.write_bytes(role.encode())
+                config[f"{role}_gguf"] = MODULE._gguf_identity(gguf)
+                runtime = workspace / role
+                runtime.mkdir(parents=True)
+                model = runtime / f"lib{role}.so"
+                model.write_bytes(role.encode())
+                (runtime / "libckernel_engine.so").write_bytes(b"engine")
+                report[f"{role}_runtime"] = {
+                    "source": "gguf", "gguf": str(gguf),
+                    "workdir": str(runtime), "so_path": str(model),
+                }
+            sample = {"image": image, "image_sha256": MODULE._sha256_file(image)}
+            evidence = MODULE._verify_bridge_execution(report, sample, config)
+            self.assertEqual(evidence["source_mode"], "gguf")
+            self.assertFalse(evidence["loaded_engine_verified"])
+            changed = json.loads(json.dumps(report))
+            changed["decoder_runtime"]["gguf"] = changed["encoder_runtime"]["gguf"]
+            with self.assertRaisesRegex(ValueError, "GGUF differs"):
+                MODULE._verify_bridge_execution(changed, sample, config)
+            changed = json.loads(json.dumps(report))
+            outside = root / "libdecoder.so"
+            outside.write_bytes(b"wrong")
+            changed["decoder_runtime"]["so_path"] = str(outside)
+            with self.assertRaisesRegex(ValueError, "outside the workspace"):
+                MODULE._verify_bridge_execution(changed, sample, config)
+            (root / "decoder.gguf").write_bytes(b"mutated")
+            with self.assertRaisesRegex(ValueError, "changed during OCR execution"):
+                MODULE._verify_bridge_execution(report, sample, config)
+
+    def test_gguf_resume_rejects_changed_generated_library(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workspace = root / "runtime"
+            config = {"source_mode": "gguf", "gguf_runtime_dir": str(workspace)}
+            evidence = {
+                "evidence_kind": "bridge_reported_paths_and_artifact_hashes",
+                "source_mode": "gguf", "loaded_engine_verified": False,
+                "prefix_source": "encoder", "prefix_tokens": 2,
+                "model_library_paths": {}, "model_library_sha256": {},
+                "engine_library_paths": {}, "engine_library_sha256": {},
+            }
+            for role in ("encoder", "decoder"):
+                source = root / f"{role}.gguf"
+                source.write_bytes(role.encode())
+                config[f"{role}_gguf"] = MODULE._gguf_identity(source)
+                runtime = workspace / role
+                runtime.mkdir(parents=True)
+                model = runtime / f"lib{role}.so"
+                engine = runtime / "libckernel_engine.so"
+                model.write_bytes(role.encode())
+                engine.write_bytes(b"engine")
+                evidence["model_library_paths"][role] = str(model)
+                evidence["model_library_sha256"][role] = MODULE._sha256_file(model)
+                evidence["engine_library_paths"][role] = str(engine)
+                evidence["engine_library_sha256"][role] = MODULE._sha256_file(engine)
+            expected = {"image_index": 1, "image_sha256": "image", "truth_sha256": "truth"}
+            truth = {"name": "Ada"}
+            output = '{"name":"Ada"}'
+            row = {
+                "case_config": expected, "status": "complete", "image_index": 1,
+                "image_sha256": "image", "truth_sha256": "truth",
+                "execution_evidence": evidence, "generated_text": output,
+                "output_sha256": MODULE._sha256_bytes(output.encode()),
+                "parsed_output": truth, "metrics": MODULE._score(truth, truth),
+                "generated_token_ids": [1], "generated_tokens": 1,
+                "token_trace_sha256": MODULE._sha256_json([1]),
+                "timings": {"wall_sec": 1.0},
+            }
+            path = root / "case.json"
+            path.write_text(json.dumps(row), encoding="utf-8")
+            self.assertIsNotNone(MODULE._load_resumed(path, expected, config, truth))
+            (workspace / "decoder" / "libdecoder.so").write_bytes(b"changed")
+            self.assertIsNone(MODULE._load_resumed(path, expected, config, truth))
+
+    def test_gguf_mode_runs_fresh_report_and_invalidates_changed_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            image = root / "image.jpg"
+            truth = root / "truth.json"
+            image.write_bytes(b"image")
+            truth.write_text('{"name":"Ada"}', encoding="utf-8")
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps({"samples": [{
+                "inputs": [{"path": "image.jpg"}],
+                "groundTruth": [{"path": "truth.json"}],
+            }]}), encoding="utf-8")
+            decoder = root / "decoder.gguf"
+            encoder = root / "encoder.gguf"
+            decoder.write_bytes(b"decoder")
+            encoder.write_bytes(b"encoder")
+            output = root / "output"
+            runtime = output / "gguf_runtime"
+            runtime.mkdir(parents=True)
+            report_path = runtime / "bridge_report.json"
+            report_path.write_text('{"status":"stale"}', encoding="utf-8")
+            args = [
+                "--manifest", str(manifest), "--decoder-gguf", str(decoder),
+                "--encoder-gguf", str(encoder), "--adapter-id", "fixture",
+                "--model-label", "fixture", "--output-dir", str(output),
+                "--limit", "1", "--require-images", "1",
+            ]
+            calls = []
+
+            def run(command, log_path, env):
+                self.assertFalse(report_path.exists())
+                calls.append(command)
+                report = {
+                    "status": "ok", "prefix_source": "encoder", "prefix_tokens": 2,
+                    "encoder_report": {"image_source": "file", "image_path": str(image),
+                                       "prefix_tokens": 2},
+                    "generated_text": '{"name":"Ada"}', "generated_token_ids": [1],
+                    "generation_stop_reason": "eos", "timings": {},
+                }
+                for role, source in (("encoder", encoder), ("decoder", decoder)):
+                    directory = runtime / role
+                    directory.mkdir(exist_ok=True)
+                    model = directory / f"lib{role}.so"
+                    if not model.exists():
+                        model.write_bytes(role.encode())
+                    (directory / "libckernel_engine.so").write_bytes(b"engine")
+                    report[f"{role}_runtime"] = {
+                        "source": "gguf", "gguf": str(source),
+                        "workdir": str(directory), "so_path": str(model),
+                    }
+                report_path.write_text(json.dumps(report), encoding="utf-8")
+                return 0.01
+
+            with mock.patch.object(MODULE, "_run", side_effect=run), redirect_stdout(StringIO()):
+                self.assertEqual(MODULE.main(args), 0)
+                self.assertEqual(MODULE.main(args), 0)
+                self.assertEqual(len(calls), 1)
+                (runtime / "decoder" / "libdecoder.so").write_bytes(b"changed")
+                self.assertEqual(MODULE.main(args), 0)
+                self.assertEqual(len(calls), 2)
+            summary = json.loads((output / "summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(summary["quality_status"], "pass")
+            self.assertTrue((output / "image01" / "bridge_report.json").is_file())
+
     def test_required_count_applies_to_selected_distinct_images(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -75,6 +249,8 @@ class MultimodalOcrCorpusCertificationTest(unittest.TestCase):
                      "evidence_kind": "bridge_reported_paths_and_artifact_hashes",
                      "loaded_engine_verified": False, "prefix_source": "encoder",
                      "model_library_sha256": {"encoder": "a" * 64, "decoder": "b" * 64},
+                     "model_library_paths": {"encoder": "/private/SENTINEL-encoder.so"},
+                     "engine_library_sha256": {"decoder": "d" * 64},
                  }} for _ in range(2)
             ],
         }
@@ -84,7 +260,7 @@ class MultimodalOcrCorpusCertificationTest(unittest.TestCase):
         self.assertEqual(public["completed_count"], 2)
         self.assertEqual(public["passing_count"], 1)
         self.assertEqual(public["status"], "fail")
-        for secret in ("SENTINEL", "/private", "c" * 64):
+        for secret in ("SENTINEL", "/private", "c" * 64, "d" * 64):
             self.assertNotIn(secret, serialized)
         minimal = PUBLIC.build_count_free_public_summary(private)
         self.assertEqual(minimal, {

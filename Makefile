@@ -1787,6 +1787,7 @@ test-v8-qwen38-dense-contracts:
 test-v8-multimodal-ocr-contracts:
 	@$(PYTHON) -m unittest -q \
 		tests.test_v8_multimodal_ocr_corpus_certification \
+		tests.test_v8_gemma4_scaffold.Gemma3RopeMetadataTests.test_gemma4_bridge_uses_persistent_cache_after_mixed_prefill \
 		tests.test_v8_decoder_first_token_parity \
 		tests.test_v8_multitoken_eos_contract
 

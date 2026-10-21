@@ -10,6 +10,7 @@
 
 #include "llama.h"
 #include "mtmd.h"
+#include "mtmd-helper.h"
 
 static std::string ppm_token(std::istream & stream) {
     std::string token;
@@ -31,27 +32,35 @@ static std::string ppm_token(std::istream & stream) {
 
 int main(int argc, char ** argv) {
     if (argc != 6) {
-        std::cerr << "usage: llama_mtmd_prefix_probe_v8 MODEL MMPROJ IMAGE_P6 OUTPUT_F32 OUTPUT_RGB8\n";
+        std::cerr << "usage: llama_mtmd_prefix_probe_v8 MODEL MMPROJ IMAGE OUTPUT_F32 OUTPUT_RGB8\n";
         return 2;
     }
     try {
         std::ifstream image(argv[3], std::ios::binary);
-        if (!image || ppm_token(image) != "P6") throw std::runtime_error("expected P6 image");
-        const int width = std::stoi(ppm_token(image));
-        const int height = std::stoi(ppm_token(image));
-        const int maximum = std::stoi(ppm_token(image));
-        if (width <= 0 || height <= 0 || width > 16384 || height > 16384 ||
-            static_cast<int64_t>(width) * height > 16000000 || maximum != 255) {
-            throw std::runtime_error("unsupported P6 geometry or channel range");
+        if (!image) throw std::runtime_error("cannot open image");
+        char magic[2] = {};
+        image.read(magic, sizeof(magic));
+        const bool is_p6 = image.gcount() == 2 && magic[0] == 'P' && magic[1] == '6';
+        image.clear();
+        image.seekg(0);
+        int width = 0;
+        int height = 0;
+        std::vector<uint8_t> rgb;
+        if (is_p6) {
+            (void) ppm_token(image);
+            width = std::stoi(ppm_token(image));
+            height = std::stoi(ppm_token(image));
+            const int maximum = std::stoi(ppm_token(image));
+            if (width <= 0 || height <= 0 || width > 16384 || height > 16384 ||
+                static_cast<int64_t>(width) * height > 16000000 || maximum != 255) {
+                throw std::runtime_error("unsupported P6 geometry or channel range");
+            }
+            rgb.resize(static_cast<size_t>(width) * height * 3);
+            image.read(reinterpret_cast<char *>(rgb.data()), rgb.size());
+            if (static_cast<size_t>(image.gcount()) != rgb.size() || image.peek() != EOF) {
+                throw std::runtime_error("incomplete or trailing P6 pixel data");
+            }
         }
-        std::vector<uint8_t> rgb(static_cast<size_t>(width) * height * 3);
-        image.read(reinterpret_cast<char *>(rgb.data()), rgb.size());
-        if (static_cast<size_t>(image.gcount()) != rgb.size() || image.peek() != EOF) {
-            throw std::runtime_error("incomplete or trailing P6 pixel data");
-        }
-        std::ofstream rgb_output(argv[5], std::ios::binary);
-        rgb_output.write(reinterpret_cast<const char *>(rgb.data()), rgb.size());
-        if (!rgb_output) throw std::runtime_error("failed to write decoded RGB8 pixels");
 
         llama_backend_init();
         llama_model_params model_params = llama_model_default_params();
@@ -68,8 +77,32 @@ int main(int argc, char ** argv) {
         if (!mtmd || !mtmd_support_vision(mtmd.get())) {
             throw std::runtime_error("failed to load vision encoder");
         }
-        std::unique_ptr<mtmd_bitmap, decltype(&mtmd_bitmap_free)> bitmap(
-            mtmd_bitmap_init(width, height, rgb.data()), mtmd_bitmap_free);
+        std::unique_ptr<mtmd_bitmap, decltype(&mtmd_bitmap_free)> bitmap(nullptr, mtmd_bitmap_free);
+        if (is_p6) {
+            bitmap.reset(mtmd_bitmap_init(width, height, rgb.data()));
+        } else {
+            const auto decoded = mtmd_helper_bitmap_init_from_file(
+                mtmd.get(), argv[3], false, mtmd_helper_init_opt_default());
+            if (decoded.video_ctx) mtmd_helper_video_free(decoded.video_ctx);
+            bitmap.reset(decoded.bitmap);
+            if (decoded.video_ctx || !bitmap || mtmd_bitmap_is_audio(bitmap.get())) {
+                throw std::runtime_error("image decoder did not return one RGB8 image");
+            }
+            width = static_cast<int>(mtmd_bitmap_get_nx(bitmap.get()));
+            height = static_cast<int>(mtmd_bitmap_get_ny(bitmap.get()));
+            if (width <= 0 || height <= 0 || width > 16384 || height > 16384 ||
+                static_cast<int64_t>(width) * height > 16000000 ||
+                mtmd_bitmap_get_n_bytes(bitmap.get()) != static_cast<size_t>(width) * height * 3) {
+                throw std::runtime_error("unsupported decoded image geometry");
+            }
+            const auto * data = mtmd_bitmap_get_data(bitmap.get());
+            if (!data) throw std::runtime_error("image decoder returned no pixels");
+            rgb.assign(data, data + static_cast<size_t>(width) * height * 3);
+        }
+        if (!bitmap) throw std::runtime_error("failed to prepare image bitmap");
+        std::ofstream rgb_output(argv[5], std::ios::binary);
+        rgb_output.write(reinterpret_cast<const char *>(rgb.data()), rgb.size());
+        if (!rgb_output) throw std::runtime_error("failed to write decoded RGB8 pixels");
         std::unique_ptr<mtmd_input_chunks, decltype(&mtmd_input_chunks_free)> chunks(
             mtmd_input_chunks_init(), mtmd_input_chunks_free);
         if (!bitmap || !chunks) throw std::runtime_error("failed to prepare image chunk");
