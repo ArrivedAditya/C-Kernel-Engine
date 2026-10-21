@@ -3542,12 +3542,17 @@ CK_EXPORT int ck_model_count_text_tokens(const char *text, int text_len) {
     if (!g_model || !g_model->tokenizer || !text) return -1;
     if (text_len < 0) {
         size_t inferred = strlen(text);
-        if (inferred > INT32_MAX - 2) return -1;
+        if (inferred > (INT32_MAX - 2) / 7) return -1;
         text_len = (int)inferred;
     }
     if (text_len == 0) return 0;
-    if (text_len > INT32_MAX - 2) return -1;
-    size_t capacity = (size_t)text_len + 2;
+    /* Each SPM plain segment may gain a dummy prefix. Preprocessing expands
+     * each source byte by at most 3, each segment adds at most 3 prefix bytes,
+     * and each special token adds one ID. There can be at most text_len
+     * segments and text_len specials, so 7 IDs per byte plus BOS/EOS bounds
+     * the complete output. Smaller buffers can silently omit EOS. */
+    if (text_len > (INT32_MAX - 2) / 7) return -1;
+    size_t capacity = (size_t)text_len * 7 + 2;
     if (capacity > SIZE_MAX / sizeof(int32_t)) return -1;
     int32_t *tokens = (int32_t *)malloc(capacity * sizeof(int32_t));
     if (!tokens) return -1;

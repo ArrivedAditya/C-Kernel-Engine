@@ -941,6 +941,7 @@ test-tokenizer-spm: $(LIB_TOKENIZER)
 	@echo "========================================"
 	@echo "  REAL SPM Parity Tests (SentencePiece)"
 	@echo "========================================"
+	@LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) unittest/test_generated_token_count.py
 	@LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) unittest/test_tokenizer_spm_real.py
 	@echo ""
 	@echo "========================================"
