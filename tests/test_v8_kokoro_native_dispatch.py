@@ -174,6 +174,10 @@ class KokoroNativeDispatchTest(unittest.TestCase):
             capture_output=True, text=True)
         self.assertEqual(result.returncode, 2)
         self.assertFalse(unsupported.exists())
+        session = subprocess.run([str(bundle / "native-kokoro-dispatch"),
+            str(bundle), '--session'], capture_output=True, text=True)
+        self.assertEqual(session.returncode, 2)
+        self.assertIn('runtime-length bundle', session.stderr)
 
     def test_runtime_bundle_routes_three_lengths_to_one_generated_artifact(self):
         voice = self.root / "runtime-voice.ckvoice"
@@ -194,7 +198,10 @@ class KokoroNativeDispatchTest(unittest.TestCase):
             built.append(count)
             directory.mkdir()
             host = directory / "native-kokoro-wav"
-            host.write_text("#!/bin/sh\nprintf 'runtime:%s\\n' \"$4\" > \"$2\"\n")
+            host.write_text("#!/bin/sh\n"
+                            "if [ \"$2\" = --session ]; then "
+                            "printf 'session:%s:%s\\n' \"$1\" \"$3\"; "
+                            "else printf 'runtime:%s\\n' \"$4\" > \"$2\"; fi\n")
             host.chmod(0o755)
             library = directory / "generated.so"
             library.write_bytes(b"one synthetic runtime library")
@@ -218,6 +225,11 @@ class KokoroNativeDispatchTest(unittest.TestCase):
         self.assertTrue(report["runtime_lengths"])
         self.assertEqual(len({item["library_sha256"] for item in
                               report["buckets"].values()}), 1)
+        session = subprocess.run([str(output / 'native-kokoro-dispatch'),
+            str(output), '--session'], capture_output=True, text=True)
+        self.assertEqual(session.returncode, 0, session.stderr)
+        self.assertEqual(session.stdout.strip(),
+            f"session:{output / '64/request.cktts'}:{output / 'af_heart.ckvoice'}")
         for count in (8, 13, 36, 8):
             ids = ",".join(map(str, [0] + [4] * (count - 2) + [0]))
             wav = self.root / f"runtime-{count}.wav"
@@ -241,6 +253,9 @@ class KokoroNativeDispatchTest(unittest.TestCase):
         self.assertEqual(run.returncode, 4)
         self.assertIn("artifact identity mismatch", run.stderr)
         self.assertFalse(rejected.exists())
+        session = subprocess.run([str(output / 'native-kokoro-dispatch'),
+            str(output), '--session'], capture_output=True, text=True)
+        self.assertEqual(session.returncode, 4)
         range_output = self.root / "runtime-range-bundle"
         with mock.patch.object(bundle_builder, "DEFAULT_BINDINGS", bindings), \
              mock.patch.object(bundle_builder, "build_runtime",

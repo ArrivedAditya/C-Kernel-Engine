@@ -216,6 +216,64 @@ int ck_kokoro_runtime_waveform_bounded(uint8_t *arena, size_t capacity,
             self.assertNotEqual(run.returncode, 0)
             self.assertFalse(output.exists())
 
+        # The worker must retain its loaded package across requests. Removing
+        # the package after READY makes an accidental per-chunk reload fail.
+        worker = subprocess.Popen([str(binary), str(packed), '--session',
+                                   str(bank)], stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                  text=True, bufsize=1)
+        self.assertEqual(worker.stdout.readline().strip(), 'READY\tloads=1')
+        packed.unlink()
+        requests = []
+        for index, count in enumerate((8, 13, 36, 8)):
+            ids = ','.join(map(str, [0] + [50] * (count - 2) + [0]))
+            output = self.root / f'persistent-{index}.wav'
+            requests.append((output, count))
+            worker.stdin.write(f'RUN\t{output}\t7\t{ids}\n')
+            worker.stdin.flush()
+            sample_count = {8: 20, 13: 25, 36: 30}[count]
+            self.assertEqual(worker.stdout.readline().strip(),
+                             f'WAV_READY\t{sample_count}\t{output}')
+        invalid = self.root / 'persistent-invalid.wav'
+        ids = ','.join(map(str, [0] + [50] * 14 + [0]))
+        worker.stdin.write(f'RUN\t{invalid}\t7\t{ids}\n')
+        worker.stdin.flush()
+        self.assertEqual(worker.stdout.readline().strip(), 'ERROR\t7')
+        self.assertFalse(invalid.exists())
+        worker.stdin.write(f'RUN\t{invalid}\tbad\t{ids}\n')
+        worker.stdin.flush()
+        self.assertEqual(worker.stdout.readline().strip(), 'ERROR\t2')
+        self.assertFalse(invalid.exists())
+        worker.stdin.write(f'RUN\t{requests[0][0]}\t7\t{ids}\n')
+        worker.stdin.flush()
+        self.assertEqual(worker.stdout.readline().strip(), 'ERROR\t10')
+        recovered = self.root / 'persistent-recovered.wav'
+        ids = ','.join(map(str, [0] + [50] * 6 + [0]))
+        worker.stdin.write(f'RUN\t{recovered}\t7\t{ids}\nQUIT\n')
+        worker.stdin.flush()
+        self.assertEqual(worker.stdout.readline().strip(),
+                         f'WAV_READY\t20\t{recovered}')
+        worker.stdin.close()
+        self.assertEqual(worker.wait(timeout=10), 0, worker.stderr.read())
+        worker.stdout.close()
+        worker.stderr.close()
+        for output, count in requests:
+            with wave.open(str(output), 'rb') as audio:
+                self.assertEqual(audio.getnframes(), {8: 20, 13: 25, 36: 30}[count])
+        self.assertEqual(requests[0][0].read_bytes(), requests[3][0].read_bytes())
+        self.assertEqual(requests[0][0].read_bytes(), recovered.read_bytes())
+        print('CKE_NUMERICAL_CASE ' + json.dumps({
+            'case_id': 'kokoro.native-wav-host.persistent-requests-v1',
+            'name': 'native host retains package across 8/13/36/8 requests',
+            'provider': 'native_kokoro_wav_host', 'dtype': 'pcm16',
+            'direction': 'inference',
+            'oracle': 'isolated WAVs and exact repeated-request identity',
+            'status': 'pass', 'gate': 'session', 'blocking': True,
+            'max_diff': 0, 'tolerance': 0,
+            'configuration': 'synthetic generated entry; package removed after READY; invalid request then recovery',
+            'reproduction_command': 'python3 -m unittest tests.test_v8_native_kokoro_wav_host',
+        }))
+
     def request_package(self, name, ids_offset=IDS_OFFSET, ids_count=8,
                         predictor_offset=PREDICTOR_OFFSET,
                         decoder_offset=DECODER_OFFSET):
