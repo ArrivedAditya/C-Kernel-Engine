@@ -15,8 +15,13 @@ import os
 import sys
 
 import numpy as np
-import torch
-import torch.nn.functional as F
+try:
+    import torch
+except ModuleNotFoundError as exc:
+    if exc.name != "torch":
+        raise
+    print("TEST SKIPPED: PyTorch BF16 storage oracle is unavailable")
+    sys.exit(0)
 
 from lib_loader import load_lib
 from test_utils import (
@@ -389,10 +394,12 @@ def test_forward_2d_bf16(T=32, D=896, aligned_D=896):
     ref = float_to_bf16(a_bf16_f32[:, :D] + b_bf16_f32[:, :D])
 
     # C kernel
+    output_flat = y_bf16.ravel()
+    assert np.shares_memory(output_flat, y_bf16), "C must write into the observed destination"
     lib.add_forward_2d_bf16(
         numpy_to_ptr_u16(a_bf16.ravel()),
         numpy_to_ptr_u16(b_bf16.ravel()),
-        numpy_to_ptr_u16(y_bf16.ravel()),
+        numpy_to_ptr_u16(output_flat),
         ctypes.c_int(T),
         ctypes.c_int(D),
         ctypes.c_int(aligned_D)
@@ -416,7 +423,7 @@ def test_forward_2d_bf16(T=32, D=896, aligned_D=896):
 
 
 def test_bf16_rounding_boundaries():
-    """Tie-to-even must be visible in the stored output, including in-place."""
+    """Finite tie-to-even values must be visible in stored output and in-place."""
     a = np.array([1.0, 1.0078125, -1.0, -1.0078125], dtype=np.float32)
     b = np.array([1 / 256, 1 / 256, -1 / 256, -1 / 256], dtype=np.float32)
     a_bits = float_to_bf16(a)
@@ -432,6 +439,32 @@ def test_bf16_rounding_boundaries():
                          ctypes.c_size_t(4))
     passed = np.array_equal(output, expected) and np.array_equal(inplace, expected)
     print(f"  BF16 tie-to-even stored output: {'PASS' if passed else 'FAIL'}")
+    return passed
+
+
+def test_bf16_edge_shapes_and_negative_controls():
+    """Zero length is a no-op; scalar and SIMD-tail lengths store exact values."""
+    a = float_to_bf16(np.linspace(-1.0, 1.0, 33, dtype=np.float32))
+    b = float_to_bf16(np.linspace(0.25, -0.25, 33, dtype=np.float32))
+    expected = float_to_bf16(bf16_to_float(a) + bf16_to_float(b))
+    for n in (0, 1, 17, 33):
+        output = np.full(33, 0xDEAD, dtype=np.uint16)
+        lib.add_forward_bf16(numpy_to_ptr_u16(a), numpy_to_ptr_u16(b),
+                             numpy_to_ptr_u16(output), ctypes.c_size_t(n))
+        if not (np.array_equal(output[:n], expected[:n])
+                and np.all(output[n:] == 0xDEAD)):
+            return False
+
+    # A no-op kernel and a truncating store must both fail the same bitwise
+    # assertion used above. Nonfinite payload semantics are a separate contract.
+    a_tie = np.array([1.0078125], dtype=np.float32)
+    b_tie = np.array([1 / 256], dtype=np.float32)
+    rounded = float_to_bf16(a_tie + b_tie)
+    truncated = ((a_tie + b_tie).view(np.uint32) >> 16).astype(np.uint16)
+    stale = np.full(1, 0xDEAD, dtype=np.uint16)
+    passed = (not np.array_equal(stale, rounded)
+              and not np.array_equal(truncated, rounded))
+    print(f"  BF16 stale-output/truncation controls: {'PASS' if passed else 'FAIL'}")
     return passed
 
 
@@ -498,7 +531,9 @@ def main():
     results.append(("add_backward_bf16", test_backward_bf16()))
     results.append(("add_forward_2d_bf16", test_forward_2d_bf16()))
     results.append(("add_forward_2d_bf16_padded", test_forward_2d_bf16(T=4, D=37, aligned_D=48)))
+    results.append(("add_forward_2d_bf16_small", test_forward_2d_bf16(T=1, D=1, aligned_D=4)))
     results.append(("bf16_rounding_boundaries", test_bf16_rounding_boundaries()))
+    results.append(("bf16_edge_shapes_and_controls", test_bf16_edge_shapes_and_negative_controls()))
     results.append(("add_forward_f32", test_forward_f32()))
 
     # Summary
