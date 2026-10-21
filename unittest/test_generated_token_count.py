@@ -96,14 +96,17 @@ int count_buffer_unchanged(void) {{
         self.assertEqual(native.ck_tokenizer_add_special_token(tok, b"<tool>", 6), 0)
         for text in ("a", "aa", "a b", "a☃b", "a<tool>b", "a" * 70):
             payload = text.encode()
+            generated.fill_count_buffer()
+            counted = generated.ck_model_count_text_tokens(payload, len(payload))
+            self.assertEqual(generated.count_buffer_unchanged(), 1)
             ids = (ctypes.c_int32 * 1024)()
             expected = native.ck_tokenizer_encode(tok, payload, len(payload), ids, 1024)
             self.assertGreater(expected, 0)
             self.assertEqual(ids[0], 1)
             self.assertEqual(ids[expected - 1], 2)
-            generated.fill_count_buffer()
-            self.assertEqual(generated.ck_model_count_text_tokens(payload, len(payload)), expected)
-            self.assertEqual(generated.count_buffer_unchanged(), 1)
+            self.assertEqual(counted, expected)
+            if len(text) == 70:
+                self.assertGreater(counted, 4)  # exact rejection at a four-token context
 
     def test_bpe_count_matches_complete_encode(self):
         generated, native = self._library("bpe")
@@ -124,14 +127,15 @@ int count_buffer_unchanged(void) {{
         generated.enable_count_bpe_bos_eos(tok)
         generated.set_count_tokenizer(tok)
         for payload in (b"a", b"ab", b"a b", "a☃b".encode(), b"ab" * 70):
+            generated.fill_count_buffer()
+            counted = generated.ck_model_count_text_tokens(payload, len(payload))
+            self.assertEqual(generated.count_buffer_unchanged(), 1)
             ids = (ctypes.c_int32 * 1024)()
             expected = native.ck_true_bpe_encode(tok, payload, len(payload), ids, 1024)
             self.assertGreater(expected, 0)
             self.assertEqual(ids[0], 1)
             self.assertEqual(ids[expected - 1], 2)
-            generated.fill_count_buffer()
-            self.assertEqual(generated.ck_model_count_text_tokens(payload, len(payload)), expected)
-            self.assertEqual(generated.count_buffer_unchanged(), 1)
+            self.assertEqual(counted, expected)
 
 
 if __name__ == "__main__":
