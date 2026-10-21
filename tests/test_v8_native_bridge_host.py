@@ -877,7 +877,7 @@ class V8NativeBridgeHostTests(unittest.TestCase):
             "image_min_pixels": 161280,
             "image_max_pixels": 2580480,
             "image_resize_algorithm": "bicubic",
-            "image_resize_padding": "none",
+            "image_resize_padding": "center_ceil",
             "image_resize_rounding_policy": "half_away_from_zero",
         }
         with mock.patch.object(bridge_runner_v8, "_image_source_size", return_value=(512, 256)):
@@ -901,6 +901,7 @@ class V8NativeBridgeHostTests(unittest.TestCase):
             {"image_min_pixels": True},
             {"image_max_pixels": 1},
             {"image_resize_algorithm": "bilinear"},
+            {"image_resize_padding": "none"},
             {"image_resize_rounding_policy": "ties_to_even"},
         ):
             with self.subTest(invalid=invalid), mock.patch.object(
@@ -908,23 +909,52 @@ class V8NativeBridgeHostTests(unittest.TestCase):
             ), self.assertRaisesRegex(RuntimeError, "Gemma4 vision"):
                 bridge_runner_v8._gemma4_geometry_overrides({**contract, **invalid}, Path("image.ppm"))
 
-    def test_gemma4_bicubic_resize_without_padding(self) -> None:
-        if bridge_runner_v8.Image is None:
-            self.skipTest("Pillow is required for bicubic preprocessing")
+    def test_gemma4_bicubic_resize_uses_centered_ceil_padding(self) -> None:
+        self.assertIsNotNone(bridge_runner_v8.Image, "Pillow is required for bicubic preprocessing")
         with tempfile.TemporaryDirectory(prefix="v8_gemma4_resize_") as tmpdir:
             image = Path(tmpdir) / "image.ppm"
             image.write_bytes(b"P6\n2 1\n255\n" + bytes((255, 0, 0, 0, 0, 255)))
             result = bridge_runner_v8._load_image_file(
-                image, 2, 4,
+                image, 2, 6,
                 image_mean=[0.0, 0.0, 0.0],
                 image_std=[1.0, 1.0, 1.0],
                 resize_algorithm="bicubic",
-                resize_padding="none",
+                resize_padding="center_ceil",
             )
         pixels = result["interleaved"]
-        self.assertEqual(len(pixels), 2 * 4 * 3)
-        self.assertIn("bicubic_none_resize_4x2", result["preprocess"])
-        self.assertTrue(all(sum(pixels[index:index + 3]) > 0.0 for index in range(0, len(pixels), 3)))
+        self.assertEqual(len(pixels), 2 * 6 * 3)
+        self.assertIn("bicubic_center_ceil_resize_6x2", result["preprocess"])
+        for row in range(2):
+            self.assertEqual(pixels[(row * 6) * 3:(row * 6 + 1) * 3], [0.0, 0.0, 0.0])
+            self.assertEqual(pixels[(row * 6 + 5) * 3:(row * 6 + 6) * 3], [0.0, 0.0, 0.0])
+            self.assertGreater(sum(pixels[(row * 6 + 1) * 3:(row * 6 + 2) * 3]), 0.0)
+
+    def test_gemma4_prebuilt_encoder_rejects_old_resize_policy(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="v8_gemma4_legacy_encoder_") as tmpdir:
+            runtime = Path(tmpdir)
+            for filename in (
+                "libencoder_v8.so", "libckernel_engine.so", "weights.bump", "weights_manifest.map",
+            ):
+                (runtime / filename).touch()
+            config = {
+                "model": "gemma4_vision", "embed_dim": 768, "projector_out_dim": 2560,
+                "image_min_pixels": 1, "image_max_pixels": 1000,
+                "image_resize_algorithm": "bicubic",
+                "image_resize_rounding_policy": "half_away_from_zero",
+                "contract": {"multimodal_bridge": {"decode_policy": "causal_mixed_prefix"}},
+            }
+            layout_path = runtime / "layout.json"
+            for padding in (None, "none"):
+                layout_path.write_text(json.dumps({"config": {**config, "image_resize_padding": padding}}))
+                with self.subTest(padding=padding), self.assertRaisesRegex(RuntimeError, "regenerate"):
+                    bridge_runner_v8._load_prebuilt_encoder_runtime(runtime)
+                with self.subTest(padding=padding), mock.patch.object(
+                    bridge_runner_v8, "_load_encoder_lib"
+                ) as load_library, self.assertRaisesRegex(RuntimeError, "regenerate"):
+                    bridge_runner_v8._run_encoder({"layout_path": layout_path}, "gradient")
+                load_library.assert_not_called()
+            layout_path.write_text(json.dumps({"config": {**config, "image_resize_padding": "center_ceil"}}))
+            self.assertEqual(bridge_runner_v8._load_prebuilt_encoder_runtime(runtime)["embed_dim"], 768)
 
     def test_ck_run_v8_step_run_chat_uses_detected_default_threads(self) -> None:
         with tempfile.TemporaryDirectory(prefix="v8_step_run_chat_threads_") as tmpdir:

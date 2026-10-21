@@ -136,7 +136,7 @@ def main() -> int:
         "-I", str(llama_root / "tools/mtmd"),
         "-I", str(llama_root / "ggml/include"),
         str(PROBE_SOURCE), "-L", str(build), f"-Wl,-rpath,{build}",
-        "-lmtmd", "-lllama", "-o", str(probe),
+        "-lmtmd", "-lllama", "-lggml-base", "-o", str(probe),
     ])
     env = {**os.environ, "LD_LIBRARY_PATH": str(build)}
     linked = _run(["ldd", str(probe)], env=env)

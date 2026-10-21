@@ -2201,12 +2201,7 @@ def _cohere_compass_geometry_overrides(
     }
 
 
-def _gemma4_geometry_overrides(config: dict[str, Any], image_path: Path) -> dict[str, Any]:
-    source_width, source_height = _image_source_size(image_path)
-    patch_size = int(config.get("patch_size", 0) or 0)
-    merge_size = int(config.get("spatial_merge_size", 3) or 3)
-    if patch_size <= 0 or merge_size <= 0:
-        raise RuntimeError(f"invalid Gemma4V patch/merge config patch={patch_size} merge={merge_size}")
+def _gemma4_resize_policy(config: dict[str, Any]) -> None:
     min_pixels = config.get("image_min_pixels")
     max_pixels = config.get("image_max_pixels")
     if (type(min_pixels) is not int or type(max_pixels) is not int
@@ -2214,7 +2209,7 @@ def _gemma4_geometry_overrides(config: dict[str, Any], image_path: Path) -> dict
         raise RuntimeError(
             "Gemma4 vision pixel limits are missing or invalid; regenerate the encoder artifact"
         )
-    if config.get("image_resize_algorithm") != "bicubic" or config.get("image_resize_padding") != "none":
+    if config.get("image_resize_algorithm") != "bicubic" or config.get("image_resize_padding") != "center_ceil":
         raise RuntimeError(
             "Gemma4 vision resize contract is missing or invalid; regenerate the encoder artifact"
         )
@@ -2222,6 +2217,17 @@ def _gemma4_geometry_overrides(config: dict[str, Any], image_path: Path) -> dict
         raise RuntimeError(
             "Gemma4 vision rounding contract is missing or invalid; regenerate the encoder artifact"
         )
+
+
+def _gemma4_geometry_overrides(config: dict[str, Any], image_path: Path) -> dict[str, Any]:
+    _gemma4_resize_policy(config)
+    source_width, source_height = _image_source_size(image_path)
+    patch_size = int(config.get("patch_size", 0) or 0)
+    merge_size = int(config.get("spatial_merge_size", 3) or 3)
+    if patch_size <= 0 or merge_size <= 0:
+        raise RuntimeError(f"invalid Gemma4V patch/merge config patch={patch_size} merge={merge_size}")
+    min_pixels = config["image_min_pixels"]
+    max_pixels = config["image_max_pixels"]
     align_size = patch_size * merge_size
     image_width, image_height = _calc_qwen_vl_smart_resize(
         source_width, source_height, align_size, min_pixels, max_pixels,
@@ -2709,6 +2715,8 @@ def _load_prebuilt_encoder_runtime(runtime_dir: Path) -> dict[str, Any]:
     config = dict(layout.get("config", {}) or {})
     if str(config.get("model") or config.get("arch") or "").lower() == "qwen3_vl_vision":
         _qwen_vl_resize_rounding_policy(config)
+    if str(config.get("model") or config.get("arch") or "").lower() == "gemma4_vision":
+        _gemma4_resize_policy(config)
     return {
         "gguf": None,
         "runtime_dir": runtime_dir,
@@ -3451,6 +3459,8 @@ def _run_encoder(
     _vision_prefix_decode_policy(layout_cfg)
     if str(layout_cfg.get("model") or layout_cfg.get("arch") or "").lower() == "qwen3_vl_vision":
         _qwen_vl_resize_rounding_policy(layout_cfg)
+    if str(layout_cfg.get("model") or layout_cfg.get("arch") or "").lower() == "gemma4_vision":
+        _gemma4_resize_policy(layout_cfg)
     memory_evidence = {"before_load": _memory_snapshot()}
     weight_storage = _runtime_weight_storage_evidence(runtime)
     if bool(weight_storage["memory_backed"]) and int(weight_storage["size_bytes"]) >= 1 << 30:

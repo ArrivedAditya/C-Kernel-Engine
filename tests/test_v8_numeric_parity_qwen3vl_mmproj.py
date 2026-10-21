@@ -39,7 +39,7 @@ class NumericParityQwen3VLMmprojV8Tests(unittest.TestCase):
                 "image_min_pixels": 161280,
                 "image_max_pixels": 2580480,
                 "image_resize_algorithm": "bicubic",
-                "image_resize_padding": "none",
+                "image_resize_padding": "center_ceil",
                 "image_resize_rounding_policy": "half_away_from_zero",
             }
             (root / "weights_manifest.runtime.json").write_text(json.dumps({"config": config}))
