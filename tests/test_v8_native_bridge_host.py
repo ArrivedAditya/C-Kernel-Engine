@@ -229,6 +229,7 @@ def _build_tiny_decoder_runtime(
     batched_prefill: bool = False,
     stop_token_ids: list[int] | None = None,
     special_token_overrides: dict[str, object] | None = None,
+    inject_prefill_failure: bool = False,
 ) -> tuple[Path, Path, Path]:
     manifest = _make_qwen3_decoder_manifest(
         include_tokenizer_contract=include_tokenizer_contract
@@ -306,6 +307,16 @@ def _build_tiny_decoder_runtime(
     )
     if result.returncode != 0:
         raise AssertionError(f"codegen_v8 failed\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}")
+
+    if inject_prefill_failure:
+        source = c_path.read_text(encoding="utf-8")
+        needle = "        ck_decode(g_model, tokens[i]);\n"
+        assert source.count(needle) == 1
+        source = source.replace(
+            needle,
+            needle + "        if (getenv(\"CK_TEST_FAIL_AFTER_PREFILL_TOKEN\")) return -1;\n",
+        )
+        c_path.write_text(source, encoding="utf-8")
 
     _compile_generated_model(c_path, so_path)
     return so_path, bump_path, manifest_map
@@ -1635,7 +1646,8 @@ class V8NativeBridgeHostTests(unittest.TestCase):
     def test_ck_session_v8_ffi_formats_tokenizes_and_streams_generation(self) -> None:
         with tempfile.TemporaryDirectory(prefix="v8_native_session_ffi_") as tmpdir:
             so_path, bump_path, manifest_map = _build_tiny_decoder_runtime(
-                Path(tmpdir), include_tokenizer_contract=True
+                Path(tmpdir), include_tokenizer_contract=True,
+                inject_prefill_failure=True,
             )
 
             class SessionConfig(ctypes.Structure):
@@ -1780,7 +1792,7 @@ class V8NativeBridgeHostTests(unittest.TestCase):
                     session_lib.ck_session_v8_encode(
                         session, b"u" * 33, None, 0
                     ),
-                    -7,  # native tokenizer rejects context overflow
+                    33,  # exact count may exceed the generation context
                 )
 
                 encoded_count = session_lib.ck_session_v8_encode(
@@ -1849,6 +1861,34 @@ class V8NativeBridgeHostTests(unittest.TestCase):
                 )
                 self.assertEqual(second.prompt_tokens, generation.prompt_tokens)
                 self.assertEqual(streamed, [(0, b"<|pad|>", 0)])
+                model_lib = ctypes.CDLL(str(so_path))
+                model_lib.ck_model_get_active_tokens.restype = ctypes.c_int
+                with mock.patch.dict("os.environ", {"CK_TEST_FAIL_AFTER_PREFILL_TOKEN": "1"}):
+                    failed = GenerateResult(
+                        struct_size=ctypes.sizeof(GenerateResult), abi_version=1
+                    )
+                    self.assertEqual(
+                        session_lib.ck_session_v8_generate(
+                            session, ctypes.byref(request), on_token, None,
+                            ctypes.byref(failed),
+                        ),
+                        -7,  # a generated forward failed after advancing state
+                    )
+                self.assertEqual(
+                    model_lib.ck_model_get_active_tokens(), 0,
+                    "failed generation must discard partially written model state",
+                )
+                for _ in range(3):
+                    streamed.clear()
+                    recovered = GenerateResult(
+                        struct_size=ctypes.sizeof(GenerateResult), abi_version=1
+                    )
+                    self.assertEqual(session_lib.ck_session_v8_generate(
+                        session, ctypes.byref(request), on_token, None,
+                        ctypes.byref(recovered),
+                    ), 0)
+                    self.assertEqual(streamed, [(0, b"<|pad|>", 0)])
+                    self.assertEqual(recovered.prompt_tokens, generation.prompt_tokens)
                 self.assertEqual(session_lib.ck_session_v8_reset(session), 0)
             finally:
                 session_lib.ck_session_v8_close(session)
