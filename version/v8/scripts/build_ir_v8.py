@@ -4404,6 +4404,26 @@ def _materialize_compact_kv_layout(config: Dict[str, Any]) -> None:
     config["kv_cache_layer_stride_variable"] = True
 
 
+def _layer_output_width_for_transpose(
+    embed_dim: int, num_heads: int, num_kv_heads: int,
+    max_q_head_dim: int, max_k_head_dim: int, max_v_head_dim: int,
+) -> int:
+    """Size the shared transpose temporary for every Q/K/V/attention layout.
+
+    Generated prefill layout bridges use A_LAYER_OUTPUT as an out-of-place
+    destination before copying back to the respective scratch buffer. Its
+    extent must cover the widest physical head-major view, which can exceed
+    the model's hidden width (for example Qwen3's 2048-wide Q versus 1024
+    hidden). This is an allocation contract, not a change to model arithmetic.
+    """
+    return max(
+        embed_dim,
+        num_heads * max_q_head_dim,
+        num_kv_heads * max_k_head_dim,
+        num_kv_heads * max_v_head_dim,
+    )
+
+
 def build_activation_specs(
     config: Dict[str, Any],
     mode: str,
@@ -4601,9 +4621,13 @@ def build_activation_specs(
     scratch_size = max(mlp_size, fused_attn_scratch, geglu_bf16_scratch)
     add("mlp_scratch", scratch_size, f"[max({seq_len}*{intermediate_size*2}, fused_attn, geglu_bf16)]")
 
-    # Layer output
-    layer_out_size = seq_len * embed_dim * 4
-    add("layer_output", layer_out_size, f"[{seq_len}, {embed_dim}]")
+    # Generated prefill transposes reuse this allocation as their destination.
+    layer_out_width = _layer_output_width_for_transpose(
+        embed_dim, num_heads, num_kv_heads,
+        max_q_head_dim, max_k_head_dim, max_v_head_dim,
+    )
+    layer_out_size = seq_len * layer_out_width * 4
+    add("layer_output", layer_out_size, f"[{seq_len}, {layer_out_width}]")
 
     projector_out_dim = int(config.get("projector_out_dim", 0) or 0)
     projector_total_out_dim = int(config.get("projector_total_out_dim", projector_out_dim) or 0)
@@ -13631,9 +13655,13 @@ def generate_memory_layout(
         f"provider_scratch({provider_scratch_reserve}))]",
     )
 
-    # Layer output: [seq_len, embed_dim]
-    layer_out_size = seq_len * embed_dim * 4
-    add_buffer("layer_output", layer_out_size, f"[{seq_len}, {embed_dim}]")
+    # Match the out-of-place Q/K/V/attention transpose contract above.
+    layer_out_width = _layer_output_width_for_transpose(
+        embed_dim, num_heads, num_kv_heads,
+        max_q_head_dim, max_k_head_dim, max_v_head_dim,
+    )
+    layer_out_size = seq_len * layer_out_width * 4
+    add_buffer("layer_output", layer_out_size, f"[{seq_len}, {layer_out_width}]")
 
     projector_out_dim = int(config.get("projector_out_dim", 0) or 0)
     projector_total_out_dim = int(config.get("projector_total_out_dim", projector_out_dim) or 0)
