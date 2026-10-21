@@ -191,6 +191,7 @@ typedef struct {
 
     /* Built-in tokenizer API (from generated model) */
     encode_text_t encode_text;
+    encode_text_t count_text_tokens;
     decode_tokens_t decode_tokens;
     has_tokenizer_t has_tokenizer;
     can_encode_text_t can_encode_text;
@@ -1858,6 +1859,7 @@ static bool load_model_api(const char *lib_path, ModelAPI *api) {
 
     /* Built-in tokenizer API (v7 models have tokenizer in generated code) */
     resolve_symbol(api->handle, "ck_model_encode_text", (void **)&api->encode_text, false);
+    resolve_symbol(api->handle, "ck_model_count_text_tokens", (void **)&api->count_text_tokens, false);
     resolve_symbol(api->handle, "ck_model_decode_tokens", (void **)&api->decode_tokens, false);
     resolve_symbol(api->handle, "ck_model_has_tokenizer", (void **)&api->has_tokenizer, false);
     resolve_symbol(api->handle, "ck_model_can_encode_text", (void **)&api->can_encode_text, false);
@@ -5801,9 +5803,12 @@ int ck_session_v8_encode(
         return session_error(session, CK_SESSION_V8_ERROR_CAPABILITY,
                              "text encoding is unavailable");
     }
-    int count = session->api.encode_text(text, -1);
+    int count = (!output && session->api.count_text_tokens)
+        ? session->api.count_text_tokens(text, -1)
+        : session->api.encode_text(text, -1);
     const int32_t *tokens = session->api.get_token_buffer();
-    if (count < 0 || (count > 0 && !tokens)) {
+    if (count < 0 || (count == 0 && text[0] != '\0') ||
+        (output && count > 0 && !tokens)) {
         return session_error(session, CK_SESSION_V8_ERROR_RUNTIME,
                              "native tokenizer failed");
     }

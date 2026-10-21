@@ -7,6 +7,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <limits.h>
 
 #include "tokenizer/tokenizer.h"
 #include "tokenizer/hash_table.h"
@@ -296,10 +297,16 @@ static int ck_tokenizer_encode_spm_llama_impl(const CKTokenizer *tok,
     if (text_len < 0) text_len = (int)strlen(text);
     if (text_len == 0) return 0;
 
-    char preprocessed[8192];
-    int pp_len = preprocess_spm_llama_text(text, text_len, preprocessed, (int)sizeof(preprocessed) - 1,
+    /* A space may expand to the three-byte SentencePiece marker. Fixed
+     * stack buffers turned otherwise valid long prompts into a zero-token
+     * result, which the serving admission path could mistake for success. */
+    if (text_len > (INT_MAX - 4) / 3) return 0;
+    int pp_capacity = text_len * 3 + 4;
+    char *preprocessed = (char *)malloc((size_t)pp_capacity);
+    if (!preprocessed) return 0;
+    int pp_len = preprocess_spm_llama_text(text, text_len, preprocessed, pp_capacity - 1,
                                            tok->config.add_space_prefix);
-    if (pp_len < 0) return 0;
+    if (pp_len < 0) { free(preprocessed); return 0; }
     preprocessed[pp_len] = '\0';
 
     int num_symbols = 0;
@@ -310,7 +317,7 @@ static int ck_tokenizer_encode_spm_llama_impl(const CKTokenizer *tok,
         offs += char_len;
         num_symbols++;
     }
-    if (num_symbols <= 0) return 0;
+    if (num_symbols <= 0) { free(preprocessed); return 0; }
 
     SpmLlamaSymbol *symbols = (SpmLlamaSymbol *)calloc((size_t)num_symbols, sizeof(SpmLlamaSymbol));
     int node_cap = 2 * num_symbols + 1;
@@ -318,6 +325,7 @@ static int ck_tokenizer_encode_spm_llama_impl(const CKTokenizer *tok,
     if (!symbols || !nodes) {
         if (symbols) free(symbols);
         if (nodes) free(nodes);
+        free(preprocessed);
         return 0;
     }
 
@@ -399,6 +407,7 @@ static int ck_tokenizer_encode_spm_llama_impl(const CKTokenizer *tok,
 
     free(symbols);
     free(nodes);
+    free(preprocessed);
     return out_idx;
 }
 
@@ -491,10 +500,13 @@ static int ck_tokenizer_encode_spm_impl(const CKTokenizer *tok,
     }
 
     /* Preprocess: replace spaces with ▁ */
-    char preprocessed[8192];
-    int pp_len = preprocess_spm_text(text, text_len, preprocessed, sizeof(preprocessed) - 1,
+    if (text_len > (INT_MAX - 4) / 3) return 0;
+    int pp_capacity = text_len * 3 + 4;
+    char *preprocessed = (char *)malloc((size_t)pp_capacity);
+    if (!preprocessed) return 0;
+    int pp_len = preprocess_spm_text(text, text_len, preprocessed, pp_capacity - 1,
                                      tok->config.add_space_prefix);
-    if (pp_len < 0) return 0;
+    if (pp_len < 0) { free(preprocessed); return 0; }
     preprocessed[pp_len] = '\0';
     if (dbg) {
         fprintf(stderr, "[SPM] preprocessed len=%d: \"%.*s\"\n", pp_len, pp_len, preprocessed);
@@ -513,6 +525,7 @@ static int ck_tokenizer_encode_spm_impl(const CKTokenizer *tok,
         if (best_score) free(best_score);
         if (best_prev) free(best_prev);
         if (best_token) free(best_token);
+        free(preprocessed);
         return 0;
     }
 
@@ -596,6 +609,7 @@ static int ck_tokenizer_encode_spm_impl(const CKTokenizer *tok,
         free(best_score);
         free(best_prev);
         free(best_token);
+        free(preprocessed);
         return 0;
     }
 
@@ -632,6 +646,7 @@ static int ck_tokenizer_encode_spm_impl(const CKTokenizer *tok,
     free(best_score);
     free(best_prev);
     free(best_token);
+    free(preprocessed);
 
     if (num_tokens > max_ids) num_tokens = max_ids;
 

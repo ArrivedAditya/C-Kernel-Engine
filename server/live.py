@@ -2056,6 +2056,11 @@ def create_app(
                         500, "native tokenizer failed while counting the rendered prompt",
                         err_type="server_error", code="native_tokenization_failed",
                     ) from exc
+                if prompt_tokens <= 0:
+                    raise _harness_error(
+                        500, "native tokenizer returned no tokens for a nonempty prompt",
+                        err_type="server_error", code="native_tokenization_failed",
+                    )
                 if prompt_tokens >= context_length:
                     # Case 1: the prompt alone does not fit the loaded context
                     # capacity. Reject before any model execution; never

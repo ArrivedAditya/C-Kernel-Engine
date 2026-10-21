@@ -69,7 +69,6 @@ def test_prompt_alone_over_capacity_rejected_and_session_stays_usable() -> None:
     assert error["code"] == "context_length_exceeded"
     assert "before any output tokens are reserved" in error["message"]
     assert session.calls == [], "rejected request must not reach generation"
-    ok = _post(client, text="hi")
     session.prompt_token_count = 5
     ok = _post(client, text="hi")
     assert ok.status_code == 200
@@ -93,6 +92,30 @@ def test_output_budget_equal_to_capacity_rejected() -> None:
     rejected = _post(client, max_output_tokens=32)
     assert rejected.status_code == 400
     assert session.calls == []
+
+
+def test_zero_token_count_cannot_admit_nonempty_prompt() -> None:
+    session = CapacitySession(prompt_token_count=0)
+    client = _client(session, context_length=64)
+    rejected = _post(client, text="long nonempty prompt")
+    assert rejected.status_code == 500
+    assert rejected.json()["error"]["code"] == "native_tokenization_failed"
+    assert session.calls == []
+    session.prompt_token_count = 5
+    assert _post(client).status_code == 200
+
+
+def test_oversized_prompt_stream_rejected_before_generation_then_usable() -> None:
+    session = CapacitySession(prompt_token_count=65)
+    client = _client(session, context_length=64)
+    rejected = client.post("/v1/responses", json={
+        "model": "test", "input": "too long", "max_output_tokens": 8, "stream": True,
+    })
+    assert rejected.status_code == 400
+    assert rejected.json()["error"]["code"] == "context_length_exceeded"
+    assert session.calls == []
+    session.prompt_token_count = 5
+    assert _post(client).status_code == 200
 
 
 def test_admitted_request_hitting_limit_reports_truthful_length_stop() -> None:
