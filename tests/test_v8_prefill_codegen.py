@@ -311,6 +311,73 @@ int main(void) {
                             "-o", str(binary)], check=True, capture_output=True)
             subprocess.run([str(binary)], check=True, capture_output=True)
 
+    def test_chunk_local_continuation_reads_prior_cache(self):
+        """The old chunk-only schedule must fail a history-sensitive output."""
+        compiler = shutil.which("cc")
+        if compiler is None:
+            self.skipTest("C compiler unavailable")
+        base_op = {"function": "noop_kernel", "op": "mla_attention", "layer": 0,
+                   "args": []}
+        config = {"context_length": 32, "prefill_chunk_length": 2, "embed_dim": 4}
+        program = r'''#include <stdint.h>
+#define MAX_SEQ_LEN 32
+typedef struct { int pos; int cache[32]; int context_sum; } CKModel;
+static int g_ck_skip_decode_logits;
+static int ck_model_cancel_requested(void) { return 0; }
+/* A current-chunk provider sees only the supplied rows. */
+static void ck_prefill_range(CKModel *m, const int32_t *tokens, int count, int pos) {
+    int local_sum = 0;
+    for (int i = 0; i < count; ++i) {
+        m->cache[pos + i] = tokens[i];
+        local_sum += tokens[i];
+    }
+    m->context_sum = local_sum;
+    m->pos = pos + count;
+}
+/* Decode consumes every previously stored row and appends its own. */
+static void ck_decode(CKModel *m, int32_t token) {
+    int total = token;
+    for (int i = 0; i < m->pos; ++i) total += m->cache[i];
+    m->cache[m->pos++] = token;
+    m->context_sum = total;
+}
+__SCHEDULE__
+int main(void) {
+    (void)g_ck_skip_decode_logits;
+    const int32_t tokens[] = {10, 11, 12, 13};
+    CKModel model = {0};
+    ck_prefill(&model, tokens, 4);
+    if (model.pos != 4) return 1;
+    if (model.context_sum != 46) return 2;
+    /* The same continuation must notice a wrong prior cache owner/value. */
+    model.pos = 2;
+    model.cache[0] = 99;
+    ck_prefill(&model, tokens + 2, 2);
+    if (model.pos != 4 || model.context_sum == 46) return 3;
+    return 0;
+}
+'''
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for label, scope, expected_exit in (
+                ("declared", "current_chunk", 0),
+                ("missing_scope_control", None, 2),
+            ):
+                op = dict(base_op)
+                if scope is not None:
+                    op["prefill_history_scope"] = scope
+                emitted = codegen_prefill_v8.emit_prefill_function([op], config)
+                schedule = "static void ck_prefill(CKModel" + emitted.split(
+                    "static void ck_prefill(CKModel", 1)[1]
+                source = root / f"{label}.c"
+                binary = root / label
+                source.write_text(program.replace("__SCHEDULE__", schedule))
+                subprocess.run([compiler, "-std=c11", "-Wall", "-Werror",
+                                str(source), "-o", str(binary)], check=True,
+                               capture_output=True, text=True)
+                result = subprocess.run([str(binary)], capture_output=True)
+                self.assertEqual(result.returncode, expected_exit, label)
+
     def test_composite_embedding_receives_declared_segment_plan(self):
         provider = json.loads((ROOT / "version/v8/kernel_maps/gemma4_per_layer_embed_forward.json").read_text())
         op = {
