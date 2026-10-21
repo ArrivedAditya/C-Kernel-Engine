@@ -552,6 +552,10 @@ def main() -> int:
         "suite": args.suite,
         "oversized_prompt_sha256": (hashlib.sha256(oversized_prompt.encode("utf-8")).hexdigest()
                                      if oversized_prompt is not None else None),
+        "replay_settings": ({"ordinary_prompt_sha256": hashlib.sha256(b"Hello").hexdigest(),
+                             "temperature": 0, "top_p": 1, "max_output_tokens": 16,
+                             "requests_per_side_per_route": 3}
+                            if args.suite == "recovery-replay" else None),
         "prefill_lines": PREFILL_LINES,
         "identity_before": None,
         "identity_after": None, "cases": [], "status": "fail",
