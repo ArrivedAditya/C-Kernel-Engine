@@ -1,0 +1,577 @@
+{
+  "artifacts": {
+    "gemma": {
+      "chunk_model_sha256": "2852220966ba0b260c65d7aec95dc53e33c44b47a34eda89c064300838118c95",
+      "chunk_source_sha256": "10b0dfdd308ecf420e4a79820ac24a716fc3f1f5f87a972c38b24e5a22ac5afe",
+      "engine_sha256": "947a3303943cc473076078e0a5700cf2556b5e8a163daade9411c2de14268aa8",
+      "full_model_sha256": "4b9de23024ddeacbb9300010504ccea7dcafb1e1bfdc7e942fc72e7bfa6e15a9",
+      "full_source_sha256": "567eb1992fcbaa715a8f39d670051053f673cc9f27a96b95e8a08f36634e9f85",
+      "gguf_sha256": "0d29b1a23a4cb1f14fda28c9e63563fa4bbefb6f34db4f7e873bb72edd932b00",
+      "weights_manifest_sha256": "9ae45ee1a8416fc33c17a2fcbd8e63e3d0e4b087e252aff07fe30ad1ac7bf623"
+    },
+    "qwen2": {
+      "chunk_model_sha256": "0a03ce64da2f9e15be324cd827c31e6267eec14d092bfdb2cd2896915395fa14",
+      "chunk_source_sha256": "91bb6c2d22f6e0dc7a6c4862fbff768b8c08685fd2945d5989c6eb88eb4d4974",
+      "engine_sha256": "947a3303943cc473076078e0a5700cf2556b5e8a163daade9411c2de14268aa8",
+      "full_model_sha256": "a8d3727e047153f3c2e0001d0793fa13866797ed3ddf4011ca3f2f47c1486de9",
+      "full_source_sha256": "4f6cbeeb3171ee6c330e4813f77f66ab00a94c0b2c729b5d3159a3f331d91de4",
+      "gguf_sha256": "f0a42bb979ca62b5e61f3bf924ab4b6a40aa091825ee7dcb4039949980ab81a8",
+      "weights_manifest_sha256": "b15697ca123ddc06a4a160332f302f46fa5716a41b77b4dd33d0f0ab8a57e500"
+    }
+  },
+  "cases": {
+    "gemma": {
+      "natural": {
+        "chunk128": {
+          "logits_sha256": "ef84420fcb8eeaceeac30803ca425b05ae8ece6471d1d75873e5e57a176a8cac",
+          "top_token": 236761
+        },
+        "comparison": {
+          "cosine": 0.9990618633394817,
+          "first_kv_difference": {
+            "channel": 0,
+            "chunk": {
+              "hex": "e06693bf",
+              "value": -1.1515769958496094
+            },
+            "full": {
+              "hex": "71a691bf",
+              "value": -1.1378918886184692
+            },
+            "head": 0,
+            "kind": "K",
+            "layer": 1,
+            "position": 239
+          },
+          "kv_exact_layers": 1,
+          "kv_layers": 18,
+          "max_kv_abs": 6.211832046508789,
+          "max_logit_abs": 1.7571978569030762
+        },
+        "full": {
+          "logits_sha256": "662626238c91f6f4131b6c1de6ea05f6091717101727779f4859dd077e7edcdd",
+          "top_token": 236761
+        },
+        "input": {
+          "kind": "natural",
+          "token_count": 429,
+          "token_ids_csv": "2,236780,11998,14736,7835,4681,607,7732,2864,1883,236761,42085,1217,15612,18497,236764,18378,877,6910,236764,532,32735,22435,614,8726,236789,236751,12309,1651,2264,8726,94517,6436,236761,565,11998,14736,7835,4681,607,7732,2864,1883,236761,42085,1217,15612,18497,236764,18378,877,6910,236764,532,32735,22435,614,8726,236789,236751,12309,1651,2264,8726,94517,6436,236761,565,11998,14736,7835,4681,607,7732,2864,1883,236761,42085,1217,15612,18497,236764,18378,877,6910,236764,532,32735,22435,614,8726,236789,236751,12309,1651,2264,8726,94517,6436,236761,565,11998,14736,7835,4681,607,7732,2864,1883,236761,42085,1217,15612,18497,236764,18378,877,6910,236764,532,32735,22435,614,8726,236789,236751,12309,1651,2264,8726,94517,6436,236761,565,11998,14736,7835,4681,607,7732,2864,1883,236761,42085,1217,15612,18497,236764,18378,877,6910,236764,532,32735,22435,614,8726,236789,236751,12309,1651,2264,8726,94517,6436,236761,565,11998,14736,7835,4681,607,7732,2864,1883,236761,42085,1217,15612,18497,236764,18378,877,6910,236764,532,32735,22435,614,8726,236789,236751,12309,1651,2264,8726,94517,6436,236761,565,11998,14736,7835,4681,607,7732,2864,1883,236761,42085,1217,15612,18497,236764,18378,877,6910,236764,532,32735,22435,614,8726,236789,236751,12309,1651,2264,8726,94517,6436,236761,565,11998,14736,7835,4681,607,7732,2864,1883,236761,42085,1217,15612,18497,236764,18378,877,6910,236764,532,32735,22435,614,8726,236789,236751,12309,1651,2264,8726,94517,6436,236761,565,11998,14736,7835,4681,607,7732,2864,1883,236761,42085,1217,15612,18497,236764,18378,877,6910,236764,532,32735,22435,614,8726,236789,236751,12309,1651,2264,8726,94517,6436,236761,565,11998,14736,7835,4681,607,7732,2864,1883,236761,42085,1217,15612,18497,236764,18378,877,6910,236764,532,32735,22435,614,8726,236789,236751,12309,1651,2264,8726,94517,6436,236761,565,11998,14736,7835,4681,607,7732,2864,1883,236761,42085,1217,15612,18497,236764,18378,877,6910,236764,532,32735,22435,614,8726,236789,236751,12309,1651,2264,8726,94517,6436,236761,565,11998,14736,7835,4681,607,7732,2864,1883,236761,42085,1217,15612,18497,236764,18378,877,6910,236764,532,32735,22435,614,8726,236789,236751,12309,1651,2264,8726,94517,6436,236761,565,11998,14736,7835,4681,607,7732,2864,1883,236761,42085,1217,15612,18497,236764,18378,877,6910,236764,532,32735,22435,614,8726,236789,236751,12309,1651,2264,8726,94517,6436",
+          "token_ids_le_i32_sha256": "a8623316945ec808afe4564420be5ee4b8ba77310224f6ad50a295f048daa428"
+        },
+        "teacher_forced_continuation": {
+          "chosen_tokens": [
+            236761,
+            565,
+            11998,
+            14736,
+            7835,
+            4681,
+            607,
+            7732
+          ],
+          "feed": "full-run greedy tokens, applied unchanged to both runs",
+          "steps": [
+            {
+              "chunk_top": 236761,
+              "cosine": 0.9990618633394817,
+              "full_top": 236761,
+              "max_logit_abs": 1.7571978569030762,
+              "position": 429,
+              "step": 0
+            },
+            {
+              "chunk_top": 565,
+              "cosine": 0.999335889444484,
+              "full_top": 565,
+              "max_logit_abs": 1.3930177688598633,
+              "position": 430,
+              "step": 1
+            },
+            {
+              "chunk_top": 11998,
+              "cosine": 0.9983553504575379,
+              "full_top": 11998,
+              "max_logit_abs": 2.106396198272705,
+              "position": 431,
+              "step": 2
+            },
+            {
+              "chunk_top": 14736,
+              "cosine": 0.9994487362139383,
+              "full_top": 14736,
+              "max_logit_abs": 2.3549537658691406,
+              "position": 432,
+              "step": 3
+            },
+            {
+              "chunk_top": 7835,
+              "cosine": 0.999432785823818,
+              "full_top": 7835,
+              "max_logit_abs": 1.3773882389068604,
+              "position": 433,
+              "step": 4
+            },
+            {
+              "chunk_top": 4681,
+              "cosine": 0.999661504553049,
+              "full_top": 4681,
+              "max_logit_abs": 1.9110393524169922,
+              "position": 434,
+              "step": 5
+            },
+            {
+              "chunk_top": 607,
+              "cosine": 0.9997933888834172,
+              "full_top": 607,
+              "max_logit_abs": 1.4212169647216797,
+              "position": 435,
+              "step": 6
+            },
+            {
+              "chunk_top": 7732,
+              "cosine": 0.9989749666466099,
+              "full_top": 7732,
+              "max_logit_abs": 3.3651866912841797,
+              "position": 436,
+              "step": 7
+            },
+            {
+              "chunk_top": 2864,
+              "cosine": 0.9998390522469667,
+              "full_top": 2864,
+              "max_logit_abs": 1.6535711288452148,
+              "position": 437,
+              "step": 8
+            }
+          ],
+          "top_agreement_all_steps": true
+        }
+      },
+      "repeat": {
+        "chunk128": {
+          "logits_sha256": "4fc8890f5c8c01c7c60ec7213968b7eca6b06eeb4473c43b90dc31f1a6ece056",
+          "top_token": 107
+        },
+        "comparison": {
+          "cosine": 0.9993848327589062,
+          "first_kv_difference": {
+            "channel": 0,
+            "chunk": {
+              "hex": "fb53b6c0",
+              "value": -5.697751522064209
+            },
+            "full": {
+              "hex": "174ab6c0",
+              "value": -5.696544170379639
+            },
+            "head": 0,
+            "kind": "K",
+            "layer": 1,
+            "position": 159
+          },
+          "kv_exact_layers": 1,
+          "kv_layers": 18,
+          "max_kv_abs": 4.492144584655762,
+          "max_logit_abs": 2.5655412673950195
+        },
+        "full": {
+          "logits_sha256": "25446e18ad6ec0339f081067f302354df4c6fb27208bd91d96ea34df6c90bd4c",
+          "top_token": 107
+        },
+        "input": {
+          "kind": "repeat",
+          "token_count": 429,
+          "token_id_repeated": 9707
+        },
+        "sequential_decode": {
+          "chunk_max_abs": 2.438155174255371,
+          "full_max_abs": 1.9093027114868164,
+          "logits_sha256": "f6517bb9795cfa3429a8c0d2061829e1112b3281eedfec5af181aff64e0cd78a",
+          "top_token": 107
+        },
+        "teacher_forced_continuation": {
+          "chosen_tokens": [
+            107,
+            126421,
+            108,
+            56461,
+            107,
+            56461,
+            107,
+            56461
+          ],
+          "feed": "full-run greedy tokens, applied unchanged to both runs",
+          "steps": [
+            {
+              "chunk_top": 107,
+              "cosine": 0.9993848327589062,
+              "full_top": 107,
+              "max_logit_abs": 2.5655412673950195,
+              "position": 429,
+              "step": 0
+            },
+            {
+              "chunk_top": 126421,
+              "cosine": 0.9969478536403673,
+              "full_top": 126421,
+              "max_logit_abs": 2.373002767562866,
+              "position": 430,
+              "step": 1
+            },
+            {
+              "chunk_top": 108,
+              "cosine": 0.9996929222427828,
+              "full_top": 108,
+              "max_logit_abs": 4.912397384643555,
+              "position": 431,
+              "step": 2
+            },
+            {
+              "chunk_top": 56461,
+              "cosine": 0.9993484094151148,
+              "full_top": 56461,
+              "max_logit_abs": 3.2452239990234375,
+              "position": 432,
+              "step": 3
+            },
+            {
+              "chunk_top": 107,
+              "cosine": 0.999442263340727,
+              "full_top": 107,
+              "max_logit_abs": 2.602598190307617,
+              "position": 433,
+              "step": 4
+            },
+            {
+              "chunk_top": 56461,
+              "cosine": 0.9996009905575298,
+              "full_top": 56461,
+              "max_logit_abs": 3.4167327880859375,
+              "position": 434,
+              "step": 5
+            },
+            {
+              "chunk_top": 107,
+              "cosine": 0.9992466191797333,
+              "full_top": 107,
+              "max_logit_abs": 4.075854301452637,
+              "position": 435,
+              "step": 6
+            },
+            {
+              "chunk_top": 56461,
+              "cosine": 0.9997312812118393,
+              "full_top": 56461,
+              "max_logit_abs": 1.7543277740478516,
+              "position": 436,
+              "step": 7
+            },
+            {
+              "chunk_top": 107,
+              "cosine": 0.9998278234868572,
+              "full_top": 107,
+              "max_logit_abs": 2.903860092163086,
+              "position": 437,
+              "step": 8
+            }
+          ],
+          "top_agreement_all_steps": true
+        }
+      }
+    },
+    "qwen2": {
+      "natural": {
+        "chunk128": {
+          "logits_sha256": "3b5f602c7be9731ff73decd5e35d43ef0933886531c64edfac6ea4f0909f514d",
+          "top_token": 15278
+        },
+        "comparison": {
+          "cosine": 0.9998017180405342,
+          "first_kv_difference": {
+            "channel": 0,
+            "chunk": {
+              "hex": "46d2eabf",
+              "value": -1.8345420360565186
+            },
+            "full": {
+              "hex": "08c2eabf",
+              "value": -1.8340463638305664
+            },
+            "head": 0,
+            "kind": "K",
+            "layer": 1,
+            "position": 157
+          },
+          "kv_exact_layers": 1,
+          "kv_layers": 24,
+          "max_kv_abs": 0.5631558895111084,
+          "max_logit_abs": 0.500457763671875
+        },
+        "full": {
+          "logits_sha256": "42eed358a0357b3a0b452a669a888e96abdb667842501967570f5e8f22e42cf9",
+          "top_token": 15278
+        },
+        "input": {
+          "kind": "natural",
+          "token_count": 429,
+          "token_ids_csv": "3021,36,17045,7907,4119,448,8651,1681,1584,13,81917,1246,6500,15278,11,61115,855,7559,11,323,35835,21129,458,8315,594,10435,1393,2441,8315,51435,7375,13,356,3390,17045,7907,4119,448,8651,1681,1584,13,81917,1246,6500,15278,11,61115,855,7559,11,323,35835,21129,458,8315,594,10435,1393,2441,8315,51435,7375,13,356,3390,17045,7907,4119,448,8651,1681,1584,13,81917,1246,6500,15278,11,61115,855,7559,11,323,35835,21129,458,8315,594,10435,1393,2441,8315,51435,7375,13,356,3390,17045,7907,4119,448,8651,1681,1584,13,81917,1246,6500,15278,11,61115,855,7559,11,323,35835,21129,458,8315,594,10435,1393,2441,8315,51435,7375,13,356,3390,17045,7907,4119,448,8651,1681,1584,13,81917,1246,6500,15278,11,61115,855,7559,11,323,35835,21129,458,8315,594,10435,1393,2441,8315,51435,7375,13,356,3390,17045,7907,4119,448,8651,1681,1584,13,81917,1246,6500,15278,11,61115,855,7559,11,323,35835,21129,458,8315,594,10435,1393,2441,8315,51435,7375,13,356,3390,17045,7907,4119,448,8651,1681,1584,13,81917,1246,6500,15278,11,61115,855,7559,11,323,35835,21129,458,8315,594,10435,1393,2441,8315,51435,7375,13,356,3390,17045,7907,4119,448,8651,1681,1584,13,81917,1246,6500,15278,11,61115,855,7559,11,323,35835,21129,458,8315,594,10435,1393,2441,8315,51435,7375,13,356,3390,17045,7907,4119,448,8651,1681,1584,13,81917,1246,6500,15278,11,61115,855,7559,11,323,35835,21129,458,8315,594,10435,1393,2441,8315,51435,7375,13,356,3390,17045,7907,4119,448,8651,1681,1584,13,81917,1246,6500,15278,11,61115,855,7559,11,323,35835,21129,458,8315,594,10435,1393,2441,8315,51435,7375,13,356,3390,17045,7907,4119,448,8651,1681,1584,13,81917,1246,6500,15278,11,61115,855,7559,11,323,35835,21129,458,8315,594,10435,1393,2441,8315,51435,7375,13,356,3390,17045,7907,4119,448,8651,1681,1584,13,81917,1246,6500,15278,11,61115,855,7559,11,323,35835,21129,458,8315,594,10435,1393,2441,8315,51435,7375,13,356,3390,17045,7907,4119,448,8651,1681,1584,13,81917,1246,6500,15278,11,61115,855,7559,11,323,35835,21129,458,8315,594,10435,1393,2441,8315,51435,7375,13,356,3390,17045,7907,4119,448,8651,1681,1584,13,81917,1246,6500",
+          "token_ids_le_i32_sha256": "23a56e409f8571921e8020c51d39fd32fd839bb1cdc344028e2796ebd51e4862"
+        },
+        "teacher_forced_continuation": {
+          "chosen_tokens": [
+            15278,
+            11,
+            61115,
+            855,
+            7559,
+            11,
+            323,
+            35835
+          ],
+          "feed": "full-run greedy tokens, applied unchanged to both runs",
+          "steps": [
+            {
+              "chunk_top": 15278,
+              "cosine": 0.9998017180405342,
+              "full_top": 15278,
+              "max_logit_abs": 0.500457763671875,
+              "position": 429,
+              "step": 0
+            },
+            {
+              "chunk_top": 11,
+              "cosine": 0.9996609423982745,
+              "full_top": 11,
+              "max_logit_abs": 0.43447184562683105,
+              "position": 430,
+              "step": 1
+            },
+            {
+              "chunk_top": 61115,
+              "cosine": 0.9997783384570053,
+              "full_top": 61115,
+              "max_logit_abs": 0.4763317108154297,
+              "position": 431,
+              "step": 2
+            },
+            {
+              "chunk_top": 855,
+              "cosine": 0.9998345250252855,
+              "full_top": 855,
+              "max_logit_abs": 0.5396823883056641,
+              "position": 432,
+              "step": 3
+            },
+            {
+              "chunk_top": 7559,
+              "cosine": 0.9997281548634002,
+              "full_top": 7559,
+              "max_logit_abs": 0.5103989839553833,
+              "position": 433,
+              "step": 4
+            },
+            {
+              "chunk_top": 11,
+              "cosine": 0.9996303943245287,
+              "full_top": 11,
+              "max_logit_abs": 0.4086000919342041,
+              "position": 434,
+              "step": 5
+            },
+            {
+              "chunk_top": 323,
+              "cosine": 0.9997594346740838,
+              "full_top": 323,
+              "max_logit_abs": 0.4652137756347656,
+              "position": 435,
+              "step": 6
+            },
+            {
+              "chunk_top": 35835,
+              "cosine": 0.9998254061975962,
+              "full_top": 35835,
+              "max_logit_abs": 0.5314478874206543,
+              "position": 436,
+              "step": 7
+            },
+            {
+              "chunk_top": 21129,
+              "cosine": 0.9998657962075969,
+              "full_top": 21129,
+              "max_logit_abs": 0.43052244186401367,
+              "position": 437,
+              "step": 8
+            }
+          ],
+          "top_agreement_all_steps": true
+        }
+      },
+      "repeat": {
+        "chunk128": {
+          "logits_sha256": "1ebde73f21221b7f64b3beb099a7fefa89f7d981ee8b23b5c8f3f66bc2420f72",
+          "top_token": 11
+        },
+        "comparison": {
+          "cosine": 0.9999056836244361,
+          "first_kv_difference": {
+            "channel": 0,
+            "chunk": {
+              "hex": "fed34a3d",
+              "value": 0.04951857775449753
+            },
+            "full": {
+              "hex": "09094b3d",
+              "value": 0.04956916347146034
+            },
+            "head": 0,
+            "kind": "K",
+            "layer": 3,
+            "position": 128
+          },
+          "kv_exact_layers": 3,
+          "kv_layers": 24,
+          "max_kv_abs": 0.19959688186645508,
+          "max_logit_abs": 0.29845523834228516
+        },
+        "full": {
+          "logits_sha256": "4f6d97dee822a11d2cf1414e56a2dc7ec6189cf57fef7c6a58cf42012e618f30",
+          "top_token": 11
+        },
+        "input": {
+          "kind": "repeat",
+          "token_count": 429,
+          "token_id_repeated": 9707
+        },
+        "sequential_decode": {
+          "chunk_max_abs": 0.293959379196167,
+          "full_max_abs": 0.30776071548461914,
+          "logits_sha256": "532bf8deae64f8e864b70d3625dc2c2c14f96babedc8f0fc13f0aba0925a6703",
+          "top_token": 11
+        },
+        "teacher_forced_continuation": {
+          "chosen_tokens": [
+            11,
+            358,
+            2776,
+            4460,
+            311,
+            3535,
+            429,
+            8266
+          ],
+          "feed": "full-run greedy tokens, applied unchanged to both runs",
+          "steps": [
+            {
+              "chunk_top": 11,
+              "cosine": 0.9999056836244361,
+              "full_top": 11,
+              "max_logit_abs": 0.29845523834228516,
+              "position": 429,
+              "step": 0
+            },
+            {
+              "chunk_top": 358,
+              "cosine": 0.9995537700922698,
+              "full_top": 358,
+              "max_logit_abs": 0.6270234882831573,
+              "position": 430,
+              "step": 1
+            },
+            {
+              "chunk_top": 2776,
+              "cosine": 0.9995573687766914,
+              "full_top": 2776,
+              "max_logit_abs": 0.5844180583953857,
+              "position": 431,
+              "step": 2
+            },
+            {
+              "chunk_top": 4460,
+              "cosine": 0.999767622586219,
+              "full_top": 4460,
+              "max_logit_abs": 0.4875361919403076,
+              "position": 432,
+              "step": 3
+            },
+            {
+              "chunk_top": 311,
+              "cosine": 0.9996755156217493,
+              "full_top": 311,
+              "max_logit_abs": 0.48414039611816406,
+              "position": 433,
+              "step": 4
+            },
+            {
+              "chunk_top": 3535,
+              "cosine": 0.9996489659087927,
+              "full_top": 3535,
+              "max_logit_abs": 0.4501354694366455,
+              "position": 434,
+              "step": 5
+            },
+            {
+              "chunk_top": 429,
+              "cosine": 0.9994776912714082,
+              "full_top": 429,
+              "max_logit_abs": 0.6014800071716309,
+              "position": 435,
+              "step": 6
+            },
+            {
+              "chunk_top": 8266,
+              "cosine": 0.9996767653003807,
+              "full_top": 8266,
+              "max_logit_abs": 0.522320032119751,
+              "position": 436,
+              "step": 7
+            },
+            {
+              "chunk_top": 264,
+              "cosine": 0.9996528989020376,
+              "full_top": 264,
+              "max_logit_abs": 0.5570969581604004,
+              "position": 437,
+              "step": 8
+            }
+          ],
+          "top_agreement_all_steps": true
+        }
+      }
+    }
+  },
+  "date_utc": "2026-10-21",
+  "engine_flags": "-O3 -fPIC -DCK_TARGET_ARM=1 -mtune=native -fno-math-errno",
+  "executed_after_first_chunk": "generated tokenwise decode replay; not mixed batch or chunk GEMM",
+  "historical_trigger": {
+    "gemma3_429_full_vs_chunk128": {
+      "cosine": 0.840373,
+      "max_abs": 77.1968
+    },
+    "original_token_sequence_recovered": false,
+    "qwen2_429_full_vs_chunk128": {
+      "argmax_flip": true,
+      "cosine": 0.963279,
+      "max_abs": 5.5646
+    },
+    "revision": "667d9a624",
+    "source": "dgx-hb10:~/ck-cert-reports/arm-cert-main-667d9a624-20261020.json"
+  },
+  "host": "dgx-hb10",
+  "input_recipe": {
+    "natural_text_repeated": "CKE serves generated models with separate request state. Explain how cache ownership, bounded prefill, and cancellation preserve an agent's conversation while another agent executes tools. ",
+    "natural_token_ids": "Exact IDs are retained in each natural case; first 429 IDs used.",
+    "repeat": "token ID 9707 repeated 429 times"
+  },
+  "limitations": [
+    "The exact historical 429-token sequence was not retained; these are fresh controlled inputs, not a claim to have reproduced its magnitude.",
+    "Artifact hashes identify paths after build. This diagnostic did not attest the loaded backing mappings.",
+    "No per-layer identical-input arithmetic replay is included.",
+    "Nine-step teacher-forced top-token agreement is diagnostic, not a numerical acceptance criterion or complete task trajectory."
+  ],
+  "note": "Current clean-main runs reduce the historical large divergence, but full/chunked KV and logits are not exact; no tolerance or end-to-end trajectory certification is asserted. Different generated artifacts select different prefill schedules.",
+  "requested_chunk_length": 128,
+  "schema": "cke.chunked_prefill.audit.v1",
+  "source_revision": "d17c9e6d0",
+  "status": "INCOMPLETE_ARITHMETIC_CONTRACT",
+  "threads": 20
+}
