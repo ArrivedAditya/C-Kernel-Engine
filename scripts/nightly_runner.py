@@ -1444,6 +1444,7 @@ TEST_SUITES = {
             for name in (
                 "test_gemma4_geometry_override_uses_pooled_projector_tokens",
                 "test_gemma4_bicubic_resize_uses_centered_ceil_padding",
+                "test_gemma4_padding_geometry_and_normalization_boundaries",
                 "test_gemma4_prebuilt_encoder_rejects_old_resize_policy",
             )
         ),
