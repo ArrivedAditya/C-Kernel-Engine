@@ -1082,6 +1082,10 @@ TEST_SUITES = {
         "Kokoro Native Dictionary Text Preparation and Dispatch", "inference",
         ROOT / "tests" / "test_v8_kokoro_native_lexicon_text.py",
     ),
+    "tts_kokoro_accessibility_text_plan": TestSuite(
+        "Kokoro Pinned Text Conversion and Bounded Chunk Planning", "inference",
+        ROOT / "tests" / "test_v8_kokoro_accessibility_text_plan.py",
+    ),
     "tts_kokoro_whisper_roundtrip": TestSuite(
         "Generated Kokoro to Whisper Known-Text Round Trip", "inference",
         ROOT / "tests" / "test_v8_kokoro_whisper_roundtrip.py",
