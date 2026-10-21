@@ -620,7 +620,7 @@
     "No per-layer identical-input arithmetic replay is included.",
     "Nine-step teacher-forced top-token agreement covers Qwen2 and Gemma3 only; Qwen3 has a one-step comparison. Neither is a numerical acceptance criterion or complete task trajectory."
   ],
-  "note": "Current clean-main runs reduce the historical large divergence, but full/chunked KV and logits are not exact; no tolerance or end-to-end trajectory certification is asserted. Different generated artifacts select different prefill schedules.",
+  "note": "Clean merged-main runs at d17c9e6d0 reduce the historical large divergence, but full/chunked KV and logits are not exact; no tolerance or end-to-end trajectory certification is asserted. Different generated artifacts select different prefill schedules.",
   "requested_chunk_length": 128,
   "schema": "cke.chunked_prefill.audit.v1",
   "source_revision": "d17c9e6d0",
