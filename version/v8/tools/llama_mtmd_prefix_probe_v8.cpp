@@ -1,5 +1,6 @@
 #include <cctype>
 #include <cstdint>
+#include <cstring>
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -11,6 +12,53 @@
 #include "llama.h"
 #include "mtmd.h"
 #include "mtmd-helper.h"
+
+struct CaptureStage {
+    std::string name;
+    std::string path;
+    std::string error;
+    bool seen = false;
+    int64_t columns = 0;
+    int64_t rows = 0;
+};
+
+static bool capture_stage(ggml_tensor * tensor, bool ask, void * opaque) {
+    auto & capture = *static_cast<CaptureStage *>(opaque);
+    if (capture.name != tensor->name) return false;
+    if (ask) return true;
+    if (capture.seen) {
+        capture.error = "selected MTMD stage appeared more than once";
+        return true;
+    }
+    const int64_t count = ggml_nelements(tensor);
+    if (count <= 0 || count > 64 * 1024 * 1024 || !ggml_is_contiguous(tensor) ||
+        (tensor->type != GGML_TYPE_F32 && tensor->type != GGML_TYPE_F16)) {
+        capture.error = "selected MTMD stage has unsupported geometry, layout, or dtype";
+        return true;
+    }
+    std::vector<uint8_t> storage(ggml_nbytes(tensor));
+    ggml_backend_tensor_get(tensor, storage.data(), 0, storage.size());
+    std::vector<float> values(static_cast<size_t>(count));
+    if (tensor->type == GGML_TYPE_F32) {
+        std::memcpy(values.data(), storage.data(), storage.size());
+    } else {
+        for (int64_t i = 0; i < count; ++i) {
+            ggml_fp16_t half;
+            std::memcpy(&half, storage.data() + static_cast<size_t>(i) * sizeof(half), sizeof(half));
+            values[i] = ggml_fp16_to_fp32(half);
+        }
+    }
+    std::ofstream output(capture.path, std::ios::binary);
+    output.write(reinterpret_cast<const char *>(values.data()), values.size() * sizeof(float));
+    if (!output) {
+        capture.error = "failed to write MTMD stage capture";
+        return true;
+    }
+    capture.columns = tensor->ne[0];
+    capture.rows = count / tensor->ne[0];
+    capture.seen = true;
+    return true;
+}
 
 static std::string ppm_token(std::istream & stream) {
     std::string token;
@@ -31,11 +79,20 @@ static std::string ppm_token(std::istream & stream) {
 }
 
 int main(int argc, char ** argv) {
-    if (argc != 6) {
-        std::cerr << "usage: llama_mtmd_prefix_probe_v8 MODEL MMPROJ IMAGE OUTPUT_F32 OUTPUT_RGB8\n";
+    if (argc != 6 && argc != 9) {
+        std::cerr << "usage: llama_mtmd_prefix_probe_v8 MODEL MMPROJ IMAGE OUTPUT_F32 OUTPUT_RGB8"
+                     " [--capture-stage NAME OUTPUT_F32]\n";
         return 2;
     }
     try {
+        CaptureStage capture;
+        if (argc == 9) {
+            if (std::strcmp(argv[6], "--capture-stage") != 0 || !*argv[7] || !*argv[8]) {
+                throw std::runtime_error("invalid MTMD stage capture arguments");
+            }
+            capture.name = argv[7];
+            capture.path = argv[8];
+        }
         std::ifstream image(argv[3], std::ios::binary);
         if (!image) throw std::runtime_error("cannot open image");
         char magic[2] = {};
@@ -72,6 +129,10 @@ int main(int argc, char ** argv) {
         params.use_gpu = false;
         params.n_threads = 8;
         params.warmup = false;
+        if (!capture.name.empty()) {
+            params.cb_eval = capture_stage;
+            params.cb_eval_user_data = &capture;
+        }
         std::unique_ptr<mtmd_context, decltype(&mtmd_free)> mtmd(
             mtmd_init_from_file(argv[2], model.get(), params), mtmd_free);
         if (!mtmd || !mtmd_support_vision(mtmd.get())) {
@@ -133,12 +194,20 @@ int main(int argc, char ** argv) {
             ++image_chunks;
         }
         if (image_chunks == 0) throw std::runtime_error("MTMD produced no image chunks");
+        if (!capture.name.empty()) {
+            if (!capture.error.empty()) throw std::runtime_error(capture.error);
+            if (!capture.seen) throw std::runtime_error("selected MTMD stage was not executed");
+        }
         std::ofstream output(argv[4], std::ios::binary);
         output.write(reinterpret_cast<const char *>(prefix.data()),
                      prefix.size() * sizeof(float));
         if (!output) throw std::runtime_error("failed to write embeddings");
         std::cout << "tokens=" << prefix.size() / dim << " dim=" << dim
-                  << " image_chunks=" << image_chunks << "\n";
+                  << " image_chunks=" << image_chunks;
+        if (capture.seen) {
+            std::cout << " capture_columns=" << capture.columns << " capture_rows=" << capture.rows;
+        }
+        std::cout << "\n";
     } catch (const std::exception & error) {
         std::cerr << error.what() << '\n';
         return 1;

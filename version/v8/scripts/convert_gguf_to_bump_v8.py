@@ -4210,7 +4210,7 @@ def main() -> None:
                     "image_min_pixels": int(min_pixels),
                     "image_max_pixels": int(max_pixels),
                     "image_resize_algorithm": "bicubic",
-                    "image_resize_padding": "none",
+                    "image_resize_padding": "center_ceil",
                     "image_resize_rounding_policy": "half_away_from_zero",
                 })
 

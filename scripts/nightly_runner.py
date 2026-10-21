@@ -1435,6 +1435,19 @@ TEST_SUITES = {
         "parity",
         ROOT / "tests" / "test_v8_numeric_parity_qwen3vl_mmproj.py",
     ),
+    "gemma4_vision_resize_contract": TestSuite(
+        "Gemma4 Vision Resize Contract",
+        "parity",
+        ROOT / "tests" / "test_v8_native_bridge_host.py",
+        unittest_targets=tuple(
+            "tests.test_v8_native_bridge_host.V8NativeBridgeHostTests." + name
+            for name in (
+                "test_gemma4_geometry_override_uses_pooled_projector_tokens",
+                "test_gemma4_bicubic_resize_uses_centered_ceil_padding",
+                "test_gemma4_prebuilt_encoder_rejects_old_resize_policy",
+            )
+        ),
+    ),
     "v8_geglu_quick_contract": TestSuite(
         "v8 GeGLU Quick Numerical and Alias Contract",
         "kernels",
