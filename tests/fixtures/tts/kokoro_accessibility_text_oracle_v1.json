@@ -1,0 +1,345 @@
+{
+  "schema": "cke.kokoro.accessibility-text-oracle.v1",
+  "reference": "pinned Kokoro 0.9.4 KPipeline(model=False), Misaki 0.9.4, en_core_web_sm 3.8.0, espeak fallback",
+  "cases": [
+    {
+      "text": "Dr. Smith has 12 words.",
+      "reference_phonemes": "dˈɑktəɹ smˈɪθ hæz twˈɛlv wˈɜɹdz.",
+      "tokens": [
+        {
+          "text": "Dr.",
+          "whitespace": " ",
+          "phonemes": "dˈɑktəɹ"
+        },
+        {
+          "text": "Smith",
+          "whitespace": " ",
+          "phonemes": "smˈɪθ"
+        },
+        {
+          "text": "has",
+          "whitespace": " ",
+          "phonemes": "hæz"
+        },
+        {
+          "text": "12",
+          "whitespace": " ",
+          "phonemes": "twˈɛlv"
+        },
+        {
+          "text": "words",
+          "whitespace": "",
+          "phonemes": "wˈɜɹdz"
+        },
+        {
+          "text": ".",
+          "whitespace": "",
+          "phonemes": "."
+        }
+      ]
+    },
+    {
+      "text": "The CKE runtime reads files and code. 2 + 2 = 4.",
+      "reference_phonemes": "ðə sˌikˌAˈi ɹˈʌntIm ɹˈidz fˈIlz ænd kˈOd. tˈu plˈʌs tˈu ˈikwᵊlz fˈɔɹ.",
+      "tokens": [
+        {
+          "text": "The",
+          "whitespace": " ",
+          "phonemes": "ðə"
+        },
+        {
+          "text": "CKE",
+          "whitespace": " ",
+          "phonemes": "sˌikˌAˈi"
+        },
+        {
+          "text": "runtime",
+          "whitespace": " ",
+          "phonemes": "ɹˈʌntIm"
+        },
+        {
+          "text": "reads",
+          "whitespace": " ",
+          "phonemes": "ɹˈidz"
+        },
+        {
+          "text": "files",
+          "whitespace": " ",
+          "phonemes": "fˈIlz"
+        },
+        {
+          "text": "and",
+          "whitespace": " ",
+          "phonemes": "ænd"
+        },
+        {
+          "text": "code",
+          "whitespace": "",
+          "phonemes": "kˈOd"
+        },
+        {
+          "text": ".",
+          "whitespace": " ",
+          "phonemes": "."
+        },
+        {
+          "text": "2",
+          "whitespace": " ",
+          "phonemes": "tˈu"
+        },
+        {
+          "text": "+",
+          "whitespace": " ",
+          "phonemes": "plˈʌs"
+        },
+        {
+          "text": "2",
+          "whitespace": " ",
+          "phonemes": "tˈu"
+        },
+        {
+          "text": "=",
+          "whitespace": " ",
+          "phonemes": "ˈikwᵊlz"
+        },
+        {
+          "text": "4",
+          "whitespace": "",
+          "phonemes": "fˈɔɹ"
+        },
+        {
+          "text": ".",
+          "whitespace": "",
+          "phonemes": "."
+        }
+      ]
+    },
+    {
+      "text": "A list:\n1. First item.\n2. Second item.",
+      "reference_phonemes": "ɐ lˈɪst:wˈʌn. fˈɜɹst ˈITəm.tˈu. sˈɛkənd ˈITəm.",
+      "tokens": [
+        {
+          "text": "A",
+          "whitespace": " ",
+          "phonemes": "ɐ"
+        },
+        {
+          "text": "list",
+          "whitespace": "",
+          "phonemes": "lˈɪst"
+        },
+        {
+          "text": ":",
+          "whitespace": "",
+          "phonemes": ":"
+        },
+        {
+          "text": "\n1",
+          "whitespace": "",
+          "phonemes": "wˈʌn"
+        },
+        {
+          "text": ".",
+          "whitespace": " ",
+          "phonemes": "."
+        },
+        {
+          "text": "First",
+          "whitespace": " ",
+          "phonemes": "fˈɜɹst"
+        },
+        {
+          "text": "item",
+          "whitespace": "",
+          "phonemes": "ˈITəm"
+        },
+        {
+          "text": ".",
+          "whitespace": "",
+          "phonemes": "."
+        },
+        {
+          "text": "\n2",
+          "whitespace": "",
+          "phonemes": "tˈu"
+        },
+        {
+          "text": ".",
+          "whitespace": " ",
+          "phonemes": "."
+        },
+        {
+          "text": "Second",
+          "whitespace": " ",
+          "phonemes": "sˈɛkənd"
+        },
+        {
+          "text": "item",
+          "whitespace": "",
+          "phonemes": "ˈITəm"
+        },
+        {
+          "text": ".",
+          "whitespace": "",
+          "phonemes": "."
+        }
+      ]
+    },
+    {
+      "text": "I can read these words. First, open README.md. Then check 2 + 2 = 4. If the device disconnects, press stop and try again.",
+      "reference_phonemes": "ˌI kæn ɹˈid ðiz wˈɜɹdz. fˈɜɹst, ˈOpᵊn ɹˈidmi.ˌɛmdˈi. ðˈɛn ʧˈɛk tˈu plˈʌs tˈu ˈikwᵊlz fˈɔɹ. ˌɪf ðə dəvˈIs dˌɪskənˈɛkts, pɹˈɛs stˈɑp ænd tɹˈI əɡˈɛn.",
+      "tokens": [
+        {
+          "text": "I",
+          "whitespace": " ",
+          "phonemes": "ˌI"
+        },
+        {
+          "text": "can",
+          "whitespace": " ",
+          "phonemes": "kæn"
+        },
+        {
+          "text": "read",
+          "whitespace": " ",
+          "phonemes": "ɹˈid"
+        },
+        {
+          "text": "these",
+          "whitespace": " ",
+          "phonemes": "ðiz"
+        },
+        {
+          "text": "words",
+          "whitespace": "",
+          "phonemes": "wˈɜɹdz"
+        },
+        {
+          "text": ".",
+          "whitespace": " ",
+          "phonemes": "."
+        },
+        {
+          "text": "First",
+          "whitespace": "",
+          "phonemes": "fˈɜɹst"
+        },
+        {
+          "text": ",",
+          "whitespace": " ",
+          "phonemes": ","
+        },
+        {
+          "text": "open",
+          "whitespace": " ",
+          "phonemes": "ˈOpᵊn"
+        },
+        {
+          "text": "README.md",
+          "whitespace": "",
+          "phonemes": "ɹˈidmi.ˌɛmdˈi"
+        },
+        {
+          "text": ".",
+          "whitespace": " ",
+          "phonemes": "."
+        },
+        {
+          "text": "Then",
+          "whitespace": " ",
+          "phonemes": "ðˈɛn"
+        },
+        {
+          "text": "check",
+          "whitespace": " ",
+          "phonemes": "ʧˈɛk"
+        },
+        {
+          "text": "2",
+          "whitespace": " ",
+          "phonemes": "tˈu"
+        },
+        {
+          "text": "+",
+          "whitespace": " ",
+          "phonemes": "plˈʌs"
+        },
+        {
+          "text": "2",
+          "whitespace": " ",
+          "phonemes": "tˈu"
+        },
+        {
+          "text": "=",
+          "whitespace": " ",
+          "phonemes": "ˈikwᵊlz"
+        },
+        {
+          "text": "4",
+          "whitespace": "",
+          "phonemes": "fˈɔɹ"
+        },
+        {
+          "text": ".",
+          "whitespace": " ",
+          "phonemes": "."
+        },
+        {
+          "text": "If",
+          "whitespace": " ",
+          "phonemes": "ˌɪf"
+        },
+        {
+          "text": "the",
+          "whitespace": " ",
+          "phonemes": "ðə"
+        },
+        {
+          "text": "device",
+          "whitespace": " ",
+          "phonemes": "dəvˈIs"
+        },
+        {
+          "text": "disconnects",
+          "whitespace": "",
+          "phonemes": "dˌɪskənˈɛkts"
+        },
+        {
+          "text": ",",
+          "whitespace": " ",
+          "phonemes": ","
+        },
+        {
+          "text": "press",
+          "whitespace": " ",
+          "phonemes": "pɹˈɛs"
+        },
+        {
+          "text": "stop",
+          "whitespace": " ",
+          "phonemes": "stˈɑp"
+        },
+        {
+          "text": "and",
+          "whitespace": " ",
+          "phonemes": "ænd"
+        },
+        {
+          "text": "try",
+          "whitespace": " ",
+          "phonemes": "tɹˈI"
+        },
+        {
+          "text": "again",
+          "whitespace": "",
+          "phonemes": "əɡˈɛn"
+        },
+        {
+          "text": ".",
+          "whitespace": "",
+          "phonemes": "."
+        }
+      ]
+    }
+  ]
+}
