@@ -68,3 +68,14 @@ def test_malformed_or_unsafe_turn_is_rejected(raw: str) -> None:
 def test_plain_text_and_stop_stripped_final() -> None:
     assert parse_muse_turn('Hello.').final_text == 'Hello.'
     assert parse_muse_turn(' to=user<|message|>Hello.').final_text == 'Hello.'
+
+
+def test_leading_whitespace_does_not_hide_framed_tool_call() -> None:
+    turn = parse_muse_turn(' \n' + _tool('read_file', 'path', '/tmp/a'))
+    assert turn.final_text == ''
+    assert turn.tool_calls == [{'name': 'read_file', 'arguments': {'path': '/tmp/a'}}]
+
+
+def test_leading_whitespace_does_not_hide_malformed_frame() -> None:
+    with pytest.raises(MuseSyntaxError):
+        parse_muse_turn(' \n<|start|>assistant to=read_file<|message|>broken<|eot|>')

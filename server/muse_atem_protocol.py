@@ -127,9 +127,9 @@ def parse_muse_turn(text: str) -> MuseTurn:
     """Parse one generated assistant turn; plain unframed output is final text."""
     if not text:
         return MuseTurn("", "", [])
-    raw = text
-    if raw.lstrip().startswith("to="):
-        raw = "<|start|>assistant " + raw.lstrip()
+    raw = text.lstrip()
+    if raw.startswith("to="):
+        raw = "<|start|>assistant " + raw
     if not raw.startswith("<|start|>"):
         return MuseTurn("", text.strip(), [])
 

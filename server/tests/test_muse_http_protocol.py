@@ -74,6 +74,21 @@ def _completed_payload(response, stream: bool) -> dict:
 
 
 @pytest.mark.parametrize("stream", [False, True])
+def test_muse_leading_whitespace_preserves_tool_channel(stream: bool) -> None:
+    client, _ = _client([" \n" + CALL])
+    response = client.post("/v1/responses", json={
+        "model": "muse-test", "input": "Read /tmp/a", "tools": [TOOL],
+        "stream": stream,
+    })
+    assert response.status_code == 200, response.text
+    payload = _completed_payload(response, stream)
+    calls = [item for item in payload["output"] if item["type"] == "function_call"]
+    assert len(calls) == 1
+    assert json.loads(calls[0]["arguments"]) == {"path": "/tmp/a"}
+    assert "<|start|>" not in payload.get("output_text", "")
+
+
+@pytest.mark.parametrize("stream", [False, True])
 def test_muse_tool_round_trip_and_channel_isolation(stream: bool) -> None:
     client, session = _client([CALL, FINAL])
     first = client.post("/v1/responses", json={
