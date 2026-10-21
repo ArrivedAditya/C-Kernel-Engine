@@ -57,6 +57,14 @@
           "max_kv_abs": 6.211832046508789,
           "max_logit_abs": 1.7571978569030762
         },
+        "explicit_staged_control": {
+          "continuation_decode_tokens": 301,
+          "first_chunk_tokens": 128,
+          "kv_layers_exact": 18,
+          "kv_layers_total": 18,
+          "logits_exact": true,
+          "logits_sha256": "ef84420fcb8eeaceeac30803ca425b05ae8ece6471d1d75873e5e57a176a8cac"
+        },
         "full": {
           "logits_sha256": "662626238c91f6f4131b6c1de6ea05f6091717101727779f4859dd077e7edcdd",
           "top_token": 236761
@@ -188,6 +196,14 @@
           "kv_layers": 18,
           "max_kv_abs": 4.492144584655762,
           "max_logit_abs": 2.5655412673950195
+        },
+        "explicit_staged_control": {
+          "continuation_decode_tokens": 301,
+          "first_chunk_tokens": 128,
+          "kv_layers_exact": 18,
+          "kv_layers_total": 18,
+          "logits_exact": true,
+          "logits_sha256": "4fc8890f5c8c01c7c60ec7213968b7eca6b06eeb4473c43b90dc31f1a6ece056"
         },
         "full": {
           "logits_sha256": "25446e18ad6ec0339f081067f302354df4c6fb27208bd91d96ea34df6c90bd4c",
@@ -322,6 +338,14 @@
           "max_kv_abs": 0.5631558895111084,
           "max_logit_abs": 0.500457763671875
         },
+        "explicit_staged_control": {
+          "continuation_decode_tokens": 301,
+          "first_chunk_tokens": 128,
+          "kv_layers_exact": 24,
+          "kv_layers_total": 24,
+          "logits_exact": true,
+          "logits_sha256": "3b5f602c7be9731ff73decd5e35d43ef0933886531c64edfac6ea4f0909f514d"
+        },
         "full": {
           "logits_sha256": "42eed358a0357b3a0b452a669a888e96abdb667842501967570f5e8f22e42cf9",
           "top_token": 15278
@@ -454,6 +478,14 @@
           "max_kv_abs": 0.19959688186645508,
           "max_logit_abs": 0.29845523834228516
         },
+        "explicit_staged_control": {
+          "continuation_decode_tokens": 301,
+          "first_chunk_tokens": 128,
+          "kv_layers_exact": 24,
+          "kv_layers_total": 24,
+          "logits_exact": true,
+          "logits_sha256": "1ebde73f21221b7f64b3beb099a7fefa89f7d981ee8b23b5c8f3f66bc2420f72"
+        },
         "full": {
           "logits_sha256": "4f6d97dee822a11d2cf1414e56a2dc7ec6189cf57fef7c6a58cf42012e618f30",
           "top_token": 11
@@ -579,6 +611,14 @@
           "max_kv_abs": 0.006970539689064026,
           "max_logit_abs": 0.0358271598815918
         },
+        "explicit_staged_control": {
+          "continuation_decode_tokens": 301,
+          "first_chunk_tokens": 128,
+          "kv_layers_exact": 28,
+          "kv_layers_total": 28,
+          "logits_exact": true,
+          "logits_sha256": "35de5e3bae496fb9bd47e3a59aa85d92733da7e439f5ab00df2456d17ff400c7"
+        },
         "full": {
           "logits_sha256": "87f295d39c31ef4f640b1fefabff4f58bf73c7b33fa5d4e4ca5c77142594a5fb",
           "top_token": 1479
@@ -594,6 +634,7 @@
   "date_utc": "2026-10-21",
   "engine_flags": "-O3 -fPIC -DCK_TARGET_ARM=1 -mtune=native -fno-math-errno",
   "executed_after_first_chunk": "generated tokenwise decode replay; not mixed batch or chunk GEMM",
+  "fallback_semantics_status": "PASS_EXACT_STAGED_CONTROL",
   "historical_trigger": {
     "gemma3_429_full_vs_chunk128": {
       "cosine": 0.840373,
@@ -620,7 +661,7 @@
     "No per-layer identical-input arithmetic replay is included.",
     "Nine-step teacher-forced top-token agreement covers Qwen2 and Gemma3 only; Qwen3 has a one-step comparison. Neither is a numerical acceptance criterion or complete task trajectory."
   ],
-  "note": "Clean merged-main runs at d17c9e6d0 reduce the historical large divergence, but full/chunked KV and logits are not exact; no tolerance or end-to-end trajectory certification is asserted. Different generated artifacts select different prefill schedules.",
+  "note": "Clean merged-main runs at d17c9e6d0: chunk-128 execution is byte-exact to explicit prefill-128 plus 301 generated decode calls on all five tested cases, including every exported KV layer. Full-prefill comparisons still differ and require a declared phase arithmetic verdict; no tolerance or mixed-batch certification is asserted.",
   "requested_chunk_length": 128,
   "schema": "cke.chunked_prefill.audit.v1",
   "source_revision": "d17c9e6d0",
