@@ -199,10 +199,8 @@ void add_backward_bf16(const uint16_t *d_y,
     if (d_a && d_a != d_y) {
 #if defined(__AVX512F__)
         for (; i + 32 <= n; i += 32) {
-            __m512i v0 = _mm512_loadu_si512((const __m512i*)&d_y[i]);
-            __m512i v1 = _mm512_loadu_si512((const __m512i*)&d_y[i + 32]);
-            _mm512_storeu_si512((__m512i*)&d_a[i], v0);
-            _mm512_storeu_si512((__m512i*)&d_a[i + 32], v1);
+            __m512i values = _mm512_loadu_si512((const __m512i*)&d_y[i]);
+            _mm512_storeu_si512((__m512i*)&d_a[i], values);
         }
 #endif
         for (; i < n; ++i) {
@@ -215,10 +213,8 @@ void add_backward_bf16(const uint16_t *d_y,
     if (d_b && d_b != d_y) {
 #if defined(__AVX512F__)
         for (; i + 32 <= n; i += 32) {
-            __m512i v0 = _mm512_loadu_si512((const __m512i*)&d_y[i]);
-            __m512i v1 = _mm512_loadu_si512((const __m512i*)&d_y[i + 32]);
-            _mm512_storeu_si512((__m512i*)&d_b[i], v0);
-            _mm512_storeu_si512((__m512i*)&d_b[i + 32], v1);
+            __m512i values = _mm512_loadu_si512((const __m512i*)&d_y[i]);
+            _mm512_storeu_si512((__m512i*)&d_b[i], values);
         }
 #endif
         for (; i < n; ++i) {

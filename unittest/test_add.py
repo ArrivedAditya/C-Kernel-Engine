@@ -15,8 +15,13 @@ import os
 import sys
 
 import numpy as np
-import torch
-import torch.nn.functional as F
+try:
+    import torch
+except ModuleNotFoundError as exc:
+    if exc.name != "torch":
+        raise
+    print("TEST SKIPPED: PyTorch BF16 storage oracle is unavailable")
+    sys.exit(0)
 
 from lib_loader import load_lib
 from test_utils import (
@@ -34,12 +39,9 @@ lib = load_lib("libckernel_add.so", "libckernel_engine.so")
 # =============================================================================
 
 def float_to_bf16(x: np.ndarray) -> np.ndarray:
-    """Convert float32 array to bf16 (stored as uint16)."""
-    # Truncate lower 16 bits of float32 mantissa
-    x_f32 = x.astype(np.float32)
-    x_bytes = x_f32.view(np.uint32)
-    x_bf16 = (x_bytes >> 16).astype(np.uint16)
-    return x_bf16
+    """Use PyTorch's round-to-nearest-even BF16 storage as the oracle."""
+    x_f32 = np.ascontiguousarray(x, dtype=np.float32)
+    return torch.from_numpy(x_f32).to(torch.bfloat16).view(torch.int16).numpy().view(np.uint16)
 
 
 def bf16_to_float(x: np.ndarray) -> np.ndarray:
@@ -140,14 +142,14 @@ def test_forward_bf16(N=4096, warmup=10, iterations=100):
     b_bf16 = float_to_bf16(b_f32)
     y_bf16 = np.zeros(N, dtype=np.uint16)
 
-    # Get actual BF16 values (with truncation)
+    # Compare stored BF16 values, not the unrounded FP32 sum.
     a_bf16_f32 = bf16_to_float(a_bf16)
     b_bf16_f32 = bf16_to_float(b_bf16)
 
     # PyTorch reference (using actual BF16 values)
     a_torch = torch.from_numpy(a_bf16_f32)
     b_torch = torch.from_numpy(b_bf16_f32)
-    ref = (a_torch + b_torch).numpy()
+    ref = float_to_bf16((a_torch + b_torch).numpy())
 
     # C kernel
     lib.add_forward_bf16(
@@ -159,12 +161,13 @@ def test_forward_bf16(N=4096, warmup=10, iterations=100):
 
     # Convert result back to float for comparison
     y_f32 = bf16_to_float(y_bf16)
+    ref_f32 = bf16_to_float(ref)
 
     # Compute error
-    diff = np.abs(y_f32 - ref)
+    diff = np.abs(y_f32 - ref_f32)
     max_err = np.max(diff)
     mean_err = np.mean(diff)
-    rel_err = max_err / (np.max(np.abs(ref)) + 1e-10)
+    rel_err = max_err / (np.max(np.abs(ref_f32)) + 1e-10)
 
     print(f"  Shape:     N={N}")
     print(f"  Max diff:  {max_err:.2e}")
@@ -206,8 +209,7 @@ def test_forward_bf16(N=4096, warmup=10, iterations=100):
     print(f"  Speedup:   {torch_time/c_time:.2f}x")
 
     # Pass/Fail
-    # BF16 has ~3 decimal digits of precision, so we allow some error
-    passed = max_err < 1e-3
+    passed = np.array_equal(y_bf16, ref)
     status = "PASS" if passed else "FAIL"
     print(f"\n  Status: {status}")
 
@@ -237,7 +239,7 @@ def test_scaled_forward_bf16(N=4096, alpha=0.5):
     b_bf16_f32 = bf16_to_float(b_bf16)
 
     # PyTorch reference
-    ref = a_bf16_f32 + alpha * b_bf16_f32
+    ref = float_to_bf16(a_bf16_f32 + alpha * b_bf16_f32)
 
     # C kernel
     lib.add_scaled_forward_bf16(
@@ -250,7 +252,7 @@ def test_scaled_forward_bf16(N=4096, alpha=0.5):
 
     y_f32 = bf16_to_float(y_bf16)
 
-    diff = np.abs(y_f32 - ref)
+    diff = np.abs(y_f32 - bf16_to_float(ref))
     max_err = np.max(diff)
     mean_err = np.mean(diff)
 
@@ -258,7 +260,7 @@ def test_scaled_forward_bf16(N=4096, alpha=0.5):
     print(f"  Max diff:  {max_err:.2e}")
     print(f"  Mean diff: {mean_err:.2e}")
 
-    passed = max_err < 1e-3
+    passed = np.array_equal(y_bf16, ref)
     status = "PASS" if passed else "FAIL"
     print(f"  Status: {status}")
 
@@ -287,7 +289,7 @@ def test_inplace_bf16(N=4096):
     b_bf16_f32 = bf16_to_float(b_bf16)
 
     # PyTorch reference
-    ref = a_bf16_f32 + b_bf16_f32
+    ref = float_to_bf16(a_bf16_f32 + b_bf16_f32)
 
     # C kernel (modifies a in-place)
     a_bf16_copy = a_bf16.copy()
@@ -299,13 +301,13 @@ def test_inplace_bf16(N=4096):
 
     y_f32 = bf16_to_float(a_bf16_copy)
 
-    diff = np.abs(y_f32 - ref)
+    diff = np.abs(y_f32 - bf16_to_float(ref))
     max_err = np.max(diff)
 
     print(f"  Shape:     N={N}")
     print(f"  Max diff:  {max_err:.2e}")
 
-    passed = max_err < 1e-3
+    passed = np.array_equal(a_bf16_copy, ref)
     status = "PASS" if passed else "FAIL"
     print(f"  Status: {status}")
 
@@ -383,27 +385,29 @@ def test_forward_2d_bf16(T=32, D=896, aligned_D=896):
 
     a_bf16 = float_to_bf16(a_f32.flatten()).reshape(T, aligned_D)
     b_bf16 = float_to_bf16(b_f32.flatten()).reshape(T, aligned_D)
-    y_bf16 = np.zeros((T, aligned_D), dtype=np.uint16)
+    y_bf16 = np.full((T, aligned_D), 0xDEAD, dtype=np.uint16)
 
     a_bf16_f32 = bf16_to_float(a_bf16.flatten()).reshape(T, aligned_D)
     b_bf16_f32 = bf16_to_float(b_bf16.flatten()).reshape(T, aligned_D)
 
     # PyTorch reference (only compare first D elements per row)
-    ref = a_bf16_f32[:, :D] + b_bf16_f32[:, :D]
+    ref = float_to_bf16(a_bf16_f32[:, :D] + b_bf16_f32[:, :D])
 
     # C kernel
+    output_flat = y_bf16.ravel()
+    assert np.shares_memory(output_flat, y_bf16), "C must write into the observed destination"
     lib.add_forward_2d_bf16(
-        numpy_to_ptr_u16(a_bf16.flatten()),
-        numpy_to_ptr_u16(b_bf16.flatten()),
-        numpy_to_ptr_u16(y_bf16.flatten()),
+        numpy_to_ptr_u16(a_bf16.ravel()),
+        numpy_to_ptr_u16(b_bf16.ravel()),
+        numpy_to_ptr_u16(output_flat),
         ctypes.c_int(T),
         ctypes.c_int(D),
         ctypes.c_int(aligned_D)
     )
 
-    y_f32 = bf16_to_float(y_bf16.flatten()).reshape(T, aligned_D)[:, :D]
+    y_f32 = bf16_to_float(y_bf16[:, :D])
 
-    diff = np.abs(y_f32 - ref)
+    diff = np.abs(y_f32 - bf16_to_float(ref))
     max_err = np.max(diff)
     mean_err = np.mean(diff)
 
@@ -411,10 +415,86 @@ def test_forward_2d_bf16(T=32, D=896, aligned_D=896):
     print(f"  Max diff:  {max_err:.2e}")
     print(f"  Mean diff: {mean_err:.2e}")
 
-    passed = max_err < 1e-3
+    passed = np.array_equal(y_bf16[:, :D], ref) and np.all(y_bf16[:, D:] == 0xDEAD)
     status = "PASS" if passed else "FAIL"
     print(f"  Status: {status}")
 
+    return passed
+
+
+def test_bf16_rounding_boundaries():
+    """Finite ties must round correctly in scalar, SIMD, and SIMD-tail stores."""
+    base_a = np.array([1.0, 1.0078125, -1.0, -1.0078125], dtype=np.float32)
+    base_b = np.array([1 / 256, 1 / 256, -1 / 256, -1 / 256], dtype=np.float32)
+    base_expected = np.array([0x3F80, 0x3F82, 0xBF80, 0xBF82], dtype=np.uint16)
+    passed = True
+    for n in (4, 16, 17, 32, 33, 65):
+        a = np.tile(base_a, (n + 3) // 4)[:n]
+        b = np.tile(base_b, (n + 3) // 4)[:n]
+        a_bits = float_to_bf16(a)
+        b_bits = float_to_bf16(b)
+        expected = np.tile(base_expected, (n + 3) // 4)[:n]
+        assert np.array_equal(float_to_bf16(a + b), expected)
+
+        output = np.full(n, 0xDEAD, dtype=np.uint16)
+        lib.add_forward_bf16(numpy_to_ptr_u16(a_bits), numpy_to_ptr_u16(b_bits),
+                             numpy_to_ptr_u16(output), ctypes.c_size_t(n))
+        inplace = a_bits.copy()
+        lib.add_inplace_bf16(numpy_to_ptr_u16(inplace), numpy_to_ptr_u16(b_bits),
+                             ctypes.c_size_t(n))
+        passed &= np.array_equal(output, expected) and np.array_equal(inplace, expected)
+    print(f"  BF16 tie-to-even stored output: {'PASS' if passed else 'FAIL'}")
+    return passed
+
+
+def test_bf16_backward_copy_bounds():
+    """Copy only n elements, including at AVX-512 vector/tail boundaries."""
+    guard = 8
+    for n in (0, 1, 31, 32, 33, 63, 64, 65, 96):
+        source = np.full(guard + n + 32, 0xA55A, dtype=np.uint16)
+        source[guard:guard + n] = (np.arange(n, dtype=np.uint16) * 37 + 1)
+        before_source = source.copy()
+        outputs = [np.full_like(source, 0xDEAD) for _ in range(2)]
+        lib.add_backward_bf16(
+            numpy_to_ptr_u16(source[guard:]),
+            numpy_to_ptr_u16(outputs[0][guard:]),
+            numpy_to_ptr_u16(outputs[1][guard:]),
+            ctypes.c_size_t(n),
+        )
+        if not np.array_equal(source, before_source):
+            return False
+        for output in outputs:
+            if not (np.all(output[:guard] == 0xDEAD)
+                    and np.array_equal(output[guard:guard + n], source[guard:guard + n])
+                    and np.all(output[guard + n:] == 0xDEAD)):
+                return False
+    print("  BF16 backward vector/tail bounds: PASS")
+    return True
+
+
+def test_bf16_edge_shapes_and_negative_controls():
+    """Zero length is a no-op; scalar and SIMD-tail lengths store exact values."""
+    a = float_to_bf16(np.linspace(-1.0, 1.0, 33, dtype=np.float32))
+    b = float_to_bf16(np.linspace(0.25, -0.25, 33, dtype=np.float32))
+    expected = float_to_bf16(bf16_to_float(a) + bf16_to_float(b))
+    for n in (0, 1, 17, 33):
+        output = np.full(33, 0xDEAD, dtype=np.uint16)
+        lib.add_forward_bf16(numpy_to_ptr_u16(a), numpy_to_ptr_u16(b),
+                             numpy_to_ptr_u16(output), ctypes.c_size_t(n))
+        if not (np.array_equal(output[:n], expected[:n])
+                and np.all(output[n:] == 0xDEAD)):
+            return False
+
+    # A no-op kernel and a truncating store must both fail the same bitwise
+    # assertion used above. Nonfinite payload semantics are a separate contract.
+    a_tie = np.array([1.0078125], dtype=np.float32)
+    b_tie = np.array([1 / 256], dtype=np.float32)
+    rounded = float_to_bf16(a_tie + b_tie)
+    truncated = ((a_tie + b_tie).view(np.uint32) >> 16).astype(np.uint16)
+    stale = np.full(1, 0xDEAD, dtype=np.uint16)
+    passed = (not np.array_equal(stale, rounded)
+              and not np.array_equal(truncated, rounded))
+    print(f"  BF16 stale-output/truncation controls: {'PASS' if passed else 'FAIL'}")
     return passed
 
 
@@ -480,6 +560,11 @@ def main():
     results.append(("add_inplace_bf16", test_inplace_bf16()))
     results.append(("add_backward_bf16", test_backward_bf16()))
     results.append(("add_forward_2d_bf16", test_forward_2d_bf16()))
+    results.append(("add_forward_2d_bf16_padded", test_forward_2d_bf16(T=4, D=37, aligned_D=48)))
+    results.append(("add_forward_2d_bf16_small", test_forward_2d_bf16(T=1, D=1, aligned_D=4)))
+    results.append(("bf16_rounding_boundaries", test_bf16_rounding_boundaries()))
+    results.append(("bf16_backward_copy_bounds", test_bf16_backward_copy_bounds()))
+    results.append(("bf16_edge_shapes_and_controls", test_bf16_edge_shapes_and_negative_controls()))
     results.append(("add_forward_f32", test_forward_f32()))
 
     # Summary
