@@ -5940,7 +5940,11 @@ int ck_session_v8_generate(
                       "native generation failed");
     }
     if (session->api.set_cancel_flag) session->api.set_cancel_flag(NULL);
-    if (result->stop_reason == CK_SESSION_STOP_CANCELLED && session->api.kv_reset) {
+    /* A failed forward may have updated KV, recurrent state or the position
+     * cursor before reporting failure. Never expose that partial state to a
+     * later request, including one that asks to continue the session. */
+    if ((status != 0 || result->stop_reason == CK_SESSION_STOP_CANCELLED) &&
+        session->api.kv_reset) {
         session->api.kv_reset();
     }
     pthread_mutex_unlock(&session->generation_lock);
