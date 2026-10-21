@@ -555,7 +555,7 @@ def main(argv: list[str] | None = None) -> int:
         context_length=runtime_context_length,
     )
     from server.serving_bundle import (
-        _loaded_model_token_decoder, resolved_renderer_tokens,
+        _loaded_model_token_decoder, _loaded_model_token_lookup, resolved_renderer_tokens,
         runtime_auto_bos_token, runtime_renderer_tokens,
     )
     loaded_identity = None
@@ -572,6 +572,7 @@ def main(argv: list[str] | None = None) -> int:
             renderer_tokens = resolved_renderer_tokens(
                 run_dir, resolved_serving,
                 decode_ids=_loaded_model_token_decoder(run_dir),
+                lookup_token=_loaded_model_token_lookup(run_dir),
             )
         else:
             renderer_tokens = runtime_renderer_tokens(run_dir) if chat_template else None

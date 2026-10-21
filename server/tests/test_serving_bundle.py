@@ -452,6 +452,17 @@ def test_gguf_manifest_ids_bind_publisher_token_text_from_verified_assets(setup)
     resolved = resolve(setup)
     tokens = resolved_renderer_tokens(run, load_resolved_serving(run))
     assert tokens == {"bos_token": "<bos>", "eos_token": "<turn|>"}
+    # Display decoding may omit control tokens; exact loaded vocabulary lookup
+    # verifies their spelling without relying on user-facing decoded text.
+    assert resolved_renderer_tokens(
+        run, load_resolved_serving(run), decode_ids=lambda _ids: "",
+        lookup_token=lambda text: {"<bos>": 2, "<turn|>": 106}.get(text, -1),
+    ) == tokens
+    with pytest.raises(ValueError, match="loaded tokenizer disagrees"):
+        resolved_renderer_tokens(
+            run, load_resolved_serving(run), decode_ids=lambda _ids: "",
+            lookup_token=lambda text: {"<bos>": 3, "<turn|>": 106}.get(text, -1),
+        )
     with pytest.raises(ValueError, match="loaded tokenizer disagrees"):
         resolved_renderer_tokens(run, load_resolved_serving(run),
                                  decode_ids=lambda ids: "<wrong>")
@@ -465,6 +476,36 @@ def test_gguf_manifest_ids_bind_publisher_token_text_from_verified_assets(setup)
         load_resolved_serving(run)
     assert resolved["assets"]["tokenizer.json"]["sha256"] != hashlib.sha256(
         (run / "tokenizer.json").read_bytes()).hexdigest()
+
+
+def test_loaded_special_token_lookup_uses_raw_vocabulary_not_display_decode(tmp_path):
+    import server.serving_bundle as bundle
+
+    if not hasattr(os, "RTLD_NOLOAD"):
+        pytest.skip("loaded-library lookup requires RTLD_NOLOAD")
+    source = tmp_path / "model.c"
+    source.write_text('''
+        #include <stdint.h>
+        #include <string.h>
+        int32_t ck_model_lookup_token(const char *text) {
+            if (!strcmp(text, "<bos>")) return 2;
+            if (!strcmp(text, "<eos>")) return 3;
+            return -1;
+        }
+        int ck_model_decode_tokens(const int32_t *ids, int n, char *out, int cap) {
+            (void)ids; (void)n; (void)cap; out[0] = 0; return 0;
+        }
+    ''')
+    library_path = tmp_path / "libmodel.so"
+    subprocess.run(["cc", "-shared", "-fPIC", "-o", str(library_path), str(source)], check=True)
+    loaded = ctypes.CDLL(str(library_path))
+    assert loaded.ck_model_lookup_token
+    assert bundle._loaded_model_token_decoder(tmp_path)([2]) == ""
+    lookup = bundle._loaded_model_token_lookup(tmp_path)
+    assert lookup is not None
+    assert lookup("<bos>") == 2
+    assert lookup("<eos>") == 3
+    assert lookup("<wrong>") == -1
 
 
 def test_gguf_manifest_ids_without_tokenizer_json_use_loaded_decoder(setup, monkeypatch):
