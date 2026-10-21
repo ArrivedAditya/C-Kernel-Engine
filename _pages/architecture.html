@@ -1,0 +1,320 @@
+<!-- TITLE: Architecture -->
+<!-- NAV: architecture -->
+
+<h1>System Architecture</h1>
+
+<p>C-Kernel-Engine uses a three-stage pipeline to transform model configurations into optimized C runtimes.</p>
+
+<div class="card card-accent">
+    <p style="margin: 0;"><strong>New:</strong> See the <a href="ir-pipeline.html">IR Pipeline v6.6</a> page for end-to-end visuals of templates, IR1/IR2, lowering, memory layout, and dumb codegen.</p>
+</div>
+
+<div class="card card-accent">
+    <p style="margin: 0;"><strong>Performance Methodology:</strong> See <a href="kernel-tuning-methodology.html">Kernel Tuning Methodology</a> for the VTune, Advisor, roofline, CK profile, parity, and E2E workflow used to push generated kernels toward CPU-node limits.</p>
+</div>
+
+<div class="card card-accent">
+    <p style="margin: 0;"><strong>v8 Compiler Hardening:</strong> See <a href="v8-numerical-contracts.html">v8 Numerical Contracts</a> for circuits, kernel-map capabilities, explicit attention reductions, deterministic resolution, generated-artifact equivalence, and parity promotion gates. See <a href="kernel-maps.html">Kernel Maps and Provider Selection</a> for how the resolver picks a physical provider per op and how the legacy migration is tracked.</p>
+</div>
+
+<h2>Active v8 Compiler Architecture</h2>
+
+<p>The active v8 inference compiler consumes three authoritative inputs: model weights, an architecture circuit, and executable kernel maps. The circuit owns graph structure and required semantics. Kernel maps own ABI and implementation capability. The DSL resolves and stitches; generated C does not guess.</p>
+
+<p>This boundary is executable policy, not only documentation. The v8 and v7 DSL audits reject new model-family dispatch in generic compiler/codegen functions, including dispatch hidden behind local aliases. Exact kernel operations do not fall back to broader families, malformed per-layer dimensions fail, and circuit weight policies are schema validated. New-model support must therefore extend a circuit, a kernel map, or a tested kernel instead of accumulating another compiler conditional. Multimodal families go further and compose circuits — see <a href="kernel-architecture.html#composite-circuits">Kernel Architecture — Composite Circuits</a> for the extends / components / stitch mechanism.</p>
+
+<div class="img-container svg-viewer" data-title="v8 Numerical Contract Architecture">
+    <img src="assets/v8-numerical-contracts.svg" alt="v8 weights, circuits, kernel maps, numerical contract resolution, IR lowering and generated C">
+</div>
+
+<div class="grid grid-2">
+    <div class="card"><h3 style="margin-top:0;">Compiler Input</h3><pre>weights + circuits + kernel maps
+             ↓
+deterministic DSL lowering
+             ↓
+generated C</pre><p>Model definitions live in <code>version/v8/circuits/</code>. The historical embedded BUMP key remains <code>template</code> for serialized compatibility.</p></div>
+    <div class="card"><h3 style="margin-top:0;">Semantic Selection</h3><p>Precision-sensitive operations declare <code>required_contracts</code>. Real kernel maps advertise <code>provides</code> and <code>supported_reductions</code>. Missing and ambiguous providers are compile-time errors.</p></div>
+    <div class="card"><h3 style="margin-top:0;">Authoritative Resolution</h3><p>The resolver selects the compatible kernel and contract before GraphIR construction. GraphIR records that decision; LoweredIR, call-ready IR, and generated C must preserve it without fallback or reselection.</p></div>
+    <div class="card"><h3 style="margin-top:0;">Promotion Gate</h3><p>Leaf tests are necessary but insufficient. Public routing, threaded thresholds, stitched layer boundaries, full replay, persistent decode, and E2E behavior must agree before production validation.</p></div>
+</div>
+
+<h3>Why reduction is architecture</h3>
+<p>Attention is not fully specified by <code>softmax(QKᵀ)V</code>. Q/K rounding, score accumulation, online-softmax state, V accumulation, split thresholds, partial storage, and merge order can change logits. v8 records these as complete contracts instead of inferring them from strict-mode flags, cache dtypes, sequence lengths, or thread counts.</p>
+
+<h3>Why threading is a kernel capability</h3>
+<p>Threading metadata applies across attention, GEMM, GEMV, and other parallel operators. Kernel maps declare the runtime, work partition, dispatch mechanism, and whether parallel order changes a reduction. The performance planner may choose among semantically compatible implementations, but it cannot silently change accumulation order to gain speed.</p>
+
+<div class="card">
+    <h3 style="margin-top: 0;">The "Website" Metaphor</h3>
+    <p>The engine treats LLMs like a website generator treats pages. This allows us to unroll the "Block" section efficiently in C without complex control flow.</p>
+    <table>
+        <tr>
+            <th>Section</th>
+            <th>Website</th>
+            <th>LLM</th>
+        </tr>
+        <tr>
+            <td><strong>Header</strong></td>
+            <td>&lt;head&gt;, Nav, CSS</td>
+            <td>Embeddings, Positional Encoding</td>
+        </tr>
+        <tr>
+            <td><strong>Block</strong></td>
+            <td>Blog Posts, Articles</td>
+            <td>Transformer Layers (repeated)</td>
+        </tr>
+        <tr>
+            <td><strong>Footer</strong></td>
+            <td>Copyright, Scripts</td>
+            <td>Final Norm, Language Head</td>
+        </tr>
+    </table>
+</div>
+
+<div class="img-container">
+    <img src="assets/architecture-overview.svg" alt="Architecture Overview">
+</div>
+
+<h2>Operator Spectrum Map</h2>
+
+<p>This view connects the data path (pretrain to RLHF/GRPO) with the compute path (math to inference/backprop) so operators can reason about the full stack in one place.</p>
+
+<div class="card" style="overflow-x: auto; border: 1px solid var(--grey); border-radius: 12px; padding: 0.95rem; background: radial-gradient(circle at 12% 0%, rgba(255, 180, 0, 0.16), transparent 40%), radial-gradient(circle at 90% 15%, rgba(7, 173, 248, 0.12), transparent 42%), var(--dark-card);">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:1rem; margin-bottom:0.55rem;">
+        <span style="font-size:0.8rem; color:var(--grey-light);">Click the map to open in the dark in-site SVG viewer.</span>
+        <div style="display:flex; gap:0.75rem; flex-wrap:wrap;">
+            <a href="assets/operator-spectrum-map.svg" download style="font-size:0.8rem;">Download SVG</a>
+        </div>
+    </div>
+    <div class="img-container svg-viewer" data-title="Operator Spectrum Map" style="margin:0;">
+        <img src="assets/operator-spectrum-map.svg" alt="Operator Spectrum Map" style="display:block; width:100%; min-width:900px; height:auto; border-radius:10px; border:1px solid rgba(148,163,184,0.35);">
+    </div>
+</div>
+<div class="grid grid-2">
+    <div class="card">
+        <h3 style="margin-top: 0;">Data Runbook Links</h3>
+        <ul>
+            <li><a href="v7-svg-dataset-runbook.html">v7 SVG Dataset Runbook</a> (Stage A and Stage B corpus generation)</li>
+            <li><a href="v7-runbook.html">v7 Train + Inference Runbook</a> (parity gates and train execution)</li>
+        </ul>
+    </div>
+    <div class="card">
+        <h3 style="margin-top: 0;">Computation Runbook Links</h3>
+        <ul>
+            <li><a href="ir-pipeline.html">IR Pipeline</a> (IR1/IR2/lowering and memory mapping)</li>
+            <li><a href="kernel-tuning-methodology.html">Kernel Tuning Methodology</a> (VTune, Advisor, roofline, CK profile, and parity gates)</li>
+            <li><a href="v7-profiling.html">v7 Profiling</a> (perf, flamegraph, cache, VTune/Advisor)</li>
+            <li><a href="v7-backprop-ir.html">v7 Backprop IR</a> (gradient path and training runtime checks)</li>
+            <li><a href="v8-whisper-tiny.html">Whisper Tiny End-to-End</a> (generated audio encoder/decoder circuits from PCM16 WAV)</li>
+        </ul>
+    </div>
+</div>
+
+<h2>Stage 1: Model Configuration</h2>
+
+<div class="card card-accent">
+    <p>The engine accepts HuggingFace-style <code>config.json</code> files as input:</p>
+    <pre>{
+  "hidden_size": 768,
+  "num_attention_heads": 12,
+  "num_key_value_heads": 4,
+  "num_hidden_layers": 6,
+  "intermediate_size": 2048,
+  "rms_norm_eps": 1e-5,
+  "rope_theta": 10000.0
+}</pre>
+    <p>This defines all the dimensions needed to generate layer structures.</p>
+</div>
+
+<h2>Stage 2: Intermediate Representation</h2>
+
+<p>The IR Builder creates a structured representation of each layer:</p>
+
+<div class="grid grid-2">
+    <div class="card">
+        <h3 style="margin-top: 0;">CKLayerIR Structure</h3>
+        <pre>typedef struct {
+    int layer_index;
+    int embed_dim;
+    int num_heads;
+    int num_kv_heads;
+    int head_dim;
+    int intermediate_dim;
+    int context_window;
+    float eps;
+    float rope_theta;
+} CKLayerIR;</pre>
+    </div>
+    <div class="card">
+        <h3 style="margin-top: 0;">Key Decisions</h3>
+        <ul>
+            <li><strong>Aligned dimensions</strong>: Head dim padded to cache-friendly sizes</li>
+            <li><strong>GQA ratio</strong>: Computed from num_heads / num_kv_heads</li>
+            <li><strong>Buffer sizing</strong>: Calculated for all intermediate activations</li>
+        </ul>
+    </div>
+</div>
+
+<h2>Stage 3: Code Generation</h2>
+
+<p>The codegen emits complete C functions for forward and backward passes. The examples below are the v7-era training-lane output; for the current v8 pipeline (conversion &rarr; circuit &rarr; fail-closed kernel maps &rarr; staged IR &rarr; <code>model_v8.c</code> &rarr; <code>libmodel.so</code>) see <a href="codegen.html">Code Generation</a>.</p>
+
+<div class="card">
+    <h3 style="margin-top: 0;">Generated Forward Pass</h3>
+    <pre>void forward_layer_0(
+    const float *input,
+    const ModelWeights *weights,
+    LayerActivations *acts,
+    const float *cos_cache,
+    const float *sin_cache,
+    int num_tokens
+) {
+    // 1. Pre-attention RMSNorm
+    rmsnorm_forward(input, weights->ln1_gamma, acts->ln1_out, ...);
+
+    // 2. QKV projection
+    ck_qkv_project_head_major(acts->ln1_out, weights->wq, ...);
+
+    // 3. Apply RoPE
+    rope_forward_qk(acts->q, acts->k, cos_cache, sin_cache, ...);
+
+    // 4. Attention
+    attention_forward_causal_head_major_gqa(acts->q, acts->k, acts->v, ...);
+
+    // 5. Output projection + residual
+    // 6. Post-attention RMSNorm
+    // 7. MLP (SwiGLU)
+    // 8. Final residual
+}</pre>
+</div>
+
+<div class="card card-accent">
+    <h3 style="margin-top: 0;">Generated Backward Pass</h3>
+    <pre>void backward_layer_0(
+    const float *d_output,
+    const ModelWeights *weights,
+    const LayerActivations *acts,
+    WeightGradients *grads,
+    float *d_input
+) {
+    // Reverse order of forward pass
+    // Each kernel uses saved activations from forward
+
+    // 1. Backward through final residual
+    // 2. Backward through MLP (SwiGLU)
+    // 3. Backward through RMSNorm 2
+    // 4. Backward through attention output projection
+    // 5. Backward through attention
+    attention_backward_causal_head_major_gqa(d_attn_out, acts->q, ...);
+
+    // 6. Backward through RoPE (inverse rotation)
+    rope_backward_qk(d_q, d_k, ...);
+
+    // 7. Backward through QKV projection
+    // 8. Backward through RMSNorm 1
+}</pre>
+</div>
+
+<h2>Memory Layout</h2>
+
+<div class="alert alert-info">
+    <div class="alert-icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+    </div>
+    <div>
+        <strong>Head-Major Layout</strong><br>
+        Q/K/V use <code>[num_heads, num_tokens, head_dim]</code> layout for cache-efficient attention computation.
+    </div>
+</div>
+
+<table>
+    <tr>
+        <th>Buffer</th>
+        <th>Layout</th>
+        <th>Size</th>
+    </tr>
+    <tr>
+        <td><code>input</code></td>
+        <td>[B, T, D]</td>
+        <td>batch * tokens * embed_dim</td>
+    </tr>
+    <tr>
+        <td><code>Q</code></td>
+        <td>[H, T, d_k]</td>
+        <td>num_heads * tokens * head_dim</td>
+    </tr>
+    <tr>
+        <td><code>K, V</code></td>
+        <td>[H_kv, T, d_k]</td>
+        <td>num_kv_heads * tokens * head_dim</td>
+    </tr>
+    <tr>
+        <td><code>scores</code></td>
+        <td>[H, T, T]</td>
+        <td>num_heads * tokens * context_window</td>
+    </tr>
+    <tr>
+        <td><code>mlp_hidden</code></td>
+        <td>[T, 2*I]</td>
+        <td>tokens * 2 * intermediate_dim</td>
+    </tr>
+</table>
+
+<p>
+    The same fixed-offset discipline is the precondition for <a href="memory-tetris.html">Memory Tetris</a>,
+    a research-stage design (not implemented) that would reuse dead arena slots as final destinations for
+    tensors prefetched from NVMe.
+</p>
+
+<h2>Kernel Composition</h2>
+
+<p>Kernels are composed following transformer layer structure:</p>
+
+<div class="img-container">
+    <img src="assets/forward-backward-flow.svg" alt="Forward and Backward Data Flow">
+</div>
+
+<h2>Build System</h2>
+
+<div class="grid grid-2">
+    <div class="card">
+        <h3 style="margin-top: 0;">Full Library</h3>
+        <pre>make</pre>
+        <p>Builds <code>libckernel_engine.so</code> with all kernels linked together.</p>
+    </div>
+    <div class="card">
+        <h3 style="margin-top: 0;">Per-Kernel Libraries</h3>
+        <pre>make libckernel_attention.so
+make libckernel_rope.so
+make libckernel_rmsnorm.so</pre>
+        <p>Builds individual kernel libraries for testing.</p>
+    </div>
+</div>
+
+<h2>Codegen Pipeline</h2>
+
+<div class="card card-accent">
+    <h3 style="margin-top: 0;">Generate Runtime from Config</h3>
+    <pre># Build the IR demo tool
+make build/ck_ir_demo
+
+# Generate C runtime
+./build/ck_ir_demo config.json --emit build/model.c
+
+# Or use the make target
+make ck-emit CONFIG=config.json OUT=build/model.c</pre>
+</div>
+
+<p>The generated file contains:</p>
+<ul>
+    <li>Buffer allocation functions</li>
+    <li>Forward pass for all layers</li>
+    <li>Backward pass for all layers</li>
+    <li>Parameter gradient accumulation</li>
+</ul>
+
+<h2>Project Structure</h2>
+
+<p>The codebase is organized for easy navigation:</p>
+
+{{FOLDER_STRUCTURE}}

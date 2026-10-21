@@ -1,0 +1,1650 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The CKE Constraint Model | C-Kernel-Engine</title>
+    <meta name="description" content="Theory of Constraints as runtime math: per-region clocks for compute, cache, DRAM, network and storage; region time as max-plus-unhidden-sync; the exposed-transfer equation; the critical-path heterogeneous shard scheduler; CKU as the observable result; and the prediction-error control loop connecting Scaling Philosophy, CKU, Memory Tetris and Distributed Zip Fusion into one theory.">
+    <meta name="robots" content="index,follow">
+    <link rel="canonical" href="https://c-kernel-engine.github.io/C-Kernel-Engine/constraint-model.html">
+    <meta property="og:title" content="The CKE Constraint Model | C-Kernel-Engine">
+    <meta property="og:description" content="Theory of Constraints as runtime math: per-region clocks for compute, cache, DRAM, network and storage; region time as max-plus-unhidden-sync; the exposed-transfer equation; the critical-path heterogeneous shard scheduler; CKU as the observable result; and the prediction-error control loop connecting Scaling Philosophy, CKU, Memory Tetris and Distributed Zip Fusion into one theory.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://c-kernel-engine.github.io/C-Kernel-Engine/constraint-model.html">
+    <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+    <style>
+        :root {
+            /* Antsand Brand Colors - Lightened */
+            --orange: #ffb400;
+            --orange-dark: #e5a200;
+            --orange-light: #ffc933;
+            --dark: #2a2a2a;
+            --dark-lighter: #363636;
+            --dark-card: #323232;
+            --grey: #454545;
+            --grey-light: #555555;
+            --text-primary: #f5f5f5;
+            --text-secondary: #b0b0b0;
+            --text-muted: #808080;
+            --bg-dark: #232323;
+            --white: #ffffff;
+            --code-bg: #1a1a1a;
+            --green: #47b475;
+            --blue: #07adf8;
+            --gradient-header: linear-gradient(135deg, #2a2a2a 0%, #363636 50%, #2a2a2a 100%);
+            --shadow-sm: 0 2px 4px rgba(0,0,0,0.3);
+            --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+            --shadow-lg: 0 8px 24px rgba(0,0,0,0.5);
+            --transition: all 0.3s ease;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-dark);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Header */
+        .site-header {
+            background: var(--gradient-header);
+            border-bottom: 3px solid var(--orange);
+            padding: 0.5rem 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 1rem;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            box-shadow: var(--shadow-md);
+        }
+
+        .header-brand {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            text-decoration: none;
+        }
+
+        .header-logo {
+            width: 40px;
+            height: 40px;
+            background: var(--orange);
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            color: var(--dark);
+            font-size: 1.1rem;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .header-title {
+            color: var(--white);
+            font-size: 1.4rem;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+        }
+
+        .header-subtitle {
+            color: var(--orange);
+            font-size: 0.8rem;
+            font-weight: 500;
+        }
+
+        /* Navigation */
+        .site-nav {
+            display: flex;
+            gap: 0.25rem;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .site-nav > a,
+        .nav-dropdown > .nav-trigger {
+            color: var(--text-secondary);
+            text-decoration: none;
+            padding: 0.6rem 1rem;
+            border-radius: 4px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: var(--transition);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            border: none;
+            background: transparent;
+            font-family: inherit;
+        }
+
+        .site-nav > a:hover,
+        .nav-dropdown:hover > .nav-trigger {
+            color: var(--white);
+            background: var(--grey);
+        }
+
+        .site-nav > a.active,
+        .nav-dropdown > .nav-trigger.active {
+            background: var(--orange);
+            color: var(--dark);
+            font-weight: 600;
+        }
+
+        /* Dropdown */
+        .nav-dropdown {
+            position: relative;
+        }
+
+        .nav-trigger::after {
+            content: '';
+            border: solid currentColor;
+            border-width: 0 2px 2px 0;
+            display: inline-block;
+            padding: 3px;
+            transform: rotate(45deg);
+            margin-top: -3px;
+            transition: transform 0.2s;
+        }
+
+        .nav-dropdown:hover .nav-trigger::after {
+            transform: rotate(-135deg);
+            margin-top: 3px;
+        }
+
+        .nav-dropdown-menu {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            background: var(--dark-card);
+            border-radius: 8px;
+            box-shadow: var(--shadow-lg);
+            min-width: 220px;
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(-10px);
+            transition: var(--transition);
+            overflow: hidden;
+            margin-top: 0.5rem;
+            border: 1px solid var(--grey);
+        }
+
+        .nav-dropdown:hover .nav-dropdown-menu {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0);
+        }
+
+        .nav-dropdown-menu a {
+            display: block;
+            padding: 0.75rem 1rem;
+            color: var(--text-secondary);
+            text-decoration: none;
+            transition: var(--transition);
+            border-left: 3px solid transparent;
+        }
+
+        .nav-dropdown-menu a:hover {
+            background: var(--grey);
+            border-left-color: var(--orange);
+            color: var(--white);
+        }
+
+        .nav-dropdown-menu a small {
+            display: block;
+            color: var(--text-muted);
+            font-size: 0.75rem;
+            margin-top: 0.2rem;
+        }
+
+        /* Last dropdown aligns to the right edge */
+        .nav-dropdown:last-child .nav-dropdown-menu {
+            left: auto;
+            right: 0;
+        }
+
+        /* Mega menu for Architecture dropdown */
+        .nav-dropdown-menu.mega-menu {
+            width: min(1180px, calc(100vw - 2rem));
+            min-width: 0;
+            max-height: calc(100vh - 90px);
+            padding: 1.25rem 1.5rem;
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 0.75rem 1.25rem;
+            left: auto;
+            right: 0;
+            overflow-y: auto;
+            transform: translateY(-10px);
+        }
+
+        .nav-dropdown:hover .nav-dropdown-menu.mega-menu {
+            transform: translateY(0);
+        }
+
+        .mega-menu .menu-section {
+            margin-bottom: 0.75rem;
+        }
+
+        .mega-menu .menu-shortcuts {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 0.5rem;
+            margin-top: 0.75rem;
+        }
+
+        .mega-menu .menu-shortcuts a {
+            padding: 0.55rem 0.75rem;
+            background: rgba(255, 180, 0, 0.055);
+            border: 1px solid rgba(255, 180, 0, 0.18);
+        }
+
+        .mega-menu .menu-heading {
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--orange);
+            padding: 0.5rem 0.75rem 0.35rem;
+            border-bottom: 1px solid var(--grey);
+            margin-bottom: 0.35rem;
+        }
+
+        .mega-menu a {
+            padding: 0.6rem 0.75rem;
+            font-size: 0.9rem;
+            border-radius: 4px;
+            border-left: none;
+            line-height: 1.3;
+        }
+
+        .mega-menu a:hover {
+            border-left: none;
+            background: var(--grey);
+        }
+
+        .mega-menu a small {
+            font-size: 0.75rem;
+            margin-top: 0.15rem;
+        }
+
+        /* Main Content */
+        main {
+            box-sizing: border-box;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+            flex: 1;
+            width: 100%;
+        }
+
+        /* Hero Section */
+        .hero {
+            background: var(--gradient-header);
+            border: 1px solid var(--grey);
+            color: var(--white);
+            padding: 3rem 2rem;
+            border-radius: 12px;
+            margin-bottom: 2rem;
+            text-align: center;
+            box-shadow: var(--shadow-lg);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, var(--orange), var(--orange-light), var(--orange));
+        }
+
+        .hero h1 {
+            color: var(--white);
+            border: none;
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .hero p {
+            font-size: 1.1rem;
+            color: var(--text-secondary);
+            max-width: 700px;
+            margin: 0 auto;
+        }
+
+        /* Typography */
+        h1 {
+            color: var(--white);
+            font-size: 2rem;
+            margin-bottom: 1rem;
+            border-bottom: 2px solid var(--orange);
+            padding-bottom: 0.5rem;
+        }
+
+        h2 {
+            color: var(--white);
+            font-size: 1.4rem;
+            margin: 2rem 0 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        h2::before {
+            content: '';
+            width: 4px;
+            height: 1.4rem;
+            background: var(--orange);
+            border-radius: 2px;
+        }
+
+        h3 {
+            color: var(--orange);
+            font-size: 1.15rem;
+            margin: 1.5rem 0 0.75rem;
+        }
+
+        p {
+            margin-bottom: 1rem;
+            color: var(--text-secondary);
+        }
+
+        /* Cards */
+        .card {
+            background: var(--dark-card);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            box-shadow: var(--shadow-sm);
+            border-left: 3px solid var(--grey-light);
+            transition: var(--transition);
+            border: 1px solid var(--grey);
+        }
+
+        .card:hover {
+            box-shadow: var(--shadow-md);
+            border-left-color: var(--orange);
+        }
+
+        .card-accent {
+            border-left-color: var(--orange);
+        }
+
+        .card-green {
+            border-left-color: var(--green);
+        }
+
+        .card-blue {
+            border-left-color: var(--blue);
+        }
+
+        .card h3 {
+            margin-top: 0;
+        }
+
+        /* Clickable Cards */
+        a.card-link {
+            display: block;
+            text-decoration: none;
+            color: inherit;
+        }
+
+        a.card-link .card {
+            cursor: pointer;
+        }
+
+        a.card-link .card:hover {
+            border-left-width: 5px;
+        }
+
+        .card-arrow {
+            color: var(--orange);
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-top: 1rem;
+            transition: var(--transition);
+        }
+
+        a.card-link:hover .card-arrow {
+            gap: 0.75rem;
+        }
+
+        /* Feature Icons */
+        .feature-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .feature-icon.orange { background: rgba(255, 180, 0, 0.15); color: var(--orange); }
+        .feature-icon.green { background: rgba(71, 180, 117, 0.15); color: var(--green); }
+        .feature-icon.blue { background: rgba(7, 173, 248, 0.15); color: var(--blue); }
+        .feature-icon.grey { background: rgba(255, 255, 255, 0.1); color: var(--text-secondary); }
+
+        /* Stats */
+        .stat-number {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: var(--orange);
+            line-height: 1;
+        }
+
+        .stat-label {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+        }
+
+        /* Code blocks */
+        pre {
+            background: var(--code-bg);
+            color: #e0e0e0;
+            padding: 1.25rem;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin: 1rem 0;
+            font-family: 'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            font-size: 0.85rem;
+            border: 1px solid var(--grey);
+        }
+
+        code {
+            font-family: 'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            background: var(--grey);
+            padding: 0.2rem 0.4rem;
+            border-radius: 3px;
+            font-size: 0.85rem;
+            color: var(--orange);
+        }
+
+        pre code {
+            background: none;
+            padding: 0;
+            color: #e0e0e0;
+        }
+
+        /* Tables */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+            background: var(--dark-card);
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid var(--grey);
+        }
+
+        th {
+            background: var(--dark);
+            color: var(--orange);
+            padding: 0.875rem 1rem;
+            text-align: left;
+            font-weight: 600;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        td {
+            padding: 0.875rem 1rem;
+            border-bottom: 1px solid var(--grey);
+            color: var(--text-secondary);
+        }
+
+        tr:hover {
+            background: var(--grey);
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        /* Lists */
+        ul, ol {
+            margin: 1rem 0;
+            padding-left: 1.5rem;
+            color: var(--text-secondary);
+        }
+
+        li {
+            margin-bottom: 0.5rem;
+        }
+
+        /* Links */
+        a {
+            color: var(--orange);
+            transition: var(--transition);
+        }
+
+        a:hover {
+            color: var(--orange-light);
+        }
+
+        /* Grid */
+        .grid {
+            display: grid;
+            gap: 1.5rem;
+        }
+
+        .grid-2 {
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        }
+
+        .grid-3 {
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        }
+
+        .grid-4 {
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        }
+
+        /* Alerts */
+        .alert {
+            padding: 1rem 1.25rem;
+            border-radius: 6px;
+            margin: 1rem 0;
+            display: flex;
+            align-items: flex-start;
+            gap: 0.75rem;
+            border: 1px solid;
+        }
+
+        .alert-icon {
+            font-size: 1.25rem;
+            flex-shrink: 0;
+        }
+
+        .alert-info {
+            background: rgba(7, 173, 248, 0.1);
+            border-color: var(--blue);
+            color: var(--blue);
+        }
+
+        .alert-warning {
+            background: rgba(255, 180, 0, 0.1);
+            border-color: var(--orange);
+            color: var(--orange);
+        }
+
+        .alert-success {
+            background: rgba(71, 180, 117, 0.1);
+            border-color: var(--green);
+            color: var(--green);
+        }
+
+        /* Image containers */
+        .img-container {
+            margin: 1.5rem 0;
+            text-align: center;
+        }
+
+        .img-container img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 8px;
+            box-shadow: var(--shadow-lg);
+            border: 1px solid var(--grey);
+        }
+
+        /* Badge */
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 999px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .badge-orange {
+            background: var(--orange);
+            color: var(--dark);
+        }
+
+        .badge-green {
+            background: var(--green);
+            color: white;
+        }
+
+        .badge-grey {
+            background: var(--grey);
+            color: var(--text-secondary);
+        }
+
+        /* Diagram blocks (monospace pre with colored spans) */
+        .diagram {
+            background: var(--code-bg);
+            border: 1px solid var(--grey);
+            border-radius: 6px;
+            padding: 1.25rem;
+            margin: 1rem 0;
+            overflow-x: auto;
+            font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace;
+            font-size: 0.8rem;
+            line-height: 1.55;
+            white-space: pre;
+            color: var(--text-muted);
+        }
+        .diagram .hl     { color: var(--blue); font-weight: 700; }
+        .diagram .grn    { color: var(--green); }
+        .diagram .wrn    { color: var(--orange); }
+        .diagram .err    { color: #f85149; }
+        .diagram .purple { color: #bc8cff; }
+        .diagram .dim    { color: #484f58; }
+
+        /* Inline status colors */
+        .good { color: var(--green); font-weight: 600; }
+        .bad  { color: #f85149; font-weight: 600; }
+        .meh  { color: var(--orange); font-weight: 600; }
+
+        /* Section numbering */
+        .section-num {
+            color: var(--orange);
+            font-weight: 400;
+            margin-right: 0.25rem;
+        }
+
+        /* Accordion */
+        details {
+            background: var(--dark-card);
+            border-radius: 6px;
+            margin-bottom: 0.75rem;
+            border: 1px solid var(--grey);
+            border-left: 3px solid var(--grey-light);
+            overflow: hidden;
+            transition: var(--transition);
+        }
+
+        details:hover {
+            border-left-color: var(--orange);
+        }
+
+        details[open] {
+            border-left-color: var(--orange);
+        }
+
+        summary {
+            padding: 1rem 1.25rem;
+            cursor: pointer;
+            font-weight: 600;
+            color: var(--white);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            list-style: none;
+            user-select: none;
+            transition: var(--transition);
+        }
+
+        summary::-webkit-details-marker {
+            display: none;
+        }
+
+        summary::after {
+            content: '';
+            border: solid var(--orange);
+            border-width: 0 2px 2px 0;
+            display: inline-block;
+            padding: 4px;
+            transform: rotate(-45deg);
+            transition: transform 0.2s ease;
+            flex-shrink: 0;
+            margin-left: 1rem;
+        }
+
+        details[open] summary::after {
+            transform: rotate(45deg);
+        }
+
+        summary:hover {
+            background: var(--grey);
+        }
+
+        details[open] summary {
+            border-bottom: 1px solid var(--grey);
+        }
+
+        .accordion-content {
+            padding: 1rem 1.25rem;
+        }
+
+        /* Site search */
+        .site-search {
+            display: flex;
+            align-items: center;
+            flex: 0 1 240px;
+            min-width: 140px;
+        }
+
+        .site-search input {
+            width: 100%;
+            background: var(--code-bg);
+            border: 1px solid var(--grey);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-family: inherit;
+            font-size: 0.85rem;
+            padding: 0.5rem 0.75rem;
+            transition: var(--transition);
+        }
+
+        .site-search input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .site-search input:focus {
+            outline: 2px solid var(--orange);
+            outline-offset: 1px;
+            border-color: var(--orange);
+        }
+
+        /* Mobile hamburger button */
+        .nav-toggle {
+            display: none;
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            padding: 0.5rem;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .nav-toggle span {
+            display: block;
+            width: 24px;
+            height: 3px;
+            background: var(--orange);
+            border-radius: 2px;
+            transition: var(--transition);
+        }
+
+        .nav-toggle.active span:nth-child(1) {
+            transform: rotate(45deg) translate(5px, 5px);
+        }
+
+        .nav-toggle.active span:nth-child(2) {
+            opacity: 0;
+        }
+
+        .nav-toggle.active span:nth-child(3) {
+            transform: rotate(-45deg) translate(6px, -6px);
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .site-header {
+                flex-direction: row;
+                justify-content: space-between;
+                padding: 0.75rem 1rem;
+            }
+
+            .nav-toggle {
+                display: flex;
+            }
+
+            .site-search {
+                order: 3;
+                flex: 1 1 100%;
+                min-width: 0;
+            }
+
+            .site-search input {
+                font-size: 1rem;
+            }
+
+            .site-nav {
+                position: fixed;
+                top: 60px;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: var(--dark);
+                flex-direction: column;
+                flex-wrap: nowrap;
+                align-items: stretch;
+                padding: 1rem;
+                gap: 0.5rem;
+                overflow-y: auto;
+                transform: translateX(-100%);
+                transition: transform 0.3s ease;
+                z-index: 999;
+            }
+
+            .site-nav.open {
+                transform: translateX(0);
+            }
+
+            .site-nav > a,
+            .nav-dropdown > .nav-trigger {
+                width: 100%;
+                padding: 1rem;
+                font-size: 1rem;
+            }
+
+            .nav-dropdown {
+                width: 100%;
+            }
+
+            .nav-dropdown-menu {
+                position: static;
+                opacity: 1;
+                visibility: hidden;
+                max-height: 0;
+                overflow: hidden;
+                transform: none;
+                margin-top: 0;
+                transition: max-height 0.3s ease, visibility 0.3s ease;
+                background: var(--dark-lighter);
+                border-radius: 0;
+                border: none;
+                box-shadow: none;
+            }
+
+            .nav-dropdown.open .nav-dropdown-menu {
+                visibility: visible;
+                max-height: 500px;
+            }
+
+            .nav-dropdown-menu a {
+                padding: 0.75rem 1.5rem;
+            }
+
+            /* Disable hover on mobile */
+            .nav-dropdown:hover .nav-dropdown-menu {
+                opacity: 1;
+                visibility: hidden;
+                max-height: 0;
+            }
+
+            .nav-dropdown.open .nav-dropdown-menu,
+            .nav-dropdown.open:hover .nav-dropdown-menu {
+                visibility: visible;
+                max-height: 500px;
+            }
+
+            .nav-dropdown-menu.mega-menu {
+                display: block;
+                width: 100%;
+                min-width: 0;
+                max-height: 0;
+                padding: 0.5rem;
+                left: auto;
+                right: auto;
+                overflow: hidden;
+                transform: none;
+            }
+
+            .nav-dropdown.open .nav-dropdown-menu.mega-menu,
+            .nav-dropdown.open:hover .nav-dropdown-menu.mega-menu {
+                max-height: 70vh;
+                overflow-y: auto;
+                transform: none;
+            }
+
+            .mega-menu .menu-shortcuts {
+                grid-template-columns: 1fr;
+            }
+
+            main {
+                padding: 1rem;
+            }
+
+            h1 {
+                font-size: 1.75rem;
+            }
+
+            .hero {
+                padding: 2rem 1rem;
+            }
+
+            .hero h1 {
+                font-size: 1.75rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="site-header">
+        <a href="index.html" class="header-brand">
+            <div class="header-logo">CK</div>
+            <div>
+                <div class="header-title">C-Kernel-Engine</div>
+                <div class="header-subtitle">High-Performance ML Kernels</div>
+            </div>
+        </a>
+        <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+            <span></span>
+            <span></span>
+            <span></span>
+        </button>
+        <form class="site-search" role="search" action="search.html" method="get" data-test="site-search">
+            <input type="search" name="q" id="site-search-input" aria-label="Search documentation" placeholder="Search docs ( / )" autocomplete="off">
+        </form>
+        <nav class="site-nav">
+            <a href="index.html" class="">Home</a>
+            <a href="spectrum.html" class="" style="color:var(--orange)">⚡ Spectrum</a>
+            <a href="quickstart.html" class="">Getting Started</a>
+            <a href="developer-guide.html" class="">Developer Guide</a>
+            <a href="contributing.html" class="">Contribute</a>
+            <a href="scaling.html" class="">Scaling</a>
+            <a href="support-hardware.html" class="" style="color:var(--green)">Support Lab</a>
+            <a href="cke-throughput-unit.html" class="" style="color:var(--orange)">CKU</a>
+            <div class="nav-dropdown">
+                <span class="nav-trigger active">Architecture</span>
+                <div class="nav-dropdown-menu mega-menu">
+                    <!-- Architecture Home Link -->
+                    <div class="menu-section" style="grid-column: 1 / -1; border-bottom: 1px solid var(--grey); padding-bottom: 0.5rem; margin-bottom: 0.5rem;">
+                        <a href="architecture-links.html" style="font-weight: 600; color: var(--orange);">
+                            View All Architecture Docs
+                            <small>Complete documentation index</small>
+                        </a>
+                        <div class="menu-shortcuts">
+                            <a href="pytorch-parity.html">PyTorch Parity<small>Numerical evidence</small></a>
+                            <a href="research.html">Research<small>Current investigations</small></a>
+                            <a href="decisions.html">Architecture Decisions<small>ADRs and tradeoffs</small></a>
+                            <a href="api.html">API &amp; Source Docs<small>Reference and Doxygen</small></a>
+                        </div>
+                    </div>
+                    <!-- Left Column -->
+                    <div class="menu-section">
+                        <div class="menu-heading">Core</div>
+                        <a href="architecture.html">System Overview<small>IR, Codegen, Kernels</small></a>
+                        <a href="tokenizer.html">Tokenizer<small>BPE, WordPiece, Trie</small></a>
+                        <a href="sentencepiece.html">SentencePiece<small>Viterbi DP, byte fallback</small></a>
+                        <a href="kernels.html">Kernel Reference<small>Forward/backward ops</small></a>
+                        <a href="codegen.html">Code Generation<small>IR to C compilation</small></a>
+                        <a href="iteration-philosophy.html">Iteration Philosophy<small>Why v1→v6 matters</small></a>
+                        <a href="ir-v2.html">IR v2 Format<small>Case study: symbolic dimensions</small></a>
+                        <a href="v7-backprop-ir.html">v7 Backprop IR<small>IR1/IR2 + layout/codegen flow</small></a>
+                        <a href="v7-cross-entropy-parity.html">v7 Cross-Entropy Parity<small>p - one_hot, reduction semantics, drift fixes</small></a>
+                        <a href="concepts.html">Deep Dive Concepts<small>RoPE, Flash Attention, GQA</small></a>
+                        <a href="kernel-maps.html">Kernel Maps<small>Provider selection, ABI, migration</small></a>
+                        <a href="kernel-architecture.html">v8 Kernel Architecture<small>Registry by op family, math</small></a>
+                        <a href="architecture-variants.html">Architecture Variants<small>Laguna, Cohere2, Instella, Nemotron</small></a>
+                        <a href="v8-moe-expert-kernels.html">MoE Expert Kernels<small>Bucketed prefill, mixed-quant experts</small></a>
+                        <a href="v8-cohere-kernels.html">Cohere Kernel Story<small>Reuse, BF16 vision, Transcribe audio</small></a>
+                    </div>
+                    <div class="menu-section">
+                        <div class="menu-heading">Quantization</div>
+                        <a href="quantization.html">Quant Fundamentals<small>Block formats, grouping</small></a>
+                        <a href="gguf-bump.html">GGUF to Bump<small>Weight conversion</small></a>
+                        <a href="gguf-conversion.html">GGUF Parsing<small>Byte-level guide</small></a>
+                    </div>
+                    <!-- Right Column -->
+                    <div class="menu-section">
+                        <div class="menu-heading">Optimization</div>
+                        <a href="gemm-memory-layout.html">GEMM Memory Layout<small>NN/NT layouts, offsets</small></a>
+                        <a href="gemm-optimization.html">GEMM Optimization<small>AVX, MKL, blocking</small></a>
+                        <a href="kernel-tuning-methodology.html">Kernel Tuning Methodology<small>VTune, Advisor, roofline, parity gates</small></a>
+                        <a href="cke-throughput-unit.html">CKE Throughput Unit<small>PB/s active-byte target</small></a>
+                        <a href="gemma4-speculative-pair.html">Gemma4 Speculative Pair<small>Backbone + MTP drafter circuit</small></a>
+                        <a href="v8-mla-kimi.html">v8 MLA / Kimi<small>Explicit decode cache contract</small></a>
+                        <a href="v8-whisper-tiny.html">Whisper Tiny E2E<small>Audio encoder/decoder circuits</small></a>
+                        <a href="simd-architecture.html">SIMD Architecture<small>AVX-512, VNNI, AMX</small></a>
+                        <a href="flash_attention.html" class="">Flash Attention Analysis<small>Why llama.cpp is faster</small></a>
+                    </div>
+                    <div class="menu-section">
+                        <div class="menu-heading">Infrastructure</div>
+                        <a href="memory-safety.html">Memory Safety<small>Bump allocator, canaries</small></a>
+                        <a href="deterministic-memory.html">Deterministic Memory<small>RDMA, interpretability</small></a>
+                        <a href="profiling.html">Profiling Guide<small>Valgrind, perf, flamegraphs</small></a>
+                        <a href="kernel-tuning-methodology.html">Kernel Tuning Methodology<small>CPU-node performance runbook</small></a>
+                        <a href="v7-profiling.html">v7 Profiling Runbook<small>Train kernels: VTune, Advisor, perf</small></a>
+                        <a href="v7-runbook.html">v7 Inference + Training Runbook<small>Copy/paste train + infer workflow</small></a>
+                        <a href="sizing.html">Model Sizing Lab<small>KV, state, concurrency, six-GPU placement</small></a>
+                        <a href="serving.html">Serving &amp; Batching<small>Single-flight, batch2, continuous-batching roadmap</small></a>
+                        <a href="v7-svg-dataset-runbook.html">v7 SVG Dataset Runbook<small>Pretrain + midtrain data generation</small></a>
+                        <a href="testing.html">Testing<small>Numerical parity verification</small></a>
+                        <a href="divergence-harness.html">Stitched Divergence Harness<small>llama.cpp/PyTorch tensor attribution</small></a>
+                        <a href="threadpool.html">Thread Pool<small>Persistent pthreads, dispatch</small></a>
+                    </div>
+                </div>
+            </div>
+            <a href="test-report.html" class="">Test Report</a>
+            <a href="version-history.html" class="">Versions</a>
+        </nav>
+    </header>
+    <main>
+
+<style>
+@media (max-width: 640px) {
+    main table { display: block; overflow-x: auto; }
+    main mjx-container[display="true"] { display: block; overflow-x: auto; overflow-y: hidden; max-width: 100%; }
+}
+</style>
+
+<h1>The CKE Constraint Model</h1>
+
+<p class="lead">
+    Theory of Constraints expressed as runtime math. Every generated region has several clocks running
+    &mdash; compute, cache, DRAM, network, storage &mdash; and the region takes as long as the slowest
+    required path plus the synchronization that could not be hidden. Scaling says <em>why</em>, CKU
+    <em>measures</em>, Memory Tetris <em>places</em>, Distributed Zip <em>parallelizes</em> &mdash; and
+    measurement closes the loop.
+</p>
+
+<div class="alert alert-warning">
+    <div class="alert-icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+    </div>
+    <div style="min-width: 0;">
+        <strong>Status: design vocabulary</strong><br>
+        The constraint model is the shared mathematical language of CKE's research pages. The
+        measurement and planning stages it names (X-Ray, kernel maps, numerical contracts) exist today;
+        the closed replanning loop is the <strong>research program, not a shipped feature</strong>.
+        Every equation on this page is a model to be validated &mdash; the distributed-CPU
+        <a href="distributed-cpu.html">validation ladder</a> is where the numbers come from.
+    </div>
+</div>
+
+<h2>One Theory, Four Pages</h2>
+
+<p>
+    Four CKE documents have been circling the same idea from different altitudes. They are one theory:
+</p>
+
+<div class="grid grid-2">
+    <div class="card card-green">
+        <h3 style="margin-top: 0;">1. Scaling Philosophy &mdash; Why</h3>
+        <p>The system advances at the rate of its active constraint. Profile the slowest element; do not optimize irrelevant peaks. <a href="scaling.html">Open Scaling Philosophy</a>.</p>
+    </div>
+    <div class="card card-green">
+        <h3 style="margin-top: 0;">2. CKU &mdash; Measure</h3>
+        <p>How much useful model-state work did the entire system advance per unit time? The common throughput unit and the node roofline. <a href="cke-throughput-unit.html">Open CKU</a>.</p>
+    </div>
+    <div class="card card-green">
+        <h3 style="margin-top: 0;">3. Memory Tetris &mdash; Place</h3>
+        <p>Where should each byte live, and when should it move? NVMe &rarr; DRAM &rarr; cache &rarr; compute, with known lifetimes, staging windows and exposed stalls. <a href="memory-tetris.html">Open Memory Tetris</a>.</p>
+    </div>
+    <div class="card card-green">
+        <h3 style="margin-top: 0;">4. Distributed Zip &mdash; Parallelize</h3>
+        <p>Which algebraic pieces can execute independently across nodes, and when must they synchronize? Shard &rarr; local execution &rarr; partial sum &rarr; minimal reduction. <a href="distributed-cpu.html">Open Zip Fusion</a>. Then measure CKU again.</p>
+    </div>
+</div>
+
+<h2>The Per-Region Clocks</h2>
+
+<p>
+    For any generated region \(r\), a CPU node has several clocks running concurrently. Compute:
+</p>
+
+\[ T_{\text{compute},r} = \frac{F_r}{P_{\text{effective}}} \]
+
+<p>
+    DRAM, on <strong>fresh bytes</strong> (what DRAM must actually deliver after cache reuse):
+</p>
+
+\[ T_{\text{DRAM},r} = \frac{B_{\text{fresh},r}}{BW_{\text{DRAM}}} \]
+
+\[ T_{\text{cache},r} = \frac{B_{\text{cache},r}}{BW_{\text{cache}}} \]
+
+<p>
+    Network, where latency usually dominates the payload:
+</p>
+
+\[ T_{\text{network},r} = L_{\text{collective}} + \frac{B_{\text{sync},r}}{BW_{\text{network}}} \]
+
+<p>
+    and, when Memory Tetris tiering is involved, storage:
+</p>
+
+\[ T_{\text{storage},r} = L_{\text{storage}} + \frac{B_{\text{NVMe},r}}{BW_{\text{NVMe}}} \]
+
+<p>
+    When independent clocks overlap, region time is approximately their <strong>maximum</strong>,
+    not their sum &mdash; plus whatever synchronization could not be hidden:
+</p>
+
+\[ \boxed{\; T_r = \max\!\left( T_{\text{compute}},\ T_{\text{fresh-memory}},\ T_{\text{exposed-storage}} \right) + T_{\text{unhidden-sync}} \;} \]
+
+<p>
+    The slowest required path is the constraint. Optimizing any other clock buys nothing until the
+    constraint moves &mdash; that is Goldratt's observation, restated as runtime math.
+</p>
+
+<h2>Exposed vs Hidden: The Overlap Equation</h2>
+
+<p>
+    A transfer only costs wall time when it is <em>exposed</em> &mdash; longer than the work that
+    could have hidden it. One equation covers every tier:
+</p>
+
+\[ \boxed{\; T_{\text{exposed}} = \max\!\left( 0,\ T_{\text{transfer}} - T_{\text{overlap window}} \right) \;} \]
+
+<p>
+    Instantiated per path:
+</p>
+
+\[ T_{\text{exposed DRAM}} = \max(0,\ T_{\text{DRAM}} - T_{\text{compute}}) \]
+
+\[ T_{\text{exposed SSD}} = \max(0,\ T_{\text{SSD}} - T_{\text{lookahead}}) \]
+
+\[ T_{\text{exposed net}} = \max(0,\ T_{\text{network}} - T_{\text{independent work}}) \]
+
+<p>
+    A 250 &micro;s NVMe prefetch under 300 &micro;s of compute contributes <em>zero</em> exposed
+    storage time; a 500 &micro;s transfer under the same compute exposes 200 &micro;s. Memory Tetris's
+    residency choices, the zip schedule's independent lanes, and ordinary cache prefetch are all the
+    same move: <strong>grow the overlap window or shrink the transfer until the exposure is zero.</strong>
+</p>
+
+<h2>Shape the Clocks: The Flowing Pipeline</h2>
+
+<p>
+    The maximum in the core equation is a bound, not the goal. The goal is to <strong>shape the work
+    assigned to every node so the clocks line up</strong> &mdash; during a region,
+    \(T_{\text{compute},i} \approx T_{\text{stream},i} \approx T_{\text{prefetch},i}\), with
+    synchronization from neighboring regions hidden or extremely short. The contrast is between a
+    stall pipeline (<code>fetch &rarr; stall &rarr; compute &rarr; stall &rarr; sync</code>) and a
+    flowing one, where DRAM streams continuously, the cache prefetches \(N+1\) and \(N+2\) ahead of
+    use, the CPU never waits, and the sync rides the boundary:
+</p>
+
+<div class="img-container svg-viewer" data-title="Stall pipeline versus flowing pipeline: the objective is to shape work so compute, stream and prefetch clocks line up and stall tends to zero">
+    <img src="assets/constraint-model-flowing-pipeline.svg" alt="Two timelines. The stall pipeline runs fetch, stall, compute, stall, sync, fetch — sequential phases with dead gaps where one clock waits on another. The flowing pipeline shows four lanes across a region boundary: DRAM streams region N weights then region N+1 weights continuously, the cache prefetches N+1 and N+2 ahead of use, the CPU computes region N then N+1 without gaps, and a small network sync rides the boundary while the next region is already flowing. The target is to minimize critical-path time plus stall time over shard, tile and prefetch choices, with the ideal that compute, stream and prefetch times per node are approximately equal and stall time goes to zero" style="width: 100%; max-width: 960px; margin: 0 auto; display: block;">
+</div>
+
+<p>
+    The optimization target is therefore not a single roof but a schedule:
+</p>
+
+\[ \min_{\{s_i,\ \text{tile}_i,\ \text{prefetch}_i\}} \left[ T_{\text{critical path}} + T_{\text{stall}} \right] \qquad \text{ideally } T_{\text{stall}} \rightarrow 0 \]
+
+<h3>Supply meets demand: the node gets what it can finish on time</h3>
+
+<p>
+    A node does not get &ldquo;its fair share&rdquo; &mdash; one fourth because there are four nodes.
+    It gets <strong>what it can finish before the boundary</strong>. If a Ryzen sustains
+    \(BW_i = 80\) GB/s on the actual CKE packed-weight path and its kernel can process a tile in
+    150 &micro;s, the memory system can only <em>supply</em> \(80 \times 150\,\mu s = 12\) MB of fresh
+    bytes in that window. With 4 MB of useful hot data already in cache, the region can operate on
+    roughly 16 MB. Assign 30 MB and the CPU waits on memory; assign 5 MB and memory capacity sits
+    unused while the CPU starves. The planner searches for:
+</p>
+
+\[ B_{\text{fresh},i} \approx BW_i \times T_{\text{compute},i} \qquad \text{(subject to cache reuse and overlap)} \]
+
+<p>
+    &mdash; arithmetic demand matched to the memory supply rate (all figures MODEL labels).
+</p>
+
+<h3>Cache as a queue: elasticity between unequal rates</h3>
+
+<p>
+    When arithmetic is the slower clock &mdash; \(T_{\text{fetch}} = 100\,\mu s\) against
+    \(T_{\text{compute}} = 250\,\mu s\) &mdash; memory gets ahead, and a large cache earns its keep in
+    a second way: it is a <strong>queue between two unequal rates</strong>,
+    DRAM producer &rarr; LLC buffer &rarr; CPU consumer. While the CPU computes tile \(N\), DRAM can
+    prefetch \(N+1\) and possibly \(N+2\), capacity and associativity permitting. When the CPU is
+    faster than DRAM, the planner's moves are the Theory-of-Constraints levers: smaller tiles, more
+    reuse, another memory-producing node or channel, or a restructured operator.
+</p>
+
+<h2>The Refined Core Equation</h2>
+
+<p>
+    With the overlap vocabulary in hand, the core equation sharpens from a max-of-roofs to a
+    <strong>critical path plus exposed stall</strong>:
+</p>
+
+\[ \boxed{\; T_r = T_{\text{critical-path},r} + T_{\text{exposed-stall},r} \;} \]
+
+\[ T_{\text{critical-path},r} = \max_i \left[ \max\!\left( \frac{B_{\text{fresh},i}}{BW_i},\ \frac{F_i}{P_i} \right) \right] \]
+
+\[ T_{\text{exposed-stall}} = T_{\text{sync not hidden}} + T_{\text{prefetch not hidden}} + T_{\text{storage not hidden}} \]
+
+<p>
+    and CKE's two jobs follow directly: <strong>minimize \(T_{\text{exposed-stall}}\)</strong> (hide
+    everything hidable) and <strong>minimize \(\max_i T_i\)</strong> (balance what cannot be hidden).
+    Theory of Constraints plus scheduling, in one line each.
+</p>
+
+<h2>The Heterogeneous Scheduler: Minimize the Critical-Path Maximum</h2>
+
+<p>
+    On heterogeneous nodes the region does not finish at the fastest lane's time &mdash; it finishes
+    at the slowest lane's time, plus synchronization. If the lanes measure 180, 182, 179 and
+    95 &micro;s, the region takes &asymp;182 &micro;s \(+\ T_{\text{sync}}\), and the fast node wastes
+    87 &micro;s waiting. The planner's objective is therefore the critical-path maximum:
+</p>
+
+\[ \boxed{\; \underset{s_1,\dots,s_N}{\arg\min}\ \left[ \max_i T_i(s_i)\ +\ T_{\text{sync}}(N, B) \right] \quad \text{subject to } \sum_i s_i = 1 \;} \]
+
+<p>
+    where \(s_i\) is node \(i\)'s shard fraction and \(T_i\) follows from its measured
+    \(P_i(r, \text{phase}, \text{dtype})\). Rebalance until the lanes tie &mdash; 180, 181, 179, 180
+    &mdash; and \(\max_i T_i\) is minimized. This is the deterministic form of the
+    <a href="distributed-cpu.html">distributed-CPU sizing model</a>: shard geometry derived from
+    measured capability, not static ratios.
+</p>
+
+<h3>Balanced completion time, not balanced bytes</h3>
+
+<p>
+    The per-node estimate credits cache-resident reuse \(C_i\) against the fresh-byte term:
+</p>
+
+\[ T_i(s_i) = \max\!\left( \frac{B_i(s_i) - C_i}{BW_i},\ \frac{F_i(s_i)}{P_i} \right) \]
+
+<p>
+    and the planner solves \(T_1 \approx T_2 \approx \dots \approx T_N\) subject to
+    \(\sum_i s_i = 1\). Note what this does <em>not</em> do: it does not split bytes by bandwidth
+    ratio. With stream rates 80 : 80 : 400 GB/s but compute rates 2 : 2 : 8 TF/s, the correct split
+    is 80 : 80 : 400 <em>only if the region is bandwidth-bound</em> &mdash; for a compute-bound
+    region the 2 : 2 : 8 ratio governs, and for anything in between the max() decides per node.
+    The goal is balanced <strong>completion time</strong>; the byte split is a consequence, not the
+    objective.
+</p>
+
+<h2>Worked Example: One Ryzen Region (MODEL)</h2>
+
+<p>
+    A parameterized example, all labels THEORETICAL. DDR5-5600 dual channel:
+</p>
+
+\[ 5600\ \text{MT/s} \times 8\ \text{B} = 44.8\ \text{GB/s per channel} \;\Rightarrow\; 89.6\ \text{GB/s theoretical DRAM} \]
+
+<p>
+    A ConnectX-class fabric at a nominal 400 Gb/s:
+</p>
+
+\[ 400\ \text{Gb/s} \;/\; 8 = 50\ \text{GB/s raw line rate} \]
+
+<p>
+    The hierarchy reads cache \(\gg\) 89.6 GB/s DRAM \(>\) 50 GB/s network &mdash; but the network does
+    <strong>not</strong> limit the transformer to 50 GB/s, because it does not carry the same bytes as
+    DRAM. That is the central zip insight. Suppose a 200 &micro;s region consumes 18 MB of local
+    weight data and synchronizes only 16 KB at its boundary:
+</p>
+
+\[ \frac{18\ \text{MB}}{89.6\ \text{GB/s}} \approx 201\ \mu\text{s} \qquad \frac{16\ \text{KB}}{50\ \text{GB/s}} \approx 0.32\ \mu\text{s} \]
+
+<p>
+    Network <em>bandwidth</em> is nearly irrelevant; the network <em>latency</em> is not. With a
+    collective latency of 8 &micro;s (unmeasured, MODEL):
+</p>
+
+\[ T_{\text{sync}} \approx 8 + 0.32 = 8.3\ \mu\text{s} \qquad T_r \approx 201 + 8.3 \approx 209\ \mu\text{s} \]
+
+<p>
+    This is the kind of calculation CKE should generate for every region &mdash; then replace with a
+    measurement. Note how it connects to the
+    <a href="distributed-cpu.html">token ruler</a>: 186 such boundaries per token make the
+    \(L_{\text{collective}}\) term, not the 0.32 &micro;s of transmission, the term to engineer down.
+</p>
+
+<h2>CKU Refined: The Critical-Path Unit</h2>
+
+<p>
+    The <a href="cke-throughput-unit.html">CKU roofline</a> already bounds a node by the minimum of
+    its memory, compute and network roofs. The zip schedule refines what &ldquo;network roof&rdquo;
+    means: not all active bytes cross all roofs. A node may process \(B_{\text{local}} = 18\) MB while
+    synchronizing only \(B_{\text{sync}} = 16\) KB. The byte classes have different paths, so CKU
+    becomes a per-path vector:
+</p>
+
+\[ CKU_{\text{path}} = \{\, CKU_{\text{compute}},\ CKU_{\text{memory}},\ CKU_{\text{network}},\ CKU_{\text{storage}} \,\} \]
+
+\[ B_{\text{local}} \neq B_{\text{network}} \]
+
+<p>
+    and effective throughput is constrained by the <strong>critical path</strong>, not by pretending
+    every byte crosses every roof:
+</p>
+
+\[ T_{\text{token}} = T_{\text{critical path}}, \qquad CKU = \frac{B_{\text{useful active path}}}{T_{\text{token}}} \]
+
+<p>
+    CKU is then the <em>observable result of the scheduler</em> &mdash; the number the control loop
+    tries to raise by moving the constraint.
+</p>
+
+<h2>&ldquo;Deterministic&rdquo; Means Predictable</h2>
+
+<p>
+    CKE knows the exact graph, exact tensor shapes, exact lifetimes, exact planned placements, exact
+    communication boundaries and calibrated machine capabilities. It can therefore produce an
+    execution schedule and <strong>predict its critical path</strong>:
+</p>
+
+\[ \text{IR} + \text{hardware profile} \rightarrow \text{constraint model} \rightarrow \text{schedule} \rightarrow \text{generated C} \rightarrow \text{measured execution} \]
+
+<p>
+    Prediction error becomes a first-class metric:
+</p>
+
+\[ \boxed{\; E = \frac{|\,T_{\text{measured}} - T_{\text{predicted}}\,|}{T_{\text{predicted}}} \;} \]
+
+<p>
+    The research program in one sentence: keep shrinking \(E\). If CKE predicts 2.4 tok/s and measures
+    2.2, the system model is good; add a node, change the shard geometry, predict 4.1, measure 3.9
+    &mdash; each cycle is a validated or falsified claim about the constraint map (illustrative
+    numbers, not results). That is deterministic computing in a stronger sense than deterministic
+    kernels: <strong>the runtime knows what it is about to cost.</strong>
+</p>
+
+<h2>The Control Loop</h2>
+
+<div class="img-container svg-viewer" data-title="The CKE constraint-model control loop: model and IR feed a constraint map, three resource lanes feed the planner, generated C executes, X-Ray measurement produces CKU, and the found constraint loops back into replanning">
+    <img src="assets/constraint-model-loop.svg" alt="A vertical control loop. Model and IR feed a constraint map of FLOPs, fresh bytes, lifetimes and dependencies. Three lanes branch out: compute roofline answered by the CKU page, memory placement answered by Memory Tetris, and network minimization answered by Distributed Zip. They converge into the CKE planner, which emits a schedule as generated C. Execution produces X-Ray and perf data, which produces the measured CKU and the active constraint. A feedback arrow returns from constraint found back to the constraint map for replanning. A footer states each pass aims to shrink the prediction error E. The measurement and planning stages exist today; the closed loop is the research program" style="width: 100%; max-width: 960px; margin: 0 auto; display: block;">
+</div>
+
+<h2>The Planner Discipline</h2>
+
+<p>
+    Each resource &mdash; arithmetic, cache, DRAM, NUMA, network, storage, synchronization &mdash;
+    presents the same quotient:
+</p>
+
+\[ \text{candidate time} = \frac{\text{required work}}{\text{measured capability}} \]
+
+<p>
+    and the planner attacks the active constraint in a fixed order:
+</p>
+
+<ol>
+    <li><strong>Reduce required work</strong> &mdash; smaller payloads, fewer boundaries, dead-tensor elimination.</li>
+    <li><strong>Overlap independent work</strong> &mdash; grow the window that hides the transfer.</li>
+    <li><strong>Rebalance shards</strong> &mdash; minimize the critical-path maximum across heterogeneous nodes.</li>
+    <li><strong>Eliminate unnecessary movement</strong> &mdash; residency, replication and placement choices.</li>
+    <li><strong>Minimize exposed synchronization</strong> &mdash; latency on the boundary, not bandwidth, is the term to engineer down.</li>
+    <li><strong>Add hardware only then</strong> &mdash; when the remaining constraint is physical, and the model says which one.</li>
+</ol>
+
+<div class="card card-accent">
+    <h3 style="margin-top: 0;">The universal statement</h3>
+    <p style="margin-bottom: 0;">
+        <strong>Every topology has a slowest active boundary; CKE explicitly models it.</strong>
+        Ryzen DDR, dual-socket NUMA, ConnectX, NVMe, HBM or NVLink &mdash; the clocks differ, the
+        equation does not.
+    </p>
+</div>
+
+<h2>Related Pages</h2>
+
+<ul>
+    <li><a href="scaling.html">Scaling Philosophy</a> &mdash; why the constraint, not the peak, is the unit of progress</li>
+    <li><a href="cke-throughput-unit.html">CKE Throughput Unit</a> &mdash; the measurement the loop optimizes</li>
+    <li><a href="memory-tetris.html">Memory Tetris</a> &mdash; placement: hiding slower tiers behind useful work</li>
+    <li><a href="distributed-cpu.html">Distributed CPU: Zip Fusion</a> &mdash; parallelization: the sizing model, token budget and validation ladder</li>
+    <li><a href="v8-numerical-contracts.html">v8 Numerical Contracts</a> &mdash; the parity rules every schedule must satisfy</li>
+    <li><a href="research.html">Research Tracker</a> &mdash; status of all proposed techniques</li>
+</ul>
+    </main>
+
+    <!-- SVG Viewer Overlay (shared across all pages) -->
+    <style>
+    .svg-viewer { cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
+    .svg-viewer:hover { transform: scale(1.01); box-shadow: 0 8px 32px rgba(255, 180, 0, 0.3); }
+    #svg-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.95); z-index: 999999; }
+    #svg-overlay .toolbar { position: fixed; top: 0; left: 0; right: 0; padding: 10px 20px; background: rgba(0,0,0,0.9); display: flex; justify-content: space-between; align-items: center; z-index: 1000000; border-bottom: 1px solid #333; }
+    #svg-overlay .toolbar .title { color: #ccc; font-size: 14px; }
+    #svg-overlay .toolbar .controls { display: flex; gap: 8px; align-items: center; }
+    #svg-overlay .toolbar button { background: #333; color: #ffb400; border: 1px solid #555; padding: 8px 14px; cursor: pointer; border-radius: 4px; font-size: 14px; }
+    #svg-overlay .toolbar button:hover { background: #444; border-color: #ffb400; }
+    #svg-overlay .toolbar .close-btn { font-size: 20px; padding: 4px 12px; }
+    #svg-overlay .toolbar .zoom-display { color: #888; font-size: 12px; min-width: 45px; text-align: center; }
+    #svg-overlay .toolbar .separator { color: #444; }
+    #svg-overlay .image-container { display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 60px 20px 20px; cursor: grab; }
+    #svg-overlay .image-container:active { cursor: grabbing; }
+    #svg-overlay .image-container img { max-width: 95%; max-height: 90vh; transform-origin: center center; }
+    #svg-overlay .nav-btn { position: fixed; top: 50%; transform: translateY(-50%); background: rgba(0,0,0,0.7); color: #ffb400; border: 1px solid #555; font-size: 30px; padding: 20px 15px; cursor: pointer; z-index: 1000000; border-radius: 4px; }
+    #svg-overlay .nav-btn:hover { background: rgba(255,180,0,0.2); border-color: #ffb400; }
+    #svg-overlay .nav-prev { left: 10px; }
+    #svg-overlay .nav-next { right: 10px; }
+    #svg-overlay .hint { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); color: #666; font-size: 12px; background: rgba(0,0,0,0.8); padding: 8px 20px; border-radius: 20px; }
+    </style>
+
+    <div id="svg-overlay">
+        <div class="toolbar">
+            <span class="title" id="svg-title">Image</span>
+            <div class="controls">
+                <button onclick="svgViewer.zoomOut()" title="Zoom Out (-)">-</button>
+                <span class="zoom-display" id="zoom-display">100%</span>
+                <button onclick="svgViewer.zoomIn()" title="Zoom In (+)">+</button>
+                <span class="separator">|</span>
+                <button onclick="svgViewer.fitWidth()" title="Fit Width (W)">Width</button>
+                <button onclick="svgViewer.fitHeight()" title="Fit Height (H)">Height</button>
+                <button onclick="svgViewer.resetZoom()" title="Reset (0)">Reset</button>
+                <span class="separator">|</span>
+                <button class="close-btn" onclick="svgViewer.close()" title="Close (ESC)">&times;</button>
+            </div>
+        </div>
+        <button class="nav-btn nav-prev" onclick="svgViewer.prev()" title="Previous">&larr;</button>
+        <button class="nav-btn nav-next" onclick="svgViewer.next()" title="Next">&rarr;</button>
+        <div class="image-container" id="svg-container">
+            <img id="svg-image" src="" alt="">
+        </div>
+        <div class="hint">Scroll to zoom | Drag to pan | W/H to fit | 0 to reset | ESC to close</div>
+    </div>
+
+    <script>
+    var svgViewer = (function() {
+        var overlay, img, titleEl, container;
+        var images = [];
+        var currentIndex = 0;
+        var scale = 1, panX = 0, panY = 0;
+        var isDragging = false, dragStartX, dragStartY, panStartX, panStartY;
+
+        function init() {
+            overlay = document.getElementById('svg-overlay');
+            img = document.getElementById('svg-image');
+            titleEl = document.getElementById('svg-title');
+            container = document.getElementById('svg-container');
+            if (!overlay || !img) return;
+
+            document.querySelectorAll('.svg-viewer').forEach(function(viewer, index) {
+                var viewerImg = viewer.querySelector('img');
+                if (viewerImg) {
+                    images.push({ src: viewerImg.src, title: viewer.getAttribute('data-title') || viewerImg.alt || 'Diagram' });
+                    viewer.onclick = function(e) { e.preventDefault(); open(index); };
+                }
+            });
+
+            container.addEventListener('wheel', function(e) {
+                e.preventDefault();
+                scale = Math.max(0.5, Math.min(10, scale + (e.deltaY > 0 ? -0.2 : 0.2)));
+                updateTransform();
+            });
+
+            container.addEventListener('mousedown', function(e) { isDragging = true; dragStartX = e.clientX; dragStartY = e.clientY; panStartX = panX; panStartY = panY; });
+            document.addEventListener('mousemove', function(e) { if (!isDragging) return; panX = panStartX + (e.clientX - dragStartX); panY = panStartY + (e.clientY - dragStartY); updateTransform(); });
+            document.addEventListener('mouseup', function() { isDragging = false; });
+
+            document.addEventListener('keydown', function(e) {
+                if (overlay.style.display !== 'block') return;
+                if (e.key === 'Escape') close();
+                if (e.key === 'ArrowLeft') prev();
+                if (e.key === 'ArrowRight') next();
+                if (e.key === '+' || e.key === '=') zoomIn();
+                if (e.key === '-') zoomOut();
+                if (e.key === '0') resetZoom();
+                if (e.key === 'w' || e.key === 'W') fitWidth();
+                if (e.key === 'h' || e.key === 'H') fitHeight();
+            });
+
+            overlay.addEventListener('click', function(e) { if (e.target === overlay || e.target === container) close(); });
+        }
+
+        function updateTransform() {
+            img.style.transform = 'translate(' + panX + 'px, ' + panY + 'px) scale(' + scale + ')';
+            var zd = document.getElementById('zoom-display');
+            if (zd) zd.textContent = Math.round(scale * 100) + '%';
+        }
+
+        function open(index) {
+            if (!images[index]) return;
+            currentIndex = index; scale = 1; panX = 0; panY = 0;
+            img.src = images[index].src;
+            titleEl.textContent = images[index].title + ' (' + (index + 1) + '/' + images.length + ')';
+            updateTransform();
+            overlay.style.display = 'block';
+            document.body.style.overflow = 'hidden';
+        }
+
+        function close() { overlay.style.display = 'none'; document.body.style.overflow = ''; }
+        function prev() { open((currentIndex - 1 + images.length) % images.length); }
+        function next() { open((currentIndex + 1) % images.length); }
+        function zoomIn() { scale = Math.min(10, scale + 0.25); updateTransform(); }
+        function zoomOut() { scale = Math.max(0.5, scale - 0.25); updateTransform(); }
+        function resetZoom() { scale = 1; panX = 0; panY = 0; updateTransform(); }
+
+        function fitWidth() {
+            if (!img.naturalWidth || !img.complete) { img.onload = fitWidth; return; }
+            scale = Math.max(0.1, Math.min(10, (window.innerWidth - 150) / img.naturalWidth));
+            panX = 0; panY = 0; updateTransform();
+        }
+
+        function fitHeight() {
+            if (!img.naturalHeight || !img.complete) { img.onload = fitHeight; return; }
+            scale = Math.max(0.1, Math.min(10, (window.innerHeight - 120) / img.naturalHeight));
+            panX = 0; panY = 0; updateTransform();
+        }
+
+        if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', init); } else { init(); }
+
+        return { open: open, close: close, prev: prev, next: next, zoomIn: zoomIn, zoomOut: zoomOut, resetZoom: resetZoom, fitWidth: fitWidth, fitHeight: fitHeight };
+    })();
+
+    // Mobile navigation
+    (function() {
+        var navToggle = document.querySelector('.nav-toggle');
+        var siteNav = document.querySelector('.site-nav');
+        var dropdowns = document.querySelectorAll('.nav-dropdown');
+
+        if (navToggle && siteNav) {
+            navToggle.addEventListener('click', function() {
+                navToggle.classList.toggle('active');
+                siteNav.classList.toggle('open');
+                navToggle.setAttribute('aria-expanded', siteNav.classList.contains('open'));
+            });
+
+            // Close menu when clicking a non-dropdown link
+            siteNav.querySelectorAll('a:not(.nav-dropdown-menu a)').forEach(function(link) {
+                link.addEventListener('click', function() {
+                    if (window.innerWidth <= 768) {
+                        navToggle.classList.remove('active');
+                        siteNav.classList.remove('open');
+                    }
+                });
+            });
+        }
+
+        // Handle dropdowns on mobile
+        dropdowns.forEach(function(dropdown) {
+            var trigger = dropdown.querySelector('.nav-trigger');
+            if (trigger) {
+                trigger.addEventListener('click', function(e) {
+                    if (window.innerWidth <= 768) {
+                        e.preventDefault();
+                        // Close other dropdowns
+                        dropdowns.forEach(function(d) {
+                            if (d !== dropdown) d.classList.remove('open');
+                        });
+                        dropdown.classList.toggle('open');
+                    }
+                });
+            }
+        });
+
+        // Close dropdowns when clicking outside on mobile
+        document.addEventListener('click', function(e) {
+            if (window.innerWidth <= 768 && !e.target.closest('.nav-dropdown')) {
+                dropdowns.forEach(function(d) { d.classList.remove('open'); });
+            }
+        });
+    })();
+
+    // Site search keyboard shortcuts: "/" or Ctrl+K / Cmd+K focuses the header search box.
+    (function() {
+        var searchInput = document.getElementById('site-search-input');
+        if (!searchInput) return;
+        document.addEventListener('keydown', function(e) {
+            var target = e.target;
+            var tag = (target.tagName || '').toLowerCase();
+            var typing = tag === 'input' || tag === 'textarea' || tag === 'select' || target.isContentEditable;
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+                e.preventDefault();
+                searchInput.focus();
+                searchInput.select();
+            } else if (e.key === '/' && !typing) {
+                e.preventDefault();
+                searchInput.focus();
+            }
+        });
+    })();
+    </script>
+
+    <!-- MathJax for LaTeX equations across docs pages -->
+    <script>
+    window.MathJax = {
+        tex: {
+            inlineMath: [['\\(', '\\)'], ['$', '$']],
+            displayMath: [['\\[', '\\]'], ['$$', '$$']],
+            processEscapes: true,
+            processEnvironments: true
+        },
+        options: {
+            skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
+        },
+        svg: {
+            fontCache: 'global'
+        }
+    };
+    </script>
+    <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+
+    <footer style="background: #2a2a2a; border-top: 1px solid #454545; color: #b0b0b0; padding: 3rem 2rem; margin-top: auto;">
+        <div style="max-width: 1200px; margin: 0 auto; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 2rem;">
+            <div>
+                <h4 style="color: #ffb400; margin-bottom: 0.75rem; font-size: 1rem;">C-Kernel-Engine</h4>
+                <p style="color: #707070; font-size: 0.875rem; margin: 0;">High-performance ML kernels with full PyTorch parity.</p>
+            </div>
+            <div>
+                <h4 style="color: #ffb400; margin-bottom: 0.75rem; font-size: 1rem;">Resources</h4>
+                <ul style="list-style: none; padding: 0; margin: 0;">
+                    <li style="margin-bottom: 0.5rem;"><a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine" style="color: #909090; text-decoration: none; font-size: 0.875rem;">GitHub</a></li>
+                    <li style="margin-bottom: 0.5rem;"><a href="contributing.html" style="color: #909090; text-decoration: none; font-size: 0.875rem;">Contributor Path</a></li>
+                    <li style="margin-bottom: 0.5rem;"><a href="architecture.html" style="color: #909090; text-decoration: none; font-size: 0.875rem;">Architecture</a></li>
+                    <li style="margin-bottom: 0.5rem;"><a href="api.html" style="color: #909090; text-decoration: none; font-size: 0.875rem;">API Reference</a></li>
+                </ul>
+            </div>
+            <div>
+                <h4 style="color: #ffb400; margin-bottom: 0.75rem; font-size: 1rem;">Related</h4>
+                <ul style="list-style: none; padding: 0; margin: 0;">
+                    <li style="margin-bottom: 0.5rem;"><a href="https://www.shivasnotes.com/" style="color: #909090; text-decoration: none; font-size: 0.875rem;">ShivasNotes</a></li>
+                    <li style="margin-bottom: 0.5rem;"><a href="https://www.shivasnotes.com/work-with-us" style="color: #909090; text-decoration: none; font-size: 0.875rem;">Work With Us</a></li>
+                    <li style="margin-bottom: 0.5rem;"><a href="https://antshiv.com/" style="color: #909090; text-decoration: none; font-size: 0.875rem;">antshiv.com</a></li>
+                </ul>
+            </div>
+            <div style="text-align: right;">
+                <p style="color: #606060; font-size: 0.75rem; margin: 0;">Static docs · C-first execution</p>
+                <p style="color: #606060; font-size: 0.75rem; margin: 0.5rem 0 0 0;">2026-10-21</p>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>

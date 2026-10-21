@@ -1,0 +1,336 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 500" role="img"
+     aria-label="C Kernel Engine — Data × Computation Spectrum">
+  <defs>
+    <!-- Background base -->
+    <linearGradient id="bgBase" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0c1018"/>
+      <stop offset="100%" stop-color="#090d13"/>
+    </linearGradient>
+
+    <!-- Subtle vertical field: warm top → cool bottom — communicates the spectrum -->
+    <linearGradient id="fieldGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%"   stop-color="#ffb400" stop-opacity="0.06"/>
+      <stop offset="42%"  stop-color="#a070ff" stop-opacity="0.03"/>
+      <stop offset="100%" stop-color="#07adf8" stop-opacity="0.08"/>
+    </linearGradient>
+
+    <!-- Spectrum axis strip (the horizontal gradient bar between the two bands) -->
+    <linearGradient id="specAxis" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%"   stop-color="#ffb400" stop-opacity="0.70"/>
+      <stop offset="30%"  stop-color="#ffb400" stop-opacity="0.30"/>
+      <stop offset="50%"  stop-color="#a070ff" stop-opacity="0.50"/>
+      <stop offset="70%"  stop-color="#07adf8" stop-opacity="0.30"/>
+      <stop offset="100%" stop-color="#07adf8" stop-opacity="0.70"/>
+    </linearGradient>
+
+    <!-- Rail gradients -->
+    <linearGradient id="railData" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%"   stop-color="#facc15"/>
+      <stop offset="50%"  stop-color="#ffb400"/>
+      <stop offset="100%" stop-color="#fb923c"/>
+    </linearGradient>
+    <linearGradient id="railComp" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%"   stop-color="#60a5fa"/>
+      <stop offset="50%"  stop-color="#07adf8"/>
+      <stop offset="100%" stop-color="#0ea5e9"/>
+    </linearGradient>
+
+    <!-- Band fills -->
+    <linearGradient id="bandData" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%"   stop-color="#ffb400" stop-opacity="0.02"/>
+      <stop offset="50%"  stop-color="#ffb400" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#ffb400" stop-opacity="0.02"/>
+    </linearGradient>
+    <linearGradient id="bandComp" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%"   stop-color="#07adf8" stop-opacity="0.02"/>
+      <stop offset="50%"  stop-color="#07adf8" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#07adf8" stop-opacity="0.02"/>
+    </linearGradient>
+
+    <!-- IR bar -->
+    <linearGradient id="irFill" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%"   stop-color="#47b475" stop-opacity="0.25"/>
+      <stop offset="50%"  stop-color="#47b475" stop-opacity="0.09"/>
+      <stop offset="100%" stop-color="#47b475" stop-opacity="0.25"/>
+    </linearGradient>
+
+    <!-- Glow filters -->
+    <filter id="fGold"   x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="0" stdDeviation="3.5" flood-color="#ffb400" flood-opacity="0.55"/>
+    </filter>
+    <filter id="fBlue"   x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="0" stdDeviation="3.5" flood-color="#07adf8" flood-opacity="0.55"/>
+    </filter>
+    <filter id="fAmber"  x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="0" stdDeviation="5"   flood-color="#f59e0b" flood-opacity="0.65"/>
+    </filter>
+    <filter id="fPurple" x="-50%" y="-50%" width="200%" height="200%">
+      <feDropShadow dx="0" dy="0" stdDeviation="5"   flood-color="#a070ff" flood-opacity="0.55"/>
+    </filter>
+    <filter id="fGreen"  x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="0" stdDeviation="2.5" flood-color="#47b475" flood-opacity="0.50"/>
+    </filter>
+
+    <!-- Markers -->
+    <marker id="aGold"    viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto">
+      <path d="M0,1 L7,4 L0,7 Z" fill="#ffb400"/>
+    </marker>
+    <marker id="aBlue"    viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto">
+      <path d="M0,1 L7,4 L0,7 Z" fill="#07adf8"/>
+    </marker>
+    <marker id="aPD" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="4.5" markerHeight="4.5" orient="auto">
+      <path d="M0,1 L7,4 L0,7 Z" fill="#9060df"/>
+    </marker>
+    <marker id="aPU" viewBox="0 0 8 8" refX="1" refY="4" markerWidth="4.5" markerHeight="4.5" orient="auto">
+      <path d="M8,1 L1,4 L8,7 Z" fill="#9060df"/>
+    </marker>
+  </defs>
+
+  <!-- ── BACKGROUND FIELD ───────────────────────────────────────────
+       The vertical warm→cool gradient is the "spectrum" you inhabit.
+       It's always there; you move through it in both directions.
+  ──────────────────────────────────────────────────────────────────── -->
+  <rect width="1200" height="500" rx="14" fill="url(#bgBase)"/>
+  <rect width="1200" height="500" rx="14" fill="url(#fieldGrad)"/>
+  <rect x="7" y="7" width="1186" height="486" rx="12" fill="none" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+
+  <!-- ── HEADER ────────────────────────────────────────────────────── -->
+  <text x="32" y="35" fill="#f1f5f9" font-size="20" font-family="Segoe UI,Arial,sans-serif"
+        font-weight="700" letter-spacing="-0.3">C Kernel Engine — Data × Computation Spectrum</text>
+  <text x="32" y="53" fill="#4b5563" font-size="10.5" font-family="Segoe UI,Arial,sans-serif">
+    Both spectra are co-equal. Any stage is re-entrant. No step is once-and-done — the engine is the traversal space.
+  </text>
+
+  <!-- 3 legend pills -->
+  <rect x="32"  y="62" width="78"  height="16" rx="8" fill="rgba(255,180,0,0.12)"  stroke="rgba(255,180,0,0.44)"/>
+  <text x="71"  y="74" fill="#ffb400" font-size="9" font-family="Segoe UI,Arial,sans-serif" font-weight="700" text-anchor="middle">↔ DATA</text>
+  <rect x="118" y="62" width="98"  height="16" rx="8" fill="rgba(7,173,248,0.12)"  stroke="rgba(7,173,248,0.44)"/>
+  <text x="167" y="74" fill="#07adf8" font-size="9" font-family="Segoe UI,Arial,sans-serif" font-weight="700" text-anchor="middle">↔ COMPUTE</text>
+  <rect x="224" y="62" width="106" height="16" rx="8" fill="rgba(160,112,255,0.12)" stroke="rgba(160,112,255,0.44)"/>
+  <text x="277" y="74" fill="#a070ff" font-size="9" font-family="Segoe UI,Arial,sans-serif" font-weight="700" text-anchor="middle">⇅ COUPLED</text>
+
+  <!-- ── DATA SPECTRUM BAND  y=82→172 ──────────────────────────────── -->
+  <text x="100" y="99"  fill="#ffb400" font-size="9.5" font-family="Segoe UI,Arial,sans-serif" font-weight="700" text-anchor="end">DATA</text>
+  <text x="100" y="112" fill="#ffb400" font-size="9.5" font-family="Segoe UI,Arial,sans-serif" font-weight="700" text-anchor="end">SPECTRUM</text>
+  <text x="100" y="124" fill="rgba(255,180,0,0.50)" font-size="9" font-family="Segoe UI,Arial,sans-serif" text-anchor="end">← →</text>
+
+  <rect x="108" y="82" width="970" height="90" rx="8"
+        fill="url(#bandData)" stroke="rgba(255,180,0,0.16)" stroke-width="1"/>
+
+  <!-- Data rail  y=127 -->
+  <path d="M225,127 C272,115 338,139 385,127 C432,115 498,139 545,127 C592,115 658,139 705,127 C752,115 818,139 865,127 C926,115 993,139 1060,127"
+        fill="none" stroke="rgba(0,0,0,0.45)" stroke-width="5" stroke-linecap="round"/>
+  <path d="M225,127 C272,115 338,139 385,127 C432,115 498,139 545,127 C592,115 658,139 705,127 C752,115 818,139 865,127 C926,115 993,139 1060,127"
+        fill="none" stroke="url(#railData)" stroke-width="3" stroke-linecap="round" filter="url(#fGold)"/>
+
+  <!-- Rail arrows + re-entry arcs -->
+  <line x1="1063" y1="127" x2="1086" y2="127" stroke="#fb923c" stroke-width="2" marker-end="url(#aGold)" opacity="0.85"/>
+  <line x1="204"  y1="127" x2="222"  y2="127" stroke="#facc15" stroke-width="2" marker-end="url(#aGold)" opacity="0.40"/>
+  <path d="M1060,115 C1070,105 1092,103 1104,108 C1115,114 1113,124 1099,127"
+        fill="none" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="4 2.5" opacity="0.50" marker-end="url(#aGold)"/>
+
+  <!-- Data nodes (warm gradient left→right) -->
+  <g fill="#0d1117" stroke-width="2.2">
+    <circle cx="225"  cy="127" r="10" stroke="#facc15"/>
+    <circle cx="385"  cy="127" r="10" stroke="#ffb400"/>
+    <circle cx="545"  cy="127" r="10" stroke="#f59e0b"/>
+    <circle cx="705"  cy="127" r="10" stroke="#fb923c"/>
+    <circle cx="865"  cy="127" r="10" stroke="#f97316"/>
+    <circle cx="1060" cy="127" r="10" stroke="#ef4444"/>
+  </g>
+  <circle cx="225"  cy="127" r="3.5" fill="#facc15"/>
+  <circle cx="385"  cy="127" r="3.5" fill="#ffb400"/>
+  <circle cx="545"  cy="127" r="3.5" fill="#f59e0b"/>
+  <circle cx="705"  cy="127" r="3.5" fill="#fb923c"/>
+  <circle cx="865"  cy="127" r="3.5" fill="#f97316"/>
+  <circle cx="1060" cy="127" r="3.5" fill="#ef4444"/>
+
+  <!-- Stage labels: above -->
+  <g fill="#dde6ef" font-size="10.5" font-family="Segoe UI,Arial,sans-serif" text-anchor="middle" font-weight="600">
+    <text x="225"  y="101">Corpus Gen</text>
+    <text x="385"  y="101">Tokenize</text>
+    <text x="545"  y="101">QC Gates</text>
+    <text x="705"  y="101">SFT</text>
+    <text x="865"  y="101">Preference</text>
+    <text x="1060" y="101">Policy Loop</text>
+  </g>
+  <!-- Stage labels: below -->
+  <g fill="#4b5563" font-size="9" font-family="Segoe UI,Arial,sans-serif" text-anchor="middle">
+    <text x="225"  y="150">stage-a · b · bridge</text>
+    <text x="385"  y="150">ascii_bpe · 320-vocab</text>
+    <text x="545"  y="150">roundtrip · SVG val</text>
+    <text x="705"  y="150">instruction pairs</text>
+    <text x="865"  y="150">DPO · reward signals</text>
+    <text x="1060" y="150">GRPO · reward model</text>
+  </g>
+
+  <!-- Test gate badges -->
+  <rect x="347" y="155" width="76" height="13" rx="6" fill="rgba(71,180,117,0.13)" stroke="rgba(71,180,117,0.44)" stroke-width="0.8"/>
+  <text x="385" y="165" fill="#47b475" font-size="8" font-family="Segoe UI,Arial,sans-serif" text-anchor="middle" font-weight="700">◈ roundtrip gate</text>
+  <rect x="511" y="155" width="68" height="13" rx="6" fill="rgba(71,180,117,0.13)" stroke="rgba(71,180,117,0.44)" stroke-width="0.8"/>
+  <text x="545" y="165" fill="#47b475" font-size="8" font-family="Segoe UI,Arial,sans-serif" text-anchor="middle" font-weight="700">◈ QC gate</text>
+  <rect x="822" y="155" width="86" height="13" rx="6" fill="rgba(231,76,60,0.10)" stroke="rgba(231,76,60,0.36)" stroke-width="0.8"/>
+  <text x="865" y="165" fill="#d05050" font-size="8" font-family="Segoe UI,Arial,sans-serif" text-anchor="middle" font-weight="700">◈ parity data gate</text>
+
+  <!-- ── SPECTRUM AXIS STRIP  y=174→186 ─────────────────────────────
+       This IS the spectrum. One axis. Traversable in both directions.
+       Data-heavy on the left, compute-heavy on the right.
+       You are never locked into one end.
+  ──────────────────────────────────────────────────────────────────── -->
+  <rect x="108" y="174" width="970" height="12" rx="6" fill="url(#specAxis)" opacity="0.80"/>
+  <!-- Axis labels at ends -->
+  <text x="118" y="183" fill="rgba(255,180,0,0.65)" font-size="8" font-family="Segoe UI,Arial,sans-serif">← data-heavy</text>
+  <text x="1070" y="183" fill="rgba(7,173,248,0.65)" font-size="8" font-family="Segoe UI,Arial,sans-serif" text-anchor="end">compute-heavy →</text>
+  <!-- Axis center label -->
+  <text x="600" y="183" fill="rgba(160,112,255,0.75)" font-size="8" font-family="Segoe UI,Arial,sans-serif" text-anchor="middle" font-weight="600">re-entrant at any point</text>
+
+  <!-- ── COUPLING ZONE  y=190→255 ──────────────────────────────────── -->
+  <rect x="108" y="190" width="970" height="65" rx="8"
+        fill="rgba(160,112,255,0.03)" stroke="rgba(160,112,255,0.09)" stroke-width="1"/>
+
+  <!-- 6 bidirectional coupling connectors — these ARE the story here -->
+  <!-- x=225 -->
+  <line x1="225" y1="191" x2="225" y2="253" stroke="#8050c0" stroke-width="1.5" stroke-dasharray="4 3" opacity="0.70"
+        marker-end="url(#aPD)" marker-start="url(#aPU)"/>
+  <rect x="188" y="207" width="74" height="14" rx="7" fill="rgba(0,0,0,0.45)" stroke="rgba(128,80,192,0.30)" stroke-width="0.7"/>
+  <text x="225" y="218" fill="#9060df" font-size="8" font-family="Segoe UI,Arial,sans-serif" text-anchor="middle">corpus→math</text>
+
+  <!-- x=385 -->
+  <line x1="385" y1="191" x2="385" y2="253" stroke="#8050c0" stroke-width="1.5" stroke-dasharray="4 3" opacity="0.70"
+        marker-end="url(#aPD)" marker-start="url(#aPU)"/>
+  <rect x="347" y="207" width="76" height="14" rx="7" fill="rgba(0,0,0,0.45)" stroke="rgba(128,80,192,0.30)" stroke-width="0.7"/>
+  <text x="385" y="218" fill="#9060df" font-size="8" font-family="Segoe UI,Arial,sans-serif" text-anchor="middle">tokenizer↔BPE</text>
+
+  <!-- x=545 -->
+  <line x1="545" y1="191" x2="545" y2="253" stroke="#8050c0" stroke-width="1.5" stroke-dasharray="4 3" opacity="0.70"
+        marker-end="url(#aPD)" marker-start="url(#aPU)"/>
+  <rect x="507" y="207" width="76" height="14" rx="7" fill="rgba(0,0,0,0.45)" stroke="rgba(128,80,192,0.30)" stroke-width="0.7"/>
+  <text x="545" y="218" fill="#9060df" font-size="8" font-family="Segoe UI,Arial,sans-serif" text-anchor="middle">data gates→IR</text>
+
+  <!-- x=705 -->
+  <line x1="705" y1="191" x2="705" y2="253" stroke="#8050c0" stroke-width="1.5" stroke-dasharray="4 3" opacity="0.70"
+        marker-end="url(#aPD)" marker-start="url(#aPU)"/>
+  <rect x="660" y="207" width="90" height="14" rx="7" fill="rgba(0,0,0,0.45)" stroke="rgba(128,80,192,0.30)" stroke-width="0.7"/>
+  <text x="705" y="218" fill="#9060df" font-size="8" font-family="Segoe UI,Arial,sans-serif" text-anchor="middle">instruction→emit</text>
+
+  <!-- x=865: parity gate — highlighted -->
+  <line x1="865" y1="191" x2="865" y2="253" stroke="#b090ff" stroke-width="2.2" stroke-dasharray="5 3" opacity="0.92"
+        marker-end="url(#aPD)" marker-start="url(#aPU)" filter="url(#fPurple)"/>
+  <rect x="826" y="205" width="78" height="16" rx="8" fill="rgba(160,112,255,0.18)" stroke="rgba(160,112,255,0.55)" stroke-width="0.9"/>
+  <text x="865" y="217" fill="#c4a8ff" font-size="8.5" font-family="Segoe UI,Arial,sans-serif" text-anchor="middle" font-weight="700">parity gate</text>
+
+  <!-- x=1060: full loop — highlighted -->
+  <line x1="1060" y1="191" x2="1060" y2="253" stroke="#b090ff" stroke-width="2.2" stroke-dasharray="5 3" opacity="0.92"
+        marker-end="url(#aPD)" marker-start="url(#aPU)" filter="url(#fPurple)"/>
+  <rect x="1021" y="205" width="78" height="16" rx="8" fill="rgba(160,112,255,0.18)" stroke="rgba(160,112,255,0.55)" stroke-width="0.9"/>
+  <text x="1060" y="217" fill="#c4a8ff" font-size="8.5" font-family="Segoe UI,Arial,sans-serif" text-anchor="middle" font-weight="700">full loop</text>
+
+  <!-- ── COMPUTE SPECTRUM BAND  y=258→405 ──────────────────────────── -->
+  <text x="100" y="294" fill="#07adf8" font-size="9.5" font-family="Segoe UI,Arial,sans-serif" font-weight="700" text-anchor="end">COMPUTE</text>
+  <text x="100" y="307" fill="#07adf8" font-size="9.5" font-family="Segoe UI,Arial,sans-serif" font-weight="700" text-anchor="end">SPECTRUM</text>
+  <text x="100" y="319" fill="rgba(7,173,248,0.50)" font-size="9" font-family="Segoe UI,Arial,sans-serif" text-anchor="end">← →</text>
+
+  <rect x="108" y="258" width="970" height="147" rx="8"
+        fill="url(#bandComp)" stroke="rgba(7,173,248,0.16)" stroke-width="1"/>
+
+  <!-- PRE-FORK compute rail  x=225→545  y=335 -->
+  <path d="M225,335 C270,323 340,347 385,335 C430,323 500,347 545,335"
+        fill="none" stroke="rgba(0,0,0,0.45)" stroke-width="5" stroke-linecap="round"/>
+  <path d="M225,335 C270,323 340,347 385,335 C430,323 500,347 545,335"
+        fill="none" stroke="url(#railComp)" stroke-width="3" stroke-linecap="round" filter="url(#fBlue)"/>
+
+  <!-- POST-FORK compute rail  x=705→1060  y=335 -->
+  <path d="M705,335 C750,323 820,347 865,335 C930,323 995,347 1060,335"
+        fill="none" stroke="rgba(0,0,0,0.45)" stroke-width="5" stroke-linecap="round"/>
+  <path d="M705,335 C750,323 820,347 865,335 C930,323 995,347 1060,335"
+        fill="none" stroke="url(#railComp)" stroke-width="3" stroke-linecap="round" filter="url(#fBlue)"/>
+
+  <!-- ── UPPER FORK ARC: Train IR1 + IR2 (amber) ─────────────────────
+       IR1 = forward graph (save_for_backward on every op, fp32)
+       IR2 = synthesized backward graph (loss_backward → grad accumulate)
+  ──────────────────────────────────────────────────────────────────── -->
+  <path d="M545,335 C578,300 672,300 705,335"
+        fill="none" stroke="rgba(0,0,0,0.40)" stroke-width="5" stroke-linecap="round"/>
+  <path d="M545,335 C578,300 672,300 705,335"
+        fill="none" stroke="#f59e0b" stroke-width="3" stroke-linecap="round" filter="url(#fAmber)"/>
+
+  <!-- ── LOWER FORK ARC: Infer IR decode + prefill (blue) ────────────
+       IR1 decode = gemv, single token, KV cache read
+       IR1 prefill = gemm_nt, multi-token, KV cache write, transposes
+       Both go through: Fusion → Lower1/2/3 → codegen_v7.py
+  ──────────────────────────────────────────────────────────────────── -->
+  <path d="M545,335 C578,370 672,370 705,335"
+        fill="none" stroke="rgba(0,0,0,0.40)" stroke-width="5" stroke-linecap="round"/>
+  <path d="M545,335 C578,370 672,370 705,335"
+        fill="none" stroke="#07adf8" stroke-width="3" stroke-linecap="round" filter="url(#fBlue)"/>
+
+  <!-- Rail arrows + re-entry arc -->
+  <line x1="1063" y1="335" x2="1086" y2="335" stroke="#0ea5e9" stroke-width="2" marker-end="url(#aBlue)" opacity="0.85"/>
+  <line x1="204"  y1="335" x2="222"  y2="335" stroke="#60a5fa" stroke-width="2" marker-end="url(#aBlue)" opacity="0.40"/>
+  <path d="M1060,323 C1070,313 1092,311 1103,316 C1114,322 1112,332 1098,335"
+        fill="none" stroke="#0ea5e9" stroke-width="1.5" stroke-dasharray="4 2.5" opacity="0.48" marker-end="url(#aBlue)"/>
+
+  <!-- ── FORK NODE x=545 — half amber (train enters) / half blue (infer enters) -->
+  <path d="M534,335 A11,11 0 0,1 556,335 Z" fill="#c97c0a" opacity="0.95"/>
+  <path d="M534,335 A11,11 0 0,0 556,335 Z" fill="#0b8fcc" opacity="0.95"/>
+  <circle cx="545" cy="335" r="11.5" fill="none" stroke="#6b7280" stroke-width="1.5"/>
+  <circle cx="545" cy="335" r="3"   fill="#f1f5f9"/>
+
+  <!-- ── MERGE / CODEGEN NODE x=705 — same split visual -->
+  <path d="M694,335 A11,11 0 0,1 716,335 Z" fill="#c97c0a" opacity="0.95"/>
+  <path d="M694,335 A11,11 0 0,0 716,335 Z" fill="#0b8fcc" opacity="0.95"/>
+  <circle cx="705" cy="335" r="11.5" fill="none" stroke="#6b7280" stroke-width="1.5"/>
+  <circle cx="705" cy="335" r="3"   fill="#f1f5f9"/>
+
+  <!-- Regular compute nodes -->
+  <g fill="#0d1117" stroke-width="2.2">
+    <circle cx="225"  cy="335" r="10" stroke="#60a5fa"/>
+    <circle cx="385"  cy="335" r="10" stroke="#38bdf8"/>
+    <circle cx="865"  cy="335" r="10" stroke="#3b82f6" stroke-width="2.5"/>
+    <circle cx="1060" cy="335" r="10" stroke="#0ea5e9"/>
+  </g>
+  <circle cx="225"  cy="335" r="3.5" fill="#60a5fa"/>
+  <circle cx="385"  cy="335" r="3.5" fill="#38bdf8"/>
+  <circle cx="865"  cy="335" r="3.5" fill="#3b82f6"/>
+  <circle cx="1060" cy="335" r="3.5" fill="#0ea5e9"/>
+
+  <!-- Compute stage labels: above nodes (y=272) -->
+  <g fill="#dde6ef" font-size="10.5" font-family="Segoe UI,Arial,sans-serif" text-anchor="middle" font-weight="600">
+    <text x="225"  y="273">Math</text>
+    <text x="385"  y="273">Kernels + Quant</text>
+    <text x="545"  y="273">IR Build</text>
+    <text x="705"  y="273">Codegen</text>
+    <text x="865"  y="273">Parity + Tests</text>
+    <text x="1060" y="273">Deploy</text>
+  </g>
+
+  <!-- ── FORK ARC LABELS — legible, no sub-text clutter ── -->
+  <!-- Train IR label: sits above the upper arc (peak y≈300) -->
+  <text x="625" y="295" fill="#f59e0b" font-size="11" font-family="Segoe UI,Arial,sans-serif"
+        text-anchor="middle" font-weight="700" filter="url(#fAmber)">Train IR1 + IR2</text>
+
+  <!-- Infer IR label: sits below the lower arc (dip y≈370) -->
+  <text x="625" y="385" fill="#07adf8" font-size="11" font-family="Segoe UI,Arial,sans-serif"
+        text-anchor="middle" font-weight="700" filter="url(#fBlue)">Infer decode · prefill</text>
+
+  <!-- Compute sub-labels: below regular nodes (y=393) -->
+  <g fill="#4b5563" font-size="9" font-family="Segoe UI,Arial,sans-serif" text-anchor="middle">
+    <text x="225"  y="393">equations · fd-grad</text>
+    <text x="385"  y="393">gemv · gemm · q4_k</text>
+    <text x="865"  y="393">llama.cpp · pytorch · FD</text>
+    <text x="1060" y="393">fwd · prefill · train</text>
+  </g>
+
+  <!-- ── IR VISUALIZER BAR ─────────────────────────────────────────── -->
+  <rect x="32" y="416" width="1136" height="30" rx="8"
+        fill="url(#irFill)" stroke="rgba(71,180,117,0.38)" stroke-width="1" filter="url(#fGreen)"/>
+  <text x="600" y="436" fill="#47b475" font-size="11" font-family="Segoe UI,Arial,sans-serif"
+        font-weight="700" text-anchor="middle" letter-spacing="0.3">
+    ◎ IR Visualizer (ir_report.html) — Train IR, Infer IR, Data Lab, Parity — full observability at every stage
+  </text>
+
+  <!-- ── FOOTER — one line ─────────────────────────────────────────── -->
+  <text x="600" y="470" fill="#374151" font-size="9.5" font-family="Segoe UI,Arial,sans-serif" text-anchor="middle">
+    IR Build forks: Train (IR1 fwd + IR2 bwd, fp32) and Infer (decode gemv + prefill gemm, quantized, KV cache) are separate pipelines — both converge at Codegen.
+  </text>
+</svg>

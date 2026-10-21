@@ -1,0 +1,1617 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Support the CKE CPU AI Hardware Lab | C-Kernel-Engine</title>
+    <meta name="description" content="Support reproducible C-Kernel-Engine testing across Xeon 6, AMX BF16, AVX-512, memory topology, NUMA, 100GbE, and distributed CPU AI systems.">
+    <meta name="robots" content="index,follow">
+    <link rel="canonical" href="https://c-kernel-engine.github.io/C-Kernel-Engine/support-hardware.html">
+    <meta property="og:title" content="Support the CKE CPU AI Hardware Lab | C-Kernel-Engine">
+    <meta property="og:description" content="Support reproducible C-Kernel-Engine testing across Xeon 6, AMX BF16, AVX-512, memory topology, NUMA, 100GbE, and distributed CPU AI systems.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://c-kernel-engine.github.io/C-Kernel-Engine/support-hardware.html">
+    <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+    <style>
+        :root {
+            /* Antsand Brand Colors - Lightened */
+            --orange: #ffb400;
+            --orange-dark: #e5a200;
+            --orange-light: #ffc933;
+            --dark: #2a2a2a;
+            --dark-lighter: #363636;
+            --dark-card: #323232;
+            --grey: #454545;
+            --grey-light: #555555;
+            --text-primary: #f5f5f5;
+            --text-secondary: #b0b0b0;
+            --text-muted: #808080;
+            --bg-dark: #232323;
+            --white: #ffffff;
+            --code-bg: #1a1a1a;
+            --green: #47b475;
+            --blue: #07adf8;
+            --gradient-header: linear-gradient(135deg, #2a2a2a 0%, #363636 50%, #2a2a2a 100%);
+            --shadow-sm: 0 2px 4px rgba(0,0,0,0.3);
+            --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+            --shadow-lg: 0 8px 24px rgba(0,0,0,0.5);
+            --transition: all 0.3s ease;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-dark);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Header */
+        .site-header {
+            background: var(--gradient-header);
+            border-bottom: 3px solid var(--orange);
+            padding: 0.5rem 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 1rem;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            box-shadow: var(--shadow-md);
+        }
+
+        .header-brand {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            text-decoration: none;
+        }
+
+        .header-logo {
+            width: 40px;
+            height: 40px;
+            background: var(--orange);
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            color: var(--dark);
+            font-size: 1.1rem;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .header-title {
+            color: var(--white);
+            font-size: 1.4rem;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+        }
+
+        .header-subtitle {
+            color: var(--orange);
+            font-size: 0.8rem;
+            font-weight: 500;
+        }
+
+        /* Navigation */
+        .site-nav {
+            display: flex;
+            gap: 0.25rem;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .site-nav > a,
+        .nav-dropdown > .nav-trigger {
+            color: var(--text-secondary);
+            text-decoration: none;
+            padding: 0.6rem 1rem;
+            border-radius: 4px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: var(--transition);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            border: none;
+            background: transparent;
+            font-family: inherit;
+        }
+
+        .site-nav > a:hover,
+        .nav-dropdown:hover > .nav-trigger {
+            color: var(--white);
+            background: var(--grey);
+        }
+
+        .site-nav > a.active,
+        .nav-dropdown > .nav-trigger.active {
+            background: var(--orange);
+            color: var(--dark);
+            font-weight: 600;
+        }
+
+        /* Dropdown */
+        .nav-dropdown {
+            position: relative;
+        }
+
+        .nav-trigger::after {
+            content: '';
+            border: solid currentColor;
+            border-width: 0 2px 2px 0;
+            display: inline-block;
+            padding: 3px;
+            transform: rotate(45deg);
+            margin-top: -3px;
+            transition: transform 0.2s;
+        }
+
+        .nav-dropdown:hover .nav-trigger::after {
+            transform: rotate(-135deg);
+            margin-top: 3px;
+        }
+
+        .nav-dropdown-menu {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            background: var(--dark-card);
+            border-radius: 8px;
+            box-shadow: var(--shadow-lg);
+            min-width: 220px;
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(-10px);
+            transition: var(--transition);
+            overflow: hidden;
+            margin-top: 0.5rem;
+            border: 1px solid var(--grey);
+        }
+
+        .nav-dropdown:hover .nav-dropdown-menu {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0);
+        }
+
+        .nav-dropdown-menu a {
+            display: block;
+            padding: 0.75rem 1rem;
+            color: var(--text-secondary);
+            text-decoration: none;
+            transition: var(--transition);
+            border-left: 3px solid transparent;
+        }
+
+        .nav-dropdown-menu a:hover {
+            background: var(--grey);
+            border-left-color: var(--orange);
+            color: var(--white);
+        }
+
+        .nav-dropdown-menu a small {
+            display: block;
+            color: var(--text-muted);
+            font-size: 0.75rem;
+            margin-top: 0.2rem;
+        }
+
+        /* Last dropdown aligns to the right edge */
+        .nav-dropdown:last-child .nav-dropdown-menu {
+            left: auto;
+            right: 0;
+        }
+
+        /* Mega menu for Architecture dropdown */
+        .nav-dropdown-menu.mega-menu {
+            width: min(1180px, calc(100vw - 2rem));
+            min-width: 0;
+            max-height: calc(100vh - 90px);
+            padding: 1.25rem 1.5rem;
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 0.75rem 1.25rem;
+            left: auto;
+            right: 0;
+            overflow-y: auto;
+            transform: translateY(-10px);
+        }
+
+        .nav-dropdown:hover .nav-dropdown-menu.mega-menu {
+            transform: translateY(0);
+        }
+
+        .mega-menu .menu-section {
+            margin-bottom: 0.75rem;
+        }
+
+        .mega-menu .menu-shortcuts {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 0.5rem;
+            margin-top: 0.75rem;
+        }
+
+        .mega-menu .menu-shortcuts a {
+            padding: 0.55rem 0.75rem;
+            background: rgba(255, 180, 0, 0.055);
+            border: 1px solid rgba(255, 180, 0, 0.18);
+        }
+
+        .mega-menu .menu-heading {
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--orange);
+            padding: 0.5rem 0.75rem 0.35rem;
+            border-bottom: 1px solid var(--grey);
+            margin-bottom: 0.35rem;
+        }
+
+        .mega-menu a {
+            padding: 0.6rem 0.75rem;
+            font-size: 0.9rem;
+            border-radius: 4px;
+            border-left: none;
+            line-height: 1.3;
+        }
+
+        .mega-menu a:hover {
+            border-left: none;
+            background: var(--grey);
+        }
+
+        .mega-menu a small {
+            font-size: 0.75rem;
+            margin-top: 0.15rem;
+        }
+
+        /* Main Content */
+        main {
+            box-sizing: border-box;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+            flex: 1;
+            width: 100%;
+        }
+
+        /* Hero Section */
+        .hero {
+            background: var(--gradient-header);
+            border: 1px solid var(--grey);
+            color: var(--white);
+            padding: 3rem 2rem;
+            border-radius: 12px;
+            margin-bottom: 2rem;
+            text-align: center;
+            box-shadow: var(--shadow-lg);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, var(--orange), var(--orange-light), var(--orange));
+        }
+
+        .hero h1 {
+            color: var(--white);
+            border: none;
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .hero p {
+            font-size: 1.1rem;
+            color: var(--text-secondary);
+            max-width: 700px;
+            margin: 0 auto;
+        }
+
+        /* Typography */
+        h1 {
+            color: var(--white);
+            font-size: 2rem;
+            margin-bottom: 1rem;
+            border-bottom: 2px solid var(--orange);
+            padding-bottom: 0.5rem;
+        }
+
+        h2 {
+            color: var(--white);
+            font-size: 1.4rem;
+            margin: 2rem 0 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        h2::before {
+            content: '';
+            width: 4px;
+            height: 1.4rem;
+            background: var(--orange);
+            border-radius: 2px;
+        }
+
+        h3 {
+            color: var(--orange);
+            font-size: 1.15rem;
+            margin: 1.5rem 0 0.75rem;
+        }
+
+        p {
+            margin-bottom: 1rem;
+            color: var(--text-secondary);
+        }
+
+        /* Cards */
+        .card {
+            background: var(--dark-card);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            box-shadow: var(--shadow-sm);
+            border-left: 3px solid var(--grey-light);
+            transition: var(--transition);
+            border: 1px solid var(--grey);
+        }
+
+        .card:hover {
+            box-shadow: var(--shadow-md);
+            border-left-color: var(--orange);
+        }
+
+        .card-accent {
+            border-left-color: var(--orange);
+        }
+
+        .card-green {
+            border-left-color: var(--green);
+        }
+
+        .card-blue {
+            border-left-color: var(--blue);
+        }
+
+        .card h3 {
+            margin-top: 0;
+        }
+
+        /* Clickable Cards */
+        a.card-link {
+            display: block;
+            text-decoration: none;
+            color: inherit;
+        }
+
+        a.card-link .card {
+            cursor: pointer;
+        }
+
+        a.card-link .card:hover {
+            border-left-width: 5px;
+        }
+
+        .card-arrow {
+            color: var(--orange);
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-top: 1rem;
+            transition: var(--transition);
+        }
+
+        a.card-link:hover .card-arrow {
+            gap: 0.75rem;
+        }
+
+        /* Feature Icons */
+        .feature-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .feature-icon.orange { background: rgba(255, 180, 0, 0.15); color: var(--orange); }
+        .feature-icon.green { background: rgba(71, 180, 117, 0.15); color: var(--green); }
+        .feature-icon.blue { background: rgba(7, 173, 248, 0.15); color: var(--blue); }
+        .feature-icon.grey { background: rgba(255, 255, 255, 0.1); color: var(--text-secondary); }
+
+        /* Stats */
+        .stat-number {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: var(--orange);
+            line-height: 1;
+        }
+
+        .stat-label {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+        }
+
+        /* Code blocks */
+        pre {
+            background: var(--code-bg);
+            color: #e0e0e0;
+            padding: 1.25rem;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin: 1rem 0;
+            font-family: 'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            font-size: 0.85rem;
+            border: 1px solid var(--grey);
+        }
+
+        code {
+            font-family: 'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            background: var(--grey);
+            padding: 0.2rem 0.4rem;
+            border-radius: 3px;
+            font-size: 0.85rem;
+            color: var(--orange);
+        }
+
+        pre code {
+            background: none;
+            padding: 0;
+            color: #e0e0e0;
+        }
+
+        /* Tables */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+            background: var(--dark-card);
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid var(--grey);
+        }
+
+        th {
+            background: var(--dark);
+            color: var(--orange);
+            padding: 0.875rem 1rem;
+            text-align: left;
+            font-weight: 600;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        td {
+            padding: 0.875rem 1rem;
+            border-bottom: 1px solid var(--grey);
+            color: var(--text-secondary);
+        }
+
+        tr:hover {
+            background: var(--grey);
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        /* Lists */
+        ul, ol {
+            margin: 1rem 0;
+            padding-left: 1.5rem;
+            color: var(--text-secondary);
+        }
+
+        li {
+            margin-bottom: 0.5rem;
+        }
+
+        /* Links */
+        a {
+            color: var(--orange);
+            transition: var(--transition);
+        }
+
+        a:hover {
+            color: var(--orange-light);
+        }
+
+        /* Grid */
+        .grid {
+            display: grid;
+            gap: 1.5rem;
+        }
+
+        .grid-2 {
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        }
+
+        .grid-3 {
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        }
+
+        .grid-4 {
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        }
+
+        /* Alerts */
+        .alert {
+            padding: 1rem 1.25rem;
+            border-radius: 6px;
+            margin: 1rem 0;
+            display: flex;
+            align-items: flex-start;
+            gap: 0.75rem;
+            border: 1px solid;
+        }
+
+        .alert-icon {
+            font-size: 1.25rem;
+            flex-shrink: 0;
+        }
+
+        .alert-info {
+            background: rgba(7, 173, 248, 0.1);
+            border-color: var(--blue);
+            color: var(--blue);
+        }
+
+        .alert-warning {
+            background: rgba(255, 180, 0, 0.1);
+            border-color: var(--orange);
+            color: var(--orange);
+        }
+
+        .alert-success {
+            background: rgba(71, 180, 117, 0.1);
+            border-color: var(--green);
+            color: var(--green);
+        }
+
+        /* Image containers */
+        .img-container {
+            margin: 1.5rem 0;
+            text-align: center;
+        }
+
+        .img-container img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 8px;
+            box-shadow: var(--shadow-lg);
+            border: 1px solid var(--grey);
+        }
+
+        /* Badge */
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 999px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .badge-orange {
+            background: var(--orange);
+            color: var(--dark);
+        }
+
+        .badge-green {
+            background: var(--green);
+            color: white;
+        }
+
+        .badge-grey {
+            background: var(--grey);
+            color: var(--text-secondary);
+        }
+
+        /* Diagram blocks (monospace pre with colored spans) */
+        .diagram {
+            background: var(--code-bg);
+            border: 1px solid var(--grey);
+            border-radius: 6px;
+            padding: 1.25rem;
+            margin: 1rem 0;
+            overflow-x: auto;
+            font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace;
+            font-size: 0.8rem;
+            line-height: 1.55;
+            white-space: pre;
+            color: var(--text-muted);
+        }
+        .diagram .hl     { color: var(--blue); font-weight: 700; }
+        .diagram .grn    { color: var(--green); }
+        .diagram .wrn    { color: var(--orange); }
+        .diagram .err    { color: #f85149; }
+        .diagram .purple { color: #bc8cff; }
+        .diagram .dim    { color: #484f58; }
+
+        /* Inline status colors */
+        .good { color: var(--green); font-weight: 600; }
+        .bad  { color: #f85149; font-weight: 600; }
+        .meh  { color: var(--orange); font-weight: 600; }
+
+        /* Section numbering */
+        .section-num {
+            color: var(--orange);
+            font-weight: 400;
+            margin-right: 0.25rem;
+        }
+
+        /* Accordion */
+        details {
+            background: var(--dark-card);
+            border-radius: 6px;
+            margin-bottom: 0.75rem;
+            border: 1px solid var(--grey);
+            border-left: 3px solid var(--grey-light);
+            overflow: hidden;
+            transition: var(--transition);
+        }
+
+        details:hover {
+            border-left-color: var(--orange);
+        }
+
+        details[open] {
+            border-left-color: var(--orange);
+        }
+
+        summary {
+            padding: 1rem 1.25rem;
+            cursor: pointer;
+            font-weight: 600;
+            color: var(--white);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            list-style: none;
+            user-select: none;
+            transition: var(--transition);
+        }
+
+        summary::-webkit-details-marker {
+            display: none;
+        }
+
+        summary::after {
+            content: '';
+            border: solid var(--orange);
+            border-width: 0 2px 2px 0;
+            display: inline-block;
+            padding: 4px;
+            transform: rotate(-45deg);
+            transition: transform 0.2s ease;
+            flex-shrink: 0;
+            margin-left: 1rem;
+        }
+
+        details[open] summary::after {
+            transform: rotate(45deg);
+        }
+
+        summary:hover {
+            background: var(--grey);
+        }
+
+        details[open] summary {
+            border-bottom: 1px solid var(--grey);
+        }
+
+        .accordion-content {
+            padding: 1rem 1.25rem;
+        }
+
+        /* Site search */
+        .site-search {
+            display: flex;
+            align-items: center;
+            flex: 0 1 240px;
+            min-width: 140px;
+        }
+
+        .site-search input {
+            width: 100%;
+            background: var(--code-bg);
+            border: 1px solid var(--grey);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-family: inherit;
+            font-size: 0.85rem;
+            padding: 0.5rem 0.75rem;
+            transition: var(--transition);
+        }
+
+        .site-search input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .site-search input:focus {
+            outline: 2px solid var(--orange);
+            outline-offset: 1px;
+            border-color: var(--orange);
+        }
+
+        /* Mobile hamburger button */
+        .nav-toggle {
+            display: none;
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            padding: 0.5rem;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .nav-toggle span {
+            display: block;
+            width: 24px;
+            height: 3px;
+            background: var(--orange);
+            border-radius: 2px;
+            transition: var(--transition);
+        }
+
+        .nav-toggle.active span:nth-child(1) {
+            transform: rotate(45deg) translate(5px, 5px);
+        }
+
+        .nav-toggle.active span:nth-child(2) {
+            opacity: 0;
+        }
+
+        .nav-toggle.active span:nth-child(3) {
+            transform: rotate(-45deg) translate(6px, -6px);
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .site-header {
+                flex-direction: row;
+                justify-content: space-between;
+                padding: 0.75rem 1rem;
+            }
+
+            .nav-toggle {
+                display: flex;
+            }
+
+            .site-search {
+                order: 3;
+                flex: 1 1 100%;
+                min-width: 0;
+            }
+
+            .site-search input {
+                font-size: 1rem;
+            }
+
+            .site-nav {
+                position: fixed;
+                top: 60px;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: var(--dark);
+                flex-direction: column;
+                flex-wrap: nowrap;
+                align-items: stretch;
+                padding: 1rem;
+                gap: 0.5rem;
+                overflow-y: auto;
+                transform: translateX(-100%);
+                transition: transform 0.3s ease;
+                z-index: 999;
+            }
+
+            .site-nav.open {
+                transform: translateX(0);
+            }
+
+            .site-nav > a,
+            .nav-dropdown > .nav-trigger {
+                width: 100%;
+                padding: 1rem;
+                font-size: 1rem;
+            }
+
+            .nav-dropdown {
+                width: 100%;
+            }
+
+            .nav-dropdown-menu {
+                position: static;
+                opacity: 1;
+                visibility: hidden;
+                max-height: 0;
+                overflow: hidden;
+                transform: none;
+                margin-top: 0;
+                transition: max-height 0.3s ease, visibility 0.3s ease;
+                background: var(--dark-lighter);
+                border-radius: 0;
+                border: none;
+                box-shadow: none;
+            }
+
+            .nav-dropdown.open .nav-dropdown-menu {
+                visibility: visible;
+                max-height: 500px;
+            }
+
+            .nav-dropdown-menu a {
+                padding: 0.75rem 1.5rem;
+            }
+
+            /* Disable hover on mobile */
+            .nav-dropdown:hover .nav-dropdown-menu {
+                opacity: 1;
+                visibility: hidden;
+                max-height: 0;
+            }
+
+            .nav-dropdown.open .nav-dropdown-menu,
+            .nav-dropdown.open:hover .nav-dropdown-menu {
+                visibility: visible;
+                max-height: 500px;
+            }
+
+            .nav-dropdown-menu.mega-menu {
+                display: block;
+                width: 100%;
+                min-width: 0;
+                max-height: 0;
+                padding: 0.5rem;
+                left: auto;
+                right: auto;
+                overflow: hidden;
+                transform: none;
+            }
+
+            .nav-dropdown.open .nav-dropdown-menu.mega-menu,
+            .nav-dropdown.open:hover .nav-dropdown-menu.mega-menu {
+                max-height: 70vh;
+                overflow-y: auto;
+                transform: none;
+            }
+
+            .mega-menu .menu-shortcuts {
+                grid-template-columns: 1fr;
+            }
+
+            main {
+                padding: 1rem;
+            }
+
+            h1 {
+                font-size: 1.75rem;
+            }
+
+            .hero {
+                padding: 2rem 1rem;
+            }
+
+            .hero h1 {
+                font-size: 1.75rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="site-header">
+        <a href="index.html" class="header-brand">
+            <div class="header-logo">CK</div>
+            <div>
+                <div class="header-title">C-Kernel-Engine</div>
+                <div class="header-subtitle">High-Performance ML Kernels</div>
+            </div>
+        </a>
+        <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+            <span></span>
+            <span></span>
+            <span></span>
+        </button>
+        <form class="site-search" role="search" action="search.html" method="get" data-test="site-search">
+            <input type="search" name="q" id="site-search-input" aria-label="Search documentation" placeholder="Search docs ( / )" autocomplete="off">
+        </form>
+        <nav class="site-nav">
+            <a href="index.html" class="">Home</a>
+            <a href="spectrum.html" class="" style="color:var(--orange)">⚡ Spectrum</a>
+            <a href="quickstart.html" class="">Getting Started</a>
+            <a href="developer-guide.html" class="">Developer Guide</a>
+            <a href="contributing.html" class="">Contribute</a>
+            <a href="scaling.html" class="">Scaling</a>
+            <a href="support-hardware.html" class="active" style="color:var(--green)">Support Lab</a>
+            <a href="cke-throughput-unit.html" class="" style="color:var(--orange)">CKU</a>
+            <div class="nav-dropdown">
+                <span class="nav-trigger ">Architecture</span>
+                <div class="nav-dropdown-menu mega-menu">
+                    <!-- Architecture Home Link -->
+                    <div class="menu-section" style="grid-column: 1 / -1; border-bottom: 1px solid var(--grey); padding-bottom: 0.5rem; margin-bottom: 0.5rem;">
+                        <a href="architecture-links.html" style="font-weight: 600; color: var(--orange);">
+                            View All Architecture Docs
+                            <small>Complete documentation index</small>
+                        </a>
+                        <div class="menu-shortcuts">
+                            <a href="pytorch-parity.html">PyTorch Parity<small>Numerical evidence</small></a>
+                            <a href="research.html">Research<small>Current investigations</small></a>
+                            <a href="decisions.html">Architecture Decisions<small>ADRs and tradeoffs</small></a>
+                            <a href="api.html">API &amp; Source Docs<small>Reference and Doxygen</small></a>
+                        </div>
+                    </div>
+                    <!-- Left Column -->
+                    <div class="menu-section">
+                        <div class="menu-heading">Core</div>
+                        <a href="architecture.html">System Overview<small>IR, Codegen, Kernels</small></a>
+                        <a href="tokenizer.html">Tokenizer<small>BPE, WordPiece, Trie</small></a>
+                        <a href="sentencepiece.html">SentencePiece<small>Viterbi DP, byte fallback</small></a>
+                        <a href="kernels.html">Kernel Reference<small>Forward/backward ops</small></a>
+                        <a href="codegen.html">Code Generation<small>IR to C compilation</small></a>
+                        <a href="iteration-philosophy.html">Iteration Philosophy<small>Why v1→v6 matters</small></a>
+                        <a href="ir-v2.html">IR v2 Format<small>Case study: symbolic dimensions</small></a>
+                        <a href="v7-backprop-ir.html">v7 Backprop IR<small>IR1/IR2 + layout/codegen flow</small></a>
+                        <a href="v7-cross-entropy-parity.html">v7 Cross-Entropy Parity<small>p - one_hot, reduction semantics, drift fixes</small></a>
+                        <a href="concepts.html">Deep Dive Concepts<small>RoPE, Flash Attention, GQA</small></a>
+                        <a href="kernel-maps.html">Kernel Maps<small>Provider selection, ABI, migration</small></a>
+                        <a href="kernel-architecture.html">v8 Kernel Architecture<small>Registry by op family, math</small></a>
+                        <a href="architecture-variants.html">Architecture Variants<small>Laguna, Cohere2, Instella, Nemotron</small></a>
+                        <a href="v8-moe-expert-kernels.html">MoE Expert Kernels<small>Bucketed prefill, mixed-quant experts</small></a>
+                        <a href="v8-cohere-kernels.html">Cohere Kernel Story<small>Reuse, BF16 vision, Transcribe audio</small></a>
+                    </div>
+                    <div class="menu-section">
+                        <div class="menu-heading">Quantization</div>
+                        <a href="quantization.html">Quant Fundamentals<small>Block formats, grouping</small></a>
+                        <a href="gguf-bump.html">GGUF to Bump<small>Weight conversion</small></a>
+                        <a href="gguf-conversion.html">GGUF Parsing<small>Byte-level guide</small></a>
+                    </div>
+                    <!-- Right Column -->
+                    <div class="menu-section">
+                        <div class="menu-heading">Optimization</div>
+                        <a href="gemm-memory-layout.html">GEMM Memory Layout<small>NN/NT layouts, offsets</small></a>
+                        <a href="gemm-optimization.html">GEMM Optimization<small>AVX, MKL, blocking</small></a>
+                        <a href="kernel-tuning-methodology.html">Kernel Tuning Methodology<small>VTune, Advisor, roofline, parity gates</small></a>
+                        <a href="cke-throughput-unit.html">CKE Throughput Unit<small>PB/s active-byte target</small></a>
+                        <a href="gemma4-speculative-pair.html">Gemma4 Speculative Pair<small>Backbone + MTP drafter circuit</small></a>
+                        <a href="v8-mla-kimi.html">v8 MLA / Kimi<small>Explicit decode cache contract</small></a>
+                        <a href="v8-whisper-tiny.html">Whisper Tiny E2E<small>Audio encoder/decoder circuits</small></a>
+                        <a href="simd-architecture.html">SIMD Architecture<small>AVX-512, VNNI, AMX</small></a>
+                        <a href="flash_attention.html" class="">Flash Attention Analysis<small>Why llama.cpp is faster</small></a>
+                    </div>
+                    <div class="menu-section">
+                        <div class="menu-heading">Infrastructure</div>
+                        <a href="memory-safety.html">Memory Safety<small>Bump allocator, canaries</small></a>
+                        <a href="deterministic-memory.html">Deterministic Memory<small>RDMA, interpretability</small></a>
+                        <a href="profiling.html">Profiling Guide<small>Valgrind, perf, flamegraphs</small></a>
+                        <a href="kernel-tuning-methodology.html">Kernel Tuning Methodology<small>CPU-node performance runbook</small></a>
+                        <a href="v7-profiling.html">v7 Profiling Runbook<small>Train kernels: VTune, Advisor, perf</small></a>
+                        <a href="v7-runbook.html">v7 Inference + Training Runbook<small>Copy/paste train + infer workflow</small></a>
+                        <a href="sizing.html">Model Sizing Lab<small>KV, state, concurrency, six-GPU placement</small></a>
+                        <a href="serving.html">Serving &amp; Batching<small>Single-flight, batch2, continuous-batching roadmap</small></a>
+                        <a href="v7-svg-dataset-runbook.html">v7 SVG Dataset Runbook<small>Pretrain + midtrain data generation</small></a>
+                        <a href="testing.html">Testing<small>Numerical parity verification</small></a>
+                        <a href="divergence-harness.html">Stitched Divergence Harness<small>llama.cpp/PyTorch tensor attribution</small></a>
+                        <a href="threadpool.html">Thread Pool<small>Persistent pthreads, dispatch</small></a>
+                    </div>
+                </div>
+            </div>
+            <a href="test-report.html" class="">Test Report</a>
+            <a href="version-history.html" class="">Versions</a>
+        </nav>
+    </header>
+    <main>
+
+<style>
+body { overflow-x: hidden; }
+.support-hero {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+    position: relative;
+    overflow: hidden;
+    padding: 3.4rem 2.2rem;
+    border: 1px solid rgba(71,180,117,.34);
+    border-radius: 14px;
+    background:
+        linear-gradient(135deg, rgba(71,180,117,.13), transparent 46%),
+        radial-gradient(circle at 88% 12%, rgba(7,173,248,.16), transparent 34%),
+        var(--dark-secondary);
+}
+.support-hero::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    opacity: .16;
+    pointer-events: none;
+    background-image: linear-gradient(var(--grey) 1px, transparent 1px), linear-gradient(90deg, var(--grey) 1px, transparent 1px);
+    background-size: 32px 32px;
+}
+.support-hero > * { position: relative; z-index: 1; }
+.support-hero * { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.support-kicker { color: var(--green); font: 700 .78rem 'JetBrains Mono', monospace; letter-spacing: .14em; line-height: 1.6; text-transform: uppercase; }
+.support-hero h1 { max-width: 920px; margin: .7rem 0 1rem; }
+.support-lead { max-width: 830px; color: var(--text-secondary); font-size: 1.08rem; }
+.support-actions { display: flex; gap: .8rem; flex-wrap: wrap; margin-top: 1.6rem; }
+.support-button { display: inline-block; padding: .72rem 1rem; border-radius: 7px; border: 1px solid var(--green); color: var(--green); font-weight: 700; text-decoration: none; }
+.support-button.primary { color: #08130e; background: var(--green); }
+.support-grid { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 1rem; margin: 1.2rem 0 2rem; }
+.support-card { padding: 1.25rem; border: 1px solid var(--grey); border-radius: 10px; background: var(--dark-secondary); }
+.support-card h3 { color: var(--orange); margin-top: 0; }
+.support-price { color: var(--green); font: 700 1.05rem 'JetBrains Mono', monospace; }
+.support-status { display: inline-block; margin-bottom: .7rem; padding: .22rem .52rem; border: 1px solid rgba(7,173,248,.35); border-radius: 999px; color: var(--blue); font: 700 .7rem 'JetBrains Mono', monospace; text-transform: uppercase; }
+.support-table { width: 100%; border-collapse: collapse; margin: 1rem 0 2rem; }
+.support-table th, .support-table td { padding: .78rem; border: 1px solid var(--grey); text-align: left; vertical-align: top; }
+.support-table th { color: var(--orange); background: rgba(255,180,0,.07); }
+.support-contract { padding: 1.4rem; border-left: 4px solid var(--blue); background: rgba(7,173,248,.07); }
+.support-callout { padding: 1.4rem; border: 1px solid rgba(255,180,0,.3); border-radius: 10px; background: rgba(255,180,0,.06); }
+.support-target { margin: 1.5rem 0 2rem; padding: 1.5rem; border: 1px solid rgba(71,180,117,.38); border-radius: 12px; background: linear-gradient(135deg, rgba(71,180,117,.1), rgba(7,173,248,.05)); }
+.support-target-head { display: flex; align-items: end; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.support-target-value { color: var(--green); font: 800 1.7rem 'JetBrains Mono', monospace; }
+.support-milestones { display: grid; grid-template-columns: repeat(6, minmax(0,1fr)); gap: .45rem; margin-top: 1.2rem; }
+.support-milestone { padding: .7rem .45rem; border-top: 4px solid var(--grey-light); background: rgba(255,255,255,.025); text-align: center; }
+.support-milestone strong { display: block; color: var(--orange); font-family: 'JetBrains Mono', monospace; }
+.support-milestone span { color: var(--text-muted); font-size: .72rem; }
+.support-investment { margin: 1.5rem 0 2rem; padding: 1.5rem; border: 1px solid rgba(7,173,248,.32); border-radius: 12px; background: linear-gradient(135deg, rgba(7,173,248,.08), rgba(71,180,117,.04)); }
+.support-investment-head { display: flex; align-items: end; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: .8rem; }
+.support-investment-total { color: var(--blue); font: 800 1.7rem 'JetBrains Mono', monospace; }
+.support-funded { color: var(--green); font: 700 .72rem 'JetBrains Mono', monospace; letter-spacing: .08em; text-transform: uppercase; }
+.fleet-dot { display: inline-block; width: .62rem; height: .62rem; border-radius: 50%; margin-right: .45rem; vertical-align: middle; }
+.fleet-dot.legacy { background: #808080; }
+.fleet-dot.portable { background: var(--blue); }
+.fleet-dot.server { background: var(--green); }
+.fleet-dot.planned { background: var(--orange); }
+.fleet-dot.ordered { background: var(--blue); }
+.fleet-dot.future { background: #bc8cff; }
+.fleet-status { font: 700 .72rem 'JetBrains Mono', monospace; letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; }
+.support-quote { color: var(--orange); font: 700 1.05rem 'JetBrains Mono', monospace; }
+@media (max-width: 850px) { .support-grid { grid-template-columns: minmax(0, 1fr); } .support-hero { padding: 2.2rem 1.25rem; } .support-actions, .support-button { box-sizing: border-box; width: 100%; } .support-table { display: block; max-width: 100%; overflow-x: auto; } }
+@media (max-width: 700px) { .support-milestones { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+</style>
+
+<section class="support-hero">
+  <div class="support-kicker">Open hardware evidence program</div>
+  <h1>Help CKE prove CPU AI on hardware engineers can inspect and own.</h1>
+  <p class="support-lead">C-Kernel-Engine needs more than benchmark claims. It needs repeatable measurements across SIMD generations, memory topologies, NUMA domains, and real network links. Support expands the laboratory while keeping the code, methods, limitations, and publishable results open.</p>
+  <div class="support-actions">
+    <a class="support-button primary" href="https://github.com/sponsors/antshiv">Sponsor on GitHub</a>
+    <a class="support-button" href="mailto:anthony.shivakumar@antshiv.com?subject=CKE%20hardware%20lab%20support">Contribute hardware</a>
+    <a class="support-button" href="https://www.shivasnotes.com/work-with-us">Fund a defined investigation</a>
+    <a class="support-button" href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/issues">Propose a reproducible test</a>
+  </div>
+</section>
+
+<section class="support-target">
+  <div class="support-target-head">
+    <div><div class="support-kicker">Public program target</div><h2 style="margin:.35rem 0 0">Build the full CPU AI evidence laboratory in stages</h2></div>
+    <div class="support-target-value">CAD $60,000</div>
+  </div>
+  <p>The target is a ceiling for the complete multi-year program, not a claim that this amount has been raised or a requirement to spend everything immediately. The revised ceiling reflects 2026 server-memory, platform, storage, cooling, tax, and shipping costs. Each CAD $10,000 milestone releases a more capable evidence lane only after the previous stage produces inspectable results.</p>
+  <div class="support-milestones" aria-label="Six ten-thousand-dollar funding milestones">
+    <div class="support-milestone"><strong>$10K</strong><span>portable + desktop nodes</span></div>
+    <div class="support-milestone"><strong>$20K</strong><span>first EPYC platform</span></div>
+    <div class="support-milestone"><strong>$30K</strong><span>server memory + storage</span></div>
+    <div class="support-milestone"><strong>$40K</strong><span>network + metering</span></div>
+    <div class="support-milestone"><strong>$50K</strong><span>matched-node expansion</span></div>
+    <div class="support-milestone"><strong>$60K</strong><span>full evidence program</span></div>
+  </div>
+  <p style="margin-top:1rem"><strong>Current funding must be reported manually.</strong> Until GitHub Sponsors and in-kind contributions are reconciled into a public ledger, these markers describe capability gates rather than claiming money raised.</p>
+</section>
+
+<section class="support-investment">
+  <div class="support-investment-head">
+    <div><div class="support-kicker">Founder-funded acquisition ledger</div><h2 style="margin:.35rem 0 0">Antshiv Robotics hardware acquired for CKE</h2></div>
+    <div class="support-investment-total">CAD $16,379.15</div>
+  </div>
+  <p>These systems and components are Antshiv Robotics assets acquired for CKE development and evidence generation. Their purchase has been funded by the founder from personal funds; that funding source does not make the equipment a separate personal test collection. The ledger remains separate from sponsor funding, donated or loaned equipment, and the future CAD $60,000 laboratory ceiling.</p>
+  <table class="support-table">
+    <thead><tr><th>Hardware</th><th>Acquisition cost</th><th>Research role</th><th>Funding and ownership</th></tr></thead>
+    <tbody>
+      <tr><td>Lenovo ThinkPad T14 Gen 3 (used), Core i7-1260P, 24 GB DDR4-3200 (8 GB soldered + 16 GB SODIMM)</td><td>CAD $600</td><td>Portable Ubuntu development and documentation workstation, AVX2 portability node, and interactive control node for server experiments</td><td><span class="support-funded">Founder funded / company asset</span></td></tr>
+      <tr><td>Lenovo P3 Tiny, Core i7-14700T (20 physical / 28 logical CPUs, AVX2/FMA/AVX-VNNI), 32 GB DDR5</td><td>CAD $1,050</td><td>Dedicated minimal Ubuntu Server node for repeatable CKE execution, profiling, and unattended experiments</td><td><span class="support-funded">Founder funded / company asset</span></td></tr>
+      <tr><td>WD_BLACK SN850X 2 TB NVMe expansion for the P3 (CAD $499.99 + $35.00 PST + $25.00 GST), mounted at <code>/data</code></td><td>CAD $559.99</td><td>Artifact tier: model catalog, converted BUMP weights, isolated worktrees, X-Ray tensors, and VTune/Advisor/perf captures</td><td><span class="support-funded">Founder funded / company asset</span></td></tr>
+      <tr><td>Memory Express order WEB-1200399 (2026-08-11): Ryzen 9 9950X3D bundle — ASUS TUF X870E-PLUS WIFI7, G.SKILL Flare X5 64 GB DDR5-6000 (2×32 GB), Cooler Master 360 Elite AIO (incl. GST, BC PST and shipping)</td><td>CAD $2,470.87</td><td>AMD evidence node core: native Zen 5 AVX-512 versus P3 AVX2/VNNI, cross-vendor numerics, distributed experiments — installed, verified on-node 2026-08-20, commissioning</td><td><span class="support-funded">Founder funded / company asset</span></td></tr>
+      <tr><td>Newegg order 574780872 (2026-08-11): MSI MPG A850GS 850 W PSU · Samsung 990 PRO 4 TB w/ heatsink · Corsair Vengeance 96 GB (2×48 GB) DDR5-6000 · ASUS TUF GT502 Horizon case · WD Red Plus 12 TB HDD · combo discount −$770.00 (incl. GST and PST)</td><td>CAD $4,177.52</td><td>Ryzen node chassis, power, memory and storage tiers — installed, verified on-node 2026-08-20 (990 PRO 4 TB + WD Red 12 TB enumerated); the 96 GB Corsair kit is not in the current population; WD Red HDD for bulk artifact and corpus retention</td><td><span class="support-funded">Founder funded / company asset</span></td></tr>
+      <tr><td>Newegg order 574780892 (2026-08-11): Crucial 32 GB DDR5-5600 SODIMM (CT32G56C46S5) for the P3 (incl. ~12% GST+PST and $9.99 shipping)</td><td>CAD $716.78</td><td>P3 second SODIMM — installed 2026-08-15, 64 GB total verified on-node; larger resident model lanes on the server node</td><td><span class="support-funded">Founder funded / company asset</span></td></tr>
+      <tr><td><a href="https://www.amd.com/en/products/processors/server/epyc/9005-series/amd-epyc-9755.html">AMD EPYC 9755</a> OEM processor (2026-09-15), 128 cores / 256 threads, 2.7 GHz base clock, SP5, 512 MB L3</td><td>CAD $6,803.99</td><td>CPU for the first high-capacity server node; shipped, with motherboard, ECC memory, cooling, chassis, power and storage still requiring a separately verified platform bill of materials</td><td><span class="support-funded">Founder funded / company asset</span></td></tr>
+    </tbody>
+  </table>
+  <p><strong>Ledger scope:</strong> this total includes only the seven dated purchases above. The 2014 ThinkPad W530 remains available as a legacy node, but its original cost is not currently documented — it is marked pending verification and excluded from the total rather than estimated. The ledger also excludes electricity, founder labor, assembly, remaining EPYC platform components, and future Xeon or matched-server nodes. Future entries will continue to separate founder funded, sponsor funded, donated, loaned, and discounted hardware.</p>
+  <p class="tex2jax_ignore"><strong>Price-inflation note:</strong> these purchases were made during the 2026 AI-demand memory, storage, and server-component price spike. The ledger records what was actually paid, including tax and shipping, rather than estimating a historical-normal replacement price.</p>
+</section>
+
+<h2>Current CPU Fleet</h2>
+<p>The fleet is deliberately heterogeneous. Matched identical systems help controlled distributed scaling, but a mix of Intel generations, an AMD node, and one legacy machine exposes the ISA, scheduler, numerical, and provider-selection assumptions that identical hardware would silently hide. Each node below carries a status label: <strong>legacy/available</strong>, <strong>active portable</strong>, <strong>active server</strong>, <strong>ordered/assembly pending</strong>, or <strong>future target</strong>.</p>
+
+<table class="support-table">
+  <thead><tr><th>Node</th><th>Status</th><th>CPU &amp; ISA</th><th>Memory</th><th>Storage</th><th>OS role</th><th>Profiler</th><th>Research purpose</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>ThinkPad W530</strong> (2014)</td>
+      <td><span class="fleet-dot legacy"></span><span class="fleet-status">Legacy / available</span></td>
+      <td>Pending verification — old-x86, scalar/SSE/older AVX where supported</td>
+      <td>Pending verification</td>
+      <td>Pending verification</td>
+      <td>Legacy test node, remote orchestration</td>
+      <td>perf where supported</td>
+      <td>Old-x86 compatibility, scalar/SSE/older-AVX regression, failure and portability testing</td>
+    </tr>
+    <tr>
+      <td><strong>ThinkPad T14 Gen 3</strong></td>
+      <td><span class="fleet-dot portable"></span><span class="fleet-status">Active portable</span></td>
+      <td>Core i7-1260P · AVX2</td>
+      <td>24 GB DDR4-3200 (8 GB soldered + 16 GB SODIMM)</td>
+      <td>Not an evidence tier</td>
+      <td>Ubuntu/AwesomeWM development and documentation workstation</td>
+      <td>perf (interactive)</td>
+      <td>Everyday CKE development, AVX2 portability, interactive control node for server experiments</td>
+    </tr>
+    <tr>
+      <td><strong>Lenovo P3 Tiny</strong></td>
+      <td><span class="fleet-dot server"></span><span class="fleet-status">Active server</span></td>
+      <td>Core i7-14700T · 20 physical / 28 logical · AVX2/FMA/AVX-VNNI · no AVX-512</td>
+      <td>64 GB DDR5 (2×32 GB — second SODIMM Crucial CT32G56C46S5 installed 2026-08-15; verified on-node: 64,413,800 kB MemTotal)</td>
+      <td>512 GB OEM system NVMe + 2 TB SN850X at <code>/data</code> (PCIe 4.0; 7,300 MB/s advertised)</td>
+      <td>Minimal Ubuntu Server, unattended experiments</td>
+      <td>Intel VTune + Advisor (existing Intel evidence; Advisor is deprecated) + perf</td>
+      <td>Primary repeatable execution, profiling, and cross-family benchmark node</td>
+    </tr>
+    <tr>
+      <td><strong>Ryzen 9 9950X3D node</strong> (<code>cke-amd-zen5-01</code>)</td>
+      <td><span class="fleet-dot server"></span><span class="fleet-status">Active server — commissioning</span></td>
+      <td><a href="https://www.amd.com/en/products/processors/desktops/ryzen/9000-series/amd-ryzen-9-9950x3d.html">Ryzen 9 9950X3D</a> · Zen 5 · 16C/32T · full AVX-512 + BF16 + VNNI verified on-node 2026-08-20 · 128 MB L3 (96 MB 3D V-Cache)</td>
+      <td>64 GB DDR5 (2×32 GB bundle kit) — verified 62,081,516 kB MemTotal; the 96 GB kit is not in the current population</td>
+      <td>Samsung 990 PRO 4 TB NVMe (3.6 TiB usable) + WD Red Plus 12 TB HDD — both verified on-node</td>
+      <td>Ubuntu 26.04 LTS · SSH evidence node (LAN + Tailscale) · 2.5GbE linked at 1 Gb/s</td>
+      <td>perf + AMD uProf (VTune hardware event sampling requires a genuine Intel CPU — not promised on AMD)</td>
+      <td>Native AVX-512 versus AVX2/VNNI, NVMe streaming and Memory Tetris research, cross-vendor numerics, distributed experiments with the P3</td>
+    </tr>
+    <tr>
+      <td><strong>EPYC 9755 node</strong></td>
+      <td><span class="fleet-dot ordered"></span><span class="fleet-status">CPU shipped / platform pending</span></td>
+      <td>AMD EPYC 9755 · 128C/256T · 2.7 GHz base · SP5 · 512 MB L3</td>
+      <td>ECC server memory configuration pending a verified SP5 platform bill of materials</td>
+      <td>Pending platform bill of materials</td>
+      <td>Planned high-capacity Linux certification and performance node</td>
+      <td>AMD uProf + perf</td>
+      <td>Large resident artifacts, high-core-count scaling, NUMA and memory-placement evidence, long-context and multimodal certification</td>
+    </tr>
+    <tr>
+      <td><strong>Xeon 636 → 650/670 class</strong></td>
+      <td><span class="fleet-dot future"></span><span class="fleet-status">Future target</span></td>
+      <td>Xeon 630/650/670-class · AMX BF16 · AVX-512</td>
+      <td>ECC RDIMM, four channels → eight with 650/670-class CPUs</td>
+      <td>NVMe per stage bill of materials</td>
+      <td>Sponsorship-roadmap lab node</td>
+      <td>VTune / Advisor / perf</td>
+      <td>AMX BF16 kernels, memory-channel scaling, matched-node distributed research</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Storage tiers across the lab nodes</h3>
+<p>The P3 keeps its original 512 GB Samsung OEM drive as the system disk and adds the SN850X as a dedicated artifact tier. The 7,300 MB/s figure is Western Digital's <a href="https://www.westerndigital.com/products/internal-drives/wd-black-sn850x-nvme-ssd">advertised</a> sequential rating, not a CKE measurement; no dated fio artifact is published for either drive yet. The third tier shown is the Samsung 990 PRO 4 TB installed in the Ryzen node (verified on-node 2026-08-20: 3.6 TiB usable) — a Gen4 drive at 7,450 MB/s advertised; the earlier Gen5 9100 PRO quote was not purchased.</p>
+
+<div class="img-container svg-viewer" data-title="Lab storage tiers: P3 512 GB system drive, P3 2 TB /data artifact tier, Ryzen 4 TB Gen4 tensor tier">
+  <img src="assets/support-hardware-storage-tiers.svg" alt="Storage tier flow across the lab: the P3's current 512 GB Samsung OEM system NVMe boot drive, an arrow marked installed to the P3's current 2 TB WD_BLACK SN850X /data artifact tier with advertised 7,300 MB/s read holding model catalogs, BUMP artifacts, worktrees, X-Ray tensors and profiler captures, then an arrow marked installed to the Samsung 990 PRO 4 TB PCIe 4.0 tensor tier with advertised 7,450 MB/s read, installed in the Ryzen node and verified on 2026-08-20 with 3.6 TiB usable, replacing the earlier unpurchased Gen5 quote. A note bar states that more capacity broadens experiments and artifact retention but storage does not remove RAM constraints and an SSD is not DRAM. A legend notes that no measured fio result is published for any drive yet." style="width: 100%; max-width: 960px; margin: 0 auto; display: block;">
+</div>
+
+<h3>What the new /data tier unlocks</h3>
+<p>Roughly 1.8 TiB of usable space (ext4, noatime, mounted read/write at <code>/data</code>) changes how much evidence the lab can keep, not how fast the machine computes:</p>
+<ul>
+  <li><strong>Model catalog and converted artifacts</strong> — multiple GGUF sources and their converted BUMP weight files stay resident side by side instead of being re-downloaded or re-converted per experiment.</li>
+  <li><strong>Isolated worktrees and generated runtimes</strong> — parallel experiment branches with their own generated models and build trees.</li>
+  <li><strong>X-Ray tensors and reports</strong> — per-tensor capture across runs, retained for comparison instead of sampled and discarded.</li>
+  <li><strong>Profiler captures</strong> — VTune, Advisor, and perf sessions kept beside the runs they describe.</li>
+  <li><strong>Cross-family benchmark artifacts</strong> and future NVMe-tier research (the Memory Tetris proposal: a software-managed DRAM working set over explicit NVMe tensor tiers).</li>
+</ul>
+<p><strong>Scope limit:</strong> capacity improves experimental breadth and artifact retention. It does not remove RAM constraints, and no storage tier makes an SSD equivalent to DRAM.</p>
+
+<h3>AMD evidence node — installed, verified on-node 2026-08-20, commissioning</h3>
+<div class="support-callout">
+  <p style="margin-top:0"><strong>Status: installed and currently being tested.</strong> The node (<code>cke-amd-zen5-01</code>, reachable over LAN and Tailscale) passed its verification packet on 2026-08-20: <code>lscpu</code> confirms the Ryzen 9 9950X3D at 16 cores / 32 threads on one NUMA node with the full Zen 5 AVX-512 flag set (F/BW/CD/DQ/VL, VNNI, BF16, IFMA, VBMI/VBMI2, BITALG, VPOPCNTDQ, VP2INTERSECT), AVX-VNNI and FMA; cache topology L1d 48 KB + L1i 32 KB per core, L2 1 MB per core, L3 128 MB total (96 MB 3D V-Cache CCD + 32 MB); 64 GB DDR5 installed (62,081,516 kB MemTotal); Samsung 990 PRO 4 TB (3.6 TiB usable) and WD Red Plus 12 TB (10.9 TiB) both enumerated; onboard Realtek 2.5GbE currently linked at 1 Gb/s. The two dated 2026-08-11 orders below remain the cost record. Baseline stability and first CKE experiments are the commissioning step now in progress; no performance claim is made until measured and published.</p>
+  <table class="support-table">
+    <thead><tr><th>Order</th><th>Contents</th><th>Paid</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Memory Express WEB-1200399 (receipt, paid via Adyen)</td>
+        <td>AMD Ryzen 9 9950X3D (16C/32T, up to 5.7 GHz) · ASUS TUF Gaming X870E-PLUS WIFI7 · G.SKILL Flare X5 64 GB DDR5-6000 CL36 (2×32 GB) · Cooler Master MasterLiquid 360 Elite</td>
+        <td><span class="support-quote">CAD $2,470.87</span></td>
+      </tr>
+      <tr>
+        <td>Newegg 574780872 + 574780892 (order confirmation)</td>
+        <td>MSI MPG A850GS 850 W PSU · Samsung 990 PRO 4 TB w/ heatsink (PCIe 4.0 x4) · Corsair Vengeance 96 GB (2×48 GB) DDR5-6000 · ASUS TUF GT502 Horizon case · WD Red Plus 12 TB HDD · Crucial 32 GB DDR5-5600 SODIMM (for the P3)</td>
+        <td><span class="support-quote">CAD $4,894.30</span></td>
+      </tr>
+    </tbody>
+  </table>
+  <p class="tex2jax_ignore">Paid figures are the order totals including GST, PST and shipping; the combo discount (−\$770.00) is already applied in the Newegg total. These orders replaced the 2026-08-09 quotes, which are kept here for the record: the Memory Express bundle quoted CAD \$2,174.98 (actually paid \$2,470.87 including tax and shipping) and the Newegg cart estimated CAD \$1,319.94 before tax for a smaller basket — the final order grew to include the 96 GB DDR5 kit, the 12 TB HDD, and the P3 SODIMM. Samsung's 7,450 MB/s sequential figure for the 990 PRO 4 TB is a <a href="https://semiconductor.samsung.com/consumer-storage/internal-ssd/990-pro/">vendor rating</a> until measured on the final motherboard; the earlier 9100 PRO Gen5 quote (14,800/13,400 MB/s advertised) was not purchased. CPU claims follow the <a href="https://www.amd.com/en/products/processors/desktops/ryzen/9000-series/amd-ryzen-9-9950x3d.html">AMD product page</a>: Zen 5, 16 cores / 32 threads, AVX-512 and AVX2, 128 MB L3, PCIe 5.0, dual-channel DDR5, 170 W. Memory pricing in these orders reflects the 2026 AI-demand spike — see the ledger's inflation note above.</p>
+  <p style="margin-bottom:0"><strong>Research role:</strong> native Zen 5 AVX-512 versus P3 AVX2/AVX-VNNI comparisons; the current memory population is the 64 GB bundle kit (the 96 GB Corsair kit remains on the shelf for a later re-population); NVMe streaming and Memory Tetris experiments on the 990 PRO tier; cross-vendor numerical repeatability and provider selection; larger Gemma, GLM, Kimi, Qwen3.6, Whisper, and multimodal artifact-backed tests where memory permits; and distributed CKE experiments with the P3 as the Intel node and Ryzen as the AMD node — no scaling claim until measured. On AMD, Linux perf and AMD uProf (hardware counters, event-based profiling, IBS) are the primary PMU tools; Intel documents VTune hardware event-based sampling as requiring a genuine Intel processor, so no VTune PMU analysis is promised on Ryzen, and the deprecated Advisor remains an Intel-only evidence tool. This node is an intermediate founder-funded AVX-512 and storage lane — it does not replace the Xeon AMX/BF16/memory-channel sponsorship roadmap below.</p>
+</div>
+
+<h2>The Immediate Goal</h2>
+<p>The EPYC 9755 processor is shipped. The immediate goal is a balanced, verified SP5 platform around it: compatible motherboard firmware, ECC memory populated for measured bandwidth, sustained cooling, chassis and power delivery, local NVMe, and explicit NUMA placement. The node must first produce repeatable single-node evidence before CKE purchases or solicits a matched expansion. Xeon remains a separate future lane for native AMX BF16 rather than a substitute for completing this node.</p>
+
+<div class="support-grid">
+  <article class="support-card">
+    <span class="support-status">Stage 0 · active</span>
+    <h3>Access Before Ownership</h3>
+    <div class="support-price">CAD $0–$2,000</div>
+    <p>Remote machine access, short-term loaners, cloud or lab credits, profiler access, and engineering contacts. This stage validates fixtures and reduces the risk of purchasing the wrong configuration.</p>
+  </article>
+  <article class="support-card">
+    <span class="support-status">Stage 1 · CPU founder funded</span>
+    <h3>Complete One EPYC 9755 Node</h3>
+    <div class="support-price">Platform quote pending</div>
+    <p>The 128-core CPU is acquired. Motherboard, ECC memory, cooling, chassis, power and storage remain gated on compatibility checks and current quotes. This stage unlocks high-capacity, NUMA and core-scaling evidence.</p>
+  </article>
+  <article class="support-card">
+    <span class="support-status">Stage 2 · evidence gated</span>
+    <h3>Network and Matched-Node Expansion</h3>
+    <div class="support-price">Quote after first-node evidence</div>
+    <p>A second server or complementary AMX node, high-speed NICs, direct links, storage, metering and contingencies. No matched purchase occurs until the first EPYC node's evidence pipeline is working.</p>
+  </article>
+</div>
+
+<div class="support-callout">
+  <h2 style="margin-top:0">Primary Sponsorship Target: A Balanced Server Platform</h2>
+  <p>The processor alone does not establish a useful server. The first sponsorship target is the compatible ECC memory, motherboard, cooling, chassis, power, NVMe and measurement equipment needed to turn the shipped EPYC 9755 into a reproducible CKE evidence node. Memory population will be selected against the processor and board topology, then measured rather than described by channel count alone. A later Xeon platform can add native AMX BF16 evidence once the EPYC lane is operational.</p>
+</div>
+
+<p><strong>Budget discipline:</strong> these are planning ranges, not a final bill of materials. CPU availability, ECC-memory pricing, tax, cooling, chassis, PSU connectors, NIC provenance, and warranty must be quoted before purchase. Funds are released by stage; a second node is not purchased until the first-node evidence pipeline is working.</p>
+
+<h2>What the Laboratory Will Test</h2>
+<table class="support-table">
+  <thead><tr><th>Experiment lane</th><th>Measurements</th><th>Required evidence</th></tr></thead>
+  <tbody>
+    <tr><td>AMX BF16 kernels</td><td>Tile utilization, conversion boundaries, accumulation semantics, throughput, and parity against PyTorch</td><td>Commands, shapes, ISA detection, assembly/profiler artifacts, numerical tolerances</td></tr>
+    <tr><td>AVX-512 and VNNI</td><td>FP32 and quantized GEMM/GEMV, attention, reductions, fusion, cache behavior</td><td>AVX2 baseline, compiler flags, warmups, repeats, end-to-end impact</td></tr>
+    <tr><td>Memory channels</td><td>One through fully populated channel configurations where practical; bandwidth, latency, and model throughput</td><td>DIMM topology, frequency, NUMA map, measured STREAM-like baseline and real CKE workload</td></tr>
+    <tr><td>NUMA placement</td><td>First-touch, interleave, binding, page size, thread affinity, local versus remote access</td><td><code>numactl</code> topology, allocation policy, counters, RSS, latency and throughput</td></tr>
+    <tr><td>Single-node inference</td><td>Prefill, decode, time to first token, RSS, power, thermals, numerical parity</td><td>Model hash, quantization, context, batch, threads, commit, reference runtime</td></tr>
+    <tr><td>Bounded training</td><td>Forward/backward parity, optimizer state, memory budget, BF16/FP32 behavior and step time</td><td>Explicit supported circuit and dataset; no extrapolation to frontier-scale training</td></tr>
+    <tr><td>Distributed execution</td><td>One-node versus two-node scaling, tensor/pipeline partitioning, communication overlap, replicated versus sharded state</td><td>Topology, payload sizes, synchronization, transport, efficiency and failure modes</td></tr>
+    <tr><td>Network crossover</td><td>10/25/100GbE or available links; sockets/MPI and RDMA where supported</td><td>Wire rate, CPU cost, message-size sweep, latency, bandwidth and end-to-end model effect</td></tr>
+    <tr><td>Power and TCO</td><td>Idle, kernel, model, and distributed wall power; energy per workload</td><td>Meter model, measurement interval, local electricity assumption and dated BOM</td></tr>
+    <tr><td>Portability</td><td>Core i7, Xeon generations, ARM/NEON and future AMD/Arm server access</td><td>Same fixtures and canonical output boundaries; architecture-specific limitations retained</td></tr>
+  </tbody>
+</table>
+
+<h2>What Support Produces</h2>
+<div class="support-grid">
+  <article class="support-card"><h3>Reproducible code</h3><p>Kernel and runtime patches, parity gates, benchmark commands, machine-readable result records, and versioned hardware metadata.</p></article>
+  <article class="support-card"><h3>Inspectable evidence</h3><p>VTune, Advisor, perf, assembly, memory, network, power, and end-to-end reports with failures and negative results retained.</p></article>
+  <article class="support-card"><h3>Public interpretation</h3><p>Source-linked documentation, ShivasNotes articles, diagrams, and videos that explain what changed, why it matters, and where the result does not generalize.</p></article>
+</div>
+
+<h2>Ways to Contribute</h2>
+<ul>
+  <li><strong>Remote access:</strong> provide a controlled shell on relevant Xeon, AMD EPYC, Arm server, or embedded hardware.</li>
+  <li><strong>Loaner hardware:</strong> lend a workstation, CPU, memory kit, NIC, power meter, or embedded target for a defined test period.</li>
+  <li><strong>Components or discounts:</strong> reduce the cost of matched CPUs, ECC memory, storage, networking, chassis, cooling, and measurement equipment.</li>
+  <li><strong>Engineering collaboration:</strong> help validate BIOS, compiler, ISA, memory, network, or profiler assumptions with a named technical contact.</li>
+  <li><strong>Funded investigation:</strong> sponsor a bounded model/hardware qualification, numerical investigation, kernel path, or benchmark lane.</li>
+  <li><strong>Financial contribution:</strong> fund a published stage or a clearly identified component after the bill of materials is confirmed.</li>
+</ul>
+<p>Use <a href="https://github.com/sponsors/antshiv">GitHub Sponsors</a> for direct financial support. Use <a href="https://www.shivasnotes.com/work-with-us">ShivasNotes Work With Us</a> for a paid private investigation with bounded deliverables. Hardware vendors and laboratories can contact <a href="mailto:anthony.shivakumar@antshiv.com?subject=CKE%20hardware%20lab%20support">Anthony Shivakumar</a> about loaners, remote access, parts, or discounts.</p>
+
+<h2>Evidence Before Claims</h2>
+<p>No fleet result — from the W530 to the future Xeon nodes — is published without the same minimum evidence packet. A number without this packet is a lab note, not a CKE result.</p>
+<ul style="columns: 16rem; column-gap: 2.5rem;">
+  <li>Motherboard and SSD firmware versions</li>
+  <li><code>lscpu</code> output and detected ISA</li>
+  <li>DIMM topology, capacity, and memory frequency</li>
+  <li><code>nvme list</code> / device SMART state</li>
+  <li>Dated fio bandwidth baseline</li>
+  <li>Memory bandwidth baseline</li>
+  <li>Thermal and throttling log</li>
+  <li>Compiler version and flags</li>
+  <li>Model hash and quantization format</li>
+  <li>CKE commit under test</li>
+  <li>Thread count and affinity policy</li>
+  <li>Reference backend and numerical tolerances</li>
+  <li>Profiler artifact (VTune, Advisor, perf, or AMD uProf as applicable)</li>
+</ul>
+
+<h2>Evidence and Disclosure Contract</h2>
+<div class="support-contract">
+  <p><strong>Sponsorship does not purchase a favorable conclusion.</strong> Every published result identifies hardware, firmware where available, detected ISA, memory topology, operating system, compiler, CKE commit, model hash, quantization, workload, thread policy, commands, warmups, repetitions, reference backend, date, and known limitations.</p>
+  <p>Financial support, loaners, discounts, credits, and vendor engineering assistance are disclosed beside affected results. Sponsors may review factual hardware details before publication but cannot suppress reproducible negative findings or rewrite conclusions. Security-sensitive credentials and legitimately confidential information are excluded from public artifacts.</p>
+</div>
+
+<h2>Release Gates</h2>
+<ol>
+  <li>Publish the final configuration and experiment manifest before purchasing the second node.</li>
+  <li>Bring up the first node, verify cooling, power, ECC topology, ISA exposure, and baseline stability.</li>
+  <li>Close numerical parity for the selected AMX BF16 and AVX-512 paths before performance claims.</li>
+  <li>Publish at least one complete single-node evidence report and reusable result schema.</li>
+  <li>Add the matched node and direct network only after distributed CKE has an executable test plan.</li>
+  <li>Promote distributed CPU scaling from research thesis to demonstrated capability only after measured results.</li>
+</ol>
+
+<div class="support-callout">
+  <h2 style="margin-top:0">Start With a Specific Contribution</h2>
+  <p>Send the hardware model, access constraints, support type, available dates, and the question you want tested to <a href="mailto:anthony.shivakumar@antshiv.com?subject=CKE%20hardware%20lab%20support">anthony.shivakumar@antshiv.com</a>. For paid engineering work with private inputs and bounded deliverables, use the <a href="https://www.shivasnotes.com/work-with-us">Work With Us</a> page.</p>
+</div>
+    </main>
+
+    <!-- SVG Viewer Overlay (shared across all pages) -->
+    <style>
+    .svg-viewer { cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
+    .svg-viewer:hover { transform: scale(1.01); box-shadow: 0 8px 32px rgba(255, 180, 0, 0.3); }
+    #svg-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.95); z-index: 999999; }
+    #svg-overlay .toolbar { position: fixed; top: 0; left: 0; right: 0; padding: 10px 20px; background: rgba(0,0,0,0.9); display: flex; justify-content: space-between; align-items: center; z-index: 1000000; border-bottom: 1px solid #333; }
+    #svg-overlay .toolbar .title { color: #ccc; font-size: 14px; }
+    #svg-overlay .toolbar .controls { display: flex; gap: 8px; align-items: center; }
+    #svg-overlay .toolbar button { background: #333; color: #ffb400; border: 1px solid #555; padding: 8px 14px; cursor: pointer; border-radius: 4px; font-size: 14px; }
+    #svg-overlay .toolbar button:hover { background: #444; border-color: #ffb400; }
+    #svg-overlay .toolbar .close-btn { font-size: 20px; padding: 4px 12px; }
+    #svg-overlay .toolbar .zoom-display { color: #888; font-size: 12px; min-width: 45px; text-align: center; }
+    #svg-overlay .toolbar .separator { color: #444; }
+    #svg-overlay .image-container { display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 60px 20px 20px; cursor: grab; }
+    #svg-overlay .image-container:active { cursor: grabbing; }
+    #svg-overlay .image-container img { max-width: 95%; max-height: 90vh; transform-origin: center center; }
+    #svg-overlay .nav-btn { position: fixed; top: 50%; transform: translateY(-50%); background: rgba(0,0,0,0.7); color: #ffb400; border: 1px solid #555; font-size: 30px; padding: 20px 15px; cursor: pointer; z-index: 1000000; border-radius: 4px; }
+    #svg-overlay .nav-btn:hover { background: rgba(255,180,0,0.2); border-color: #ffb400; }
+    #svg-overlay .nav-prev { left: 10px; }
+    #svg-overlay .nav-next { right: 10px; }
+    #svg-overlay .hint { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); color: #666; font-size: 12px; background: rgba(0,0,0,0.8); padding: 8px 20px; border-radius: 20px; }
+    </style>
+
+    <div id="svg-overlay">
+        <div class="toolbar">
+            <span class="title" id="svg-title">Image</span>
+            <div class="controls">
+                <button onclick="svgViewer.zoomOut()" title="Zoom Out (-)">-</button>
+                <span class="zoom-display" id="zoom-display">100%</span>
+                <button onclick="svgViewer.zoomIn()" title="Zoom In (+)">+</button>
+                <span class="separator">|</span>
+                <button onclick="svgViewer.fitWidth()" title="Fit Width (W)">Width</button>
+                <button onclick="svgViewer.fitHeight()" title="Fit Height (H)">Height</button>
+                <button onclick="svgViewer.resetZoom()" title="Reset (0)">Reset</button>
+                <span class="separator">|</span>
+                <button class="close-btn" onclick="svgViewer.close()" title="Close (ESC)">&times;</button>
+            </div>
+        </div>
+        <button class="nav-btn nav-prev" onclick="svgViewer.prev()" title="Previous">&larr;</button>
+        <button class="nav-btn nav-next" onclick="svgViewer.next()" title="Next">&rarr;</button>
+        <div class="image-container" id="svg-container">
+            <img id="svg-image" src="" alt="">
+        </div>
+        <div class="hint">Scroll to zoom | Drag to pan | W/H to fit | 0 to reset | ESC to close</div>
+    </div>
+
+    <script>
+    var svgViewer = (function() {
+        var overlay, img, titleEl, container;
+        var images = [];
+        var currentIndex = 0;
+        var scale = 1, panX = 0, panY = 0;
+        var isDragging = false, dragStartX, dragStartY, panStartX, panStartY;
+
+        function init() {
+            overlay = document.getElementById('svg-overlay');
+            img = document.getElementById('svg-image');
+            titleEl = document.getElementById('svg-title');
+            container = document.getElementById('svg-container');
+            if (!overlay || !img) return;
+
+            document.querySelectorAll('.svg-viewer').forEach(function(viewer, index) {
+                var viewerImg = viewer.querySelector('img');
+                if (viewerImg) {
+                    images.push({ src: viewerImg.src, title: viewer.getAttribute('data-title') || viewerImg.alt || 'Diagram' });
+                    viewer.onclick = function(e) { e.preventDefault(); open(index); };
+                }
+            });
+
+            container.addEventListener('wheel', function(e) {
+                e.preventDefault();
+                scale = Math.max(0.5, Math.min(10, scale + (e.deltaY > 0 ? -0.2 : 0.2)));
+                updateTransform();
+            });
+
+            container.addEventListener('mousedown', function(e) { isDragging = true; dragStartX = e.clientX; dragStartY = e.clientY; panStartX = panX; panStartY = panY; });
+            document.addEventListener('mousemove', function(e) { if (!isDragging) return; panX = panStartX + (e.clientX - dragStartX); panY = panStartY + (e.clientY - dragStartY); updateTransform(); });
+            document.addEventListener('mouseup', function() { isDragging = false; });
+
+            document.addEventListener('keydown', function(e) {
+                if (overlay.style.display !== 'block') return;
+                if (e.key === 'Escape') close();
+                if (e.key === 'ArrowLeft') prev();
+                if (e.key === 'ArrowRight') next();
+                if (e.key === '+' || e.key === '=') zoomIn();
+                if (e.key === '-') zoomOut();
+                if (e.key === '0') resetZoom();
+                if (e.key === 'w' || e.key === 'W') fitWidth();
+                if (e.key === 'h' || e.key === 'H') fitHeight();
+            });
+
+            overlay.addEventListener('click', function(e) { if (e.target === overlay || e.target === container) close(); });
+        }
+
+        function updateTransform() {
+            img.style.transform = 'translate(' + panX + 'px, ' + panY + 'px) scale(' + scale + ')';
+            var zd = document.getElementById('zoom-display');
+            if (zd) zd.textContent = Math.round(scale * 100) + '%';
+        }
+
+        function open(index) {
+            if (!images[index]) return;
+            currentIndex = index; scale = 1; panX = 0; panY = 0;
+            img.src = images[index].src;
+            titleEl.textContent = images[index].title + ' (' + (index + 1) + '/' + images.length + ')';
+            updateTransform();
+            overlay.style.display = 'block';
+            document.body.style.overflow = 'hidden';
+        }
+
+        function close() { overlay.style.display = 'none'; document.body.style.overflow = ''; }
+        function prev() { open((currentIndex - 1 + images.length) % images.length); }
+        function next() { open((currentIndex + 1) % images.length); }
+        function zoomIn() { scale = Math.min(10, scale + 0.25); updateTransform(); }
+        function zoomOut() { scale = Math.max(0.5, scale - 0.25); updateTransform(); }
+        function resetZoom() { scale = 1; panX = 0; panY = 0; updateTransform(); }
+
+        function fitWidth() {
+            if (!img.naturalWidth || !img.complete) { img.onload = fitWidth; return; }
+            scale = Math.max(0.1, Math.min(10, (window.innerWidth - 150) / img.naturalWidth));
+            panX = 0; panY = 0; updateTransform();
+        }
+
+        function fitHeight() {
+            if (!img.naturalHeight || !img.complete) { img.onload = fitHeight; return; }
+            scale = Math.max(0.1, Math.min(10, (window.innerHeight - 120) / img.naturalHeight));
+            panX = 0; panY = 0; updateTransform();
+        }
+
+        if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', init); } else { init(); }
+
+        return { open: open, close: close, prev: prev, next: next, zoomIn: zoomIn, zoomOut: zoomOut, resetZoom: resetZoom, fitWidth: fitWidth, fitHeight: fitHeight };
+    })();
+
+    // Mobile navigation
+    (function() {
+        var navToggle = document.querySelector('.nav-toggle');
+        var siteNav = document.querySelector('.site-nav');
+        var dropdowns = document.querySelectorAll('.nav-dropdown');
+
+        if (navToggle && siteNav) {
+            navToggle.addEventListener('click', function() {
+                navToggle.classList.toggle('active');
+                siteNav.classList.toggle('open');
+                navToggle.setAttribute('aria-expanded', siteNav.classList.contains('open'));
+            });
+
+            // Close menu when clicking a non-dropdown link
+            siteNav.querySelectorAll('a:not(.nav-dropdown-menu a)').forEach(function(link) {
+                link.addEventListener('click', function() {
+                    if (window.innerWidth <= 768) {
+                        navToggle.classList.remove('active');
+                        siteNav.classList.remove('open');
+                    }
+                });
+            });
+        }
+
+        // Handle dropdowns on mobile
+        dropdowns.forEach(function(dropdown) {
+            var trigger = dropdown.querySelector('.nav-trigger');
+            if (trigger) {
+                trigger.addEventListener('click', function(e) {
+                    if (window.innerWidth <= 768) {
+                        e.preventDefault();
+                        // Close other dropdowns
+                        dropdowns.forEach(function(d) {
+                            if (d !== dropdown) d.classList.remove('open');
+                        });
+                        dropdown.classList.toggle('open');
+                    }
+                });
+            }
+        });
+
+        // Close dropdowns when clicking outside on mobile
+        document.addEventListener('click', function(e) {
+            if (window.innerWidth <= 768 && !e.target.closest('.nav-dropdown')) {
+                dropdowns.forEach(function(d) { d.classList.remove('open'); });
+            }
+        });
+    })();
+
+    // Site search keyboard shortcuts: "/" or Ctrl+K / Cmd+K focuses the header search box.
+    (function() {
+        var searchInput = document.getElementById('site-search-input');
+        if (!searchInput) return;
+        document.addEventListener('keydown', function(e) {
+            var target = e.target;
+            var tag = (target.tagName || '').toLowerCase();
+            var typing = tag === 'input' || tag === 'textarea' || tag === 'select' || target.isContentEditable;
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+                e.preventDefault();
+                searchInput.focus();
+                searchInput.select();
+            } else if (e.key === '/' && !typing) {
+                e.preventDefault();
+                searchInput.focus();
+            }
+        });
+    })();
+    </script>
+
+    <!-- MathJax for LaTeX equations across docs pages -->
+    <script>
+    window.MathJax = {
+        tex: {
+            inlineMath: [['\\(', '\\)'], ['$', '$']],
+            displayMath: [['\\[', '\\]'], ['$$', '$$']],
+            processEscapes: true,
+            processEnvironments: true
+        },
+        options: {
+            skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
+        },
+        svg: {
+            fontCache: 'global'
+        }
+    };
+    </script>
+    <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+
+    <footer style="background: #2a2a2a; border-top: 1px solid #454545; color: #b0b0b0; padding: 3rem 2rem; margin-top: auto;">
+        <div style="max-width: 1200px; margin: 0 auto; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 2rem;">
+            <div>
+                <h4 style="color: #ffb400; margin-bottom: 0.75rem; font-size: 1rem;">C-Kernel-Engine</h4>
+                <p style="color: #707070; font-size: 0.875rem; margin: 0;">High-performance ML kernels with full PyTorch parity.</p>
+            </div>
+            <div>
+                <h4 style="color: #ffb400; margin-bottom: 0.75rem; font-size: 1rem;">Resources</h4>
+                <ul style="list-style: none; padding: 0; margin: 0;">
+                    <li style="margin-bottom: 0.5rem;"><a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine" style="color: #909090; text-decoration: none; font-size: 0.875rem;">GitHub</a></li>
+                    <li style="margin-bottom: 0.5rem;"><a href="contributing.html" style="color: #909090; text-decoration: none; font-size: 0.875rem;">Contributor Path</a></li>
+                    <li style="margin-bottom: 0.5rem;"><a href="architecture.html" style="color: #909090; text-decoration: none; font-size: 0.875rem;">Architecture</a></li>
+                    <li style="margin-bottom: 0.5rem;"><a href="api.html" style="color: #909090; text-decoration: none; font-size: 0.875rem;">API Reference</a></li>
+                </ul>
+            </div>
+            <div>
+                <h4 style="color: #ffb400; margin-bottom: 0.75rem; font-size: 1rem;">Related</h4>
+                <ul style="list-style: none; padding: 0; margin: 0;">
+                    <li style="margin-bottom: 0.5rem;"><a href="https://www.shivasnotes.com/" style="color: #909090; text-decoration: none; font-size: 0.875rem;">ShivasNotes</a></li>
+                    <li style="margin-bottom: 0.5rem;"><a href="https://www.shivasnotes.com/work-with-us" style="color: #909090; text-decoration: none; font-size: 0.875rem;">Work With Us</a></li>
+                    <li style="margin-bottom: 0.5rem;"><a href="https://antshiv.com/" style="color: #909090; text-decoration: none; font-size: 0.875rem;">antshiv.com</a></li>
+                </ul>
+            </div>
+            <div style="text-align: right;">
+                <p style="color: #606060; font-size: 0.75rem; margin: 0;">Static docs · C-first execution</p>
+                <p style="color: #606060; font-size: 0.75rem; margin: 0.5rem 0 0 0;">2026-10-21</p>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>

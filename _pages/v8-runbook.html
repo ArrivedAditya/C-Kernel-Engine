@@ -1,0 +1,2441 @@
+<!-- TITLE: v8 Inference and Certified Training Runbook -->
+<!-- NAV: quickstart -->
+
+<style>
+.v8-runbook-hero {
+    display: grid;
+    grid-template-columns: 1.1fr 1fr;
+    gap: 1rem;
+    margin: 0.8rem 0 1.2rem;
+}
+.v8-runbook-card {
+    background: linear-gradient(145deg, rgba(7,173,248,0.1), rgba(255,180,0,0.08));
+    border: 1px solid var(--grey);
+    border-left: 4px solid #07adf8;
+    border-radius: 10px;
+    padding: 1rem 1.1rem;
+}
+.v8-runbook-card h2,
+.v8-runbook-card h3 {
+    margin-top: 0;
+}
+.v8-runbook-card h2::before,
+.v8-runbook-card h3::before {
+    display: none;
+}
+.v8-chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    margin-top: 0.8rem;
+}
+.v8-chip {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    background: rgba(7,173,248,0.1);
+    border: 1px solid rgba(7,173,248,0.3);
+    border-radius: 999px;
+    padding: 0.18rem 0.55rem;
+    color: var(--text-secondary);
+}
+.v8-cmd pre {
+    margin-top: 0.45rem;
+}
+.cmd-block {
+    position: relative;
+    margin: 0.65rem 0 1rem;
+}
+.cmd-block pre {
+    margin: 0;
+}
+.copy-btn {
+    position: absolute;
+    top: 0.7rem;
+    right: 0.7rem;
+    z-index: 2;
+    border: 1px solid var(--grey);
+    background: rgba(7,173,248,0.08);
+    color: var(--text-secondary);
+    border-radius: 999px;
+    padding: 0.18rem 0.7rem;
+    font-size: 0.74rem;
+    cursor: pointer;
+}
+.mini-note {
+    color: var(--text-muted);
+    font-size: 0.88rem;
+}
+.v8-path-table code {
+    font-size: 0.8rem;
+}
+.v8-path-scroll {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+.v8-note {
+    color: var(--text-muted);
+    font-size: 0.88rem;
+}
+.v8-doorway {
+    font-size: 0.84rem;
+    color: var(--text-muted);
+    border-left: 3px solid rgba(7,173,248,0.5);
+    padding-left: 0.7rem;
+    margin: 0.2rem 0 0.9rem;
+    line-height: 1.6;
+}
+.v8-doorway strong {
+    color: var(--text-secondary);
+}
+.v8-artifact-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 0.8rem;
+    margin: 0.9rem 0 1rem;
+}
+.v8-artifact-tile {
+    border: 1px solid var(--grey);
+    border-radius: 8px;
+    background: rgba(7,173,248,0.045);
+    padding: 0.85rem;
+}
+.v8-artifact-tile strong {
+    display: block;
+    margin-bottom: 0.35rem;
+    color: var(--text-primary);
+}
+.v8-artifact-tile p {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.86rem;
+}
+@media (max-width: 900px) {
+    .v8-runbook-hero {
+        grid-template-columns: 1fr;
+    }
+}
+</style>
+
+<h1>v8 Inference and Certified Training Runbook</h1>
+
+<p>
+    This is the operator runbook for the current <code>v8</code> inference lane and its
+    bounded FP32 training starter: promoted text-family bring-up through the <code>v8</code>
+    runner surface plus the validated
+    <strong>Qwen3-VL-8B-Instruct</strong> multimodal path with the matching
+    <code>mmproj-Qwen3VL-8B-Instruct</code> encoder projection file.
+</p>
+
+<p>For an architecture-aware memory and concurrency estimate, see the <a href="sizing.html">Model Sizing Lab</a>. Its bandwidth ceiling is theoretical, not a measured v8 runtime result.</p>
+
+<p>For how requests are admitted, decoded and cancelled — including the experimental two-slot batch mode — see <a href="serving.html">Serving &amp; Batching</a>.</p>
+
+<div class="alert alert-success">
+    <div class="alert-icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>
+    </div>
+    <div>
+        <strong>Validated Scope</strong><br>
+        <code>v8</code> now has a credible inference surface for promoted text-family bring-up and the tested Qwen3-VL pair runs encoder -&gt; bridge -&gt; decoder end to end with coherent captions instead of stop-marker or prompt-shell garbage.
+    </div>
+</div>
+
+<div class="v8-runbook-hero">
+    <div class="v8-runbook-card">
+        <h2>What This Runbook Covers</h2>
+        <p>
+            Four things: the promoted text-family <code>v8</code> bring-up commands, the certified
+            FP32 training starter, the one multimodal family that is validated today, and the
+            Whisper Tiny audio lane within its certified scope. It does not claim that unrelated
+            model families or the complete historical v7 training surface are ready in <code>v8</code>.
+        </p>
+        <div class="v8-chip-row">
+            <span class="v8-chip">version/v8/scripts/cks-v8-run</span>
+            <span class="v8-chip">ck_run_v8.py</span>
+            <span class="v8-chip">Qwen3-VL</span>
+            <span class="v8-chip">cks-v8-run audio</span>
+            <span class="v8-chip">Whisper Tiny</span>
+            <span class="v8-chip">FP32 training starter</span>
+        </div>
+    </div>
+    <div class="v8-runbook-card">
+        <h2>Validated Pair</h2>
+        <p><strong>Decoder GGUF:</strong><br><code>hf://Qwen/Qwen3-VL-8B-Instruct-GGUF/Qwen3VL-8B-Instruct-Q4_K_M.gguf</code></p>
+        <p><strong>mmproj GGUF example path:</strong><br><code>./mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf</code></p>
+        <p class="v8-note">Use a matching decoder/mmproj pair. If those drift apart, the bridge result is not meaningful.</p>
+    </div>
+</div>
+
+<div class="alert alert-info">
+    <div class="alert-icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+    </div>
+    <div>
+        <strong>Boundary</strong><br>
+        <code>v8</code> owns inference bring-up and one certified FP32 training-to-inference
+        starter. The wider training circuit matrix, SVG workload, pipeline builder, BF16,
+        and adapter-training lanes remain in <code>v7</code> or are not yet certified in v8.
+    </div>
+</div>
+
+<h2 id="certified-fp32-training">Training: Certified FP32 Starter</h2>
+
+<div class="card card-green">
+    <p>
+        These commands exercise production generated runtimes. They do not substitute a Python
+        operation when generated C coverage is missing.
+    </p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre># Fast two-layer forward/backward numerical certification.
+make v8-training-certify-fp32
+
+# Four-layer English learning, AdamW, restart, export, and visualizer workflow.
+make v8-training-workflow-fp32
+
+# CKE BPE plus 4-layer dense, 6-layer GQA, and 10-layer GQA full workflows.
+make v8-training-matrix-fp32
+
+# Two authored 2-layer circuits: dense and unequal-head GQA with width/tail variation.
+make v8-training-composition-fp32</pre>
+    </div>
+    <table class="table">
+        <thead><tr><th>Command</th><th>What a PASS proves</th><th>Primary evidence</th></tr></thead>
+        <tbody>
+            <tr>
+                <td><code>v8-training-certify-fp32</code></td>
+                <td>Identical serialized weights and tokens satisfy the declared PyTorch contracts for generated forward output, loss, every expected parameter gradient, and runtime provenance. Injected gradient, stale-library, and alternate-engine faults are detected.</td>
+                <td><code>version/v8/.cache/reports/training_certification_latest.json</code></td>
+            </tr>
+            <tr>
+                <td><code>v8-training-workflow-fp32</code></td>
+                <td>A four-layer reduced Qwen3-style circuit learns a pinned English byte-token fixture through generated C and native AdamW, resumes complete state in a fresh process, and exports weights into an independently built v8 inference runtime.</td>
+                <td><code>version/v8/.cache/reports/training_workflow_latest.json</code></td>
+            </tr>
+            <tr>
+                <td><code>v8-training-matrix-fp32</code></td>
+                <td>The same complete contract runs reduced Qwen3-style variants at 4, 6, and 10 layers, including unequal-head GQA. CKE trains a BPE tokenizer from the training split, verifies exact round trips and tokenizer quality, then gives generated C and PyTorch the same serialized token IDs. Nightly schedules the bounded 6-layer 4/2 GQA case; this command runs the complete depth sweep.</td>
+                <td><code>version/v8/.cache/reports/training_matrix_latest.json</code></td>
+            </tr>
+            <tr>
+                <td><code>v8-training-composition-fp32</code></td>
+                <td>Two supported Python-authored, two-layer circuits run generated-C forward/backward/AdamW against independent PyTorch at every update using fixed elementwise FP32 tolerances. One has dense 4/4 attention; one has 4/2 GQA, a non-vector-multiple 40-wide feature dimension, 17-token sequences, and a partial final accumulation window. Reports retain each trainable tensor's worst element and reject a synthetic gradient-slot swap. Nightly runs the GQA case.</td>
+                <td><code>version/v8/.cache/reports/training_composition_latest.json</code> and each case's identity-bound <code>training_workflow.json</code></td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+
+<div class="card" id="training-capability-ledger">
+    <h3 style="margin-top:0;">Training kernel capability ledger</h3>
+    <p>The <a href="v8-training-capability-ledger.html">capability ledger</a> lists public <code>cke.nn</code> authoring modules separately from exact v8 provider-map operations. It groups maps by FP32, BF16, quantized, and unspecified dtype tags and distinguishes declared backward providers from registered tests. These inventories do not establish that an authored module lowers to those providers or that generated training passed numerical certification. In particular, a BF16 or quantized forward map does not establish a trainable backward path or QLoRA support.</p>
+    <pre>python3 version/v8/scripts/build_training_capability_ledger_v8.py
+make v8-training-capability-ledger-check</pre>
+    <p>For executed evidence, open the current run's <code>training_workflow.json</code> and identity-bound <code>ir_report.html</code>; the ledger does not turn a registered provider into a PASS.</p>
+</div>
+
+<div class="card card-blue">
+    <h3 id="python-training-authoring" style="margin-top: 0;">Author the certified workflow from Python or Jupyter</h3>
+    <p>
+        The <code>cke.v8</code> adapter reuses the established <code>cke.nn</code> model surface.
+        Python declares the model, frozen dataset, tokenizer, AdamW settings, and numerical
+        contracts. It lowers the supported semantic graph into the existing CKE template/IR
+        machinery and launches the generated-C workflow;
+        it does not execute replacement model arithmetic or silently fall back to PyTorch.
+    </p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre># Validate the supported Python surface and kernel-map candidate inventory.
+make v8-training-python-authoring-smoke
+
+# Inspect the same frozen-English experiment without starting training.
+.venv/bin/python version/v8/examples/python_authoring_tiny_lm_v8.py \
+  --run-dir version/v8/.cache/python_authoring/english_fixture
+
+# Execute generated forward/backward, native AdamW, parity, restart, and export.
+.venv/bin/python version/v8/examples/python_authoring_tiny_lm_v8.py \
+  --run-dir version/v8/.cache/python_authoring/english_fixture --execute
+
+# Open the notebook authoring and report-inspection flow.
+.venv/bin/jupyter lab \
+  version/v8/notebooks/01_generated_training_quickstart.ipynb</pre>
+    </div>
+    <table class="table">
+        <thead><tr><th>Python object or artifact</th><th>Ownership and evidence</th></tr></thead>
+        <tbody>
+            <tr><td><code>cke.models.qwen3_tiny(...)</code></td><td>Builds the existing <code>cke.nn</code> semantic module graph. Certified depths are 4, 5, 6, and 10 layers; the five-layer notebook is the graph-lowering fixture.</td></tr>
+            <tr><td><code>cke.v8.DatasetConfig</code>, <code>TokenizerConfig</code>, <code>TrainingConfig</code></td><td>Provide one explicit experiment definition for the generated runtime, independent PyTorch oracle, reporting, and export.</td></tr>
+            <tr><td><code>experiment.preflight()</code></td><td>Inventories candidate forward/backward maps, tensor contracts, implementations, and registered tests. It does not claim provider resolution or executed numerical evidence. Missing candidates fail before training; the generated workflow performs resolution and execution.</td></tr>
+            <tr><td><code>python_training_experiment.json</code></td><td>Records the model graph, dataset hash, tokenizer policy, optimizer, tolerances, and deployment boundary.</td></tr>
+            <tr><td><code>python_training_semantic_model.json</code></td><td>Is the authoritative graph-derived model contract. It records ordered authored identities, the exact supported properties, all trainable parameter mappings, and the CKE template consumed by lowering. Generated forward and backward kernel operations retain those authored identities.</td></tr>
+            <tr><td><code>training_capability_preflight.json</code></td><td>Starts as a candidate inventory with <code>PENDING_GENERATED_WORKFLOW</code> resolution/evidence fields. A successful fresh, identity-bound workflow updates it to <code>RESOLVED_EXECUTION_PASS</code>. Registered tests and executed evidence remain separate.</td></tr>
+            <tr><td><code>training_experiment_manifest.json</code></td><td>Binds the run ID, case, commit, authored experiment, configuration, corpus and serialized token streams to the lowered graphs, executed providers, parity, checkpoint, and export artifacts. The visualizer re-hashes required files and labels the bundle <code>MATCHED</code>, <code>MISMATCH</code>, or <code>MISSING</code>.</td></tr>
+            <tr><td><code>training_batch_preview.json</code></td><td>Shows the actual serialized input IDs, causal labels, attention mask, loss mask, valid-token count, token-stream identity, and label policy for bounded batches.</td></tr>
+            <tr><td><code>training_workflow.json</code>, <code>ir_report.html</code></td><td>Contain the generated execution result, PyTorch discrepancies, checkpoint/resume evidence, inference export, and interactive data/IR views.</td></tr>
+        </tbody>
+    </table>
+    <h4>Use the notebook as an experiment controller</h4>
+    <ol>
+        <li>Launch Jupyter from the repository root and open the v8 notebook path shown above.</li>
+        <li>Run the model and preflight cells first. Inspect the authored semantic graph, parameter count, forward/backward requirements, and candidate-map rows before allocating a training run.</li>
+        <li>Leave <code>EXECUTE_TRAINING = False</code> while changing the circuit, corpus, tokenizer, or numerical contract. Set it to <code>True</code> only when <code>can_launch_generated_workflow</code> is true; only the completed workflow can produce a PASS. The equivalent environment switch is <code>CKE_NOTEBOOK_EXECUTE=1</code>.</li>
+        <li>Use <code>DatasetConfig</code> to point at a pinned corpus and bounded train/validation token counts. Keep the model vocabulary equal to <code>TokenizerConfig.vocab_size</code>.</li>
+        <li>Use 4, 5, 6, or 10 layers and supported dense/GQA head geometry. The graph controls depth, dimensions, ordered block identities, vocabulary, and a finite positive global <code>rope_theta</code>. In this uniform topology, reordered labels establish authored identity order; they do not claim executable support for nonuniform block reordering. Stage 1 fixes SwiGLU, RMSNorm epsilon 1e-6, bias-free projections, <code>normal_0p02</code> initialization, and FP32; other values fail before weight initialization.</li>
+        <li>Inspect <code>python_training_semantic_model.json</code> after preflight. Confirm that its parameter contract, ordered layer trace, and hash match the training report. The workflow rejects missing, changed, or mismatched semantic artifacts.</li>
+        <li>After execution, inspect the exact tokenizer round trips, training and held-out loss curve, optimizer-step parity curve, worst per-tensor differences, exact restart result, and multi-token inference-export result.</li>
+        <li>Open <code>RUN_DIR / "ir_report.html"</code> from the notebook for the dataset, tokenizer, forward/backward stitching, saved tensors, memory, checkpoint, and export panels. Set <code>EMBED_IR_VISUALIZER = True</code> to place that report inside the notebook.</li>
+        <li>Set <code>LOAD_EXISTING_REPORT = True</code> only for exploration. This path is read-only: it does not call preflight or replace the original experiment definition. The notebook validates the saved manifest and labels missing or mismatched evidence explicitly.</li>
+        <li>Use <code>training_workflow.json</code> as the machine-readable verdict. A generated HTML file alone is not a PASS.</li>
+    </ol>
+    <p>
+        The checked-in notebook has no stored outputs. Its code cells execute through capability
+        preflight in <code>v8-training-python-authoring-smoke</code>, so imports, model authoring,
+        report rendering, and the no-training default cannot silently drift. Loss and parity plots
+        use inline SVG and do not require a separate plotting package. A populated render fixture
+        also checks the experiment-identity and serialized-batch panels, including failed parity,
+        missing evidence, and mismatched-run states.
+    </p>
+    <p class="v8-note">
+        The notebook and CI example use the same adapter. The exported generated-C inference
+        runtime does not require Python, but the underlying workflow still reports a standalone
+        native executable as <code>NOT_CERTIFIED</code>. Qwen3.5 DeltaNet authoring remains behind
+        composition-level state and backward certification. RWKV is outside this workstream.
+    </p>
+    <p class="v8-note">
+        <strong>RWKV-7 inference groundwork is not executable-model certification.</strong>
+        The candidate <code>rwkv7.json</code> circuit and FP32 maps describe operation
+        interfaces; primitive oracle tests do not prove a generated full-model trajectory.
+        Native <code>rwkv_world_trie</code> tokenization is unsupported and fails before
+        tokenizer C emission. Weight import, recurrent-state and residual-buffer placement,
+        layer-zero value sharing, token-serial prefill, and generated multi-token parity
+        remain bring-up gates. Use the ordinary native host once those contracts are complete,
+        rather than introducing a separate model-specific CLI or hardcoded prompt formatter.
+    </p>
+</div>
+
+<div class="card" id="frozen-svg-training-fixture">
+    <h3 style="margin-top: 0;">Frozen SVG training fixture</h3>
+    <p>The second notebook uses the same <code>cke.v8.compile</code> workflow with one complete SVG document in each split. It uses exact byte token IDs, a five-layer FP32 dense/GQA graph, generated-C AdamW, PyTorch parity, fresh-process resume, and independently generated v8 inference. The source XML is checked before weight initialization and appears beside token IDs and loss curves in the identity-bound IR report.</p>
+    <pre> .venv/bin/python version/v8/examples/python_authoring_tiny_lm_v8.py \
+  --fixture svg --run-dir version/v8/.cache/python_authoring/svg_fixture --execute
+
+.venv/bin/jupyter lab version/v8/notebooks/02_frozen_svg_training_fixture.ipynb</pre>
+    <p>The corpus is pinned in <code>version/v8/training/svg_single_document_v1.json</code>. Its train and validation sources are separate, complete SVG files. Token limits that would truncate either tokenized document are rejected before weight initialization. The current target policy is cyclic causal next-token prediction within each document, including a last-to-first token transition. Validation repeats almost all training geometry and changes only colors, so falling validation loss tests the machinery rather than generalization. The report separately marks whether each 48-token generated sample is well-formed SVG and whether it exhausted the probe budget; that diagnostic does not change the numerical certification verdict. Broader SVG quality needs a separate evaluation set.</p>
+    <table class="table">
+        <thead><tr><th>Next milestone</th><th>Acceptance evidence</th></tr></thead>
+        <tbody>
+            <tr><td>Frozen SVG fixture</td><td>Pinned complete documents, validated XML, exact byte IDs, generated-C/PyTorch parity, falling train and held-out loss, exact resume, inference export, and one manifest-bound SVG panel.</td></tr>
+            <tr><td>Document-aware data path</td><td>Explicit EOS, attention boundaries, label masks, token-weighted accumulation, partial batches, and exact fresh-process restart at a document or shard boundary. Cross-document attention leakage must be an injected failure.</td></tr>
+            <tr><td>Tiny code fixture</td><td>Separate source projects, pinned tokenizer/data, a compile-and-run evaluation in a sandbox, and the same numerical training-to-export gates. Compilation success and hidden functional tests are reported separately.</td></tr>
+            <tr><td>Qwen3.5 recurrent contract</td><td>One specified DeltaNet operation first: independent forward and backward checks, state reset and gradient checks across chunk boundaries, saved-state ownership, and explicit full or truncated backpropagation. Then a mixed five-layer graph, followed by ten layers.</td></tr>
+            <tr><td>Precision and scale</td><td>BF16 provider execution and numerical contracts on Ryzen, representative-shape training throughput, then LoRA and quantized-base LoRA as separate certified extensions.</td></tr>
+        </tbody>
+    </table>
+    <p>Each additional supported graph inherits optimizer, checkpoint, parity, and exported-inference gates. The Python surface builds certified CKE graphs; it does not yet compile arbitrary <code>torch.nn</code> programs. RWKV remains outside this workstream.</p>
+</div>
+
+<div class="card">
+    <h3 style="margin-top: 0;">Artifacts and visual inspection</h3>
+    <p>The full workflow writes its current run under <code>version/v8/.cache/training_workflow/qwen3_4layer_fp32/</code>.</p>
+    <div class="v8-path-scroll">
+    <table class="table v8-path-table">
+        <thead><tr><th>Path below the run directory</th><th>What to inspect</th></tr></thead>
+        <tbody>
+            <tr><td><code>ir_report.html</code></td><td>Interactive training IR report: Data Lab, tokenizer, forward/backward graph, gradient stitching, learning, parity, checkpoint, and performance panels.</td></tr>
+            <tr><td><code>dataset/</code>, <code>tokenizer.json</code>, <code>tokenizer_roundtrip.json</code></td><td>Exact serialized token IDs, vocabulary, split lineage, and encode/decode round-trip evidence. Matrix runs also retain CKE BPE binary artifacts and <code>tokenizer_quality_gate.json</code>.</td></tr>
+            <tr><td><code>dataset_profile.json</code>, <code>dataset_qc.json</code></td><td>Split counts, hashes, overlap checks, and quality status for the current run.</td></tr>
+            <tr><td><code>checkpoints/latest.json</code></td><td>Pointer to the last atomically published complete checkpoint. The checkpoint owns the resume cursor and binds runtime, configuration, and dataset identities.</td></tr>
+            <tr><td><code>training_parity_latest.json</code>, <code>training_loss_curve_latest.json</code></td><td>Per-tensor PyTorch discrepancies, first-update evidence, and ten-epoch CKE/oracle loss trajectories.</td></tr>
+            <tr><td><code>backprop_stitch_runtime_latest.json</code></td><td>Saved tensors, gradient producers and consumers, accumulation state, and generated backward execution evidence.</td></tr>
+            <tr><td><code>exported_inference/</code>, <code>v8_inference_runtime/</code></td><td>Independent training-forward rebuild and v8 prefill/decode export used for the generated-token trajectory check.</td></tr>
+        </tbody>
+    </table>
+    </div>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>RUN=version/v8/.cache/training_workflow/qwen3_4layer_fp32
+
+# The workflow creates this report. Regenerate it after inspecting or moving artifacts.
+.venv/bin/python version/v8/tools/open_ir_visualizer_v8.py \
+  --generate --run "$RUN" --html-only --strict-run-artifacts \
+  --output "$RUN/ir_report.html"
+
+# Open locally, or serve the run directory on a headless host.
+xdg-open "$RUN/ir_report.html"
+python3 -m http.server 7021 --bind 127.0.0.1 --directory "$RUN"</pre>
+    </div>
+</div>
+
+<div class="card card-blue">
+    <h3 style="margin-top: 0;">Annotated certified-run example</h3>
+    <p>
+        A current four-layer run presents 10,000 pinned training tokens for ten epochs. Use the
+        report navigation rather than treating the presence of an HTML file as certification.
+    </p>
+    <table class="table">
+        <thead><tr><th>Panel</th><th>Expected current-run evidence</th><th>Certified example</th></tr></thead>
+        <tbody>
+            <tr><td>Data Lab</td><td>Train/validation hashes, token counts, tokenizer lineage, round-trip and QC PASS.</td><td>10,000 training tokens; 2,048 held-out tokens.</td></tr>
+            <tr><td>Training graph</td><td>109 forward and 209 backward operations with no unresolved backward operation; stitching data names every gradient edge.</td><td>Training IR invariants PASS.</td></tr>
+            <tr><td>Learning</td><td>CKE and PyTorch epoch curves plus held-out measurements from the same serialized batches.</td><td>Training loss <code>5.2214 -&gt; 3.1566</code>; held-out loss <code>5.5629 -&gt; 4.3848</code>.</td></tr>
+            <tr><td>Restart</td><td>Checkpoint-owned cursor and accumulated gradients restore in a fresh PID; incompatible identity controls fail.</td><td>Weights and optimizer state match uninterrupted execution with <code>0.0</code> maximum difference.</td></tr>
+            <tr><td>Export</td><td>Independent v8 runtime provenance, exact generated token sequence, and bounded per-step logit discrepancy.</td><td>12 generation steps match; maximum trajectory-logit difference <code>0.000353</code>.</td></tr>
+        </tbody>
+    </table>
+    <p class="v8-note">
+        A failed run still writes the JSON report. Read top-level <code>status</code>,
+        <code>failures</code>, and every entry under <code>checks</code>. Missing evidence is
+        <code>NOT_CERTIFIED</code> or a failed check; it is never converted to a zero measurement.
+    </p>
+</div>
+
+<div class="alert alert-warning">
+    <div class="alert-icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+    </div>
+    <div>
+        <strong>Implementation and coverage boundary</strong><br>
+        v8 owns the command, evidence contract, export, and visualizer integration. It currently
+        imports the proven v7 training IR builder, generated-runtime code generator, and PyTorch
+        oracle through explicit interfaces. Certified coverage is the reduced dense/GQA FP32 circuit,
+        including the bounded unequal-head matrix case. BF16 training, the v7 interactive plan
+        builder, frozen SVG training and gallery, additional model circuits, standalone native executables,
+        LoRA/QLoRA, Muon, and training-state offload require separate executable evidence.
+    </div>
+</div>
+
+<h2 id="full-model-certification">What Full-Model Certification Means</h2>
+
+<div class="card card-green">
+    <p>
+        Full-model certification is not defined by an arbitrary answer length. A
+        100-token response, a 5K context, coherent prose, or one matching top-1
+        token can establish bring-up evidence, but none certifies the complete
+        model. CKE promotes evidence in three levels:
+    </p>
+    <table class="table">
+        <thead>
+            <tr><th>Level</th><th>Required evidence</th><th>What it does not prove</th></tr>
+        </thead>
+        <tbody>
+            <tr><td>Bring-up</td><td>Real weights convert, compile, and execute coherently through the intended runtime path.</td><td>Numerical agreement, advertised capacity, quality, or performance.</td></tr>
+            <tr><td>Full-model numerical</td><td>Exact tokenizer or processor inputs; complete tensor inventory; every executed layer kind and persistent-state transition compared with an independent oracle; final-logit agreement; and at least 128 deterministic decode steps under a declared exact or tolerance contract.</td><td>Maximum context, broad application quality, every ISA, or competitive speed.</td></tr>
+            <tr><td>Production</td><td>Full-model numerical evidence plus the advertised context or media envelope, repeatability, memory-plan safety, supported ISA coverage, application fixtures, and recorded performance.</td><td>Unmeasured hardware, quantizations, languages, or workloads.</td></tr>
+        </tbody>
+    </table>
+    <p>
+        The <a href="model-kernel-matrix.html">model and kernel matrix</a> records
+        the strongest level reached by each family. The
+        <a href="kernel-maps.html">kernel-map guide</a> explains how the selected
+        providers own their arithmetic and call ABI. The
+        <a href="xray.html">X-Ray guide</a> covers layer and operation comparison,
+        and <a href="v8-numerical-contracts.html">numerical contracts</a> defines
+        exact and tolerance-based provider evidence.
+    </p>
+</div>
+
+<div class="card card-blue">
+    <h3 id="idle-local-nightly" style="margin-top: 0;">Idle-host local nightly</h3>
+    <p>
+        GitHub and local hardware use the same <code>scripts/nightly_runner.py</code> test and evidence engine. GitHub builds in its workflow; each clean local worktree passes <code>--prepare</code> so build preparation is recorded in the nightly report. The local coordinator only admits a registered profile when measured load, available RAM, and free disk satisfy its tier. The checked schedule runs the portable profile first, then progressively admits full, demo-readiness, and high-capacity evidence on larger hosts.
+    </p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>python3 scripts/idle_nightly_coordinator.py \
+  --repo /srv/cke/C-Kernel-Engine \
+  --ref origin/main --fetch \
+  --state-dir /srv/cke/nightly-state \
+  --list</pre>
+    </div>
+    <p>
+        Each cron invocation runs at most one due profile. Results are atomic and keyed by the source commit, case contract, compiler, physical-core selection, tracked environment, and registered manifest hashes. A zero process exit becomes <code>PASS</code> only when the fresh report matches the attempt and commit, reconciles its summary, contains its complete declared execution inventory, and has no unexpected skips. On restart, a stale <code>RUNNING</code> attempt becomes <code>INTERRUPTED</code> before another attempt begins. Every child is restricted to one logical CPU per physical core, and the common CKE, OpenMP, OpenBLAS, and MKL thread limits match that physical-core count.
+    </p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>*/10 * * * * cd /srv/cke/C-Kernel-Engine &amp;&amp; /usr/bin/python3 scripts/idle_nightly_coordinator.py --repo /srv/cke/C-Kernel-Engine --ref origin/main --fetch --state-dir /srv/cke/nightly-state &gt;&gt;/srv/cke/nightly-state/cron.log 2&gt;&amp;1</pre>
+    </div>
+    <p>
+        Reserve the host before interactive work by creating <code>/srv/cke/nightly-state/PAUSE</code>. The coordinator terminates and reaps only its owned process group, records the profile as <code>INTERRUPTED</code>, and retries it from the profile boundary after the reservation file is removed. Admission checks free swap as well as load, RAM, and disk; a running profile also interrupts on sustained swap activity or loss of its configured memory reserve. Use <code>--rerun</code> only to ignore cadence. The <code>--exclusive</code> option bypasses the idle-load check for a deliberately reserved host, but it does not bypass pause, memory, disk, or swap safety. This is profile-level recovery; it does not claim per-test or mid-inference checkpointing.
+    </p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>touch /srv/cke/nightly-state/PAUSE
+# use the host, then allow scheduled work again
+rm /srv/cke/nightly-state/PAUSE</pre>
+    </div>
+    <p class="v8-note" style="margin-bottom: 0;">
+        Run only trusted refs such as <code>origin/main</code>. The coordinator creates a detached per-commit worktree, loads the checked schedule from that commit, reuses model caches outside the worktree, retains at most two coordinator-owned worktrees by default, and never resets the operator checkout. Contributor PR code must use an isolated approval path without credentials or writable private corpora.
+    </p>
+    <p class="mini-note">
+        This coordinator currently owns one host and one local ledger. P3/Ryzen pooling requires bounded runner cases plus an authoritative lease service with host capabilities, attempt fencing, and combined reporting; independently pointing both hosts at one JSON ledger is unsupported.
+    </p>
+</div>
+
+<div class="card card-blue">
+    <h3 style="margin-top: 0;">Modality gates</h3>
+    <table class="table">
+        <thead>
+            <tr><th>Modality</th><th>Numerical gate</th><th>Capacity and quality gate</th></tr>
+        </thead>
+        <tbody>
+            <tr><td>Text</td><td>At least three fixed real prompts that exercise every declared layer kind; layer and state checkpoints through the full graph; complete first-step logits; and 128 deterministic decode steps against PyTorch or llama.cpp.</td><td>2K, 8K, and 32K are progression points. A model advertised for 64K, 128K, or 256K is not production-certified until matched runs reach that boundary with identical input IDs, checkpoint logits, KV/recurrent-state evidence, and stop reason. Code and SVG prompts measure application quality separately.</td></tr>
+            <tr><td>Vision</td><td>Official image processor and token IDs; encoder-layer checkpoints; projector/bridge output; decoder-layer and logit trajectory; at least one small, one native-resolution, and one multi-image X-Ray case.</td><td>The private resumable corpus covers OCR, forms, tables, charts, handwriting, natural images, and varied geometry. Exact fields and visual-question outputs are quality gates, not substitutes for PyTorch numerical comparison.</td></tr>
+            <tr><td>Audio</td><td>Waveform decode/resample, frontend features, every encoder block, cross-attention context, decoder state/logits, and transcript tokens compared with an independent implementation.</td><td>Short and long public fixtures, silence/noise boundaries, and every claimed language/task mode. Real-time factor, peak memory, and core occupancy are recorded independently.</td></tr>
+        </tbody>
+    </table>
+    <p class="v8-note" style="margin-bottom: 0;">
+        Long-context comparison does not require storing every activation from
+        every token. It requires deterministic input hashes, complete provider
+        identity, selected layer/state checkpoints at fixed positions, final
+        logits, and a matched decode trajectory. Any first divergence can then be
+        expanded into a full operation-level X-Ray capture.
+    </p>
+</div>
+
+<h2 id="shared-vision-certification">Shared Vision Certification</h2>
+
+<div class="card card-blue">
+    <p>
+        The Qwen3-VL, Qwen3.6-VL, and Gemma4 corpus lanes use
+        <code>certify_multimodal_llamacpp_corpus_v8.py</code> with versioned
+        profiles under <code>version/v8/parity_profiles/vision/</code>. A profile
+        fixes the encoder source, composition circuit, chat template, and
+        llama.cpp attention mode. Unknown profile fields and incompatible
+        encoder sources fail before an image is processed.
+    </p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>V8_PRIVATE_VISION_CORPUS_MANIFEST="$CKE_PRIVATE_CORPUS_MANIFEST" \
+QWEN3VL_PRIVATE_CORPUS_DECODER="$CKE_QWEN3VL_DECODER_GGUF" \
+QWEN3VL_PRIVATE_CORPUS_MMPROJ="$CKE_QWEN3VL_MMPROJ_GGUF" \
+QWEN3VL_PRIVATE_CORPUS_LLAMA_ROOT="$CKE_LLAMA_CPP_ROOT" \
+make test-qwen3vl-private-corpus-parity-auto</pre>
+    </div>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>V8_PRIVATE_VISION_CORPUS_MANIFEST="$CKE_PRIVATE_CORPUS_MANIFEST" \
+GEMMA4_PRIVATE_CORPUS_DECODER="$CKE_GEMMA4_DECODER_GGUF" \
+GEMMA4_PRIVATE_CORPUS_MMPROJ="$CKE_GEMMA4_MMPROJ_GGUF" \
+GEMMA4_PRIVATE_CORPUS_LLAMA_ROOT="$CKE_LLAMA_CPP_ROOT" \
+make test-gemma4-private-corpus-parity-auto</pre>
+    </div>
+    <p class="v8-note" style="margin-bottom: 0;">
+        The report is resumable and redacted by default. Exact decoder rows use
+        the CKE-produced visual prefix in both engines, so this lane does not by
+        itself certify image preprocessing or the vision encoder. Qwen3.6-VL
+        and Gemma4 profiles remain candidate lanes until their pinned artifacts
+        satisfy their declared numerical and corpus gates.
+    </p>
+    <p class="v8-note">
+        Keep private manifests, images, raw reports, hashes, prompts, token IDs,
+        and tensor captures outside the checkout and nightly upload paths.
+        Redacted console output is not a publishable report. The independent
+        Qwen3-VL encoder suite redacts image paths and IDs by default; use
+        <code>--show-private-details</code> only in a trusted local terminal.
+        Private corpus targets require their configured number of selected,
+        distinct image hashes; partial selections cannot satisfy full coverage.
+    </p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>python version/v8/scripts/export_vision_public_summary_v8.py \
+  --private-summary /data/cke/vision-certification/RUN/summary.json \
+  --public-summary /data/cke/vision-certification/RUN/public-summary.json \
+  --count-free</pre>
+    </div>
+    <p class="v8-note">
+        Publish only the exported file, never its containing private run directory.
+        The count-free exporter accepts encoder-prefix, shared-prefix decoder,
+        and image-fed OCR task-quality summaries. It publishes only the scoped
+        lane and verdict, omitting corpus identity, counts, percentages, timing,
+        sample identities, paths, text, and artifact hashes. Full counts and
+        provenance remain in private reports. OCR quality remains separate from
+        execution completion and does not certify numerical parity.
+    </p>
+    <p class="v8-note">
+        At source commit <code>352108874</code>, the Qwen3-VL profile passed
+        its selected private corpus across P3 AVX2 and Ryzen AVX-512; all
+        generated full-vocabulary decoder rows were bit-exact to llama.cpp.
+        This is shared-prefix decoder parity,
+        not independent vision-encoder parity or OCR-quality certification.
+    </p>
+</div>
+
+<h2 id="demo-readiness-nightly">Overnight Demo Readiness</h2>
+
+<div class="card card-blue">
+    <h3 style="margin-top: 0;">One command before a demo</h3>
+    <p>
+        Run the capacity-aware compatibility sweep before leaving the machine overnight. It exercises the promoted decoder families, compiler and memory-plan contracts, llama.cpp numerical gates, Instella, audio, vision, configured high-memory models, and both Qwen private OCR corpora.
+    </p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>make nightly-demo-readiness</pre>
+    </div>
+    <p>
+        In the morning, open <code>build/demo-readiness/nightly-latest.md</code>. The machine-readable evidence is written to <code>build/demo-readiness/nightly-latest.json</code>. A configured lane that breaks is a failure; an optional model or private corpus that is not configured is shown explicitly as <code>SKIP</code>.
+    </p>
+    <p class="v8-note" style="margin-bottom: 0;">
+        Private OCR output is redacted from the aggregate report. Configure Qwen3-VL with <code>CK_QWEN3VL_OCR_MANIFEST</code>, configure Qwen3.6-VL with <code>CK_QWEN36VL_OCR_MANIFEST</code>, <code>CK_QWEN36VL_DECODER_GGUF</code>, and <code>CK_QWEN36VL_ENCODER_RUNTIME</code>, and point <code>CK_LLAMA_CPP_ROOT</code> at the pinned llama.cpp oracle. Existing completed corpus cases resume instead of being repeated.
+    </p>
+</div>
+
+<div class="card card-blue">
+    <h3 style="margin-top: 0;">Long-context capacity and quality sweep</h3>
+    <p>
+        Run the resumable long-context matrix separately from demo readiness. It visits every configured family at 2K, 8K, 32K, 64K, 128K, and 256K tokens, where supported. The 64K, 128K, and 256K rows are the long-context certification region. Every row records exact consumed-token evidence, input hashes, prefill/decode wall time, average active cores, peak RSS, first-logit repeatability, selected generated providers, and matched llama.cpp performance when a local GGUF oracle is available. By default, a CKE performance row fails when average occupancy is below half of the requested worker count; override <code>--min-active-core-fraction</code> only for a documented topology experiment.
+    </p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>V8_LONG_CONTEXT_ARGS="--allow-download --threads 16" \
+make certify-v8-long-context</pre>
+    </div>
+    <p>
+        Run the engineering-quality phase independently when you need reviewable outputs before the multi-day capacity ladder finishes. Every model receives the same complete FP32 RoPE task. Its extracted C source is checked with a strict syntax-only compiler invocation, then passed verbatim back to the model to produce a matching standalone SVG. Generated code is never executed automatically. The gate proves artifact structure, not algorithmic correctness; human review and a numerical oracle remain mandatory before a generated kernel can enter CKE.
+    </p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>V8_ENGINEERING_QUALITY_ARGS="--allow-download --threads 16" \
+make certify-v8-engineering-quality</pre>
+    </div>
+    <p>
+        To certify a full 128K generation envelope, allocate the total context explicitly. Here <code>--quality-context 8192</code> reserves room for the prompt and <code>--quality-total-context 131072</code> is the exact compiled runtime capacity. Decode receives every remaining token after the reserve and safety margin, and normally stops on the model's EOS signal. The report records the allocated context, effective output budget, consumed tokens, and native stop reason; it does not relabel an 8K+8K run as 128K.
+    </p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>V8_ENGINEERING_QUALITY_ARGS="--allow-download --threads 0 --cpu-policy physical --quality-context 8192 --quality-total-context 131072" \
+make certify-v8-engineering-quality</pre>
+    </div>
+    <p class="v8-note" style="margin-bottom: 0;">
+        Configure local checkpoints with <code>V8_QWEN36_MODEL</code>, <code>V8_QWEN38_MODEL</code>, <code>V8_QWEN35_MOE_MODEL</code>, <code>V8_GEMMA4_MODEL</code>, <code>V8_GLM4_MODEL</code>, <code>V8_NEMOTRON9_MODEL</code>, <code>V8_INSTELLA_MODEL</code>, <code>V8_KIMI_MODEL</code>, <code>V8_LAGUNA_MODEL</code>, and <code>V8_COHERE2_MODEL</code>. The corresponding <code>V8_*_GGUF</code> variables may identify a separate llama.cpp oracle. Reports are written incrementally to <code>build/v8-long-context-certification/summary.md</code> and <code>summary.json</code>, so an interrupted multi-day run resumes completed rows. Qwen3.6-VL is intentionally excluded from this text matrix and remains covered by <code>make test-qwen36vl-private-corpus-parity-auto</code>, which exercises its encoder, bridge, decoder, and private OCR corpus.
+    </p>
+    <p class="mini-note">The capacity matrix uses a deterministic fixed-token sequence so exact consumption, hashes, timing, and oracle comparisons remain reproducible. It does not claim that normal prompts should fill every supported context window. The standalone engineering command writes to <code>build/v8-engineering-quality/quality/</code>: open <code>index.html</code> for the readable gallery, or inspect each model's exact prompt, raw response, clean <code>.c</code>/<code>.svg</code> artifact, compiler logs, trace, and validation JSON. Repository, documentation, retrieval, and multi-turn application corpora are the next certification layer.</p>
+</div>
+
+<div class="card card-blue">
+    <h3 style="margin-top: 0;">How The Vision Side Works</h3>
+    <p style="margin-bottom: 0.35rem;">
+        If you want the architecture view instead of the operator commands, read
+        <a href="v8-vision-encoder.html">v8 Vision Encoder Architecture</a>.
+        That page explains how the encoder graph is derived from GGUF + template + lowering and how the bridge hands the prefix into the decoder.
+    </p>
+    <p style="margin-bottom: 0;">
+        For parity-specific investigation, see <a href="vision-encoder-parity.html">Vision Encoder Parity</a>.
+    </p>
+</div>
+
+<div class="card card-blue">
+    <h3 style="margin-top: 0;">How The Audio Side Works</h3>
+    <p style="margin-bottom: 0;">
+        Whisper Tiny transcription runs through the same circuit and kernel-contract path: generated FP32 encoder and decoder from PCM16 WAV, with nightly audio gates and an opt-in end-to-end artifact test. See
+        <a href="v8-whisper-tiny.html">Whisper Tiny End-to-End</a> for the pipeline diagram, usage, evidence, and current limitations.
+    </p>
+</div>
+
+<h2>Prerequisites</h2>
+
+<div class="card">
+    <h3 style="margin-top: 0;">Supported Host</h3>
+    <ul>
+        <li>Linux host with a working C toolchain and Python 3.</li>
+        <li>Repo-local <code>.venv</code> with <code>version/v8/requirements.txt</code>, or let <code>cks-v8-run</code> bootstrap it interactively.</li>
+        <li>A local Qwen3-VL mmproj file available at a known path.</li>
+    </ul>
+    <div class="v8-cmd">
+        <pre>python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r version/v8/requirements.txt</pre>
+    </div>
+</div>
+
+<h2 id="arm-low-memory">ARM Low-Memory Bring-Up</h2>
+
+<div class="card">
+    <p>On Linux ARM, verify that the v8 engine links without unresolved symbols and that mixed BUMP allocation maps complete weight pages read-only. The unaligned weights/activations boundary is copied into one writable anonymous page.</p>
+    <div class="v8-cmd"><pre>make test-v8-arm-runtime
+make test-v8-arm-model-smoke CK_ARM_MODEL_DIR=/path/to/generated-v8-model</pre></div>
+    <p>The model smoke expects an artifact generated at context length 100. It forces file-backed weights and token-ID input with the full tokenizer disabled. This checks native forward execution, not raw-text tokenization, output quality, or performance parity. <code>regression-fast-arm</code> remains the broader family gate.</p>
+    <p>For low-RAM deployment, set <code>CK_BUMP_FORCE_MIXED=1</code>: Linux overcommit can let an anonymous reservation succeed before the process is OOM-killed. Mapping weights from disk does not prove that the full model will fit or run at useful speed. Page faults, activations and tokenizer memory are separate costs. On TDA4VM, the 2.33&nbsp;GiB Nanbeige BUMP mapped successfully, but end-to-end Nanbeige inference has not been certified. A full 262k-token Gemma SPM tokenizer was OOM-killed; tokenizer-disabled token-ID inference passed. Test raw-text chat separately.</p>
+</div>
+
+<h2>Canonical Text Bring-Up</h2>
+
+<div class="card">
+    <h3 style="margin-top: 0;" id="evidence-table">Current Large-Model Evidence</h3>
+    <p>Support levels are intentionally separate: coherent execution does not imply bit-exact numerical parity, multimodal support, long-trajectory certification, or competitive performance.</p>
+    <table class="table">
+        <thead>
+            <tr><th>Family</th><th>Real-weight execution</th><th>Numerical evidence</th><th>Open boundary</th></tr>
+        </thead>
+        <tbody>
+            <tr><td>Qwen3.8 27B dense Q4_K_M</td><td>Coherent long text; six complete 131,072-token engineering-artifact runs on the earlier artifact</td><td>Earlier artifact: 4,000/4,000 full-vocabulary rows and 4,011 internal rows bit-exact to llama.cpp. Current ggml-org artifact: regression repair tested with 128 exact full-logit rows at 1024 capacity.</td><td>For issue #454, use the repaired compiler and a fresh <code>--run</code> directory with <code>--force-convert --force-compile</code>. File revisions and mixed tensor dtypes matter. Run <code>make test-v8-qwen38-dense-contracts</code> for component checks, not full-model certification. 128K bit-exact parity and matched performance remain separate. <a href="qwen38-generated-artifacts.html">Artifact gallery</a></td></tr>
+            <tr><td>Qwen3.8 Flash Next Q4_K_M</td><td>Experimental 120B text runtime on the 160 GB Ryzen</td><td>256 full-vocabulary comparisons exact with a one-token prefix. After shared-expert scheduling and circuit-declared terminal-row selection, a real 40-token batched prompt passes all 64 full-logit comparisons bit-exactly, including initial prefill, at 8192 capacity with 16 threads.</td><td>BF16, long-context, and performance certification remain open. Configured 8192 capacity is not 8K consumed input. Longer repository-code/SVG runs must record actual input/output counts and preserve readable artifacts separately from numerical acceptance. Run <code>make test-v8-qwen38-flash-contracts</code> for component gates; use <code>--require-bit-exact</code> with the trajectory harness for full-logit acceptance.</td></tr>
+            <tr><td>Qwen3.5 35B-A3B Q4_K_M</td><td>Coherent text E2E</td><td>Quantized provider and trajectory gates are available</td><td>Continue long-context performance and broader prompt certification</td></tr>
+            <tr><td>Nemotron Nano 9B v2 Q4_K_M</td><td>Coherent text E2E</td><td>Mamba2/compiler contracts plus runtime smoke</td><td>Broader long-trajectory parity and performance</td></tr>
+            <tr><td>GLM4 9B Q4_K_M</td><td>Coherent text E2E</td><td>Partial-RoPE, FP16-KV, and llama.cpp parity coverage</td><td>Keep long-context and ISA regression lanes active</td></tr>
+            <tr><td>Instella-MoE 16B-A3B BF16</td><td>Coherent short text E2E</td><td>Top-1 matches PyTorch at the tested checkpoint; full-logit cosine 0.999976927</td><td>Short checkpoint only; quantized GGUF and long trajectories are not certified</td></tr>
+            <tr><td>Kimi-VL A3B BF16 text decoder</td><td>Coherent and repeatable text E2E on Intel AVX2 and Ryzen AVX-512</td><td>First token and top-20 ranking match PyTorch; full-logit cosine 0.997696</td><td>Internal drift becomes material near layer 7; MoonViT bridge is not certified</td></tr>
+            <tr><td>Laguna-XS 2.1 Q4_K_M</td><td>Coherent text E2E; all 684 mapped entries converted</td><td>Embedding and layer-0 RMSNorm are bit-exact; identical-input router replay preserves selected experts and routing weights within one ULP</td><td>The current llama.cpp Laguna loader omits the GGUF YaRN beta metadata; after oracle alignment, small attention/projection drift still changes a near-tied MoE route</td></tr>
+            <tr><td>Cohere2 Command R Q4_K_M</td><td>GGUF Q4_K_M bring-up — 8-token llama.cpp replay agreement on Command R7B; long-trajectory parity pending</td><td>Tokenizer-free replay matches llama.cpp for the first 8 greedy positions</td><td>Long-trajectory parity and matched performance sweeps</td></tr>
+            <tr><td>Cohere North Mini Code 30B-A3B Q4_K_M</td><td>Coherent and repeatable text; two complete 131,072-token capacity runs</td><td>Identical input, first-logit, and output-token hashes across both CKE runs</td><td>Matched full-model oracle parity and practical long-code quality</td></tr>
+            <tr><td>Cohere North Micro Vision 2.4B</td><td>Real-image encoder, bridge, and decoder bring-up</td><td>Portable BF16 provider contracts; official PyTorch layer X-Ray remains follow-up work</td><td>Complete encoder/bridge/decoder parity and private OCR quality</td></tr>
+            <tr><td>Cohere Transcribe 2B</td><td>Provider and exact 2,104-tensor inventory foundation; CKE conversion fails closed</td><td>Independent oracle exports frontend, all 48 encoder blocks, cross-attention, and decoder checkpoints</td><td>Assemble and certify the complete CKE audio trajectory</td></tr>
+            <tr><td>Cohere Command A+ 218B/25B-active W4A4</td><td>Experimental native NVFP4 real-weight text runtime; coherent short answer</td><td>675/675 required weights mapped, packed-row and leaf parity, bounded X-Ray</td><td>Full-model and long-context parity, vision, quality, and matched performance</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<div class="card card-blue">
+    <p style="margin-bottom: 0.6rem;">Use this path when you want inference-only runs without training a local model.</p>
+    <p class="mini-note">These raw CLI examples use the shell wrapper so a first-time user can be prompted to create <code>.venv</code> and install <code>version/v8/requirements.txt</code> if the repo-local environment is missing.</p>
+
+    <h3 id="qwen38-dense-quickstart">Qwen3.8 27B Dense Q4_K_M</h3>
+    <p class="v8-doorway"><strong>Understand:</strong> <a href="concepts.html#recurrent-attention">recurrent + full-attention hybrid</a> &middot; <strong>Inspect:</strong> <a href="kernel-maps.html#model-family-ownership">how a family earns kernel-map support</a> &middot; <strong>Check:</strong> <a href="model-kernel-matrix.html#card-qwen38">Qwen3.8 evidence</a></p>
+    <p>Run from the repository root. This command uses the standard GGUF, not an Unsloth UD mixed-quant artifact.</p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>version/v8/scripts/cks-v8-run run \
+  hf://ggml-org/Qwen3.8-27B-GGUF/Qwen3.8-27B-Q4_K_M.gguf \
+  --context-len 16384 \
+  --force-convert --force-compile \
+  --chat-template auto \
+  --prompt 'Give me a detailed example of C, Python and SQL code.' \
+  --max-tokens 256 \
+  --temperature 0.0</pre>
+    </div>
+    <p class="mini-note">16384 is context capacity, not consumed prompt length. This is a short generation check; allocate only what fits available RAM.</p>
+
+    <h3 id="qwen38-flash-quickstart">Qwen3.8 Flash Next Q4_K_M</h3>
+    <p class="v8-doorway"><strong>Understand:</strong> <a href="concepts.html#qsa">QSA</a>, <a href="concepts.html#hyper-connections">hyper-connections</a>, <a href="concepts.html#per-layer-embedding">PLE</a> &middot; <strong>Inspect:</strong> <a href="v8-moe-expert-kernels.html#moe-grouped-prefill">packed expert prefill</a> &middot; <strong>Check:</strong> <a href="#evidence-table">evidence table above</a></p>
+    <p>Experimental text inference. The example uses the local GGUF path on the 160 GB Ryzen test node. On another machine, replace that path with your matching local artifact. The tested file is 119,150,722,112 bytes; this command does not download it or certify other Flash quantizations.</p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>version/v8/scripts/cks-v8-run run \
+  "$HOME/.cache/cke-nvme/qwen38-flash-next/gguf/qwen3.8-flash-next-Q4_K_M.gguf" \
+  --context-len 8192 \
+  --force-convert --force-compile \
+  --chat-template auto \
+  --prompt 'Give me a detailed example of C, Python and SQL code.' \
+  --max-tokens 256 \
+  --temperature 0.0</pre>
+    </div>
+    <p class="mini-note">The Flash example is for a high-memory host, not the 64 GB P3. 8192 is capacity, not an 8K-input certification. See the evidence table above for numerical and long-context limits.</p>
+
+    <h3 style="margin-top: 0;">Gemma 3 270M</h3>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>version/v8/scripts/cks-v8-run run \
+  hf://unsloth/gemma-3-270m-it-GGUF/gemma-3-270m-it-Q5_K_M.gguf \
+  --context-len 1024 --force-compile --force-convert --chat-template=auto \
+  --prompt "Give me a concise example of C code." \
+  --max-tokens 64 --temperature 0.0 \
+  --generate-visualizer</pre>
+    </div>
+    <p class="mini-note">The smallest promoted text model. <code>--prompt</code> with <code>--max-tokens</code> makes the run non-interactive and bounded; <code>--temperature 0.0</code> selects deterministic greedy decoding (the default is 0.7). Omit <code>--prompt</code> for an interactive chat session.</p>
+
+    <h3>Gemma 4 E4B IT</h3>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>.venv/bin/python version/v8/scripts/ck_run_v8.py run \
+  hf://unsloth/gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q4_K_M.gguf \
+  --context-len 2048 \
+  --force-convert --force-compile \
+  --prompt 'Give me a detailed example of C code.' \
+  --chat-template gemma4 \
+  --max-tokens 1024 \
+  --temperature 0.0</pre>
+    </div>
+    <p class="mini-note">Use this as the current Gemma4 GGUF coherence smoke. A healthy run should produce a normal long answer and stop by EOS or <code>--max-tokens</code>, not by prompt-marker echo or language corruption. The tested local Q4_K_M run generated 1024 coherent C-code tokens; performance work remains separate.</p>
+
+    <h3>Gemma 4 Assistant / MTP Drafter</h3>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>.venv/bin/python version/v8/scripts/ck_run_v8.py run \
+  hf://google/gemma-4-E4B-it-assistant \
+  --run /tmp/ck-gemma4-assistant-runtime \
+  --context-len 1024 \
+  --force-convert --force-compile \
+  --generate-only \
+  --chat-template none \
+  --allow-raw-prompt</pre>
+    </div>
+    <p class="mini-note">The assistant artifact is a tiny speculative/MTP drafter, not a standalone chat model. A healthy bring-up converts safetensors directly to BUMP, lowers q-only shared-KV attention, generates C, and compiles <code>libmodel.so</code>. Real chat speedup comes only after pairing this runtime with a compatible Gemma4 backbone via <code>--speculative-draft-model-dir</code>.</p>
+
+    <h3>Nemotron Nano 9B v2</h3>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>.venv/bin/python version/v8/scripts/ck_run_v8.py run \
+  hf://bartowski/nvidia_NVIDIA-Nemotron-Nano-9B-v2-GGUF/nvidia_NVIDIA-Nemotron-Nano-9B-v2-Q4_K_M.gguf \
+  --context-len 2048 \
+  --force-convert --force-compile \
+  --prompt 'Give me a concise example of C code.' \
+  --chat-template auto \
+  --max-tokens 256 \
+  --temperature 0.0</pre>
+    </div>
+    <p class="mini-note">Use this as the current Nemotron-H / Mamba2 GGUF smoke. Native BPE text encode is enabled by default for generated BPE runtimes; set <code>CK_DISABLE_FULL_BPE_TOKENIZER=1</code> only when you intentionally want token-id prompts plus lightweight token display. A healthy run should produce normal instructional text, not token-zero collapse or repeated punctuation.</p>
+
+    <h3>GLM4</h3>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>version/v8/scripts/cks-v8-run run \
+  hf://unsloth/GLM-4-9B-0414-GGUF/GLM-4-9B-0414-Q4_K_M.gguf \
+  --context-len 1034 \
+  --force-convert --force-compile \
+  --chat-template glm4 \
+  --prompt 'Give me a detailed example of C, Python and SQL code.' \
+  --max-tokens 256 \
+  --temperature 0.0</pre>
+    </div>
+    <p class="mini-note">GLM4 has a real Q4_K_M runtime lane with partial pairwise RoPE, persistent FP16 KV cache, and llama.cpp parity coverage. <code>--force-compile</code> force-builds both <code>libckernel_engine.so</code> and <code>libckernel_tokenizer.so</code>, compiles the generated model into a staging directory, verifies that the complete bundle loads without unresolved symbols, and only then replaces the cached runtime. No manual library copy is required.</p>
+
+    <h3>Kimi-VL A3B Text Decoder</h3>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>.venv/bin/python version/v8/scripts/ck_run_v8.py run \
+  hf://moonshotai/Kimi-VL-A3B-Instruct \
+  --run /srv/cke/profiles/kimi-vl-a3b-instruct \
+  --context-len 2048 \
+  --force-convert --force-compile \
+  --prompt 'Give me a concise example of safe C code.' \
+  --chat-template kimi_vl \
+  --max-tokens 64 \
+  --temperature 0.0
+
+# Capacity-aware nightly smoke using the same model source:
+V8_KIMI_MODEL=hf://moonshotai/Kimi-VL-A3B-Instruct \
+make test-v8-kimi-highmem</pre>
+    </div>
+    <p class="mini-note">The official 32.8 GB sharded checkpoint now converts all text-decoder tensors, preserves the embedded TikToken protocol, and runs coherently on a 64 GB host. Three repeated Ryzen runs produced the same 32-token response hash. X-Ray matched PyTorch's first token and complete top-20 ranking, but internal BF16 drift becomes material around layer 7, so this is text E2E certification rather than bit-exact internal parity. MoonViT and the multimodal bridge remain outside the certified path. See <a href="v8-mla-kimi.html">v8 MLA / Kimi Decode Cache</a> for the architecture notes.</p>
+
+    <h3>Laguna-XS 2.1</h3>
+    <p class="v8-doorway"><strong>Understand:</strong> <a href="architecture-variants.html#laguna">Laguna architecture variant</a> &middot; <strong>Inspect:</strong> <a href="v8-moe-expert-kernels.html#laguna-mixed-quant">mixed-quant expert providers</a> &middot; <strong>Check:</strong> <a href="model-kernel-matrix.html#card-laguna">Laguna evidence</a></p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>.venv/bin/python version/v8/scripts/ck_run_v8.py run \
+  hf://ggml-org/Laguna-XS-2.1-GGUF/Laguna-XS-2.1-Q4_K_M.gguf \
+  --run /srv/cke/profiles/laguna-xs-2.1 \
+  --context-len 2048 \
+  --force-convert --force-compile \
+  --prompt 'Write a complete C program that prints the first ten Fibonacci numbers.' \
+  --chat-template auto \
+  --thinking-mode suppressed \
+  --max-tokens 512 \
+  --temperature 0.0</pre>
+    </div>
+    <p class="mini-note">The tested 20.27 GB Q4_K_M artifact converts all 684 mapped entries and produces coherent text and compilable C on Ryzen. The circuit declares full versus sliding attention, RoPE width, softplus attention gating, and mixed Q4/Q6 expert providers without a Laguna branch in compiler or code generation. Visible thinking is supported but can consume more than 1,024 tokens before the final answer; use a larger output budget when testing that mode. This is coherent E2E bring-up with strong leaf evidence, not long-trajectory bit-exact certification.</p>
+
+    <h3>Cohere2 Command R</h3>
+    <p class="v8-doorway"><strong>Understand:</strong> <a href="v8-cohere-kernels.html#cohere2-reuse">the Cohere2 reuse map</a> &middot; <strong>Inspect:</strong> <a href="architecture-variants.html#cohere2">Cohere2 architecture variant</a> &middot; <strong>Check:</strong> <a href="model-kernel-matrix.html#card-cohere2">Cohere2 evidence</a></p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>version/v8/scripts/cks-v8-run run \
+  hf://bartowski/c4ai-command-r7b-12-2024-GGUF/c4ai-command-r7b-12-2024-Q4_K_M.gguf \
+  --context-len 2048 --force-compile --force-convert --chat-template=auto \
+  --max-tokens 64 --temperature 0.0</pre>
+    </div>
+    <p class="mini-note">Cohere2 needs no family-specific flag: the GGUF model map routes it to the cohere2 circuit automatically. Contract test: <code>python -m unittest tests.test_v8_cohere2_contract</code>.</p>
+
+    <h3>Qwen2 0.5B Instruct</h3>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>version/v8/scripts/cks-v8-run run \
+  hf://Qwen/Qwen2-0.5B-Instruct-GGUF/qwen2-0_5b-instruct-q4_k_m.gguf \
+  --context-len 1024 --force-compile --force-convert \
+  --generate-visualizer</pre>
+    </div>
+
+    <h3>Qwen3 0.6B</h3>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>version/v8/scripts/cks-v8-run run \
+  hf://Qwen/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q8_0.gguf \
+  --context-len 1024 \
+  --force-convert --force-compile \
+  --generate-visualizer</pre>
+    </div>
+
+    <h3>Qwen3.5 0.8B</h3>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>python3 version/v8/scripts/ck_run_v8.py run \
+  hf://unsloth/Qwen3.5-0.8B-GGUF/Qwen3.5-0.8B-Q4_K_M.gguf \
+  --force-convert --force-compile \
+  --context-len 1034</pre>
+    </div>
+    <p class="mini-note">The canonical <code>v8</code> bring-up path is the <code>hf://...</code> URI. That materializes the run under <code>${CK_CACHE_DIR:-$HOME/.cache/ck-engine-v8/models}/unsloth--Qwen3.5-0.8B-GGUF</code>. Local GGUF paths are still supported when you intentionally want an offline or copied artifact.</p>
+
+    <div class="alert alert-warning" style="margin-top: 1rem;">
+        <div class="alert-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3L22 20H2L12 3z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        </div>
+        <div>
+            <strong>NaanBeige / Llama-family template symptom</strong><br>
+            If the first reply echoes <code>&lt;|im_start|&gt;assistant</code> or starts with <code>&lt;think&gt;</code>, the prompt is being fed with the wrong chat wrapper or stop markers. For NaanBeige, keep the default <code>--chat-template auto</code>, prefer <code>--python-tokenizer</code> on first bring-up, and do not force <code>--chat-template none</code> unless you are testing raw logits on purpose.
+        </div>
+    </div>
+
+    <h3>NaanBeige 4.1 3B</h3>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>version/v8/scripts/cks-v8-run run \
+  hf://mradermacher/Nanbeige4.1-3B-GGUF/Nanbeige4.1-3B.Q4_K_M.gguf \
+  --context-len 1024 --force-compile --force-convert \
+  --chat-template auto \
+  --generate-visualizer</pre>
+    </div>
+    <p class="mini-note">Current scope: these are the validated <code>v8</code> text-family operator surfaces. The multimodal Qwen3-VL path remains the promoted vision baseline; Gemma4 vision now has a high-memory bridge smoke lane for second-family coverage.</p>
+</div>
+
+<div class="card card-yellow">
+    <h3 style="margin-top: 0;">High-Memory v8 Smoke Targets</h3>
+    <p>Gemma4 text, Gemma4 vision, and Nemotron Nano 9B v2 are intentionally tracked as high-memory smoke lanes. They should appear in nightly/test reports, but skip cleanly on smaller runners instead of pretending the model family is untested.</p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>make test-v8-gemma4-highmem
+make test-v8-gemma4-vision-smoke
+make test-v8-nemotron9-highmem
+
+# Lower the threshold only when you intentionally want to run locally:
+V8_GEMMA4_MIN_MEM_GB=24 make test-v8-gemma4-highmem
+V8_NEMOTRON9_MIN_MEM_GB=24 make test-v8-nemotron9-highmem</pre>
+    </div>
+    <p class="mini-note">These tests are coherence/runtime smokes, not performance gates. They validate that the v8 conversion, compile, tokenizer/chat-template path, and first generated tokens remain sane for large model families.</p>
+</div>
+
+<div class="card">
+    <h3 style="margin-top: 0;">Text-Family Notes</h3>
+    <ul>
+        <li><strong>Gemma 3:</strong> use <code>--chat-template auto</code> for normal instruction/chat runs. <code>--chat-template none</code> is raw continuation mode now and needs <code>--allow-raw-prompt</code> if you intentionally want it.</li>
+        <li><strong>Gemma 4:</strong> use <code>--chat-template gemma4</code>. The template uses explicit per-layer/direct split-half RoPE metadata; do not replace it with the older global split-half RoPE path when debugging.</li>
+        <li><strong>Nemotron Nano 9B v2:</strong> use <code>--chat-template auto</code>. The BPE runtime should encode raw prompts by default; set <code>CK_DISABLE_FULL_BPE_TOKENIZER=1</code> only for token-id fallback/debug runs.</li>
+        <li><strong>GLM4:</strong> the real Q4_K_M path executes coherently and carries partial-RoPE, persistent FP16-KV, and llama.cpp parity coverage. Keep it in long-context and ISA regression sweeps.</li>
+        <li><strong>Instella-MoE:</strong> BF16 text executes coherently with strong short-checkpoint PyTorch agreement. Do not describe quantized GGUF or long trajectories as certified yet.</li>
+        <li><strong>Kimi-VL:</strong> the BF16 text decoder is coherent and repeatable; use <code>--chat-template kimi_vl</code>. Vision remains unimplemented, and the current X-Ray evidence is ranking parity rather than bit-exact internal parity.</li>
+        <li><strong>Laguna-XS 2.1:</strong> Q4_K_M text executes coherently and the mixed global/sliding circuit is map-owned. CKE preserves the GGUF's YaRN <code>beta_fast=64</code>; the current external llama.cpp Laguna loader defaults that value to 32. Even with a metadata-aligned diagnostic oracle, small attention/projection drift can change a near-tied MoE route, so long-trajectory parity remains open.</li>
+        <li><strong>Cohere2:</strong> pairwise RoPE applies to sliding layers only; the model-declared <code>logit_scale</code> runs as a <code>final_logit_scale_f32</code> footer op. Long-trajectory parity and performance sweeps are not certified yet.</li>
+        <li><strong>Qwen2 / Qwen3 / Qwen3.5:</strong> the <code>v8</code> runner now reproduces the same public command shapes as <code>v7</code> and clean short prompt smokes succeed on the promoted examples.</li>
+        <li><strong>NaanBeige / llama-family symptom:</strong> if the first reply echoes <code>&lt;|im_start|&gt;assistant</code> or starts with <code>&lt;think&gt;</code>, keep <code>--chat-template auto</code>, do not force <code>none</code>, and treat it as a prompt-wrapper/chat-contract symptom rather than the expected reply.</li>
+    </ul>
+</div>
+
+
+<div class="card card-green">
+    <h3 style="margin-top: 0;">New Model Compatibility Workflow</h3>
+    <ol>
+        <li><strong>Start with safetensors when available.</strong> Convert safetensors to BUMP and compare CK against PyTorch with BF16/FP32 weights. This isolates graph stitching, RoPE placement, activation math, and layer contracts before quantization enters the picture.</li>
+        <li><strong>Then bring up GGUF.</strong> Convert GGUF to BUMP and compare CK against llama.cpp. This catches tokenizer/template behavior, tied versus untied heads, quantized projection layouts, and stop-token policy.</li>
+        <li><strong>Only optimize after parity is understood.</strong> Once BF16/FP32 graph parity and GGUF coherence are clean, profile Q4_K/Q5_K/Q6_K/Q8_K kernels and threadpool scheduling separately.</li>
+    </ol>
+    <p class="mini-note">Gemma4 followed this route: BF16 safetensors proved the split-direct RoPE circuit against PyTorch, then the GGUF Q4_K_M path reused the same IR/kernel contract for coherent long-answer smoke testing.</p>
+</div>
+
+<h2 id="qwen36-optimized-prefill">Qwen3.6 Q4_K_M Optimized Prefill</h2>
+
+<p>
+    PR <strong>#277</strong> landed an exact batched-prefill optimization lane for
+    <strong>Qwen3.6-27B Q4_K_M</strong> (merge <code>c0a04690</code>, engineering note
+    <code>docs/notes/QWEN36_EXACT_BATCHED_PREFILL_2026-07-30.md</code>). It provides two principal optimizations:
+</p>
+<ol>
+    <li><strong>Exact head-parallel DeltaNet prefill.</strong> Independent value heads are partitioned across the threadpool once per prompt, and each worker advances its assigned heads through the tokens in order. This preserves CKE's certified serial arithmetic while avoiding serial head execution and repeated per-token dispatch.</li>
+    <li><strong>AVX-512 VNNI x16 Q4_K prefill projections.</strong> The existing <code>Q4_K x Q8_K</code> AVX-512 VNNI x16 provider is used for the measured Qwen3.6 prefill projection shapes, and the packed weights are prepared during model loading instead of being charged to the first prompt.</li>
+</ol>
+
+<div class="img-container svg-viewer" data-title="Qwen3.6 exact batched prefill: what PR #277 changed">
+    <img src="assets/qwen36-exact-batched-prefill.svg" alt="Before and after diagram of the Qwen3.6 optimized prefill lane: serial head execution with per-token dispatch and first-prompt weight packing at 6682.61 ms and 4.34 tok/s, versus value heads partitioned across the threadpool once per prompt with AVX-512 VNNI x16 weights packed at load at 2588.18 ms and 11.20 tok/s, with a bar chart of the three measured configurations">
+</div>
+
+<div class="card card-accent">
+    <h3 style="margin-top: 0;">Test The Optimized Lane</h3>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>CK_V8_COMPILER=icx \
+CK_BUMP_FORCE_MIXED=1 \
+CK_NUM_THREADS=14 \
+CK_V8_FORCE_BATCHED_PREFILL=1 \
+CK_DEBUG_Q4K_PREFILL_DISPATCH=1 \
+.venv/bin/python \
+version/v8/scripts/ck_run_v8.py run \
+  hf://ggml-org/Qwen3.6-27B-GGUF/Qwen3.6-27B-Q4_K_M.gguf \
+  --prompt "Give me a detailed explanation with working examples of C, Python, and SQL code." \
+  --chat-template qwen35 \
+  --thinking-mode suppressed \
+  --temperature 0 \
+  --max-tokens 64 \
+  --context-len 1034</pre>
+    </div>
+    <p class="mini-note">First test with 64 output tokens. Raising <code>--max-tokens</code> exercises longer <em>decode</em>, not longer prefill &mdash; to probe prefill behavior and long-prefix parity, lengthen the input prefix (and <code>--context-len</code>) instead. Set <code>CK_NUM_THREADS</code> to match your host's CPU allocation; the measured host ran inside a 14-CPU cgroup.</p>
+</div>
+
+<div class="card card-blue">
+    <h3 style="margin-top: 0;">Confirm Kernel Dispatch</h3>
+    <p>Startup evidence should include a line similar to:</p>
+    <pre>[CK parallel prefill] Prepared 184 AVX-512 VNNI x16 Q4_K weights at load time</pre>
+    <p>With <code>CK_DEBUG_Q4K_PREFILL_DISPATCH=1</code>, the projection diagnostics should show the <code>x16_mreuse</code> provider for the eligible Q4 prefill shapes.</p>
+    <p class="v8-note" style="margin-bottom: 0;">
+        This does not mean every CPU selects AVX-512: AVX-512/VNNI-capable systems may select the x16 provider, while other systems use a certified AVX2 or reference fallback. Kernel selection is intended to become automatic from CPU capability, model metadata, quantization format, and runtime shape; the debug environment variables are diagnostic overrides, not a public configuration surface.
+    </p>
+</div>
+
+<div class="card card-green">
+    <h3 style="margin-top: 0;">Measured Result</h3>
+    <table class="table">
+        <thead>
+            <tr><th>Configuration</th><th>Prompt time</th><th>Prompt rate</th></tr>
+        </thead>
+        <tbody>
+            <tr><td>Batched baseline</td><td>6682.61 ms</td><td>4.34 tok/s</td></tr>
+            <tr><td>Exact head-parallel DeltaNet</td><td>4014.20 ms</td><td>7.22 tok/s</td></tr>
+            <tr><td>Exact DeltaNet + measured Q4 x16 shapes</td><td>2588.18 ms</td><td>11.20 tok/s</td></tr>
+        </tbody>
+    </table>
+    <p>Two repeated final runs recorded <code>2552.64 ms</code> (<code>11.36 tok/s</code>) and <code>2601.74 ms</code> (<code>11.15 tok/s</code>).</p>
+    <p>That is approximately <strong>61% less prompt time</strong> and approximately <strong>2.6x the previous CKE batched-prefill throughput</strong>.</p>
+    <p class="v8-note" style="margin-bottom: 0;">
+        Measurement context: Qwen3.6-27B Q4_K_M, a 29-token templated prompt, an ICX native AVX-512/VNNI build, and a 14-CPU cgroup on the measurement host. Do not generalize these numbers to every CPU, compiler, context length, or model.
+    </p>
+</div>
+
+<div class="alert alert-warning">
+    <div class="alert-icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3L22 20H2L12 3z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+    </div>
+    <div>
+        <strong>Current Limitation</strong><br>
+        Batched prefill is still opt-in: <code>CK_V8_FORCE_BATCHED_PREFILL=1</code> is temporarily required and the default <code>sequential_decode</code> policy is unchanged. Short-prompt trajectories pass, and greedy top-1 matched at the tested short, 353-token, and 1K-token checkpoints &mdash; but full 1K-context logit parity is not certified. At the 1K first step the recorded comparison was cosine <code>0.865948879</code>, RMSE <code>2.014045</code>, maximum absolute difference <code>19.671235</code>. Matching greedy tokens must not be read as complete numerical parity. This drift predates the scheduling/x16 optimization and was not introduced by PR #277.
+    </div>
+</div>
+
+<div class="card">
+    <h3 style="margin-top: 0;">Planned Automatic Policy</h3>
+    <p>
+        <code>CK_V8_FORCE_BATCHED_PREFILL</code> is a temporary correctness guard, not a permanent user configuration requirement. The intended user experience is automatic selection:
+    </p>
+    <pre>model metadata + quantization + prompt shape + CPU ISA
+                       |
+                       v
+              certified kernel map
+                       |
+                       v
+       optimized provider or safe fallback</pre>
+    <p style="margin-bottom: 0;">
+        After long-context numerical parity is closed: Qwen3.6 should automatically use batched prefill, <code>CK_V8_FORCE_BATCHED_PREFILL</code> should no longer be required for normal use, a disable/debug escape hatch may remain for developers, and nightly tests should verify automatic selection without user flags. Remaining performance targets are tracked in the <a href="prefill-performance-roadmap.html">Prefill Performance Roadmap</a>, and kernel/provider coverage is summarized in the <a href="model-kernel-matrix.html">Model + Kernel Matrix</a>.
+    </p>
+</div>
+
+<h2>Canonical Gemma4 Vision Bridge Smoke</h2>
+
+<div class="card card-accent">
+    <h3 style="margin-top: 0;">Second-Family Vision Bridge</h3>
+    <p>Gemma4 vision uses the Gemma4 text decoder with the matching <code>mmproj-F16.gguf</code> encoder artifact. Use the checked-in PPM test image so the smoke path does not depend on Pillow.</p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>version/v8/scripts/cks-v8-run run \
+  hf://unsloth/gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q4_K_M.gguf \
+  --mmproj hf://unsloth/gemma-4-E4B-it-GGUF/mmproj-F16.gguf \
+  --image-path version/v8/test_assets/v8_vision_doc_card_72.ppm \
+  --prompt "Explain this image." \
+  --context-len 1024 \
+  --force-compile \
+  --chat-template gemma4 \
+  --max-tokens 8 \
+  --temperature 0.0</pre>
+    </div>
+    <p class="v8-note" style="margin-top: 0.55rem; margin-bottom: 0;">A healthy smoke converts or reuses the Gemma4 vision encoder, produces a 196-token vision prefix, completes mixed prefill in the Gemma4 decoder, and writes a bridge report. Current scope is bridge correctness; longer semantic parity remains active work.</p>
+</div>
+
+<h2>Canonical Qwen3-VL Vision Run</h2>
+
+<div class="card card-accent">
+    <h3 style="margin-top: 0;">Real Image Bring-Up</h3>
+    <p>Replace the <code>--mmproj</code> value below if your local mmproj file lives somewhere else.</p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>version/v8/scripts/cks-v8-run run \
+  hf://Qwen/Qwen3-VL-8B-Instruct-GGUF/Qwen3VL-8B-Instruct-Q4_K_M.gguf \
+  --mmproj hf://Qwen/Qwen3-VL-8B-Instruct-GGUF/mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf \
+  --image-path version/v8/test_assets/v8_vision_doc_card_72.ppm \
+  --prompt "Explain this image." \
+  --context-len 1024 \
+  --force-convert --force-compile \
+  --thinking-mode suppressed</pre>
+    </div>
+    <p style="margin-bottom: 0;">
+        The first run converts the GGUF, lowers/codegens the runtimes, compiles them, runs the encoder bridge, then generates from the decoder.
+    </p>
+    <p class="v8-note" style="margin-top: 0.55rem; margin-bottom: 0;">
+        For a cleaner caption sanity check, add <code>--max-tokens 48</code> so the current bridge generation loop does not ramble into a long repetition tail.
+    </p>
+</div>
+
+<div class="card">
+    <h3 style="margin-top: 0;">Synthetic Prefix Probe</h3>
+    <p>For a seam-only smoke test without a real image file, keep the decoder pair but switch to a synthetic prefix:</p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>version/v8/scripts/cks-v8-run run \
+  hf://Qwen/Qwen3-VL-8B-Instruct-GGUF/Qwen3VL-8B-Instruct-Q4_K_M.gguf \
+  --mmproj ./mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf \
+  --image-mode checker \
+  --prompt "Describe the image." \
+  --context-len 1024 \
+  --force-convert --force-compile</pre>
+    </div>
+</div>
+
+<h2>Canonical Whisper Audio Run</h2>
+
+<p class="v8-doorway"><strong>Understand:</strong> <a href="v8-whisper-tiny.html#pipeline">the audio pipeline</a> &middot; <strong>Inspect:</strong> <a href="audio-kernels-deep-dive.html#k1-wav">audio kernels, stage by stage</a> &middot; <strong>Check:</strong> <a href="model-kernel-matrix.html#card-whisper">Whisper evidence</a></p>
+
+<div class="card card-accent">
+    <h3 style="margin-top: 0;">Audio Runbook &mdash; WAV To Transcript</h3>
+    <p>
+        The audio lane runs generated FP32 Whisper Tiny, Base, or Small encoder and decoder artifacts &mdash; and a generated frontend:
+        WAV decode through log-Mel is seven circuit ops lowered into <code>ck_model_run_audio_wav</code>, so the
+        Python layer coordinates lifecycles only. The unified entrypoint
+        <code>version/v8/scripts/cks-v8-run audio</code> drives both stages and emits a single JSON report.
+        Codegen contains no Whisper model-name branch &mdash; the same v8 lowering path that carries text and vision
+        carries the audio circuits in <code>version/v8/circuits/</code>.
+    </p>
+    <p><strong>Step 1 &mdash; Select the Hugging Face checkpoint.</strong>
+        The runner downloads the checkpoint once, converts it, and builds the generated encoder and decoder runtimes:</p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>export CK_AUDIO_MODEL=hf://openai/whisper-tiny</pre>
+    </div>
+    <p><strong>Step 2 &mdash; Prepare the WAV.</strong>
+        The frontend expects mono 16&nbsp;kHz PCM16. Convert any source format first:</p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>ffmpeg -i your-audio.mp3 \
+  -ac 1 -ar 16000 -c:a pcm_s16le \
+  /tmp/test-audio.wav</pre>
+    </div>
+    <p><strong>Step 3 &mdash; Run the transcription.</strong></p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>version/v8/scripts/cks-v8-run audio "$CK_AUDIO_MODEL" \
+  --wav recording.wav \
+  --language en \
+  --task transcribe \
+  --max-tokens 128 \
+  --output build/whisper-test-report.json</pre>
+    </div>
+    <p style="margin-bottom: 0;"><strong>Step 4 &mdash; Read the output.</strong>
+        The transcript prints on <code>stdout</code>, a per-stage timing line prints on <code>stderr</code>,
+        and <code>--output</code> carries the full report (<code>"schema": "cke.whisper_e2e"</code>) with
+        frontend/encoder/prefill/decode seconds, generated token count, stop reason, and SHA-256 of the WAV
+        and both generated runtimes for provenance.</p>
+</div>
+
+<div class="card">
+    <h3 style="margin-top: 0;">Practical Local CPU Workflow: YouTube Or Teams</h3>
+    <p>
+        Export meeting media through the service's authorized controls, or use
+        <code>yt-dlp</code> for public or otherwise authorized YouTube content.
+        Normalize either source to the same PCM16 contract:
+    </p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>sudo apt install ffmpeg
+python3 -m pip install --user yt-dlp
+
+mkdir -p "$HOME/cke-audio/results"
+
+yt-dlp -x --audio-format wav \
+  -o "$HOME/cke-audio/source.%(ext)s" \
+  "YOUTUBE_URL"
+
+ffmpeg -y \
+  -i "$HOME/cke-audio/source.wav" \
+  -ac 1 -ar 16000 -c:a pcm_s16le \
+  "$HOME/cke-audio/input-16k.wav"</pre>
+    </div>
+    <p>
+        For a Teams, Zoom, or local recording, replace
+        <code>$HOME/cke-audio/source.wav</code> with the exported MP4, M4A,
+        MP3, FLAC, or WAV file. Transcribe with Whisper Base:
+    </p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>RUN_DIR="$HOME/.cache/ck-engine-v8/models/whisper-base-local"
+
+CK_NUM_THREADS=20 OMP_NUM_THREADS=20 \
+version/v8/scripts/cks-v8-run audio hf://openai/whisper-base \
+  --run "$RUN_DIR" \
+  --wav "$HOME/cke-audio/input-16k.wav" \
+  --language en \
+  --task transcribe \
+  --max-tokens 448 \
+  --output "$HOME/cke-audio/results/transcript.json"
+
+jq -r '.decoder.transcript_text' \
+  "$HOME/cke-audio/results/transcript.json" \
+  &gt; "$HOME/cke-audio/results/transcript.txt"</pre>
+    </div>
+    <p style="margin-bottom: 0;">
+        Audio and transcript data stay local unless the operator separately
+        uploads them. Recordings longer than 30 seconds use sequential source
+        windows. The 33-second parity fixture is certified; arbitrary
+        hour-scale recordings remain functional rather than corpus-certified.
+        Add <code>--timestamps</code> when timestamp tokens are required.
+    </p>
+</div>
+
+<div class="card card-green">
+    <h3 style="margin-top: 0;">What Success Looks Like (Audio)</h3>
+    <ul>
+        <li><code>stdout</code> prints the transcript text &mdash; the JFK sample matches the Hugging Face reference token for token.</li>
+        <li><code>stderr</code> prints <code>frontend=...s encoder=...s prefill=...s decode=...s tokens=N stop=eos</code>.</li>
+        <li>The report JSON contains <code>"status": "ok"</code> with per-stage timings, runtime hashes, and worker-lifecycle counts.</li>
+    </ul>
+    <p style="margin-bottom: 0;">
+        See <a href="v8-whisper-tiny.html">Whisper Tiny End-to-End</a> for the pipeline diagram, kernel sources, and parity evidence.
+    </p>
+</div>
+
+<div class="card">
+    <h3 style="margin-top: 0;">Short Exact And Long Nightly Gates</h3>
+    <p>
+        Nightly already covers the log-Mel frontend against PyTorch, the audio transformer primitives, and the portable v8 audio
+        circuit/codegen regression. Run the short public checkpoint path through the same front door:
+    </p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>make test-audio
+
+version/v8/scripts/cks-v8-run audio hf://openai/whisper-tiny \
+  --wav recording.wav \
+  --output build/whisper-short-report.json</pre>
+    </div>
+    <p style="margin-bottom: 0;">
+        The artifact gate requires the full reference token sequence and EOS without tolerance relaxation.
+    </p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>make test-whisper-long-audio-nightly \
+  V8_WHISPER_LONG_AUDIO_MODEL=base</pre>
+    </div>
+    <p class="v8-note" style="margin-top: 0.55rem; margin-bottom: 0;">
+        Scheduled CI uses a published five-minute MIC1 recording and a
+        human-corrected transcript across Tiny, Base, Small, Medium, and
+        Large-v3. Every model job is fail-closed: it verifies the lossless
+        fixture, builds generated runtimes, requires complete sequential-window
+        progress, bounds timestamps to the recording, and enforces its WER
+        ceiling. The same manifest can add future audio model families without
+        changing the evidence contract.
+    </p>
+</div>
+
+<h2>Canonical Parakeet TDT Audio Run</h2>
+
+<p class="v8-doorway"><strong>Understand:</strong> <a href="v8-parakeet-tdt.html#architecture">the Parakeet pipeline</a> &middot; <strong>Inspect:</strong> <a href="v8-parakeet-tdt.html#troubleshooting">the Parakeet troubleshooting map</a> &middot; <strong>Check:</strong> <a href="model-kernel-matrix.html#card-parakeet">Parakeet evidence</a></p>
+
+<div class="card card-accent">
+    <h3 style="margin-top: 0;">Parakeet Runbook &mdash; WAV To Transcript</h3>
+    <p>
+        The canonical front door downloads the pinned checkpoint, creates the FP32 BUMP bundle, builds the
+        native libraries, and selects deterministic bounded long-audio execution (180&nbsp;s windows, 30&nbsp;s
+        overlap, resume at completed window boundaries):
+    </p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>version/v8/scripts/cks-v8-run audio \
+  hf://nvidia/parakeet-tdt-0.6b-v3 \
+  --wav recording.wav \
+  --output build/parakeet-transcript.json \
+  --resume</pre>
+    </div>
+    <p>
+        The explicit conversion/build/diagnostic path below is what the front door wraps; use it for fixture
+        certification and debugging. Exact short-fixture parity covers 50/50 token IDs, 50/50 durations, the
+        transcript, and 44/44 timestamp entries against the pinned Transformers reference:
+    </p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>hf download nvidia/parakeet-tdt-0.6b-v3 \
+  --revision 541d1f99c6b0c3cd0b11a95167540bb8edefd82b \
+  --local-dir .ck_models/parakeet-tdt-0.6b-v3
+
+python version/v8/scripts/convert_safetensors_to_bump_v8.py \
+  --checkpoint .ck_models/parakeet-tdt-0.6b-v3 \
+  --output .ck_build/parakeet-tdt-0.6b-v3/weights.bump \
+  --config-out .ck_build/parakeet-tdt-0.6b-v3/config.json \
+  --manifest-out .ck_build/parakeet-tdt-0.6b-v3/weights_manifest.json \
+  --arch parakeet_tdt --dtype fp32
+
+make build/libckernel_engine.so libckernel_audio.so
+
+python version/v8/scripts/run_parakeet_native_v8.py \
+  --model .ck_build/parakeet-tdt-0.6b-v3 \
+  --audio version/v8/test_assets/parakeet_tdt_0_6b_v3/2086-149220-0033.wav \
+  --fixture docs/notes/artifacts/parakeet_tdt_0_6b_v3_2086-149220-0033_fp32.npz \
+  --decode --output .ck_build/parakeet-tdt-0.6b-v3/native-e2e.json</pre>
+    </div>
+    <p style="margin-bottom: 0;">
+        Success is <code>"status": "pass"</code> in the <code>cke.parakeet.native_e2e</code> report with
+        <code>sequences_equal</code> and <code>durations_equal</code> true. Download and conversion are one-time
+        cold costs; the recorded warm short run took 0.069&nbsp;s frontend + 1.027&nbsp;s encoder on
+        Ryzen&nbsp;9&nbsp;9950X3D (commit <code>909a2c164</code>), and the deterministic five-minute
+        overlapping-window policy runs at RTF 0.771 (WER 7.25%). Ordinary CI covers the kernel oracles
+        (<code>make test-audio</code>) and the inventory/mapping contracts
+        (<code>make test-audio-v8-contracts</code>); the full-checkpoint and long-audio runs are cached Ryzen
+        evidence, not nightly jobs. Multilingual input, real-world resampling quality, concurrent sessions,
+        generated-circuit execution, and diarization are not claimed.
+        Full detail: <a href="v8-parakeet-tdt.html#runbook">Parakeet TDT runbook</a>.
+    </p>
+</div>
+
+<h2>Canonical Whisper Audio Bridge</h2>
+
+<div class="card card-accent">
+    <h3 style="margin-top: 0;">Stage-Split Bridge Run</h3>
+    <p>
+        The audio bridge is the <code>encoder.npy</code> handoff: the generated encoder writes the cross-attention
+        conditioning, the generated decoder consumes it. The parent <code>run</code> command keeps one isolated encoder
+        worker and one isolated decoder worker alive for the request. It resets generated decoder state and replaces
+        encoder memory for every window while retaining immutable weights, prepared constants, and thread pools.
+        Use <code>--worker-lifecycle per-window</code> to reproduce the older process-per-window control. Running the two
+        hidden worker stages below yourself isolates which side of the bridge a failure lives on.
+        A clean encoder report with garbage decode means the seam; a failed encoder stage means the frontend or encoder.
+    </p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>python version/v8/scripts/run_whisper_v8.py _encoder \
+  --encoder-run-dir $CK_WHISPER_ENCODER_RUN_DIR \
+  --wav /tmp/test-audio.wav \
+  --encoder-output /tmp/whisper-encoder.npy \
+  --worker-report /tmp/whisper-encoder-report.json</pre>
+    </div>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>python version/v8/scripts/run_whisper_v8.py _decoder \
+  --decoder-run-dir $CK_WHISPER_DECODER_RUN_DIR \
+  --encoder-output /tmp/whisper-encoder.npy \
+  --language en \
+  --task transcribe \
+  --max-tokens 128 \
+  --worker-report /tmp/whisper-decoder-report.json</pre>
+    </div>
+    <p style="margin-bottom: 0;">
+        Each worker writes its own JSON report, so the encoder side can be validated for shape, timing, and
+        <code>"status"</code> before the decoder ever runs.
+    </p>
+</div>
+
+<div class="card">
+    <h3 style="margin-top: 0;">Encoder X-Ray Parity Probe</h3>
+    <p>
+        For checkpoint-level evidence across the encoder side of the bridge,
+        <code>compare_whisper_encoder_pytorch_v8.py</code> walks the generated encoder stop by stop &mdash;
+        stem conv1 &rarr; GELU &rarr; conv2 &rarr; token-major transpose &rarr; per-layer attention and MLP residuals &mdash;
+        against a PyTorch reference, enforcing max-abs and relative-RMSE tolerances per checkpoint.
+        It needs <code>torch</code> + <code>transformers</code>. The command below resolves the public Hugging Face
+        checkpoint to its local snapshot before starting the comparison:
+    </p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>WHISPER_CHECKPOINT=$(hf download openai/whisper-tiny)
+
+python version/v8/scripts/compare_whisper_encoder_pytorch_v8.py \
+  --run-dir $CK_WHISPER_ENCODER_RUN_DIR \
+  --checkpoint "$WHISPER_CHECKPOINT" \
+  --stops key \
+  --output build/whisper-encoder-xray.json</pre>
+    </div>
+    <p style="margin-bottom: 0;">
+        The stop table is derived from the architecture dimensions, not the model name, so the same probe carries
+        to other audio transformer encoders. CI drives the same script through
+        <code>tests/test_v8_audio_encoder_contract.py</code> in the nightly audio lane.
+    </p>
+</div>
+
+<h2>Compile Once, Run Natively</h2>
+
+<div class="card card-accent">
+    <p>
+        Python is the build orchestrator: it downloads or reads the model, converts weights, resolves the
+        template and <a href="kernel-maps.html">kernel maps</a>, lowers the circuit, generates C, and compiles the model library. It does
+        not need to remain in the production token loop. Build or refresh a model once with the normal v8 runner:
+    </p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>.venv/bin/python version/v8/scripts/ck_run_v8.py run MODEL.gguf \
+  --force-convert --force-compile \
+  --prompt "Hello" --max-tokens 1</pre>
+    </div>
+    <p>
+        Then run the generated library, native tokenizer, and generated chat contract directly through the C CLI:
+    </p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>make ck-cli-v8
+
+./build/ck-cli-v8 \
+  --lib "$RUN_DIR/ck-kernel-inference.so" \
+  --weights "$RUN_DIR/weights.bump" \
+  --manifest "$RUN_DIR/weights_manifest.map" \
+  --require-generated-abi \
+  --prompt "Give me a detailed example of C, Python, and SQL code." \
+  --temperature 0 --top-p 1 --max-tokens 256</pre>
+    </div>
+    <p style="margin-bottom: 0;">
+        The generated model selects the tokenizer implementation, chat formatting, stop-token policy, and
+        modality capabilities from its compiled contract. <code>temperature</code> and <code>top-p</code> are
+        request-time sampling parameters; they do not select or alter the tokenizer.
+    </p>
+</div>
+
+<div class="card">
+    <h3 style="margin-top: 0;">Native Server And FFI Boundary</h3>
+    <p>See the <a href="v8-serving-coverage.html">circuit-derived serving coverage inventory</a>
+        for declared profiles and the artifact-level evidence still missing for each circuit.</p>
+    <p>
+        External Python, Rust, or C hosts should bind <code>include/ck_session_v8.h</code> through
+        <code>build/libck_session_v8.so</code>. The session loads the generated model once and exposes native
+        chat formatting, encode, decode, generation, streaming token callbacks, cancellation, reset, timings,
+        and a versioned capability descriptor.
+    </p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>make ck-session-v8
+make test-native-session-v8</pre>
+    </div>
+    <p style="margin-bottom: 0;">
+        Independent requests reset KV and recurrent state by default. Continuation is explicit. A generated
+        runtime missing the required tokenizer or chat capability fails closed instead of guessing from its filename.
+    </p>
+</div>
+
+<div class="card card-green">
+    <h3 style="margin-top: 0;">Localhost Serve E2E</h3>
+    <p>The <code>Server Protocol and Lifecycle</code> nightly row runs the
+        model-free <code>make test-server-schema</code> suite. It includes real
+        localhost socket checks for disconnects and an unread stream, plus
+        deterministic native-failure and cancellation-timeout recovery tests.
+        A busy response uses a positive <code>Retry-After</code>; a cancellation
+        timeout means native execution may still own the session. These checks
+        establish request ownership, not completed Qwen Code tasks.</p>
+    <p>Streaming responses send bounded keep-alive comments during silent prefill,
+        including requests without tools. This lets the HTTP transport detect a
+        disconnected reader before a long native call finishes. The native worker
+        records a cancelled or failed stored response only after it returns, then
+        releases the session lease. The socket regression closes a stream during
+        active silent prefill, checks its stored status, and serves another request.</p>
+    <p>
+        Bounded localhost integration for <code>ck_serve_v8.py</code> serves Qwen3-0.6B with Q8_0 quantizations 
+        on context length of 1024 on an ephemeral <code>127.0.0.1</code> port, waits for
+        <code>GET /v1/health</code> under one monotonic deadline, streams one
+        <code>POST /v1/responses</code> request, validates every event against the
+        Responses schema, and requires streamed, terminal, and stored text to agree.
+        A budget-limited greeting is reported as <code>response.incomplete</code>,
+        not as a completed answer. A separate one-token request must explicitly
+        report <code>max_output_tokens</code>. The model-generated tool round trip
+        is an opt-in diagnostic with <code>--require-model-tool-roundtrip</code>;
+        passing the required smoke does not certify Qwen3-0.6B tool-use quality.
+        Process-group shutdown and port cleanup complete before the lane reports success.
+        Failures preserve the server log and partial SSE transcript.
+    </p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>make test-v8-serve-localhost-e2e</pre>
+    </div>
+    <p style="margin-bottom: 0;" class="mini-note">Nightly row: <code>v8 Serve Localhost E2E</code> (10 min total limit, including reserved cleanup time). The target first runs model-free validator regressions, then the real localhost path. Failure artifacts are uploaded from <code>build/v8_serve_e2e_last_failure/</code>.</p>
+</div>
+
+<div class="card" id="converted-jinja-serving">
+    <h3 style="margin-top: 0;">Converted Jinja Serving Contract</h3>
+    <p>
+        GGUF conversion writes <code>chat_template.jinja</code> beside the generated runtime;
+        safetensors conversion stages its tokenizer template assets. The live server loads the
+        selected sidecar, renders the conversation with Jinja, and passes that raw prompt to
+        the native tokenizer. A separate <code>tool_protocol.json</code> declares how tool output
+        is parsed and binds the protocol to the selected template's SHA-256. An unreadable
+        sidecar, empty render, or stale hash is an error, not a reason to silently switch
+        prompt formats.
+    </p>
+    <p>
+        A cached GGUF conversion can recover a missing native sidecar by reading only GGUF
+        metadata. It rejects a sidecar whose bytes differ from the source. Serving a complete
+        converted bundle with <code>--no-build</code> needs no source GGUF, download, or conversion.
+        Keep the generated libraries, BUMP weights, tokenizer, template sidecars, and manifest
+        together when moving the bundle.
+    </p>
+    <p>
+        Normal serving requires a nonempty <code>chat_template.jinja</code> before opening the
+        native session. To intentionally serve untemplated raw prompts, set both
+        <code>--no-chat-template</code> and <code>--allow-raw-prompt</code>. Serving overrides use
+        <code>--chat-template-file PATH</code> or <code>--chat-template-inline SOURCE</code>;
+        the ambiguous <code>--chat-template</code> option is rejected by the serve command.
+        An override replaces the native template and all tool variants. An existing
+        <code>tool_protocol.json</code> must match that effective template or startup fails.
+        String tool arguments preserve their payload whitespace; the native Qwen XML form
+        removes only one paired framing newline. Unsupported tool-schema forms fail before
+        generation, while supported arguments are checked against their declared schema.
+    </p>
+    <p>
+        The cached Qwen3.8 Q4_K_M runtime has a known native-template tokenizer mismatch:
+        its tool delimiter is split into ordinary CKE tokens while the upstream tokenizer uses
+        one special token. That numerical gap remains open. A separate Ryzen probe with the
+        publisher Jinja and native <code>qwen_xml</code> output protocol nevertheless completed
+        a Qwen Code <code>read_file</code> continuation and an HTML <code>read_file</code> →
+        <code>edit</code> task using the harness's ordinary system prompt. The compatibility
+        template installation path has therefore been retired; its bytes are retained only as
+        a legacy protocol test fixture. The <code>qwen38.json</code> circuit owns
+        an explicit <code>serving.profile_ref</code> to this reusable profile. Bundle construction
+        resolves the selected variant together with imported publisher assets, then packages
+        content-addressed templates and circuit/profile snapshots in the deployment bundle.
+        The server reads only that bundle's <code>serving.json</code> and assets; it never searches
+        repository profiles or <code>server/templates/</code> at request time.
+        Publisher templates are the shipped profile's only variant. Task success does not
+        certify exact native token IDs, cancellation recovery, or compatibility with other artifacts.
+    </p>
+    <p>
+        A separate native-BPE input limit once reduced a 33,379-byte Qwen Code tool prompt
+        to 304 CKE tokens instead of the independent GGUF tokenizer's 7,773 tokens. A rebuilt
+        model, engine, and tokenizer matched all 7,773 IDs and completed a cached
+        <code>read_file</code> and tool-result continuation. Rebuild those three libraries
+        together; replacing only the tokenizer under an older generated model is unsafe.
+        The declared <code>qwen_code_xml_raw_v2</code> protocol accepts a short plain-text
+        introduction followed by one terminal XML envelope. It still rejects inline
+        examples, fenced XML, trailing text, and unadvertised tools. If a request sets
+        <code>parallel_tool_calls=false</code>, multiple invokes fail atomically; the server
+        does not forward the first call while dropping the rest.
+        Its delimited
+        parameter bodies preserve raw HTML and code for edit arguments; a literal
+        closing <code>&lt;/parameter&gt;</code> inside a value is outside this
+        compatibility protocol. The older <code>qwen_code_xml</code> protocol keeps its
+        strict whole-response XML/entity interpretation for existing bundles; opt in to v2
+        only for existing explicitly configured compatibility bundles. Legacy bundles without
+        <code>serving.json</code> retain their hash-bound <code>tool_protocol.json</code> path.
+        One cached Qwen Code run recovered from a
+        read-before-edit rejection, read the file, and applied a bounded HTML
+        edit in a disposable worktree. That does not certify general edit-and-test
+        reliability, cancellation recovery, or 262K actual input.
+    </p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>RUN_DIR=/path/to/dedicated/qwen38-generated-runtime
+# Explicit metadata upgrade of an existing, complete generated bundle.
+# Publisher assets are the default; no repository template installation is needed.
+python3 version/v8/scripts/resolve_serving_bundle_v8.py \
+  --run "$RUN_DIR" --circuit version/v8/circuits/qwen38.json
+version/v8/scripts/ck_serve_v8.py "$RUN_DIR" --run "$RUN_DIR" \
+  --no-build --model-name qwen38-27b-q4km --host 127.0.0.1 --port 8080</pre>
+    </div>
+    <p>
+        For a new chat bundle, <code>ck_run_v8.py run ... --generate-only --resolve-serving</code>
+        resolves the circuit profile after compilation. Normal chat serving requests this automatically.
+        Raw/token-ID builds do not require publisher chat assets; omit <code>--resolve-serving</code>
+        or build with <code>--no-chat-template</code>. Unsupported selections
+        fail explicitly. The circuit's publisher variant is the default. Safetensors
+        tokenizer configuration can supply embedded or named publisher templates; conflicts with
+        colocated Jinja files fail instead of choosing one silently. Startup validates template,
+        tokenizer, weights, configuration, layout, and generated-library hashes, so hashing large
+        weights is part of setup time. Rebuilding these assets requires explicit re-resolution.
+        Explicit upgrades verify the retained manifest → IR → generated C → runtime stamp chain
+        against the current bundle bytes. A matching model name alone is insufficient. Missing build
+        provenance requires a rebuild. Computational circuit changes are rejected; only changes confined
+        to the <code>serving</code> section may be allowed with <code>--allow-serving-update</code>.
+        A missing or invalid resolved asset never falls back to a legacy template. Raw serving skips
+        formatting but still validates a present resolved bundle and actual loaded libraries. Runtime template
+        overrides are rejected for resolved bundles. The sidecar marks certification
+        <code>NOT_TESTED</code>; dependency resolution alone is not a model/tool certification.
+        Freshly compiled bundles also bind selected kernel runtime dependencies to the compiled
+        kernel registry. If a selected provider needs <code>Sleef_expf16_u10</code>, startup
+        checks <code>CK_SLEEF_LIBRARY</code> (or an already loaded process symbol) before
+        opening HTTP traffic. Rebuild and re-resolve older bundles to gain this check;
+        changing an existing server process does not upgrade its loaded runtime.
+    </p>
+    <p>
+        Run <code>make test-v8-serve-native-jinja</code> for the deterministic sidecar-loader,
+        Jinja-renderer, request/continuation, hash, and render-failure contract. The nightly
+        <code>v8 Serve Localhost E2E</code> also requires the converted Jinja sidecar in a real
+        Qwen3-0.6B generated-model request. The pinned Qwen3.8 contract uses scripted model
+        output; its green result does not certify Qwen3.8 token IDs or generated tool calls.
+        Cached Ryzen Qwen Code 0.24.6 runs completed server-issued <code>read_file</code> and
+        bounded <code>read_file</code> → <code>edit</code> calls through this variant. A
+        <code>write_file</code> request was rejected because that tool was absent from the
+        client's advertised tool set. File creation and native-template prompt-token parity
+        remain open.
+    </p>
+    <p>
+        The generated decoder now has an optional, serialized sequence-state switch ABI for
+        layouts whose compiled activation lifetimes declare only KV as persistent mutable
+        sequence state. It permits two additional generation-tagged state IDs backed by
+        caller-owned, 64-byte-aligned KV arenas. The ABI reports the exact bytes required;
+        the caller budgets and retains each arena through retirement. KV contents and
+        positions survive switches. Recurrent, encoder, and multimodal layouts do not advertise this
+        capability. The server does not use these handles yet. An additional generated
+        <code>ck_model_decode_batch2</code> entry now admits two one-token rows only when
+        the KV-only compiled layout and kernel map declare compatible Q5_1/Q8_1
+        projections. The first layer's Q and K projections share one M=2 weight traversal;
+        the remaining layers and attention execute with separate sequence state. This is
+        actual shared generated projection work, but not a full-layer batched decoder,
+        a server scheduler, mixed prefill/decode, or continuous batching.
+        For a non-default handle, named KV pointer lookup resolves to that handle; a bump-arena
+        offset is unavailable and returns <code>-1</code>.
+        Run <code>python3 version/v8/scripts/certify_sequence_state_v8.py --run RUN_DIR</code>
+        against a freshly generated eligible bundle. A 128-token Gemma3-270M Q5_K_M build
+        passed eight exact finite-logit comparisons, including reset isolation and slot reuse; the retained JSON
+        report records the library, weights, layout, and config hashes. This bounded result
+        does not cover concurrent calls, recurrent models, cancellation, or throughput.
+    </p>
+    <p>
+        Run <code>python3 version/v8/scripts/certify_batch_decode_v8.py --bundle BUNDLE --generated-source MODEL_C</code>
+        against a freshly generated eligible bundle. The retained Gemma3-270M Q5_K_M
+        report compares full finite logits and complete KV bytes with isolated prefill/decode:
+        seven continuations matched exactly across unequal prompts, swapped row order,
+        one-row continuation, retired-slot reuse, pre-step cancellation, capacity rejection,
+        and rejected buffer aliases, including a third live sequence arena. Admission now checks
+        the split's crossing values and exact base-pointer expressions, and binds the M=2 provider
+        to the selected decode kernel map. The report identifies actual loaded model, engine, and
+        tokenizer mappings and checks the generated source against the loaded model's source digest.
+        CI compiles and executes a tiny generated-entry fixture and tests rejection after a loaded
+        library pathname is replaced. Its timings are diagnostic workloads, not a speedup measurement. Recurrent
+        Qwen, larger artifacts, simultaneous API calls, and HTTP request scheduling remain
+        uncertified for this batch entry.
+    </p>
+    <p>
+        The next generated step shares the first layer's MLP gate/up Q5_1 projection as a
+        second two-row weight traversal after sequence-local attention and KV writes. The
+        compiler derives both cutpoints' live values from lowered IR without depending on
+        argument order. Only validated full decode-row writes retire earlier values; unknown
+        or partial writes prevent the extension. It checks the gate/up provider and GeGLU
+        consumption contract, and retains the Q/K-only entry for layouts
+        that do not qualify. The separate
+        <code>batch_decode_gemma3_270m_two_row_layer_20261003.json</code> report records
+        seven exact full-logit and KV comparisons from a freshly rebuilt local bundle and
+        requires both shared projection groups. A compiled fixture also compares the actual
+        emitted split functions with isolated execution. In that earlier two-group build,
+        V, output and down projections remained sequence-local; it made no full-layer or
+        throughput claim.
+    </p>
+    <p>
+        The next bounded generated entry derives four projection groups and their
+        crossing tensors from the first layer's lowered graph. Q/K/V, attention
+        output, gate/up and MLP down use map-selected two-row providers; attention,
+        KV writes, normalization and all later layers remain sequence-local. The
+        planner rejects unsupported provider bindings, pointer offsets, new live
+        values and persistent state outside the declared KV contract. The generated
+        batch entry validates both handles, positions, capacity, cancellation and
+        buffer ownership before work starts; a rejected step advances neither
+        sequence. Once admitted, both rows finish the forward pass. Cancellation
+        is observed at the next step boundary, not inside a running kernel. The retained
+        <code>batch_decode_gemma3_270m_full_layer_20261007.json</code> report requires
+        four groups and records seven exact full-vocabulary logit and complete-KV
+        comparisons on a newly generated Gemma3-270M Q5_K_M bundle. On the local
+        i7-14700T, three artifact-identical diagnostic repetitions of six matched
+        decode tokens took 183.1–184.3 ms as isolated sequential calls and
+        57.8–65.5 ms in three two-row steps. The base report and its
+        <code>_run2</code> and <code>_run3</code> siblings preserve each attempt.
+        These tiny samples are not an overnight-task or generalized
+        speedup claim. The ordinary server path still uses
+        single-flight execution; later layers, recurrent Qwen state, dynamic
+        admission and mixed prefill/decode remain separate milestones.
+    </p>
+    <p>
+        The subsequent two-row generated entry extends the checked graph-derived
+        plan across consecutive complete decoder layers. On the identified
+        Gemma3-270M Q5_K_M artifact, all 18 supported layers execute four
+        shared map-selected projection groups per layer (72 total); attention,
+        KV writes and positions remain sequence-local. The plan checks values
+        live across every split against the complete remaining graph. It rejects
+        an unsupported layer and leaves the rest of the decode path local rather
+        than assuming an unproven buffer extent or provider binding. Compact
+        row packing is required where a selected provider stride differs from
+        the live activation extent.
+    </p>
+    <p>
+        Run <code>certify_batch_decode_v8.py</code> with
+        <code>--expected-shared-layers 18 --expected-projection-groups 72</code>
+        against the identified local bundle and matching generated source. The retained
+        <code>batch_decode_gemma3_270m_multi_layer_20261008.json</code> report
+        compares complete finite logits, KV bytes and positions after each of
+        seven continuations: unequal prefixes, swapped rows, retirement and
+        slot reuse, cancellation, capacity rejection and recovery. A small
+        compiled two-layer regression runs in the standard test suite and
+        includes deliberately broken restoration and cache-ownership controls.
+        On the local i7-14700T, three artifact-identical repetitions measured
+        six isolated native decode calls at 59.4–62.1 ms versus three two-row
+        native calls at 70.6–76.8 ms. Python validation and output copying are
+        outside both timing boundaries. Thus this small-artifact batch path was
+        slower on the matched workload; it is a correctness milestone, not a
+        speedup claim. The reports record workspace and copy volume. An optional
+        monotonic-clock copy profile measured 0.748 ms of copying across three
+        instrumented steps; its instrumentation perturbs full-step timing.
+        Ordinary HTTP serving remains single-flight; recurrent Qwen state, request
+        scheduling and mixed prefill/decode still need their own contracts.
+    </p>
+    <h4 id="experimental-batch-http">Experimental two-request HTTP decode</h4>
+    <p>
+        <code>--batch-http-extra-bytes BYTES --batch-http-prompt-cap TOKENS
+        --request-output-cap TOKENS</code> opts into a separate two-slot Responses
+        path for a generated KV-only batch-capable model. It uses the loaded
+        bundle's selected Jinja, tokenizer and declared tool parser. One worker
+        owns native prefill and decode while each request has separate
+        cancellation, detokenization, events and output. A third active slot
+        receives HTTP 429; the ordinary single-flight path remains the default.
+    </p>
+    <p>
+        <code>--batch-http-decode-replay-chunk-tokens N</code> additionally opts into
+        staged prefill. The owner computes at most N prompt tokens through
+        generated single-token decode, then gives ready requests a decode turn
+        before the next chunk. Cancellation has a ticket before prompt work
+        starts. This prevents a whole prompt from monopolizing the owner, but
+        one slow token operation still sets the cancellation/latency granularity.
+        Decode replay can differ numerically from the artifact's ordinary
+        batched prefill and requires artifact-specific parity testing. The
+        effective serving record names the selected prefill strategy and chunk
+        budget. Add <code>--batch-http-mixed-one-row</code> to allow one ready
+        decode token and one staged prompt token to enter the same generated
+        two-row decode call. This is a two-slot, one-prompt-row bridge, not
+        variable-size chunk execution or a general batch-N contract. Both
+        options remain opt-in; the mixed flag requires staged prefill.
+        The local Gemma3-270M Q5_K_M generated-runtime check compares finite
+        full logits at every step, complete KV bytes and positions against
+        serialized decode replay for either prefill slot. It covers consecutive
+        mixed steps, continuation after prompt completion and a 32-token
+        session-capacity boundary. A separate optional comparison against the
+        ordinary generated prefill entry fails on the pinned artifact: 9
+        tokens match exactly, but 10 tokens change both full logits and KV
+        bytes; at 28 tokens, the top predicted token also changes. The
+        <code>--compare-ordinary</code> flag records this as a failing,
+        artifact-bound diagnostic in
+        <code>version/v8/reports/batch_prefill_gemma3_270m_20261011.json</code>.
+        The cause and which path matches the publisher reference remain
+        unverified. Mixed-step parity against decode replay does not certify
+        ordinary-prefill parity or a resolved serving deployment.
+    </p>
+    <p>
+        The optional <code>--compare-ordinary --oracle-gguf GGUF_PATH</code>
+        diagnostic compares complete logits using the same token IDs. The
+        retained result is <code>version/v8/reports/batch_prefill_gemma3_oracle_20261012.json</code>.
+        It verifies the helper's actual loaded llama.cpp library mappings,
+        records their backing-file hashes and effective settings, and repeats
+        each llama.cpp mode twice. Seven selected GGUF/BUMP tensors match at
+        beginning, middle and end samples; nine model metadata fields match.
+        Full conversion and build provenance remain unverified.
+    </p>
+    <p>
+        The comparison has an earlier boundary than the CKE prefill split:
+        at one token, CKE and llama.cpp select different top tokens. At 10
+        tokens, llama.cpp batched and sequential evaluation themselves select
+        different top tokens (107 versus 1018), with 1.248 full-logit RMSE;
+        repeated runs of each mode are exact. The one-token llama top token
+        is unchanged with one or four threads and with repacking on or off.
+        The helper requested 64 context tokens but used 256 after runtime
+        adjustment, while CKE's session
+        capacity was 32. These differences prevent treating either llama.cpp
+        mode as a numerical arbiter. CKE ordinary and staged prefill first
+        diverge at 10 tokens; an internal hidden-tensor inspection places that
+        CKE-only difference after matching layer-16 Q/K/V inputs. The
+        cross-runtime one-token mismatch is not explained by that later
+        difference. No numerical path is promoted, and batching remains
+        experimental on this artifact.
+    </p>
+    <p>
+        A separate resolved Gemma3-270M Q5_K_M chat-only HTTP acceptance is
+        available through <code>server/batch_http_acceptance.py</code>. It
+        checks expected serving and loaded session hashes before generation,
+        compares two simultaneous greedy streams with their isolated outputs,
+        requires mixed-step evidence attributed to both response IDs, then
+        cancels one request while its peer continues and serves a follow-up on
+        the same instance. The bounded
+        <code>/v1/cke/batch-observation/{response_id}</code> endpoint identifies
+        the exact peer sharing each generated step; global counters alone are
+        diagnostic. The probe requires an idle owner, records synthetic prompts,
+        settings, output hashes and terminal reasons, and cancels outstanding
+        requests on failure. The retained local run observed 27 attributed mixed
+        steps with matching outputs, peer continuation and recovery. The tested
+        artifact exhausted its output limit, so model-generated normal EOS is
+        explicitly not certified; deterministic stream tests cover normal EOS
+        and duplicate-terminal rejection. This certifies the tested HTTP/native
+        boundary only; Gemma3's
+        profile declares chat without tools, so it is not a completed agent
+        harness task or an ordinary-prefill parity result. Keep a full
+        <code>tokenizer.json</code> beside this GGUF-derived artifact when its
+        publisher template requires <code>bos_token</code>; the resolved bundle
+        hashes that asset and otherwise fails closed at rendering.
+    </p>
+    <p>
+        Native slot budgeting does not bound HTTP delivery by itself. The
+        opt-in path also limits undelivered response consumers (default 4),
+        output token events (default 4096),
+        decoded output bytes per response (default 1 MiB), and time for each
+        stream write (default 30 seconds). Configure these with
+        <code>--batch-http-delivery-consumers</code>,
+        <code>--batch-http-output-token-cap</code>,
+        <code>--batch-http-output-byte-cap</code> and
+        <code>--batch-http-delivery-timeout</code>. A stalled stream is cancelled
+        without blocking the shared native owner; an exceeded output-byte cap
+        fails that response. Token event queues are bounded and terminal
+        failure notification cannot wait behind a full queue. An owner failure
+        poisons the owner, wakes active
+        and queued consumers, and rejects new submissions rather than leaving
+        a request waiting forever.
+    </p>
+    <p>
+        This is a bounded experimental integration, not certified overnight
+        concurrency. Without the staged flag, prefill remains synchronous and
+        cannot be interrupted inside one slow native operation; a prompt-token
+        cap is not a time bound. Native per-request phase timing is reported unavailable.
+        A local generated Gemma3-270M diagnostic matched isolated and concurrent
+        output with 11 shared decode steps, but it did not use a resolved
+        deployment bundle or an external harness. Certify two real harness
+        tasks and certify staged prefill on the deployed artifact before promoting this path.
+        Recurrent Qwen state is outside this KV-only capability.
+    </p>
+</div>
+
+<div class="card">
+    <h3>Qwen3.5 publisher templates and request ownership</h3>
+    <p>The Qwen3.5 circuit references the shared <code>qwen-tools-v1</code> serving profile.
+        Conversion packages the publisher Jinja and tokenizer assets into the resolved BUMP
+        serving bundle. The declared <code>qwen_xml</code> parser handles native tool envelopes;
+        it does not constrain the model's next-token sampling. Grammar-constrained generation
+        remains a separate capability. Template rendering, token-ID agreement and actual tool
+        completion each require their own evidence.</p>
+    <p>Reasoning starts from the generation suffix isolated by rendering the selected template
+        with and without <code>add_generation_prompt</code>. Literal reasoning tags in user
+        messages or tool results cannot choose the initial parser state. Tool-bearing streams
+        expose reasoning while withholding tool calls until validation. Over-limit calls are
+        rejected together; the server never silently executes a retained subset.</p>
+    <p>The Responses API's <code>usage.output_tokens_details.reasoning_tokens</code> is
+        currently an estimate: the server divides visible reasoning text length by four and
+        rounds down. It is not an exact count of generated reasoning token IDs and should not
+        be used for billing or context admission. <code>reasoning.effort=none</code> selects
+        the server's suppressed reasoning mode; actual model behavior remains artifact-specific.
+        Other accepted effort labels do not select different compute budgets.
+        Accepted <code>service_tier</code> values are echoed in the response but do not change
+        native scheduling priority or model speed.</p>
+    <p>Typed images, files, audio and video are rejected before rendering or native execution
+        in this text-only session ABI, including media returned by tools. Publisher image-marker
+        rendering tests are render-only evidence. Plain paths remain text. Enabling vision requires
+        a connected preprocessing → generated encoder → bridge → decoder path, not positive
+        layout dimensions or template words.</p>
+    <p><code>429 Session busy</code> means the single-flight native slot is occupied. Native worker
+        completion now releases its request-owned slot independently of HTTP stream consumption.
+        Disconnects request cancellation but retain ownership until native work finishes; an old
+        response cannot cancel a newer request. A legitimate active request can still produce 429.
+        Long-prefill cancellation may exceed its acknowledgement deadline: a cancellation timeout
+        must not release buffers still in use or be described as successful bounded cancellation.</p>
+    <p>Newly generated text runtimes can accept a request-owned cancellation flag and poll it
+        between lowered prefill operations or sequential prompt tokens. The native session
+        reports cancellation before sampling and resets partial model state before reuse.
+        Older generated libraries do not have this hook. A slow individual kernel can still
+        delay acknowledgement, so a real-model prefill cancellation result is required before
+        claiming bounded latency for a deployed bundle.</p>
+    <h4>Black-box HTTP lifecycle acceptance</h4>
+    <p>Run this probe against the intended live endpoint after deployment. It uses only HTTP:
+        cancel a long-input request after its in-progress event and a decoding request after
+        observing an output delta, close a stream, close a client after its read deadline,
+        then serve a follow-up request after each case. It checks the loaded bundle, native
+        session library and server instance before and after the run. A mismatched identity
+        fails before generation; a missing run leaves no PASS report. The JSON records whether
+        follow-up generation completed or exhausted its output allowance. The long-input
+        cancellation is a timing inference, not native prefill-phase proof; the report labels
+        its trigger and phase evidence explicitly.</p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>python3 server/http_lifecycle_acceptance.py \
+  --endpoint http://127.0.0.1:8080/v1 \
+  --model &lt;advertised-model-id&gt; \
+  --expected-serving-identity &lt;serving.json identity&gt; \
+  --expected-session-library-sha256 &lt;loaded session-library SHA-256&gt; \
+  --output /path/to/new-http-lifecycle-report.json</pre>
+    </div>
+    <p class="mini-note">The probe is a transport and ownership check, not a tool-use or
+        answer-quality certification. It requires a generated runtime with the cancellation
+        hook and a local plain-HTTP endpoint; use the separate Qwen Code acceptance runner
+        to test model-generated tool calls and task completion. Schedule the two on a local
+        runner at separate times so the single-flight endpoint is not deliberately contended;
+        retain each dated report and show a missing run as <code>NOT_TESTED</code>, never PASS.</p>
+    <p class="mini-note">The versioned native session ABI borrows request buffers and callback
+        data only while a synchronous call is active. Cancellation requests a stop; generation
+        returning acknowledges that native work has stopped. The current generated-model state
+        is not certified for concurrent sessions in one process, so another HTTP host must
+        preserve single-flight ownership until a separate sequence-state contract is proven.
+        See <code>include/ck_session_v8.h</code> for the buffer and thread rules.</p>
+    <p>In an isolated Ryzen native-session probe on 2026-09-30, regenerated Qwen3.8-27B
+        Q4_K_M code acknowledged a long-prefill cancellation in 0.55 seconds and completed
+        a one-token follow-up in 3.24 seconds without reopening the session. Its uncancelled
+        64-token logits matched the previous generated library byte-for-byte. The retained
+        report is <code>/srv/cke/profiles/qwen38-prefill-cancel-20260930/probe.json</code>.
+        This probe does not certify HTTP disconnect timing, all prompt lengths, or other
+        model/provider combinations.</p>
+    <p>The 2026-09-28 Qwen3.8 overnight documentation trial failed after approximately five hours
+        and eighteen successful inspection calls with repeated busy responses. It produced no
+        HTML/SVG outputs. This is retained failure evidence; short read/edit acceptance does not
+        establish unattended reliability. Cheap lifecycle, media rejection and pinned-template
+        tests run in the existing serving suite; real-model acceptance is recorded separately.</p>
+    <p>A separately rebuilt Qwen3.5-0.8B Q4_K_M bundle exposed an imported tokenizer-type
+        mismatch: its tool delimiters were split into ordinary BPE pieces. Registering the
+        publisher's CONTROL and USER_DEFINED token types produced exact generated-runtime
+        agreement with the reference tokenizer for the tested tool prompts (327/327 and
+        325/325 token IDs). That bundle completed a bounded <code>read_file</code> request and
+        tool-result continuation on both Responses and Chat Completions routes, with thinking
+        suppressed and visible. A real Qwen Code 0.24.6
+        run received the correct file contents but repeated the read until its three-call budget
+        stopped it; this is not a completed harness-task certification. These results apply to
+        the tested 0.8B artifact, not every Qwen3.5 variant.</p>
+
+    <h3 style="margin-top: 0;">Qwen Code Interactive And Overnight Profiles</h3>
+    <p>On ARM, an explicit <code>CK_ARM_ARCH</code> used to build the engine is
+        retained by ordinary <code>cks-v8-run run</code> and <code>serve</code>
+        invocations in the same build tree. The runner checks compiler support,
+        rebuilds with that profile, and records it with the bundled library
+        hashes. Set a new <code>CK_ARM_ARCH</code> to change the target, or set
+        <code>CK_ARM_NATIVE=0</code> explicitly to request baseline ARM. If an
+        existing engine has no valid build-flag record, choose a profile
+        explicitly before rebuilding; do not infer its ISA from its filename.</p>
+    <p>
+        A cached Qwen Code 0.24.6 <code>read_file</code> task passed through the Responses server
+        using the circuit-resolved publisher Jinja bundle. The earlier 0.21.5 pilot used the
+        Chat Completions compatibility route. Both use the pinned Qwen3.8 27B Q4_K_M artifact and a
+        generated runtime with at least 16K context. Repository-owned settings separate short
+        interactive work from large overnight artifact generation without replacing the user's
+        <code>~/.qwen/settings.json</code>.
+    </p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>CK_NUM_THREADS=16 OMP_NUM_THREADS=1 \
+version/v8/scripts/cks-v8-run serve \
+  hf://ggml-org/Qwen3.8-27B-GGUF/Qwen3.8-27B-Q4_K_M.gguf \
+  --run /path/to/qwen38-agent-runtime \
+  --context-len 16384 \
+  --force-compile \
+  --model-name qwen38-27b-q4km</pre>
+    </div>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>OPENAI_API_KEY=cke-local-only \
+OPENAI_BASE_URL=http://127.0.0.1:8080/v1 \
+OPENAI_MODEL=qwen38-27b-q4km \
+QWEN_CODE_MAX_OUTPUT_TOKENS=2048 \
+QWEN_CODE_SYSTEM_SETTINGS_PATH="$PWD/server/qwen-code/interactive.settings.json" \
+qwen --bare \
+  --auth-type openai-responses \
+  --system-prompt 'Use read_file exactly once when asked, then answer without another tool call.' \
+  --allowed-tools read_file \
+  --exclude-tools edit,notebook_edit,run_shell_command,get_goal,update_goal \
+  --max-tool-calls 1 \
+  --model qwen38-27b-q4km</pre>
+    </div>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>OPENAI_API_KEY=cke-local-only \
+OPENAI_BASE_URL=http://127.0.0.1:8080/v1 \
+OPENAI_MODEL=qwen38-27b-q4km \
+QWEN_CODE_MAX_OUTPUT_TOKENS=32768 \
+QWEN_CODE_SYSTEM_SETTINGS_PATH="$PWD/server/qwen-code/overnight.settings.json" \
+qwen --bare \
+  --auth-type openai-responses \
+  --allowed-tools read_file \
+  --exclude-tools edit,notebook_edit,run_shell_command,get_goal,update_goal \
+  --max-wall-time 18h \
+  --model qwen38-27b-q4km \
+  --output-format stream-json \
+  --prompt "$(cat /path/to/reviewed-task.txt)" \
+  &gt; /path/to/task-events.jsonl</pre>
+    </div>
+    <p style="margin-bottom: 0;" class="mini-note">
+        The circuit-linked serving profile resolves the imported publisher Jinja, tokenizer
+        assets and declared tool-output protocol into the BUMP bundle. The server consumes
+        that resolved contract and rejects stale hashes; it does not install a repository
+        compatibility template at request time. Tool-bearing streams publish parsed calls
+        only after validation. A complete bundle can serve with <code>--no-build</code> without
+        the source GGUF or a server-owned template copy.
+        Publisher special-token variables such as <code>bos_token</code> come from the
+        bundle's hashed tokenizer metadata. Missing variables remain undefined and
+        conflicting metadata fails; the renderer does not invent model delimiters.
+        The standard <code>strftime_now</code> helper uses the host's current date
+        when a publisher template requests it.
+        This supports publisher text-chat rendering. Scripted Muse ATEM parsing and
+        pinned prompt-token comparisons are covered separately; they do not certify
+        Muse-generated tool calls or a completed harness task on a current bundle.
+    </p>
+    <p class="mini-note">Gemma4 references <code>gemma4-v1</code>, with a chat-only
+        default variant and an explicit <code>tools</code> variant. The default output
+        protocol is <code>none</code>: ordinary text chat can
+        resolve the publisher Jinja asset, while tool-bearing requests fail before generation.
+        When HF token sidecars are absent, verified GGUF special-token IDs are matched to
+        bundled <code>tokenizer.json</code> text; conflicting definitions fail at startup.
+        GGUF configs may carry <code>model_type</code> and <code>model_name</code> without a
+        <code>model</code> key; bundle resolution then checks the stamped manifest's circuit identity.
+        This declaration alone does not certify a Gemma4 artifact. Keep rendered-byte
+        parity, token-ID parity, generated chat, tool protocol and recovery as separate
+        artifact-specific results.</p>
+    <p class="mini-note">A fresh isolated Gemma4 E4B GGUF build exposed two native BPE
+        differences from the bundled publisher tokenizer: its Jinja prompt already contains
+        <code>&lt;bos&gt;</code>, and its tokenizer declares
+        <code>add_space_prefix=false</code>. Generated tokenization now honors both contracts.
+        Exact IDs matched the bundled <code>tokenizer.json</code> for single-turn,
+        multi-turn, and Unicode/multiline rendered prompts in the isolated Ryzen run.
+        The same isolated artifact passed short generated chat through Chat Completions
+        and streaming Responses. The repeatable HTTP probe also checks multi-turn recall,
+        a deliberately exhausted one-token output budget, undeclared-tool rejection and
+        a successful request afterward. The existing lifecycle probe passed cancellation,
+        disconnect, client timeout and follow-up recovery against this 2,048-token build.
+        The timing-only prefill trigger proves an in-progress request, not the exact native
+        phase at cancellation. These are bounded text-serving checks, not a harness task.</p>
+    <p class="mini-note">The imported publisher template contains Gemma4's
+        <code>&lt;|tool_call&gt;</code>, <code>&lt;tool_call|&gt;</code> and
+        <code>&lt;|tool_response&gt;</code> syntax, as described in
+        <a href="https://ai.google.dev/gemma/docs/core/prompt-formatting-gemma4">Google's Gemma4 prompt format</a>.
+        The optional <code>gemma4_dsl_v1</code> variant selects a strict parser,
+        adapts function declarations to the publisher's nested Jinja input,
+        and declares <code>&lt;|tool_response&gt;</code> and <code>&lt;eos&gt;</code>
+        output stops in the resolved bundle. One isolated Gemma4 E4B Q4_K_M
+        artifact completed real generated tool-call/result continuations through
+        both HTTP routes. The circuit default remains chat-only; selecting the
+        tools variant and testing one artifact does not certify every Gemma4 build.</p>
+    <p class="mini-note">For clients such as the pinned Antigravity SDK 0.1.20 that
+        send a very large <code>max_completion_tokens</code> upper bound, an operator
+        may explicitly start this bounded Gemma server with
+        <code>--request-output-cap 256</code>. The normal policy still rejects
+        requests whose declared allowance exceeds the loaded context. With the
+        cap enabled, the effective allowance is recorded in the response and
+        <code>/v1/cke/loaded-identity</code>; exhausting it remains an incomplete
+        response. The SDK's external OpenAI-compatible configuration must name
+        this local endpoint and the loaded model. No cloud fallback or model-name
+        substitution is part of this test.</p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre># Run an already resolved, self-contained Gemma tools bundle on Ryzen.
+# Verify serving.json selects the tools variant before starting; do not
+# silently replace the publisher template at request time.
+GEMMA_RUN_DIR=/path/to/identified/gemma4-tools-bundle
+python3 version/v8/scripts/ck_serve_v8.py "$GEMMA_RUN_DIR" \
+  --run "$GEMMA_RUN_DIR" --no-build --model-name gemma4-e4b-q4km-tools \
+  --host 127.0.0.1 --port 18205 --request-output-cap 256 \
+  --request-prompt-byte-cap 32768
+
+# On the harness machine, tunnel the localhost-only endpoint from Ryzen.
+ssh -N -L 127.0.0.1:18215:127.0.0.1:18205 ryzen
+# GET http://127.0.0.1:18215/v1/cke/loaded-identity and confirm the expected
+# model, gemma4_dsl_v1 protocol, effective cap and artifact hashes.</pre>
+    </div>
+    <p class="mini-note">On the isolated 2,048-token tools bundle, Antigravity SDK
+        0.1.20 connected directly to CKE with <code>--request-output-cap 256</code>
+        and completed a file read, two-file answer, exact HTML edit plus validator,
+        and retry after a transient tool error in two consecutive four-case runs.
+        Both reports and disposable workspace archives are retained under
+        <code>/srv/cke/profiles/gemma4-tools-20261003/</code>. Two earlier runs
+        failed the single-file answer despite a correct tool call and result;
+        those failed reports are retained too. The passing runs used a more
+        specific task prompt. This establishes a bounded successful workflow,
+        not repeated overnight reliability or larger-context capacity.
+        The HTTP cancellation/disconnect suite passed on the same server instance;
+        a fresh SDK read then succeeded without restart.</p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre># Read both SHA-256 values from /v1/cke/loaded-identity first.
+python3 server/http_lifecycle_acceptance.py \
+  --suite plain-chat --endpoint http://127.0.0.1:18204/v1 \
+  --model gemma4-e4b-q4km-test \
+  --expected-serving-identity "$SERVING_SHA" \
+  --expected-session-library-sha256 "$SESSION_SHA" \
+  --output /path/to/new-plain-chat-report.json
+
+# The same artifact can run the existing cancellation/recovery suite.
+python3 server/http_lifecycle_acceptance.py \
+  --suite lifecycle --prefill-lines 100 \
+  --endpoint http://127.0.0.1:18204/v1 \
+  --model gemma4-e4b-q4km-test \
+  --expected-serving-identity "$SERVING_SHA" \
+  --expected-session-library-sha256 "$SESSION_SHA" \
+  --output /path/to/new-lifecycle-report.json</pre>
+    </div>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre># Against the explicit Gemma tools variant, with the endpoint's output cap set to 256.
+# Install google-antigravity==0.1.20 in an isolated environment on the client.
+python3 server/gemma_antigravity_acceptance.py \
+  --endpoint http://127.0.0.1:18215/v1 \
+  --model gemma4-e4b-q4km-tools \
+  --expected-serving-identity "$SERVING_SHA" \
+  --expected-session-library-sha256 "$SESSION_SHA" \
+  --case-timeout-seconds 300 \
+  --workspace /path/to/new-disposable-workspace \
+  --output /path/to/new-gemma-antigravity-report.json</pre>
+    </div>
+    <h4>Bounded local Qwen Code acceptance</h4>
+    <p>Use the same Qwen Code client as a real contributor task in a new disposable directory.
+        This command reads a small HTML file, edits one heading, runs its Python validator and
+        asks for a summary. The runner checks tool IDs, arguments and results against both
+        the event stream and retained Qwen Code conversation, requires terminal success after
+        tool completion, and checks the exact file content. Extra reads of the two
+        fixture files are allowed; unexpected file paths or validation commands fail
+        the retrospective acceptance check. These checks do not sandbox tool execution.
+        Use a restricted account or container when the harness must be isolated.</p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>python3 server/qwen_harness_acceptance.py \
+  --endpoint http://127.0.0.1:8080/v1 \
+  --model qwen38-27b-q4km \
+  --expected-serving-identity &lt;serving.json identity&gt; \
+  --expected-session-library-sha256 &lt;libck_session_v8.so SHA-256&gt; \
+  --settings server/qwen-code/interactive.settings.json \
+  --run-dir /tmp/cke-qwen-acceptance-001</pre>
+    </div>
+    <p class="mini-note">The runner requires an empty run directory and writes
+        <code>events.jsonl</code>, <code>stderr.log</code>, the edited fixture and
+        <code>report.json</code>. A PASS proves this bounded harness task on the named
+        endpoint. For a resolved bundle, read the intended <code>identity</code> field from
+        its <code>serving.json</code> and pass it with
+        <code>--expected-serving-identity</code>. The runner checks
+        <code>GET /v1/cke/loaded-identity</code> before launching Qwen Code and again after
+        the task. That endpoint reports the verified bundle identity, asset hashes,
+        native session-library hash and server-instance ID without filesystem paths.
+        The session hash comes from the backing file of the loaded native session symbol;
+        deleted, replaced or ambiguous mappings are rejected at startup. Supply the
+        expected session-library hash to certify that runtime ABI as well. Every
+        supplied hash is checked independently: a mismatch prevents task launch or
+        fails certification, while an absent expectation leaves certification incomplete.
+        The endpoint reports <code>effective_serving</code> separately from the bundle:
+        configured raw or templated mode, selected output protocol, active context limit,
+        default output allowance, and stop behavior. The runner requires that snapshot
+        to remain stable across its task.
+        A legacy endpoint with no
+        loaded identity, or a run without both expected hashes, remains
+        <code>INCOMPLETE</code> even if its bounded task passes. The acceptance command exits
+        successfully only when both the task and artifact certification report <code>PASS</code>.
+        The endpoint is a startup verification snapshot, not continuous file-integrity
+        monitoring. A cached <code>191335eba</code> Qwen3.8 27B Q4_K_M
+        run completed read → edit → test → summary on Ryzen at 16K compiled capacity;
+        it does not establish 256K-input execution or other model-family tool support.</p>
+    <p style="margin-bottom: 0;" class="mini-note">
+        Qwen Code bare mode ignores <code>--core-tools</code>, so these commands explicitly
+        remove unused bare-mode tools. The interactive profile uses 16K context and a 2K output
+        allowance. The overnight profile requires a 256K generated runtime, advertises that capacity
+        to the client, and reserves up to 32K output tokens. It does not add mid-generation resume,
+        automatic publication, commits, or deployment. On later <code>--no-build</code> starts, the
+        server reads the compiled capacity from <code>layout_decode.json</code>.
+        Qwen Code 0.24.6 needs the explicit <code>QWEN_CODE_MAX_OUTPUT_TOKENS</code>
+        environment value in these examples; the older settings profile alone did not
+        constrain its output request in a bounded local probe.
+    </p>
+    <h4>Repeated Qwen and Gemma harness acceptance</h4>
+    <p>Run <code>server/harness_repeatability.py</code> from a client machine that can
+        reach both endpoints through localhost tunnels. It invokes the existing
+        black-box HTTP suites, Qwen Code runner, and Antigravity SDK runner; it
+        does not select templates or execute model arithmetic. Pin each entry to
+        the intended loaded serving and session-library SHA-256 values. Use a Python
+        environment with the server test dependencies for the coordinator, and name
+        a separate Python environment containing <code>google-antigravity==0.1.20</code>
+        for the Gemma client. The Qwen executable must report version 0.24.6.</p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>{
+  "schema": "cke.harness_repeatability.v1",
+  "attempts": 3,
+  "clients": [
+    {
+      "name": "qwen-control", "adapter": "qwen_code",
+      "endpoint": "http://127.0.0.1:18103/v1",
+      "model": "qwen38-27b-q4km-262k",
+      "serving_identity": "&lt;64 lowercase hex characters&gt;",
+      "session_library_sha256": "&lt;64 lowercase hex characters&gt;",
+      "qwen_bin": "qwen", "qwen_version": "0.24.6",
+      "task_timeout_seconds": 1800, "prefill_lines": 100
+    },
+    {
+      "name": "gemma-control", "adapter": "antigravity_gemma",
+      "endpoint": "http://127.0.0.1:18215/v1",
+      "model": "gemma4-e4b-q4km-tools",
+      "serving_identity": "&lt;64 lowercase hex characters&gt;",
+      "session_library_sha256": "&lt;64 lowercase hex characters&gt;",
+      "python": "/path/to/pinned-antigravity-venv/bin/python",
+      "case_timeout_seconds": 300, "prefill_lines": 100
+    }
+  ]
+}</pre>
+    </div>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre># Save the JSON above as /path/to/local-serving-matrix.json and replace both
+# placeholder hashes with the intended bundle/session identities.
+python3 server/harness_repeatability.py \
+  --config /path/to/local-serving-matrix.json \
+  --output-dir /path/to/new-matrix-run
+
+# If reporting logic changes, reassess completed retained reports without
+# repeating any harness tool or native generation:
+python3 server/harness_repeatability.py \
+  --reassess-dir /path/to/completed-matrix-run</pre>
+    </div>
+    <p class="mini-note">The output directory must be new. It retains the exact
+        configuration, stdout/stderr, every individual HTTP and harness report,
+        disposable workspaces, and an incrementally written summary. A failed
+        task remains failed even when the loaded identity matched; a passed task
+        does not inherit a missing protocol or recovery result. The matrix also
+        rejects a changed server-instance ID between attempts, even if the same
+        bundle is reloaded. The HTTP suites
+        test multi-turn and output-limit behavior, bounded-input rejection with
+        a successful follow-up, cancellation, disconnect, and timeout recovery.
+        For an uncapped runtime, the context probe tests an oversized output
+        reservation. The 2,048-token Gemma deployment also declares an explicit
+        32,768-byte rendered-input cap; its probe tests that separate byte limit
+        and a successful follow-up. It does not infer a token count from the
+        input's byte length. Native tokenization failures without a proven
+        capacity cause remain structured server errors, while native busy
+        responses remain HTTP 429.
+        The probe records whether an exact token-count exceedance was proven.
+        It records which boundary was exercised and does not claim that
+        the Qwen probe consumed 262K input. After a runner
+        timeout, the matrix stops submitting work to that endpoint because native
+        completion is not yet proven. The suite records failures without silently
+        retrying edits or commands. It checks outcomes after execution; a fresh
+        directory alone does not sandbox the client. Use a restricted account or
+        container when tool execution needs isolation. Reassessment writes a separate immutable
+        <code>reassessment.json</code>, pins the original summary and each child
+        report hash, and never replays a task. Older reports without child hashes
+        remain integrity-unverified. The small Gemma artifact has only 2,048 tokens
+        of compiled context and uses an explicit 256-token output cap; this matrix
+        is bounded workflow evidence, not a larger-context or unattended-reliability
+        claim. Repeat with a separately built and identified larger-context artifact
+        before advertising practical prompt/tool-schema capacity.</p>
+    <p class="mini-note">
+        <code>GET /v1/models/{model}</code> reports the loaded CKE context capacity. The server uses
+        the native tokenizer to validate the fully rendered prompt plus requested output before
+        generation and rejects an oversized request with the exact token counts. The selected Qwen
+        profile must not advertise more context than the generated runtime.
+    </p>
+    <p class="mini-note">
+        Each non-streaming completion and terminal streaming chunk includes
+        <code>cke_performance</code>. It reports prompt/output token counts, native prefill and decode
+        time, complete server request time, and time outside native generation. Client tool execution
+        occurs between requests and must be timed separately.
+    </p>
+</div>
+
+<div class="card">
+    <h3 style="margin-top: 0;">Profile The Native Token Loop</h3>
+    <p>Use the C CLI directly so Python startup and orchestration do not contaminate the profile:</p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>perf stat -d -- \
+  ./build/ck-cli-v8 --lib "$MODEL_SO" --weights "$WEIGHTS" \
+  --manifest "$MANIFEST" --require-generated-abi \
+  --prompt "Hello" --max-tokens 64 --quiet-output --no-timing
+
+perf record -g --call-graph dwarf -- \
+  ./build/ck-cli-v8 --lib "$MODEL_SO" --weights "$WEIGHTS" \
+  --manifest "$MANIFEST" --require-generated-abi \
+  --prompt "Hello" --max-tokens 64 --quiet-output --no-timing
+
+vtune -collect hotspots -result-dir build/vtune-v8-native -- \
+  ./build/ck-cli-v8 --lib "$MODEL_SO" --weights "$WEIGHTS" \
+  --manifest "$MANIFEST" --require-generated-abi \
+  --prompt "Hello" --max-tokens 64 --quiet-output --no-timing</pre>
+    </div>
+</div>
+
+<div class="card card-blue">
+    <h3 style="margin-top: 0;">What End-to-End Certification Means</h3>
+    <ol style="margin-bottom: 0;">
+        <li>Tokenizer parity: generated C encode/decode agrees with the declared Hugging Face or reference tokenizer.</li>
+        <li>Model parity: identical token IDs produce the required logits or generated token trajectory against the numerical oracle.</li>
+        <li>Native product parity: <code>ck-cli-v8</code> performs generated chat formatting, C tokenization, model execution, generated stop policy, and C detokenization without Python in the request path.</li>
+    </ol>
+</div>
+
+<h2>What Success Looks Like</h2>
+
+<div class="card card-green">
+    <ul>
+        <li>The bridge logs reach <code>[v8-bridge] done report=...</code>.</li>
+        <li>A bridge report exists under the model cache and contains <code>"status": "ok"</code>.</li>
+        <li>The generated caption is coherent natural language, not raw stop tokens, <code>/no_think</code>, or an empty assistant turn.</li>
+    </ul>
+    <p style="margin-bottom: 0;">A healthy prompt shell uses the GGUF chat template in <code>auto</code> mode and preserves the vision markers around <code>&lt;image_embeds&gt;</code>.</p>
+</div>
+
+<h2 id="ir-hub-quick-launch">IR Hub Quick Launch</h2>
+
+<div class="card card-accent">
+    <p style="margin-bottom: 0.35rem;">
+        Generate and open the parent dashboard for all v8 runs under <code>$HOME/.cache/ck-engine-v8/models</code>.
+    </p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>.venv/bin/python version/v8/tools/open_ir_hub_v8.py --open</pre>
+    </div>
+    <p style="margin-bottom: 0;">Cache-backed inference, training, profiling, and multimodal runs appear automatically when their artifacts use the canonical v8 model root.</p>
+</div>
+
+<div class="card card-blue">
+    <h3 style="margin-top: 0;">Headless Server Access</h3>
+    <p>
+        When the server has no window manager, serve the canonical model root and use an SSH tunnel.
+        Keeping the HTTP server on loopback avoids exposing unauthenticated reports to the surrounding network.
+    </p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre># Run on the headless CKE server.
+cd "${CK_CACHE_DIR:-$HOME/.cache/ck-engine-v8/models}"
+python3 -m http.server 7021 --bind 127.0.0.1
+
+# Run on the workstation that has a browser.
+ssh -L 7021:127.0.0.1:7021 USER@SERVER
+
+# Then open:
+http://127.0.0.1:7021/ir_hub.html</pre>
+    </div>
+    <p style="margin-bottom: 0;">
+        On a trusted LAN or Tailscale network, binding with <code>--bind 0.0.0.0</code> makes the hub reachable at
+        <code>http://SERVER_IP:7021/ir_hub.html</code>. Python's development server provides no authentication or TLS;
+        do not expose it directly to the public internet.
+    </p>
+</div>
+
+<h2>Artifacts To Inspect</h2>
+
+<div class="card">
+    <p>
+        v8 has its own operator artifact surface. It is not only a decoder dump:
+        text runs can emit an <code>ir_report.html</code>, the v8 hub indexes run directories,
+        and multimodal runs carry encoder &rarr; bridge &rarr; decoder artifacts that the visualizer can render as a single circuit.
+    </p>
+    <div class="v8-artifact-grid">
+        <div class="v8-artifact-tile">
+            <strong>IR Visualizer</strong>
+            <p><code>ir_report.html</code> shows lowered ops, memory layout, kernel flow, profile artifacts, parity notes, and generated commands for a single v8 run.</p>
+        </div>
+        <div class="v8-artifact-tile">
+            <strong>v8 IR Hub</strong>
+            <p><code>ir_hub_v8.html</code> indexes cache-backed v8 runs and links reports, bridge outputs, dataset viewers, embeddings, attention exports, and probe reports.</p>
+        </div>
+        <div class="v8-artifact-tile">
+            <strong>Vision Artifacts</strong>
+            <p>Qwen3-VL/Gemma4V bridge reports expose encoder runtime, projected visual prefix, decoder mixed prefill, generated text, and profiler summaries.</p>
+        </div>
+        <div class="v8-artifact-tile">
+            <strong>Dataset Viewer</strong>
+            <p>The v8 viewer reuses the contract-tested tab model for staged data, tokenizer, vocabulary, quality, embeddings, and attention inspection.</p>
+        </div>
+    </div>
+    <div class="v8-path-scroll">
+    <table class="table v8-path-table">
+        <thead>
+            <tr><th>Artifact</th><th>Purpose</th></tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><code>~/.cache/ck-engine-v8/models/.../ir_report.html</code></td>
+                <td>Single-run v8 IR visualizer report. Generated automatically by <code>--generate-visualizer</code> or explicitly with <code>open_ir_visualizer_v8.py</code>.</td>
+            </tr>
+            <tr>
+                <td><code>~/.cache/ck-engine-v8/models/ir_hub_v8.html</code></td>
+                <td>v8 run hub for scanning all cache-backed inference, bridge, probe, and viewer artifacts.</td>
+            </tr>
+            <tr>
+                <td><code>~/.cache/ck-engine-v8/models/.../multimodal_bridge/bridge_report.json</code></td>
+                <td>Final bridge status, prompt accounting, prefix grid, and generated text.</td>
+            </tr>
+            <tr>
+                <td><code>~/.cache/ck-engine-v8/models/.../multimodal_bridge/encoder/</code></td>
+                <td>Encoder-side lowered IR, compiled runtime, and bridge artifacts.</td>
+            </tr>
+            <tr>
+                <td><code>~/.cache/ck-engine-v8/models/.../multimodal_bridge/decoder/</code></td>
+                <td>Decoder lowered IR, generated C, compiled shared library, and decode bridge artifacts.</td>
+            </tr>
+        </tbody>
+    </table>
+    </div>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre># Generate or refresh a v8 IR visualizer report for one run.
+.venv/bin/python version/v8/tools/open_ir_visualizer_v8.py \
+  --generate --run "$RUN" --html-only --strict-run-artifacts \
+  --output "$RUN/ir_report.html"
+
+# Refresh the v8 run hub.
+.venv/bin/python version/v8/tools/open_ir_hub_v8.py \
+  --models-root "${CK_CACHE_DIR:-$HOME/.cache/ck-engine-v8/models}" \
+  --output "${CK_CACHE_DIR:-$HOME/.cache/ck-engine-v8/models}/ir_hub_v8.html"
+
+# List local v8 runtimes.
+./build/ck-cli-v8 --list</pre>
+    </div>
+</div>
+
+<h2>Visualizer And Hub Gates</h2>
+
+<div class="card card-blue">
+    <p>
+        Use these gates when changing v8 visualizer tabs, embedded JSON, run-hub discovery, dataset viewer contracts,
+        or multimodal bridge artifacts. They are intentionally fast enough to run locally before a PR.
+    </p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre># Source-level tab/function/DOM contracts plus pure JS utility checks.
+make v8-visualizer-health
+
+# Generate and validate ir_report.html, dataset_viewer.html, and ir_hub_v8.html.
+make v8-visualizer-generated-e2e
+
+# Validate encoder + bridge + decoder visualizer rendering for a synthetic vision run.
+make v8-visualizer-vision-artifacts</pre>
+    </div>
+    <p class="v8-note" style="margin-bottom: 0;">
+        v8 owns the certified FP32 starter's training/backprop report and continues to own inference
+        and multimodal observability. v7 remains the reference for the broader training visualizer,
+        interactive builder, SVG workload, and training circuit matrix until each path has v8 evidence.
+    </p>
+</div>
+
+<h2>Troubleshooting</h2>
+
+<div class="card">
+    <ul>
+        <li>If you omit <code>--image-path</code>, the bridge uses a synthetic image path. That is useful for seam probes, not for validating real-image captioning.</li>
+        <li>If the bridge report is missing, check disk space first. The first compile path writes large intermediate artifacts.</li>
+        <li>If output starts echoing raw chat markers or thinking-control strings, keep <code>--chat-template auto</code> and do not force a manual template override on this model.</li>
+        <li>If captions are incoherent again, verify that the decoder GGUF and mmproj GGUF are the matching Qwen3-VL pair.</li>
+    </ul>
+</div>
+
+<h2>Support Statement</h2>
+
+<div class="alert alert-warning">
+    <div class="alert-icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+    </div>
+    <div>
+        <strong>What We Are Claiming</strong><br>
+        The tested Qwen3-VL artifact pair works in <code>v8</code> for end-to-end multimodal inference bring-up. That does not automatically extend to unrelated model families or future multimodal templates that need kernels the engine does not have yet.
+    </div>
+</div>
+
+<script>
+(function () {
+    var buttons = document.querySelectorAll('.copy-btn');
+    buttons.forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            var pre = btn.parentElement.querySelector('pre');
+            if (!pre) return;
+            var text = pre.innerText;
+            navigator.clipboard.writeText(text).then(function () {
+                var old = btn.textContent;
+                btn.textContent = 'Copied ✓';
+                btn.style.color = '#47b475';
+                btn.style.borderColor = '#47b475';
+                setTimeout(function () {
+                    btn.textContent = old;
+                    btn.style.color = '';
+                    btn.style.borderColor = '';
+                }, 1400);
+            }).catch(function () {
+                btn.textContent = '✗ Failed';
+                setTimeout(function () { btn.textContent = 'Copy'; }, 1400);
+            });
+        });
+    });
+})();
+</script>

@@ -1,0 +1,417 @@
+<!-- TITLE: Architecture Links -->
+<!-- NAV: architecture-links -->
+
+<style>
+.runbook-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1rem;
+    margin: 0.75rem 0 1.5rem;
+}
+.runbook-card {
+    background: linear-gradient(145deg, rgba(255,180,0,0.09), rgba(7,173,248,0.06));
+    border: 1px solid var(--grey);
+    border-left: 4px solid var(--orange);
+    border-radius: 8px;
+    padding: 1rem 1.1rem;
+}
+.runbook-card h3 {
+    margin-top: 0;
+    margin-bottom: 0.45rem;
+}
+.runbook-card p {
+    margin-bottom: 0.8rem;
+}
+.runbook-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    margin-bottom: 0.85rem;
+}
+.runbook-tag {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    background: rgba(255,180,0,0.12);
+    border: 1px solid rgba(255,180,0,0.3);
+    color: var(--text-secondary);
+    border-radius: 999px;
+    padding: 0.18rem 0.55rem;
+}
+.runbook-link {
+    display: inline-block;
+    text-decoration: none;
+    background: var(--orange);
+    color: var(--dark);
+    font-weight: 600;
+    border-radius: 6px;
+    padding: 0.45rem 0.75rem;
+}
+.runbook-link:hover {
+    background: var(--orange-light);
+    color: var(--dark);
+}
+</style>
+
+<h1>Architecture Links</h1>
+
+<p>A comprehensive guide to all architecture documentation in C-Kernel-Engine.</p>
+
+<h2>Runbooks</h2>
+
+<div class="runbook-grid">
+    <div class="runbook-card">
+        <h3>v8 Numerical Contracts</h3>
+        <p>How weights, circuits, kernel-map capabilities, complete reduction semantics, deterministic lowering, and parity gates prevent ad hoc runtime dispatch.</p>
+        <div class="runbook-tags"><span class="runbook-tag">circuits</span><span class="runbook-tag">kernel maps</span><span class="runbook-tag">reduction contracts</span></div>
+        <a class="runbook-link" href="v8-numerical-contracts.html">Open Numerical Contracts</a>
+    </div>
+    <div class="runbook-card">
+        <h3>Kernel Maps and Provider Selection</h3>
+        <p>How the v8 resolver picks a provider mechanically: the three-level separation, the map field reference, worked memcpy/GEMM/KV-cache examples, the fail-closed ranking rules, and the migration scoreboard.</p>
+        <div class="runbook-tags">
+            <span class="runbook-tag">kernel maps</span>
+            <span class="runbook-tag">provider selection</span>
+            <span class="runbook-tag">equivalence groups</span>
+            <span class="runbook-tag">fail-closed</span>
+        </div>
+        <a class="runbook-link" href="kernel-maps.html">Open Kernel Maps</a>
+    </div>
+    <div class="runbook-card">
+        <h3>X-Ray: Evidence and Divergence Attribution</h3>
+        <p>How CKE proves numerical correctness: the join-don't-instrument pipeline, checkpoint records, three-state verdicts and the honest scorecard, capture neutrality gates, failure classes, fix ownership, and the IR visualizer X-Ray tab.</p>
+        <div class="runbook-tags">
+            <span class="runbook-tag">x-ray</span>
+            <span class="runbook-tag">parity</span>
+            <span class="runbook-tag">capture neutrality</span>
+            <span class="runbook-tag">fix ownership</span>
+        </div>
+        <a class="runbook-link" href="xray.html">Open X-Ray</a>
+    </div>
+    <div class="runbook-card">
+        <h3>The CKE Constraint Model</h3>
+        <p>Theory of Constraints as runtime math: per-region clocks (compute, cache, DRAM, network, storage), region time as max-plus-unhidden-sync, the exposed-transfer equation, the critical-path shard scheduler, and the prediction-error control loop that ties Scaling, CKU, Memory Tetris and Zip Fusion into one theory.</p>
+        <div class="runbook-tags">
+            <span class="runbook-tag">theory of constraints</span>
+            <span class="runbook-tag">critical path</span>
+            <span class="runbook-tag">control loop</span>
+        </div>
+        <a class="runbook-link" href="constraint-model.html">Open the Constraint Model</a>
+    </div>
+    <div class="runbook-card">
+        <h3>Memory Tetris</h3>
+        <p>Research design for DRAM as a software-managed tensor cache over NVMe: arena slots, prefetch overlap, safety contracts, and X-Ray evidence. Proposed, not implemented.</p>
+        <div class="runbook-tags">
+            <span class="runbook-tag">NVMe tiering</span>
+            <span class="runbook-tag">prefetch</span>
+            <span class="runbook-tag">research design</span>
+        </div>
+        <a class="runbook-link" href="memory-tetris.html">Open Memory Tetris</a>
+    </div>
+    <div class="runbook-card">
+        <h3>Distributed CPU: Zip Fusion</h3>
+        <p>Research design for whole-graph distributed CPU scheduling: fused 1-D lanes that unzip to 2-D head-by-context attention, sync boundaries per layer as the metric, and a measurement-first plan. Proposed, not implemented.</p>
+        <div class="runbook-tags">
+            <span class="runbook-tag">distributed CPU</span>
+            <span class="runbook-tag">zip fusion</span>
+            <span class="runbook-tag">research design</span>
+        </div>
+        <a class="runbook-link" href="distributed-cpu.html">Open Zip Fusion</a>
+    </div>
+    <div class="runbook-card">
+        <h3>v8 Runbook</h3>
+        <p>The scoped operator runbook for the validated <code>v8</code> lanes. v8 now supports vision (Qwen3-VL) and audio (Whisper Tiny) alongside text-family bring-up; the canonical commands for each lane live on the runbook page.</p>
+        <div class="runbook-tags">
+            <span class="runbook-tag">cks-v8-run</span>
+            <span class="runbook-tag">ck_run_v8.py</span>
+            <span class="runbook-tag">Qwen3-VL</span>
+            <span class="runbook-tag">run_whisper_v8.py</span>
+        </div>
+        <a class="runbook-link" href="v8-runbook.html">Open v8 Runbook</a>
+    </div>
+    <div class="runbook-card">
+        <h3>v8 Vision Encoder Architecture</h3>
+        <p>Design page for how the <code>v8</code> vision encoder is derived from GGUF + template + lowering, then stitched into the decoder bridge.</p>
+        <div class="runbook-tags">
+            <span class="runbook-tag">qwen3_vl_vision.json</span>
+            <span class="runbook-tag">build_ir_v8.py</span>
+            <span class="runbook-tag">encoder → bridge → decoder</span>
+        </div>
+        <a class="runbook-link" href="v8-vision-encoder.html">Open Vision Encoder Page</a>
+    </div>
+    <div class="runbook-card">
+        <h3>Whisper Tiny End-to-End</h3>
+        <p>Audio inference through the same circuit and kernel-contract path: PCM16 WAV to log-Mel, generated FP32 encoder and decoder, nightly audio gates, and the opt-in E2E artifact test.</p>
+        <div class="runbook-tags">
+            <span class="runbook-tag">audio_transformer_*.json</span>
+            <span class="runbook-tag">run_whisper_v8.py</span>
+            <span class="runbook-tag">WAV → log-Mel → encoder → decoder</span>
+        </div>
+        <a class="runbook-link" href="v8-whisper-tiny.html">Open Whisper Tiny Page</a>
+    </div>
+    <div class="runbook-card">
+        <h3>v7 Inference + Training Runbook</h3>
+        <p>Copy/paste workflow for HF GGUF inference plus <code>true_bpe</code> training and train->infer handoff.</p>
+        <div class="runbook-tags">
+            <span class="runbook-tag">ck_run_v7.py run</span>
+            <span class="runbook-tag">train_data_pipeline_v7.py</span>
+            <span class="runbook-tag">ck_chat.py</span>
+        </div>
+        <a class="runbook-link" href="v7-runbook.html">Open v7 Runbook</a>
+    </div>
+    <div class="runbook-card">
+        <h3>v7 Python Authoring Guide</h3>
+        <p>Step-by-step notebook launch order, Python authoring syntax, and the exact handoff boundary from notebooks or <code>ck.nn</code> into the existing <code>v7</code> scripts.</p>
+        <div class="runbook-tags">
+            <span class="runbook-tag">TrainingProject</span>
+            <span class="runbook-tag">ck.v7.compile(...)</span>
+            <span class="runbook-tag">notebooks 01 → 05</span>
+        </div>
+        <a class="runbook-link" href="v7-python-authoring.html">Open Python Authoring Guide</a>
+    </div>
+    <div class="runbook-card">
+        <h3>v7 Profiling Runbook</h3>
+        <p>Repeatable performance workflow for v7 training kernels with <code>perf</code>, VTune, flamegraphs, and Advisor.</p>
+        <div class="runbook-tags">
+            <span class="runbook-tag">perf</span>
+            <span class="runbook-tag">vtune</span>
+            <span class="runbook-tag">advisor</span>
+        </div>
+        <a class="runbook-link" href="v7-profiling.html">Open v7 Profiling</a>
+    </div>
+    <div class="runbook-card">
+        <h3>Kernel Tuning Methodology</h3>
+        <p>CPU-node tuning loop for v8/v7 kernels: practical coherence, fixed-token throughput, CK profile CSV, VTune, Advisor roofline, microkernel labs, and PR logs.</p>
+        <div class="runbook-tags">
+            <span class="runbook-tag">VTune</span>
+            <span class="runbook-tag">Advisor roofline</span>
+            <span class="runbook-tag">CK_PROFILE</span>
+        </div>
+        <a class="runbook-link" href="kernel-tuning-methodology.html">Open Methodology</a>
+    </div>
+    <div class="runbook-card">
+        <h3>Stitched Divergence Harness</h3>
+        <p>Backend parity method for finding the first CK-vs-reference tensor boundary across llama.cpp/mtmd GGUF lanes and future PyTorch adapters.</p>
+        <div class="runbook-tags">
+            <span class="runbook-tag">CKDMP</span>
+            <span class="runbook-tag">llama.cpp/mtmd</span>
+            <span class="runbook-tag">first divergence</span>
+        </div>
+        <a class="runbook-link" href="divergence-harness.html">Open Harness Guide</a>
+    </div>
+    <div class="runbook-card">
+        <h3>v7 SVG Dataset Runbook</h3>
+        <p>Operator workflow to generate Stage A pretraining and Stage B midtraining SVG corpora from <code>docs/site/assets/*.svg</code>, then hand off to v7 training.</p>
+        <div class="runbook-tags">
+            <span class="runbook-tag">build_svg_corpus_from_assets_v7.py</span>
+            <span class="runbook-tag">prepare_ascii_dataset_v7.py</span>
+            <span class="runbook-tag">curriculum-stage stage_a|stage_b</span>
+        </div>
+        <a class="runbook-link" href="v7-svg-dataset-runbook.html">Open SVG Dataset Runbook</a>
+    </div>
+</div>
+
+<div class="grid grid-2">
+    <div class="card card-accent">
+        <h3 style="margin-top: 0;">Core</h3>
+        <ul class="link-list">
+            <li><a href="architecture.html">System Overview</a>
+                <span class="subtitle">IR, Codegen, Kernels</span></li>
+            <li><a href="v8-numerical-contracts.html">v8 Numerical Contracts</a>
+                <span class="subtitle">Circuits, kernel capabilities, deterministic reduction resolution, and parity gates</span></li>
+            <li><a href="v8-numerical-contracts.html#gemma3-schedule-case-study">Gemma3 Schedule Case Study</a>
+                <span class="subtitle">Matching llama.cpp's numerical schedule bit-exactly — 256/256 rows on Q4_K_M and UD-Q4_K_XL</span></li>
+            <li><a href="kernel-maps.html">Kernel Maps and Provider Selection</a>
+                <span class="subtitle">297 machine-checked maps, the fail-closed resolver, and the migration scoreboard</span></li>
+            <li><a href="kernel-architecture.html">v8 Kernel Architecture</a>
+                <span class="subtitle">The registry by operation family: selection rules, equivalence groups, and the math behind each kernel class</span></li>
+            <li><a href="kernel-architecture.html#composite-circuits">Composite Circuits</a>
+                <span class="subtitle">extends + components + stitch — how multimodal families compose certified circuits</span></li>
+            <li><a href="architecture-variants.html">Architecture Variants</a>
+                <span class="subtitle">What Laguna, Cohere2, Instella, and Nemotron-H each forced the kernel registry to grow</span></li>
+            <li><a href="v8-moe-expert-kernels.html">MoE Expert Kernels</a>
+                <span class="subtitle">Grouped/bucketed expert prefill, mixed-quant compact experts, parallel throughput kernels</span></li>
+            <li><a href="v8-cohere-kernels.html">Cohere Kernel Story</a>
+                <span class="subtitle">Command R provider reuse, North MoE, Compass BF16 vision, Transcribe audio foundation</span></li>
+            <li><a href="ir-pipeline.html">IR Pipeline v6.6</a>
+                <span class="subtitle">Templates → IR1 → IR2 → Lowering</span></li>
+            <li><a href="v7-backprop-ir.html">v7 Backprop IR Pipeline</a>
+                <span class="subtitle">Init → IR1 → IR2 → Layout → Codegen + canary diagnostics</span></li>
+            <li><a href="v7-cross-entropy-parity.html">v7 Cross-Entropy Parity</a>
+                <span class="subtitle">p - one_hot derivation, PyTorch semantics, long-horizon drift fixes</span></li>
+            <li><a href="v7-grad-accum-windows.html">v7 Grad-Accum Windows</a>
+                <span class="subtitle">Micro-batch vs effective batch, N vs K, CPU batch simulation</span></li>
+            <li><a href="v7-backprop-ir.html#v7-train-data-pipeline">v7 Train Data Pipeline</a>
+                <span class="subtitle">One-command dataset -> tokenizer -> train orchestration</span></li>
+            <li><a href="v7-backprop-ir.html#v7-runtime-stitch-graph">v7 Runtime Stitch Graph</a>
+                <span class="subtitle">Function-level forward/backward/accum/optimizer stitching view</span></li>
+            <li><a href="v8-runbook.html">v8 Runbook</a>
+                <span class="subtitle">Current operator path for validated v8 text, vision, and Whisper Tiny audio inference</span></li>
+            <li><a href="v8-vision-encoder.html">v8 Vision Encoder Architecture</a>
+                <span class="subtitle">How GGUF intake, template lowering, memory planning, and bridge stitching power the working vision path</span></li>
+            <li><a href="v8-mla-kimi.html">v8 MLA / Kimi Decode Cache</a>
+                <span class="subtitle">Kimi/DeepSeek-style MLA template contract, explicit cache store/read lowering, and reference kernels</span></li>
+            <li><a href="v8-whisper-tiny.html">Whisper Tiny End-to-End</a>
+                <span class="subtitle">Generated FP32 audio encoder/decoder circuits from PCM16 WAV, with the pipeline infographic, nightly gates, and current limitations</span></li>
+            <li><a href="v7-runbook.html">v7 Inference + Training Runbook</a>
+                <span class="subtitle">Copy/paste commands for HF GGUF inference + true_bpe training</span></li>
+            <li><a href="v7-python-authoring.html">v7 Python Authoring Guide</a>
+                <span class="subtitle">Notebook lane, <code>TrainingProject</code>, and <code>ck.v7.compile(...)</code> in one place</span></li>
+            <li><a href="v7-svg-dataset-runbook.html">v7 SVG Dataset Runbook</a>
+                <span class="subtitle">Dataset generation for Stage A pretrain and Stage B midtrain</span></li>
+            <li><a href="model-kernel-matrix.html">Model + Kernel Matrix</a>
+                <span class="subtitle">Qwen2/Qwen3/Gemma + kernel coverage</span></li>
+            <li><a href="tokenizer.html">Tokenizer</a>
+                <span class="subtitle">BPE, WordPiece, Trie</span></li>
+            <li><a href="kernels.html">Kernel Reference</a>
+                <span class="subtitle">Forward/backward ops</span></li>
+            <li><a href="deltanet-deep-dive.html">Gated DeltaNet Deep Dive</a>
+                <span class="subtitle">Qwen3.5/qwen3next recurrent attention state update and kernel parity</span></li>
+            <li><a href="audio-kernels-deep-dive.html">Audio Kernels Deep Dive</a>
+                <span class="subtitle">WAV decode, resample, STFT, log-Mel, Conv1D stem, token transpose — math and parity oracles per kernel</span></li>
+            <li><a href="codegen.html">Code Generation</a>
+                <span class="subtitle">IR to C compilation</span></li>
+            <li><a href="iteration-philosophy.html">Iteration Philosophy</a>
+                <span class="subtitle">Why v1→v6 matters</span></li>
+            <li><a href="ir-v2.html">IR v2 Format</a>
+                <span class="subtitle">Case study: symbolic dimensions</span></li>
+            <li><a href="concepts.html">Deep Dive Concepts</a>
+                <span class="subtitle">RoPE, Flash Attention, GQA</span></li>
+        </ul>
+    </div>
+
+    <div class="card card-accent">
+        <h3 style="margin-top: 0;">Quantization</h3>
+        <ul class="link-list">
+            <li><a href="quantization.html">Quant Fundamentals</a>
+                <span class="subtitle">Block formats, grouping</span></li>
+            <li><a href="quantization-visuals.html">Bit Manipulation Visuals</a>
+                <span class="subtitle">Q5_0, Q4_K, INT8 with spaced repetition</span></li>
+            <li><a href="quant-formats.html">Quant Format Reference</a>
+                <span class="subtitle">Byte-level visualization</span></li>
+            <li><a href="gguf-bump.html">GGUF to Bump</a>
+                <span class="subtitle">Weight conversion</span></li>
+            <li><a href="gguf-conversion.html">GGUF Parsing</a>
+                <span class="subtitle">Byte-level guide</span></li>
+        </ul>
+    </div>
+
+    <div class="card card-accent">
+        <h3 style="margin-top: 0;">Optimization</h3>
+        <ul class="link-list">
+            <li><a href="gemm-memory-layout.html">GEMM Memory Layout</a>
+                <span class="subtitle">NN/NT layouts, offsets</span></li>
+            <li><a href="gemm-optimization.html">GEMM Optimization</a>
+                <span class="subtitle">AVX, MKL, blocking</span></li>
+            <li><a href="gemm-memory-layout.html#v7-train-parallel-plan">v7 Train Layout + Dispatch</a>
+                <span class="subtitle">IR3 memory + parallel execution plan</span></li>
+            <li><a href="gemm-optimization.html#v7-threadpool-playbook">Threadpool GEMM Playbook</a>
+                <span class="subtitle">Split M/N/K policy for training</span></li>
+            <li><a href="kernel-tuning-methodology.html">Kernel Tuning Methodology</a>
+                <span class="subtitle">VTune, Advisor, roofline, CK profile, parity, and benchmark log discipline</span></li>
+            <li><a href="simd-architecture.html">SIMD Architecture</a>
+                <span class="subtitle">AVX-512, VNNI, AMX</span></li>
+            <li><a href="flash_attention.html">Flash Attention Analysis</a>
+                <span class="subtitle">Why llama.cpp is faster</span></li>
+        </ul>
+    </div>
+
+    <div class="card card-accent">
+        <h3 style="margin-top: 0;">Infrastructure</h3>
+        <ul class="link-list">
+            <li><a href="memory-safety.html">Memory Safety</a>
+                <span class="subtitle">Bump allocator, canaries</span></li>
+            <li><a href="deterministic-memory.html">Deterministic Memory</a>
+                <span class="subtitle">RDMA, interpretability</span></li>
+            <li><a href="constraint-model.html">The CKE Constraint Model</a>
+                <span class="subtitle">Umbrella math tying Scaling, CKU, Memory Tetris and Zip into one control loop</span></li>
+            <li><a href="memory-tetris.html">Memory Tetris</a>
+                <span class="subtitle">Research design: DRAM as a tensor cache over NVMe (not implemented)</span></li>
+            <li><a href="distributed-cpu.html">Distributed CPU: Zip Fusion</a>
+                <span class="subtitle">Research design: whole-graph scheduling across CPU nodes (not implemented)</span></li>
+            <li><a href="profiling.html">Profiling Guide</a>
+                <span class="subtitle">Valgrind, perf, flamegraphs</span></li>
+            <li><a href="kernel-tuning-methodology.html">Kernel Tuning Methodology</a>
+                <span class="subtitle">CPU-node roofline workflow for v8/v7 kernel performance work</span></li>
+            <li><a href="v8-runbook.html">v8 Runbook</a>
+                <span class="subtitle">Validated text, vision, and Whisper Tiny audio operator workflows</span></li>
+            <li><a href="v8-vision-encoder.html">v8 Vision Encoder Architecture</a>
+                <span class="subtitle">Bridge and encoder design notes for the current multimodal inference lane</span></li>
+            <li><a href="v8-whisper-tiny.html">Whisper Tiny End-to-End</a>
+                <span class="subtitle">Generated audio encoder/decoder circuits, pipeline infographic, nightly gates</span></li>
+            <li><a href="v7-profiling.html">v7 Profiling Runbook</a>
+                <span class="subtitle">VTune + Advisor + perf/flamegraph on train kernels</span></li>
+            <li><a href="v7-runbook.html">v7 Inference + Training Runbook</a>
+                <span class="subtitle">Operational workflow from dataset to chat output</span></li>
+            <li><a href="v7-python-authoring.html">v7 Python Authoring Guide</a>
+                <span class="subtitle">Notebook-driven and module-driven authoring entrypoints for the same <code>v7</code> runtime</span></li>
+            <li><a href="testing.html">Testing</a>
+                <span class="subtitle">Numerical parity verification</span></li>
+            <li><a href="xray.html">X-Ray: Evidence and Divergence Attribution</a>
+                <span class="subtitle">Schema-validated parity evidence, capture neutrality, fix ownership</span></li>
+            <li><a href="divergence-harness.html">Stitched Divergence Harness</a>
+                <span class="subtitle">First failing tensor boundary across CK and reference backends</span></li>
+        </ul>
+    </div>
+</div>
+
+<h2>Temp / Work in Progress</h2>
+
+<div class="alert alert-warning">
+    <div class="alert-icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+    </div>
+    <div>
+        <strong>Draft Documentation</strong><br>
+        These pages are work-in-progress and may be moved or updated.
+    </div>
+</div>
+
+<div class="grid grid-2">
+    <div class="card card-green">
+        <h3 style="margin-top: 0;">Quantization Math Deep Dive</h3>
+        <p>Explains Q5_0/Q8_0 block formats, dequantization math, and AVX-512 vectorization strategy.</p>
+        <a href="quantization-math-temp.html" class="btn btn-primary">Read More</a>
+    </div>
+
+    <div class="card card-green">
+        <h3 style="margin-top: 0;">GEMM Memory Layout</h3>
+        <p>Covers quantized block storage, cache blocking strategies, and KV cache layouts.</p>
+        <a href="gemm-memory-layout-temp.html" class="btn btn-primary">Read More</a>
+    </div>
+</div>
+
+<h2>Quick Navigation</h2>
+
+<div class="card">
+    <h3 style="margin-top: 0;">By Task</h3>
+    <table>
+        <tr>
+            <th>Task</th>
+            <th>Documentation</th>
+        </tr>
+        <tr>
+            <td><strong>Understanding the system</strong></td>
+            <td><a href="architecture.html">System Overview</a>, <a href="concepts.html">Concepts</a>, <a href="v7-backprop-ir.html">v7 Backprop IR</a>, <a href="v7-cross-entropy-parity.html">v7 CE Parity</a>, <a href="v7-grad-accum-windows.html">v7 Grad-Accum Windows</a>, <a href="v7-runbook.html">v7 Runbook</a>, <a href="v7-python-authoring.html">v7 Python Authoring Guide</a></td>
+        </tr>
+        <tr>
+            <td><strong>Implementing new kernels</strong></td>
+            <td><a href="kernels.html">Kernel Reference</a>, <a href="deltanet-deep-dive.html">Gated DeltaNet Deep Dive</a>, <a href="codegen.html">Codegen</a></td>
+        </tr>
+        <tr>
+            <td><strong>Quantization work</strong></td>
+            <td><a href="quantization.html">Quant Fundamentals</a>, <a href="quantization-visuals.html">Bit Visuals</a>, <a href="gguf-conversion.html">GGUF Parsing</a></td>
+        </tr>
+        <tr>
+            <td><strong>Performance optimization</strong></td>
+            <td><a href="kernel-tuning-methodology.html">Kernel Tuning Methodology</a>, <a href="gemm-memory-layout.html">GEMM Layout</a>, <a href="gemm-memory-layout.html#v7-train-parallel-plan">v7 Train Layout+Dispatch</a>, <a href="gemm-optimization.html#v7-threadpool-playbook">Threadpool Playbook</a>, <a href="simd-architecture.html">SIMD</a></td>
+        </tr>
+            <tr>
+                <td><strong>Debugging & profiling</strong></td>
+                <td><a href="kernel-tuning-methodology.html">Kernel Tuning Methodology</a>, <a href="profiling.html">Profiling</a>, <a href="v7-profiling.html">v7 Profiling Runbook</a>, <a href="testing.html">Testing</a>, <a href="divergence-harness.html">Stitched Divergence Harness</a>, <a href="v7-cross-entropy-parity.html">v7 CE Parity Deep Dive</a>, <a href="v7-backprop-ir.html#v7-runtime-stitch-graph">v7 Runtime Stitch Graph</a>, <a href="v7-runbook.html">v7 Runbook</a>, <a href="v7-python-authoring.html">v7 Python Authoring Guide</a></td>
+            </tr>
+            <tr>
+                <td><strong>Operator train + compute workflow</strong></td>
+                <td><a href="v7-svg-dataset-runbook.html">v7 SVG Dataset Runbook</a>, <a href="v7-runbook.html">v7 Inference + Training Runbook</a>, <a href="v7-python-authoring.html">v7 Python Authoring Guide</a>, <a href="v7-profiling.html">v7 Profiling Runbook</a></td>
+            </tr>
+        </table>
+</div>

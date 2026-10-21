@@ -1,0 +1,728 @@
+<!-- TITLE: Quantization Formats Visual Guide -->
+<!-- NAV: quantization -->
+
+<style>
+    .format-summary {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 1rem;
+        margin-bottom: 2rem;
+    }
+
+    .format-card {
+        background: var(--dark-card);
+        border-radius: 8px;
+        padding: 1rem 1.25rem;
+        border-left: 4px solid var(--blue);
+    }
+
+    .format-card h3 {
+        color: #00c7fd;
+        font-size: 1rem;
+        margin-bottom: 0.5rem;
+    }
+
+    .format-card .bits {
+        color: var(--orange);
+        font-weight: 600;
+        font-size: 1.5rem;
+    }
+
+    .format-card .details {
+        color: var(--text-muted);
+        font-size: 0.85rem;
+        margin-top: 0.25rem;
+    }
+
+    .simple-formats .format-card { border-left-color: var(--blue); }
+    .k-quant-formats .format-card { border-left-color: var(--orange); }
+    .fp4-formats .format-card { border-left-color: #47b475; }
+
+    .section-label {
+        color: var(--text-muted);
+        font-size: 0.85rem;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        margin-bottom: 0.75rem;
+        font-weight: 600;
+    }
+
+    .infographic-container {
+        background: var(--bg-dark);
+        border-radius: 12px;
+        border: 1px solid var(--grey);
+        overflow: hidden;
+        margin: 2rem 0;
+    }
+
+    .infographic-header {
+        background: var(--dark-card);
+        padding: 1rem 1.5rem;
+        border-bottom: 1px solid var(--grey);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 1rem;
+    }
+
+    .infographic-header h2 {
+        color: var(--white);
+        font-size: 1.2rem;
+        margin: 0;
+    }
+
+    .infographic-header h2::before {
+        display: none;
+    }
+
+    .infographic-actions {
+        display: flex;
+        gap: 0.5rem;
+    }
+
+    .infographic-actions button {
+        background: var(--grey);
+        border: none;
+        color: var(--text-primary);
+        padding: 0.5rem 1rem;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 0.85rem;
+        transition: var(--transition);
+    }
+
+    .infographic-actions button:hover {
+        background: var(--orange);
+        color: var(--dark);
+    }
+
+    .infographic-preview {
+        background: var(--bg-dark);
+        border-radius: 8px;
+        padding: 1rem;
+        text-align: center;
+    }
+
+    .infographic-preview p {
+        color: var(--text-muted);
+        font-size: 0.9rem;
+        margin-top: 1rem;
+    }
+
+    .key-concepts {
+        background: var(--dark-card);
+        border-radius: 8px;
+        padding: 1.5rem;
+        margin: 2rem 0;
+    }
+
+    .key-concepts h2 {
+        color: var(--orange);
+        margin-bottom: 1rem;
+    }
+
+    .concept-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 1.5rem;
+    }
+
+    .concept {
+        background: var(--code-bg);
+        border-radius: 6px;
+        padding: 1rem;
+        border: 1px solid var(--grey);
+    }
+
+    .concept h3 {
+        color: #00c7fd;
+        font-size: 1rem;
+        margin-bottom: 0.5rem;
+    }
+
+    .concept p {
+        color: var(--text-secondary);
+        font-size: 0.9rem;
+    }
+
+    .back-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        color: var(--text-secondary);
+        text-decoration: none;
+        margin-bottom: 1.5rem;
+        font-size: 0.9rem;
+        transition: var(--transition);
+    }
+
+    .back-link:hover {
+        color: var(--orange);
+    }
+
+    /* Inline SVG expand overlay (same pattern as quantization.html / kernel-architecture.html) */
+    .svg-expand { position: relative; }
+    .svg-expand svg { cursor: zoom-in; }
+    .svg-expand svg:focus-visible { outline: 2px solid var(--orange); outline-offset: 3px; }
+    .svg-expand-hint {
+      text-align: center; font-size: 0.72rem; color: var(--text-muted);
+      margin-top: -0.6rem; margin-bottom: 1rem; font-family: 'JetBrains Mono', monospace;
+    }
+    #rf-svg-overlay {
+      display: none; position: fixed; inset: 0; z-index: 999999;
+      background: rgba(0, 0, 0, 0.95); padding: 3.2rem 1rem 1rem;
+    }
+    #rf-svg-overlay .rf-ov-bar {
+      position: fixed; top: 0; left: 0; right: 0; padding: 0.55rem 1rem;
+      background: rgba(0,0,0,0.9); border-bottom: 1px solid #333;
+      display: flex; justify-content: space-between; align-items: center; gap: 0.6rem;
+    }
+    #rf-svg-overlay .rf-ov-title { color: #ccc; font-size: 0.82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #rf-svg-overlay .rf-ov-bar button {
+      background: #333; color: #ffb400; border: 1px solid #555; padding: 0.3rem 0.7rem;
+      cursor: pointer; border-radius: 4px; font-size: 0.85rem;
+    }
+    #rf-svg-overlay .rf-ov-stage { width: 100%; height: 100%; overflow: auto; display: flex; align-items: flex-start; justify-content: center; }
+    #rf-svg-overlay .rf-ov-stage img { max-width: none; height: auto; }
+</style>
+
+<a href="quantization.html" class="back-link">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+    Back to Quantization Deep Dive
+</a>
+
+<h1>Quantization Formats Visual Guide</h1>
+<p class="lead">Byte-level structure, headers, and dequantization math for the formats CKE executes</p>
+
+<div class="key-concepts" style="margin-top: 1rem;">
+    <h2>Where These Formats Run Today</h2>
+    <p style="color: var(--text-secondary); font-size: 0.95rem;">
+        <strong>v8 is the primary engine.</strong> All current model families — Gemma 3/4, Qwen 2 / 3 / 3.5 / 3.6 / 3.8, GLM-4,
+        Nemotron, Kimi, Cohere2, Laguna, Instella-MoE, Nanbeige, GPT-2, Qwen3-VL / Qwen3.6-VL vision, and Whisper audio —
+        run as v8 generated runtimes over the GGUF formats below plus first-class BF16 storage.
+        <strong>v7 remains the training lane</strong> (FP32 forward/backward); its quantized inference path is superseded by v8.
+        The byte layouts are identical in both engines because both are parity-gated against llama.cpp.
+    </p>
+    <div class="concept-grid" style="margin-top: 1rem;">
+        <div class="concept">
+            <h3>Dense GGUF lanes</h3>
+            <p>Q4_K_M, Q5_K_M, and Q8_0 checkpoints across Gemma, Qwen, GLM-4, Nemotron, and Nanbeige. Mixed dispatch: Q4_K/Q5_K/Q6_K weights with Q8_K or Q8_0 quantized activations.</p>
+        </div>
+        <div class="concept">
+            <h3>MoE mixed-quant dispatch</h3>
+            <p>Qwen3.5 35B-A3B and Instella-MoE route experts through mixed pairs — Q4_K x Q4_K, Q4_K x Q5_K (bucketed), Q4_K x Q6_K, Q5_0 / Q5_1 with Q8_0 — selected per tensor by the kernel maps.</p>
+        </div>
+        <div class="concept">
+            <h3>BF16 as a first-class dtype</h3>
+            <p>Kimi, Instella, and Qwen3.6 lanes run BF16 weights/KV with FP32 accumulation (AVX-512 BF16 / AMX where available, portable rounding elsewhere). Not a GGUF quant — a storage contract.</p>
+        </div>
+        <div class="concept">
+            <h3>Format support boundary</h3>
+            <p>Supported: Q4_0, Q4_1, Q5_0, Q5_1, Q8_0, Q4_K, Q5_K, Q6_K, Q8_K, plus NVFP4 (MoE expert weights only, candidate status). One nuance: Q4_0 and Q4_1 have C kernels and dtype IDs but no v8 kernel maps — they remain reachable through legacy v7 bindings only, so no v8 circuit selects them. Q5_K's block struct lives privately in <code>src/kernels/gemm_kernels_q5_k.c</code> rather than in the public header. Not supported: Q2_K, Q3_K, and the IQ imatrix family — the runbook's model table lists tested artifacts per family.</p>
+        </div>
+    </div>
+</div>
+
+<!-- Quick Reference Cards -->
+<div class="section-label">Simple Formats (32 weights/block)</div>
+<div class="format-summary simple-formats">
+    <div class="format-card">
+        <h3>Q4_0</h3>
+        <div class="bits">4.5 bits/weight</div>
+        <div class="details">18 bytes = 2 (d) + 32x4/8</div>
+    </div>
+    <div class="format-card">
+        <h3>Q4_1</h3>
+        <div class="bits">5.0 bits/weight</div>
+        <div class="details">20 bytes = 2+2 (d,m) + 32x4/8</div>
+    </div>
+    <div class="format-card">
+        <h3>Q5_0</h3>
+        <div class="bits">5.5 bits/weight</div>
+        <div class="details">22 bytes = 2 (d) + 32x1/8 + 32x4/8</div>
+    </div>
+    <div class="format-card">
+        <h3>Q5_1</h3>
+        <div class="bits">6.0 bits/weight</div>
+        <div class="details">24 bytes = 4 (d,m) + 32x1/8 + 32x4/8</div>
+    </div>
+    <div class="format-card">
+        <h3>Q8_0</h3>
+        <div class="bits">8.5 bits/weight</div>
+        <div class="details">34 bytes = 2 (d) + 32x8/8</div>
+    </div>
+</div>
+
+<div class="section-label">K-Quant Formats (256 weights/block)</div>
+<div class="format-summary k-quant-formats">
+    <div class="format-card">
+        <h3>Q4_K (Primary)</h3>
+        <div class="bits">4.5 bits/weight</div>
+        <div class="details">144 bytes = 4+12 (header) + 256x4/8</div>
+    </div>
+    <div class="format-card">
+        <h3>Q5_K</h3>
+        <div class="bits">5.5 bits/weight</div>
+        <div class="details">176 bytes = 4+12 (header) + 32 (qh) + 256x4/8</div>
+    </div>
+    <div class="format-card">
+        <h3>Q6_K</h3>
+        <div class="bits">6.5625 bits/weight</div>
+        <div class="details">210 bytes = 18 (header) + 256x6/8</div>
+    </div>
+    <div class="format-card">
+        <h3>Q8_K (Activations)</h3>
+        <div class="bits">9.125 bits/weight</div>
+        <div class="details">292 bytes = 36 (header) + 256x8/8</div>
+    </div>
+</div>
+
+<div class="section-label">FP4 Formats (64 weights/block)</div>
+<div class="format-summary fp4-formats">
+    <div class="format-card">
+        <h3>NVFP4 (MoE-only, candidate)</h3>
+        <div class="bits">4.5 bits/weight</div>
+        <div class="details">36 bytes = 4 (unsigned E4M3 sub-scales) + 64x4/8; the FP32 per-tensor/expert scale is a separate runtime operand, never stored in the block</div>
+        <div class="details">E2M1 nibbles in split-half order (low nibble = sub-block lanes 0-7, high = lanes 8-15). Only two v8 kernel maps exist (routed + shared MoE SwiGLU experts), both candidate status — not a general GEMM format. Block anatomy and dequant pipeline: <a href="quantization.html#nvfp4" style="color: #00c7fd;">Quantization Deep Dive — NVFP4</a>.</div>
+    </div>
+</div>
+
+<!-- Main Infographic - Click to open in fullscreen viewer -->
+<div class="infographic-container">
+    <div class="infographic-header">
+        <h2>Complete Format Reference</h2>
+        <div class="infographic-actions">
+            <button onclick="svgViewer.open(0)">Open Viewer</button>
+            <button onclick="svgViewer.open(0); setTimeout(function(){svgViewer.fitWidth();}, 100);">Fit Width</button>
+        </div>
+    </div>
+    <div class="infographic-preview">
+        <div class="svg-viewer" data-title="Quantization Formats - Complete Reference">
+            <img src="assets/quantization-formats.svg" alt="C-Kernel-Engine Quantization Formats - Complete byte-level visualization" style="width: 100%; cursor: pointer;">
+        </div>
+        <p>Click image to open in fullscreen viewer with zoom and pan controls</p>
+    </div>
+</div>
+
+<!-- How CKE executes these formats -->
+<div class="infographic-container">
+    <div class="infographic-header">
+        <h2>How CKE Executes These Formats</h2>
+        <div class="infographic-actions">
+            <button onclick="svgViewer.open(1)">Open Viewer</button>
+            <button onclick="svgViewer.open(1); setTimeout(function(){svgViewer.fitWidth();}, 100);">Fit Width</button>
+        </div>
+    </div>
+    <div class="infographic-preview">
+        <div class="svg-viewer" data-title="How CKE Executes Quantized Weights">
+            <img src="assets/quant-execution-pipeline.svg" alt="Pipeline from GGUF quantized weights through kernel-map provider selection to per-tile execution with FP32 accumulation" style="width: 100%; cursor: pointer;">
+        </div>
+        <p>From GGUF bytes to provider-selected kernels: the same path for every model family. Click to open the fullscreen viewer.</p>
+    </div>
+    <div style="padding: 1rem 1.5rem; border-top: 1px solid var(--grey);">
+        <p style="color: var(--text-secondary); font-size: 0.95rem; margin:  0 0 0.75rem 0;">
+            The byte layouts above are the storage format; the diagram shows the execution contract. For the mechanism behind each step:
+        </p>
+        <ul style="list-style: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 0.6rem; padding: 0; margin: 0; font-size: 0.95rem;">
+            <li><a href="kernel-maps.html" style="color: #00c7fd; text-decoration: none;">Kernel Maps</a> — provider metadata, numerical contracts, equivalence groups</li>
+            <li><a href="kernel-architecture.html" style="color: #00c7fd; text-decoration: none;">Kernel Architecture</a> — how maps, lowering, and codegen connect</li>
+            <li><a href="model-kernel-matrix.html" style="color: #00c7fd; text-decoration: none;">Model and Kernel Matrix</a> — which formats each family actually runs</li>
+            <li><a href="quantization.html" style="color: #00c7fd; text-decoration: none;">Quantization Deep Dive</a> — theory and dequantization math</li>
+            <li><a href="xray.html" style="color: #00c7fd; text-decoration: none;">X-Ray</a> — see which provider ran and why others were rejected</li>
+        </ul>
+    </div>
+</div>
+
+<!-- Recipes vs Formats: the mixed-quant story -->
+<div class="key-concepts" id="recipes-vs-formats">
+    <h2>Recipes vs Formats</h2>
+    <p style="color: var(--text-secondary); font-size: 0.95rem;">
+        A GGUF label like <code>Q5_K_M</code> or <code>UD-Q4_K_XL</code> is a <strong>recipe</strong> &mdash; a
+        per-tensor format assignment &mdash; not a single format. The converter records each tensor's actual dtype
+        in the weights manifest, and the runtime dispatches <em>per tensor</em>: every weight carries its own dtype
+        through lowering, and the kernel map selects a provider for that dtype's numerical contract. The practical
+        consequence: a new recipe needs <strong>zero new kernels</strong> when providers for the constituent formats
+        already exist &mdash; only the assignment changes, not the arithmetic.
+    </p>
+
+    <div class="svg-expand">
+    <svg viewBox="0 0 1180 684" width="100%" role="img" tabindex="0" data-svg-title="One artifact, many formats - the Q5_K_M recipe census"
+         aria-label="One artifact, many formats. A GGUF label such as Q5_K_M names a per-tensor recipe, not a single format. Left panel: one decoder layer of gemma-3-270m-it repeated 18 times, with wq and wk and the ffn up-projection w1 in q5_1, wv in q8_0 on 9 layers and q5_1 on 9, wo in q5_k, w2 in q6_k on 9 layers and q5_k on 9, and twelve norm and bias tensors in fp32; the token embedding is q8_0 and the tokenizer tables are i32, u8, and f32. Right panel: the converter records each tensor's actual dtype in the weights manifest, the runtime kernel map selects a provider per tensor dtype, so a new recipe needs zero new kernels when providers for the constituent formats exist; the tested Unsloth Gemma3 UD-Q4_K_XL artifact is a mixed Q4_K, Q5_0, Q5_K, Q6_K, Q8_0 recipe, not a distinct UD arithmetic format. Census table of 332 weight tensors: q5_1 63, q5_k 27, q8_0 10, q6_k 9, fp32 218, plus 5 tokenizer tables."
+         style="max-width: 1180px; margin: 0.5rem auto 1rem; display: block; font-family: 'Inter', system-ui, sans-serif;">
+      <style>
+        .rf-box{fill:#323232;stroke:#454545;stroke-width:1.4;}
+        .rf-panel{fill:#0b1118;stroke:#263242;stroke-width:1.2;}
+        .rf-title{fill:#f5f5f5;font-size:15px;font-weight:700;}
+        .rf-sub{fill:#b0b0b0;font-size:11.5px;font-family:'JetBrains Mono',monospace;}
+        .rf-hi{fill:#7fd8ec;font-size:11.5px;font-family:'JetBrains Mono',monospace;}
+        .rf-good{fill:#7fd4a3;font-size:11.5px;font-family:'JetBrains Mono',monospace;}
+        .rf-warn{fill:#ffd38a;font-size:11.5px;font-family:'JetBrains Mono',monospace;}
+        .rf-band{fill:#9aa7b4;font-size:12px;font-weight:600;letter-spacing:.06em;}
+        .rf-cap{fill:#808080;font-size:12px;font-family:'JetBrains Mono',monospace;}
+      </style>
+      <defs>
+        <marker id="rf-arrow" markerWidth="9" markerHeight="9" refX="6.5" refY="3" orient="auto">
+          <path d="M0,0 L7,3 L0,6 Z" fill="#8aa0b4"/>
+        </marker>
+      </defs>
+
+      <text x="24" y="32" class="rf-band">ONE ARTIFACT, MANY FORMATS - "Q5_K_M" NAMES A PER-TENSOR RECIPE, NOT A FORMAT</text>
+
+      <!-- left: one decoder layer, colored by format -->
+      <rect class="rf-panel" x="24" y="48" width="470" height="300" rx="12"/>
+      <text x="44" y="76" class="rf-title" font-size="13">One decoder layer (stack repeats 18x)</text>
+      <text x="44" y="94" class="rf-sub">the recipe assigns a format per tensor</text>
+      <rect x="44" y="110" width="14" height="14" rx="3" fill="#7fd8ec"/><text x="70" y="122" class="rf-sub">wq  - q5_1</text>
+      <rect x="44" y="134" width="14" height="14" rx="3" fill="#7fd8ec"/><text x="70" y="146" class="rf-sub">wk  - q5_1</text>
+      <rect x="44" y="158" width="14" height="14" rx="3" fill="#7fd4a3"/><rect x="62" y="158" width="14" height="14" rx="3" fill="#7fd8ec"/><text x="88" y="170" class="rf-sub">wv  - q8_0 on 9 layers, q5_1 on 9</text>
+      <rect x="44" y="182" width="14" height="14" rx="3" fill="#07adf8"/><text x="70" y="194" class="rf-sub">wo  - q5_k</text>
+      <rect x="44" y="206" width="14" height="14" rx="3" fill="#7fd8ec"/><text x="70" y="218" class="rf-sub">w1 (ffn up/gate) - q5_1</text>
+      <rect x="44" y="230" width="14" height="14" rx="3" fill="#ffd38a"/><rect x="62" y="230" width="14" height="14" rx="3" fill="#07adf8"/><text x="88" y="242" class="rf-sub">w2 (ffn down) - q6_k on 9, q5_k on 9</text>
+      <rect x="44" y="254" width="14" height="14" rx="3" fill="#b0b0b0"/><text x="70" y="266" class="rf-sub">norms + biases (12 tensors) - fp32</text>
+      <text x="44" y="302" class="rf-sub">outside the stack: token_emb q8_0</text>
+      <text x="44" y="322" class="rf-sub">tokenizer tables: i32 / u8 / f32 (5)</text>
+
+      <!-- arrow to dispatch -->
+      <path d="M494,198 L598,198" fill="none" stroke="#8aa0b4" stroke-width="1.6" marker-end="url(#rf-arrow)"/>
+      <text x="512" y="184" class="rf-sub">per-tensor</text>
+      <text x="508" y="222" class="rf-sub">dtype</text>
+
+      <!-- right: per-tensor dispatch -->
+      <rect class="rf-panel" x="604" y="48" width="552" height="300" rx="12"/>
+      <text x="624" y="76" class="rf-title" font-size="13">Dispatch is per tensor, not per recipe</text>
+      <rect class="rf-box" x="624" y="94" width="230" height="70" rx="10"/>
+      <text x="644" y="120" class="rf-title" font-size="13">converter</text>
+      <text x="644" y="140" class="rf-sub">records each tensor's actual</text>
+      <text x="644" y="156" class="rf-sub">dtype in the weights manifest</text>
+      <path d="M854,129 L878,129" fill="none" stroke="#8aa0b4" stroke-width="1.5" marker-end="url(#rf-arrow)"/>
+      <rect class="rf-box" x="884" y="94" width="252" height="70" rx="10"/>
+      <text x="904" y="120" class="rf-title" font-size="13">runtime</text>
+      <text x="904" y="140" class="rf-sub">kernel map selects a provider</text>
+      <text x="904" y="156" class="rf-sub">per tensor dtype x contract</text>
+      <text x="624" y="204" class="rf-good">a new recipe (Q5_K_M, UD-Q4_K_XL, ...) needs</text>
+      <text x="624" y="224" class="rf-good">ZERO new kernels when providers for the</text>
+      <text x="624" y="244" class="rf-good">constituent formats already exist</text>
+      <rect class="rf-box" x="624" y="262" width="512" height="70" rx="10"/>
+      <text x="644" y="288" class="rf-title" font-size="13">Unsloth UD-Q4_K_XL (tested Gemma3 artifact, PR #463)</text>
+      <text x="644" y="308" class="rf-hi">= a mixed Q4_K / Q5_0 / Q5_K / Q6_K / Q8_0 recipe,</text>
+      <text x="644" y="324" class="rf-hi">not a distinct UD arithmetic format</text>
+
+      <!-- census table -->
+      <text x="24" y="380" class="rf-band">CENSUS - gemma-3-270m-it-Q5_K_M : 332 weight tensors, 18 layers (layout_prefill.json)</text>
+      <rect class="rf-panel" x="24" y="392" width="1132" height="192" rx="12"/>
+      <text x="64" y="418" class="rf-title" font-size="12">format</text>
+      <text x="176" y="418" class="rf-title" font-size="12">tensors</text>
+      <text x="280" y="418" class="rf-title" font-size="12">assigned to</text>
+      <rect x="44" y="430" width="14" height="14" rx="3" fill="#7fd8ec"/><text x="64" y="442" class="rf-sub">q5_1</text><text x="176" y="442" class="rf-sub">63</text><text x="280" y="442" class="rf-sub">wq + wk + w1 (all 18 layers) + wv on 9 layers</text>
+      <rect x="44" y="454" width="14" height="14" rx="3" fill="#07adf8"/><text x="64" y="466" class="rf-sub">q5_k</text><text x="176" y="466" class="rf-sub">27</text><text x="280" y="466" class="rf-sub">wo (all 18 layers) + w2 on 9 layers</text>
+      <rect x="44" y="478" width="14" height="14" rx="3" fill="#7fd4a3"/><text x="64" y="490" class="rf-sub">q8_0</text><text x="176" y="490" class="rf-sub">10</text><text x="280" y="490" class="rf-sub">wv on 9 layers + token_emb</text>
+      <rect x="44" y="502" width="14" height="14" rx="3" fill="#ffd38a"/><text x="64" y="514" class="rf-sub">q6_k</text><text x="176" y="514" class="rf-sub">9</text><text x="280" y="514" class="rf-sub">w2 on 9 layers</text>
+      <rect x="44" y="526" width="14" height="14" rx="3" fill="#b0b0b0"/><text x="64" y="538" class="rf-sub">fp32</text><text x="176" y="538" class="rf-sub">218</text><text x="280" y="538" class="rf-sub">norms, q_norm/k_norm, biases - 12 per layer x 18 + final norm</text>
+      <rect x="44" y="550" width="14" height="14" rx="3" fill="#555555"/><text x="64" y="562" class="rf-sub">misc</text><text x="176" y="562" class="rf-sub">5</text><text x="280" y="562" class="rf-sub">tokenizer tables (vocab_merges/offsets i32, scores f32, strings/types u8)</text>
+
+      <text x="24" y="612" class="rf-cap">Evidence (artifact census + PR #463): per-tensor dtypes counted from the artifact's layout_prefill.json (memory.weights.entries);</text>
+      <text x="24" y="632" class="rf-cap">PR #463's tested Unsloth Gemma3 UD-Q4_K_XL artifact matched 256/256 complete-vocabulary rows bit-exactly to llama.cpp.</text>
+      <text x="24" y="656" class="rf-cap">Caveats: the census is one 270M artifact shown as an illustration, not a universal distribution; per PR #463 the</text>
+      <text x="24" y="676" class="rf-cap">520-token layer-0 boundary differs at five rows - longer-context bit-exact certification remains open.</text>
+    </svg>
+    <div class="svg-expand-hint">click / tap the diagram to expand</div>
+    </div>
+
+    <div class="concept-grid" style="margin-top: 1rem;">
+        <div class="concept">
+            <h3>One label, four quant formats</h3>
+            <p>The gemma-3-270m-it-Q5_K_M artifact above is really a four-format mix &mdash; q5_1, q5_k, q8_0, q6_k
+            &mdash; plus fp32 norms and biases (218 of the 332 weight tensors: tiny, but numerous). Even within a
+            single layer role the recipe alternates: <code>wv</code> is q8_0 on 9 layers and q5_1 on 9;
+            <code>w2</code> is q6_k on 9 and q5_k on 9.</p>
+        </div>
+        <div class="concept">
+            <h3>Unsloth UD artifacts (PR #463)</h3>
+            <p>PR #463 tested an Unsloth Gemma3 <code>UD-Q4_K_XL</code> artifact: it is a mixed
+            Q4_K/Q5_0/Q5_K/Q6_K/Q8_0 recipe, not a distinct UD arithmetic format, and it matched 256/256
+            complete-vocabulary rows bit-exactly to llama.cpp. The 520-token layer-0 boundary differs at five rows,
+            so longer-context bit-exact certification remains open.</p>
+        </div>
+        <div class="concept">
+            <h3>Run the census yourself</h3>
+            <p><code>python3 version/v8/tools/open_ir_visualizer_v8.py --generate &lt;model&gt; --html-only</code>
+            writes <code>ir_report.html</code> into the model cache dir; its <strong>Weight Dtype Audit</strong> tab
+            lists the per-tensor dtype breakdown for your own artifacts.</p>
+        </div>
+    </div>
+</div>
+
+<!-- Key Concepts -->
+<div class="key-concepts">
+    <h2>Key Concepts</h2>
+    <div class="concept-grid">
+        <div class="concept">
+            <h3>Block Quantization</h3>
+            <p>Weights are grouped into blocks (32 or 256). Each block has a shared scale factor, reducing overhead while maintaining accuracy. Larger blocks = better compression, smaller blocks = better accuracy.</p>
+        </div>
+        <div class="concept">
+            <h3>Symmetric vs Asymmetric</h3>
+            <p><strong>Symmetric</strong> (Q4_0, Q5_0, Q8_0): Values centered at 0. Formula: <code>weight = (q - center) x d</code><br>
+            <strong>Asymmetric</strong> (Q4_1, Q5_1): Adds min offset. Formula: <code>weight = q x d + m</code></p>
+        </div>
+        <div class="concept" style="border-color: #ff6b6b;">
+            <h3 style="color: #ff6b6b;">Q4_K dmin: SUBTRACT not ADD!</h3>
+            <p><strong>Common Bug:</strong> Q4_K uses <code>weight = q x (d x sc) - (dmin x mn)</code><br>
+            The minus sign is critical! dmin encodes a positive offset that gets subtracted to shift the range down. Using + instead of - produces wrong outputs.</p>
+        </div>
+        <div class="concept">
+            <h3>K-Quant Nested Scales</h3>
+            <p>K-quant formats use 2-level scaling: a super-block FP16 scale multiplied by per-sub-block 6-bit or int8 scales. This gives fine-grained control with minimal overhead.</p>
+        </div>
+        <div class="concept">
+            <h3>5-bit and 6-bit Packing</h3>
+            <p>Q5 and Q6 formats split bits across multiple byte arrays. Q5: 4 low bits in <code>qs</code>, 1 high bit in <code>qh</code>. Q6: 4 low bits in <code>ql</code>, 2 high bits in <code>qh</code>.</p>
+        </div>
+        <div class="concept">
+            <h3>Q8_K: FP32 Scale + bsums</h3>
+            <p>Q8_K uses FP32 scale (not FP16!) for higher precision. The <code>bsums</code> field contains precomputed sums of 16 consecutive int8s for VNNI/AVX-512 dot product optimization.</p>
+        </div>
+        <div class="concept" style="border-color: #47b475;">
+            <h3 style="color: #47b475;">Recent Fix: Q8_K SSE Parity</h3>
+            <p>On 2026-03-09 we fixed a subtle <code>Q8_K</code> parity bug in <code>quantize_row_q8_k_sse.c</code>. The SSE path now preserves the same signed-max selection and <code>bsums</code> contract as llama.cpp/ref. See <a href="https://github.com/antshiv/C-Kernel-Engine/commit/224a4d30e0309ee7a1a9d4f3ca46bcedf0ced905" style="color: #00c7fd;">commit 224a4d30</a>.</p>
+            <p>This class of bug is easy to miss: text generation can still look mostly normal, but mixed-quant boundaries like <code>quantize_row_q8_k -&gt; gemv_q4_k_q8_k</code> accumulate small parity drift until a model family like Nanbeige exposes it.</p>
+        </div>
+    </div>
+</div>
+
+<!-- Quant Summary (current v8 mixed-quant path) -->
+<div class="container" style="margin-top: 2.5rem;">
+    <h2 style="color: var(--orange); margin-bottom: 0.75rem;">Quant Summary (current v8 mixed-quant path)</h2>
+    <p style="color: var(--text-secondary); margin-bottom: 1.25rem;">
+        These are the formats that matter in the v8 generated runtimes across Gemma, Qwen (dense, MoE, and hybrid DeltaNet),
+        GLM-4, Nemotron, Kimi, Cohere2, Laguna, Instella-MoE, Nanbeige, and the vision and audio lanes.
+        The practical rule is not just "pick a small dtype", but "pick the weight format and activation contract that match the runtime kernel actually selected by the kernel map."
+        The older v7 quantized inference path used the same byte formats; v7 is now the training lane.
+    </p>
+
+    <style>
+        .quant-summary {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 1rem;
+        }
+        .quant-card {
+            background: var(--dark-card);
+            border: 1px solid var(--grey);
+            border-radius: 10px;
+            padding: 1rem 1.1rem;
+        }
+        .quant-title {
+            font-weight: 700;
+            color: var(--orange);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .quant-tag {
+            font-size: 0.75rem;
+            padding: 0.2rem 0.5rem;
+            border-radius: 999px;
+            background: #1e2b3b;
+            color: #9ed6ff;
+            border: 1px solid #2a3a4f;
+        }
+        .quant-row {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 0.5rem;
+            margin-top: 0.35rem;
+            color: var(--text-secondary);
+            font-size: 0.92rem;
+        }
+        .bitbar {
+            margin-top: 0.75rem;
+            background: #0d141b;
+            border: 1px solid #1f2a36;
+            border-radius: 6px;
+            height: 10px;
+            overflow: hidden;
+        }
+        .bitbar > span {
+            display: block;
+            height: 100%;
+            background: linear-gradient(90deg, #00c7fd, #47b475);
+        }
+        .quant-note {
+            margin-top: 0.6rem;
+            font-size: 0.9rem;
+            color: var(--text-muted);
+        }
+        .quant-flow {
+            margin-top: 1.5rem;
+            background: #0f151c;
+            border: 1px dashed #2a3a4f;
+            border-radius: 10px;
+            padding: 1rem;
+        }
+        .flow-row {
+            display: grid;
+            grid-template-columns: 1fr 32px 1fr 32px 1fr;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .flow-box {
+            background: var(--dark-card);
+            border: 1px solid var(--grey);
+            border-radius: 8px;
+            padding: 0.6rem 0.75rem;
+            color: var(--text-secondary);
+            text-align: center;
+            font-size: 0.9rem;
+        }
+        .flow-arrow {
+            text-align: center;
+            color: #9ed6ff;
+            font-weight: 700;
+        }
+        .quant-legend {
+            margin-top: 0.75rem;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 0.5rem;
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+        }
+        .legend-chip {
+            display: inline-block;
+            padding: 0.15rem 0.5rem;
+            border-radius: 6px;
+            background: #15202b;
+            border: 1px solid #22313f;
+            color: #9ed6ff;
+            margin-right: 0.4rem;
+        }
+    </style>
+
+    <div class="quant-summary">
+        <div class="quant-card">
+            <div class="quant-title">Q8_K <span class="quant-tag">256-block</span></div>
+            <div class="quant-row"><span>Use</span><span>Activation-side K-quant path</span></div>
+            <div class="quant-row"><span>Strength</span><span>Matches ggml mixed-quant kernels</span></div>
+            <div class="bitbar"><span style="width: 78%;"></span></div>
+            <div class="quant-note">v8 path for <code>quantize_row_q8_k -&gt; gemv_q4_k_q8_k</code> and <code>gemv_q6_k_q8_k</code>; the same byte contract ran in v7.</div>
+        </div>
+        <div class="quant-card">
+            <div class="quant-title">Q8_0 <span class="quant-tag">32‑block</span></div>
+            <div class="quant-row"><span>Use</span><span>Legacy/simple high-quality paths</span></div>
+            <div class="quant-row"><span>Strength</span><span>Simple block format</span></div>
+            <div class="bitbar"><span style="width: 80%;"></span></div>
+            <div class="quant-note">Still useful, but it is no longer the whole story for modern K-quant inference.</div>
+        </div>
+        <div class="quant-card">
+            <div class="quant-title">Q5_0 / Q5_1 <span class="quant-tag">32‑block</span></div>
+            <div class="quant-row"><span>Use</span><span>Q/K/O projections</span></div>
+            <div class="quant-row"><span>Strength</span><span>Good speed/quality</span></div>
+            <div class="bitbar"><span style="width: 65%;"></span></div>
+            <div class="quant-note">Q5_1 adds an offset for asymmetric ranges; Q5_0 is symmetric.</div>
+        </div>
+        <div class="quant-card">
+            <div class="quant-title">Q5_K <span class="quant-tag">256‑block</span></div>
+            <div class="quant-row"><span>Use</span><span>Gemma MLP / proj</span></div>
+            <div class="quant-row"><span>Strength</span><span>Higher compression</span></div>
+            <div class="bitbar"><span style="width: 58%;"></span></div>
+            <div class="quant-note">K‑quant with nested scales; improves size without wrecking MLP quality.</div>
+        </div>
+        <div class="quant-card">
+            <div class="quant-title">Q6_K <span class="quant-tag">256‑block</span></div>
+            <div class="quant-row"><span>Use</span><span>Sensitive MLP / output weights</span></div>
+            <div class="quant-row"><span>Strength</span><span>Higher fidelity</span></div>
+            <div class="bitbar"><span style="width: 70%;"></span></div>
+            <div class="quant-note">Often selected for sensitive MLP paths where Q5_K is too lossy.</div>
+        </div>
+        <div class="quant-card">
+            <div class="quant-title">Q4_K <span class="quant-tag">256‑block</span></div>
+            <div class="quant-row"><span>Use</span><span>Compression-first K-quant weights</span></div>
+            <div class="quant-row"><span>Strength</span><span>Smallest footprint</span></div>
+            <div class="bitbar"><span style="width: 45%;"></span></div>
+            <div class="quant-note">Great for footprint, but easiest to destabilize if overused.</div>
+        </div>
+    </div>
+
+    <div class="quant-flow">
+        <div class="flow-row">
+            <div class="flow-box">Hidden State<br><span style="color: var(--text-muted);">FP32</span></div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-box">Activation Quantize<br><span style="color: var(--text-muted);">quantize_row_q8_k</span></div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-box">Mixed K-Quant Matvec<br><span style="color: var(--text-muted);">Q4_K / Q6_K × Q8_K</span></div>
+        </div>
+        <div class="quant-legend">
+            <div><span class="legend-chip">Q8_K</span> Activation-side block format for the current mixed K-quant runtime path.</div>
+            <div><span class="legend-chip">Q4_K</span> Compression-first weight blocks that rely on the correct <code>q8_k</code> activation contract.</div>
+            <div><span class="legend-chip">Q6_K</span> Higher-fidelity weight blocks for sensitive MLP/output paths.</div>
+        </div>
+    </div>
+</div>
+
+<!-- Links -->
+<div style="margin-top: 2rem; padding: 1.5rem; background: var(--dark-card); border-radius: 8px;">
+    <h3 style="color: var(--orange); margin-bottom: 1rem;">Related Documentation</h3>
+    <ul style="list-style: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 0.75rem; padding: 0;">
+        <li><a href="quantization.html" style="color: #00c7fd; text-decoration: none;">Quantization Deep Dive</a> - Theory and implementation</li>
+        <li><a href="quantization-visuals.html" style="color: #00c7fd; text-decoration: none;">Bit Manipulation Visuals</a> - Interactive SVG diagrams</li>
+        <li><a href="kernels.html" style="color: #00c7fd; text-decoration: none;">Kernel Reference</a> - All GEMM kernels</li>
+        <li><a href="model-kernel-matrix.html" style="color: #00c7fd; text-decoration: none;">Model and Kernel Matrix</a> - per-family formats and evidence</li>
+        <li><a href="v8-runbook.html" style="color: #00c7fd; text-decoration: none;">v8 Runbook</a> - tested artifacts and commands</li>
+        <li><a href="simd-architecture.html" style="color: #00c7fd; text-decoration: none;">SIMD Architecture</a> - AVX-512, VNNI, AMX</li>
+    </ul>
+</div>
+
+<div id="rf-svg-overlay" role="dialog" aria-modal="true" aria-label="Expanded diagram">
+    <div class="rf-ov-bar">
+      <span class="rf-ov-title" id="rf-ov-title">Diagram</span>
+      <span>
+        <button type="button" id="rf-ov-out" aria-label="Zoom out">&minus;</button>
+        <button type="button" id="rf-ov-in" aria-label="Zoom in">+</button>
+        <button type="button" id="rf-ov-close" aria-label="Close">&times;</button>
+      </span>
+    </div>
+    <div class="rf-ov-stage" id="rf-ov-stage"><img id="rf-ov-img" alt=""></div>
+</div>
+
+<script>
+    (function() {
+      var overlay = document.getElementById('rf-svg-overlay');
+      var stage = document.getElementById('rf-ov-stage');
+      var img = document.getElementById('rf-ov-img');
+      var title = document.getElementById('rf-ov-title');
+      var scale = 1;
+      function applyScale() {
+        var base = Math.max(stage.clientWidth - 32, 280);
+        img.style.width = Math.round(base * scale) + 'px';
+      }
+      function open(svg) {
+        var xml = new XMLSerializer().serializeToString(svg);
+        img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(xml);
+        img.alt = svg.getAttribute('aria-label') || 'diagram';
+        title.textContent = svg.getAttribute('data-svg-title') || 'Diagram';
+        scale = 1;
+        overlay.style.display = 'block';
+        document.body.style.overflow = 'hidden';
+        img.onload = applyScale;
+        applyScale();
+        document.getElementById('rf-ov-close').focus();
+      }
+      function close() {
+        overlay.style.display = 'none';
+        document.body.style.overflow = '';
+      }
+      document.querySelectorAll('.svg-expand svg[data-svg-title]').forEach(function(svg) {
+        svg.addEventListener('click', function() { open(svg); });
+        svg.addEventListener('keydown', function(e) {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(svg); }
+        });
+      });
+      document.getElementById('rf-ov-in').addEventListener('click', function() { scale = Math.min(4, scale + 0.25); applyScale(); });
+      document.getElementById('rf-ov-out').addEventListener('click', function() { scale = Math.max(0.4, scale - 0.25); applyScale(); });
+      document.getElementById('rf-ov-close').addEventListener('click', close);
+      overlay.addEventListener('click', function(e) { if (e.target === stage || e.target === overlay) close(); });
+      document.addEventListener('keydown', function(e) { if (e.key === 'Escape') close(); });
+    })();
+</script>

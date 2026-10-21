@@ -1,0 +1,108 @@
+<svg width="1600" height="940" viewBox="0 0 1600 940" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="v7 training memory layout with canary guards and diagnostic phases">
+  <defs>
+    <linearGradient id="bgMC" x1="0" y1="0" x2="1600" y2="940" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#061526"/>
+      <stop offset="1" stop-color="#0b1f34"/>
+    </linearGradient>
+    <linearGradient id="accentMC" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ffb400"/>
+      <stop offset="1" stop-color="#07adf8"/>
+    </linearGradient>
+    <linearGradient id="memBar" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#0e2338"/>
+      <stop offset="1" stop-color="#132c44"/>
+    </linearGradient>
+    <filter id="shadowMC" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="3" stdDeviation="5" flood-color="#000" flood-opacity="0.3"/>
+    </filter>
+    <marker id="aMC" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#79c8f7"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1600" height="940" fill="url(#bgMC)"/>
+  <rect x="40" y="34" width="1520" height="872" rx="16" fill="#081a2b" stroke="#2b5373"/>
+
+  <!-- Title -->
+  <text x="82" y="88" fill="#ffb400" font-size="38" font-family="Segoe UI, Arial" font-weight="700">v7 Training Memory Layout and Canary Diagnostics</text>
+  <text x="82" y="120" fill="#a8c3d8" font-size="20" font-family="Segoe UI, Arial">Contiguous arena, section boundaries, tensor slots, and phase checks</text>
+  <rect x="80" y="138" width="1440" height="6" rx="3" fill="url(#accentMC)"/>
+
+  <!-- Allocation bar -->
+  <g filter="url(#shadowMC)">
+    <rect x="80" y="168" width="1440" height="58" rx="12" fill="#0e2438" stroke="#2f607f"/>
+    <text x="104" y="204" fill="#dcedf8" font-size="20" font-family="Segoe UI, Arial">g_memory = calloc(total_floats) with 64-byte alignment and deterministic offsets from layout_train.json</text>
+  </g>
+
+  <!-- Memory section bar -->
+  <g filter="url(#shadowMC)">
+    <rect x="80" y="250" width="1440" height="168" rx="12" fill="url(#memBar)" stroke="#2e5f84"/>
+
+    <rect x="96" y="272" width="224" height="120" rx="10" fill="#1a3a58" stroke="#4d8bbb"/>
+    <text x="114" y="306" fill="#e8f6ff" font-size="21" font-family="Segoe UI, Arial" font-weight="700">weights</text>
+    <text x="114" y="330" fill="#a8c8dd" font-size="15" font-family="Segoe UI, Arial">persistent model params</text>
+    <text x="114" y="352" fill="#a8c8dd" font-size="15" font-family="Segoe UI, Arial">readonly in forward</text>
+
+    <rect x="332" y="272" width="200" height="120" rx="10" fill="#1e4468" stroke="#6ea6d1"/>
+    <text x="350" y="306" fill="#e8f6ff" font-size="21" font-family="Segoe UI, Arial" font-weight="700">activations</text>
+    <text x="350" y="330" fill="#a8c8dd" font-size="15" font-family="Segoe UI, Arial">act.* and saved.*</text>
+    <text x="350" y="352" fill="#a8c8dd" font-size="15" font-family="Segoe UI, Arial">produced in forward</text>
+
+    <rect x="544" y="272" width="200" height="120" rx="10" fill="#1a3e2a" stroke="#72c3a0"/>
+    <text x="562" y="306" fill="#e8fff5" font-size="21" font-family="Segoe UI, Arial" font-weight="700">grad_act</text>
+    <text x="562" y="330" fill="#bfe7d0" font-size="15" font-family="Segoe UI, Arial">grad.act.*</text>
+    <text x="562" y="352" fill="#bfe7d0" font-size="15" font-family="Segoe UI, Arial">produced in backward</text>
+
+    <rect x="756" y="272" width="210" height="120" rx="10" fill="#243e24" stroke="#8ec98e"/>
+    <text x="774" y="306" fill="#f1ffe8" font-size="21" font-family="Segoe UI, Arial" font-weight="700">grad_weights</text>
+    <text x="774" y="330" fill="#c4deb4" font-size="15" font-family="Segoe UI, Arial">dW and tmp.dW</text>
+    <text x="774" y="352" fill="#c4deb4" font-size="15" font-family="Segoe UI, Arial">accumulated in IR2</text>
+
+    <rect x="978" y="272" width="200" height="120" rx="10" fill="#2a2210" stroke="#d4b86a"/>
+    <text x="996" y="306" fill="#fff8df" font-size="21" font-family="Segoe UI, Arial" font-weight="700">optimizer</text>
+    <text x="996" y="330" fill="#e8d8a8" font-size="15" font-family="Segoe UI, Arial">adamw m and v</text>
+    <text x="996" y="352" fill="#e8d8a8" font-size="15" font-family="Segoe UI, Arial">updated in step()</text>
+
+    <rect x="1190" y="272" width="216" height="120" rx="10" fill="#2a1840" stroke="#b47dc1"/>
+    <text x="1208" y="306" fill="#fdefff" font-size="21" font-family="Segoe UI, Arial" font-weight="700">temp + aux</text>
+    <text x="1208" y="330" fill="#d8c0e0" font-size="15" font-family="Segoe UI, Arial">scratch and loss</text>
+    <text x="1208" y="352" fill="#d8c0e0" font-size="15" font-family="Segoe UI, Arial">diagnostic metadata</text>
+  </g>
+
+  <!-- Arrows down -->
+  <line x1="430" y1="420" x2="430" y2="456" stroke="#79c8f7" stroke-width="3" marker-end="url(#aMC)"/>
+  <line x1="1170" y1="420" x2="1170" y2="456" stroke="#79c8f7" stroke-width="3" marker-end="url(#aMC)"/>
+
+  <!-- Canary Guards -->
+  <text x="84" y="452" fill="#79c8f7" font-size="22" font-family="Segoe UI, Arial" font-weight="700">Canary Guards</text>
+  <g filter="url(#shadowMC)">
+    <rect x="80" y="468" width="700" height="140" rx="12" fill="#0e2438" stroke="#2f5d81"/>
+    <text x="106" y="502" fill="#dcedf8" font-size="18" font-family="Segoe UI, Arial">Per tensor slot metadata:</text>
+    <text x="106" y="528" fill="#a8c8dd" font-size="16" font-family="Segoe UI, Arial">name, offset_floats, numel, canary_offset, section, writable_fwd, writable_bwd</text>
+    <text x="106" y="554" fill="#a8c8dd" font-size="16" font-family="Segoe UI, Arial">guard pattern: 0xDEADBEEF (16 floats, 64 bytes)</text>
+    <text x="106" y="580" fill="#a8c8dd" font-size="16" font-family="Segoe UI, Arial">tail canary catches overrun near allocator boundary</text>
+  </g>
+
+  <!-- Diagnostic Phases -->
+  <text x="820" y="452" fill="#6dd29a" font-size="22" font-family="Segoe UI, Arial" font-weight="700">Diagnostic Phases</text>
+  <g filter="url(#shadowMC)">
+    <rect x="816" y="468" width="704" height="140" rx="12" fill="#0e1e18" stroke="#3a7856"/>
+    <text x="842" y="502" fill="#e0fff0" font-size="18" font-family="Segoe UI, Arial">1) plant canaries, snapshot weights</text>
+    <text x="842" y="528" fill="#bfe7d0" font-size="16" font-family="Segoe UI, Arial">2) run forward, check canaries, verify weights unchanged</text>
+    <text x="842" y="554" fill="#bfe7d0" font-size="16" font-family="Segoe UI, Arial">3) run backward, check canaries</text>
+    <text x="842" y="580" fill="#bfe7d0" font-size="16" font-family="Segoe UI, Arial">4) run optimizer, final canary check, optional oracle compare</text>
+  </g>
+
+  <!-- Operational Checks -->
+  <g filter="url(#shadowMC)">
+    <rect x="80" y="644" width="1440" height="216" rx="12" fill="#0e2030" stroke="#2b5373"/>
+    <text x="106" y="684" fill="#ffb400" font-size="24" font-family="Segoe UI, Arial" font-weight="700">Operational Checks</text>
+
+    <text x="106" y="718" fill="#dcedf8" font-size="18" font-family="Segoe UI, Arial">- layout_train_audit.json: overlap, bounds, alignment, section ownership</text>
+    <text x="106" y="746" fill="#dcedf8" font-size="18" font-family="Segoe UI, Arial">- memory_diagnostic_latest.json: phase, first_corrupt_idx, failed_op_id, rc code</text>
+    <text x="106" y="774" fill="#dcedf8" font-size="18" font-family="Segoe UI, Arial">- generated_train_runtime_summary_v7.json: emitted ops, slot map, callable kernels</text>
+    <text x="106" y="802" fill="#dcedf8" font-size="18" font-family="Segoe UI, Arial">- strict run: cks-v7-run train --backend ck --train-strict</text>
+    <text x="106" y="838" fill="#9fb8cd" font-size="16" font-family="Segoe UI, Arial">If a guard fails, use op trace plus slot map to find first write beyond declared tensor bounds.</text>
+  </g>
+</svg>

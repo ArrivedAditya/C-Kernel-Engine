@@ -1,0 +1,507 @@
+<!-- TITLE: v8 Numerical Contracts -->
+<!-- NAV: architecture-links -->
+
+<style>
+.contract-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:1rem;margin:1rem 0}.contract-card{border:1px solid var(--grey);border-left:4px solid var(--orange);border-radius:8px;padding:1rem;background:rgba(255,255,255,.02)}.contract-card h3{margin-top:0}.contract-flow{overflow-x:auto}.contract-flow img{display:block;width:100%;min-width:900px;height:auto}.contract-note{border:1px solid rgba(7,173,248,.45);border-radius:8px;padding:1rem;background:rgba(7,173,248,.06)}.contract-bad{border-color:rgba(251,113,133,.55);background:rgba(251,113,133,.06)}.contract-good{border-color:rgba(48,196,141,.55);background:rgba(48,196,141,.06)}.contract-table td:first-child{font-family:'JetBrains Mono',monospace;white-space:nowrap}
+.svg-expand{position:relative}.svg-expand svg{cursor:zoom-in}.svg-expand svg:focus-visible{outline:2px solid var(--orange);outline-offset:3px}.svg-expand-hint{text-align:center;font-size:.72rem;color:var(--text-muted);margin-top:-.6rem;margin-bottom:1rem;font-family:'JetBrains Mono',monospace}
+#nc-svg-overlay{display:none;position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,.95);padding:3.2rem 1rem 1rem}
+#nc-svg-overlay .nc-ov-bar{position:fixed;top:0;left:0;right:0;padding:.55rem 1rem;background:rgba(0,0,0,.9);border-bottom:1px solid #333;display:flex;justify-content:space-between;align-items:center;gap:.6rem}
+#nc-svg-overlay .nc-ov-title{color:#ccc;font-size:.82rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#nc-svg-overlay .nc-ov-bar button{background:#333;color:#ffb400;border:1px solid #555;padding:.3rem .7rem;cursor:pointer;border-radius:4px;font-size:.85rem}
+#nc-svg-overlay .nc-ov-stage{width:100%;height:100%;overflow:auto;display:flex;align-items:flex-start;justify-content:center}
+#nc-svg-overlay .nc-ov-stage img{max-width:none;height:auto}
+</style>
+
+<h1>v8 Numerical Contracts</h1>
+
+<p>v8 now treats numerical behavior as compiler input. A circuit does not merely say “run attention.” It can require the query precision, K/V storage and compute precision, score accumulator, online-softmax state, value accumulator, partition threshold, partial storage, and merge order. Kernel maps state which complete contracts their implementations support. The DSL resolves one provider or fails before C is emitted.</p>
+
+<div class="contract-note contract-good">
+  <strong>Core rule:</strong> weights and shapes do not uniquely define model math. Reduction order, intermediate precision, partitioning, and public routing are part of the model contract.
+</div>
+
+<div class="img-container svg-viewer contract-flow" data-title="v8 Numerical Contract Architecture">
+  <img src="assets/v8-numerical-contracts.svg" alt="Weights, circuits, kernel maps and numerical contracts flowing through deterministic v8 lowering into generated C">
+</div>
+
+<h2>Why the Architecture Needed Hardening</h2>
+
+<p>The earlier v8 path had strong kernel maps, generated C, and E2E tests, but some numerical semantics were inferred inside runtime code. A function name established one part of the contract, an environment flag selected another part, tensor metadata implied a third part, and a sequence-length threshold could silently change the reduction algorithm. Leaf kernels could all pass while the stitched model selected the wrong public route.</p>
+
+<div class="contract-grid">
+  <div class="contract-card contract-bad"><h3>Before</h3><p>Circuits declared op order. Runtime dispatch inferred precision and partition semantics from function choice, strict mode, cache dtype, token count, and thread count.</p></div>
+  <div class="contract-card"><h3>Failure Mode</h3><p>Two mathematically different kernels looked interchangeable because both were called “attention.” Unit tests exercised a correct leaf while generated code reached another route.</p></div>
+  <div class="contract-card contract-good"><h3>After</h3><p>Circuits request complete semantic IDs. Executable kernel maps advertise complete providers. Lowering rejects missing or ambiguous matches.</p></div>
+</div>
+
+<h2>The Attention Bug That Exposed It</h2>
+
+<p>Three full-attention tests had long-standing errors of roughly <code>5.68e-4</code> to <code>1.06e-3</code>. The public full-attention contract expected FP32 Q with K/V rounded through FP16, matching the GGML-style vision path. The optimized AVX2 route consumed raw FP32 K/V. Pre-rounding only K/V reduced the error to <code>4.77e-7</code>, proving this was a contract mismatch rather than a tolerance problem.</p>
+
+<table class="contract-table">
+  <tr><th>Boundary</th><th>Required behavior</th><th>Former behavior</th><th>Guard</th></tr>
+  <tr><td>full attention Q</td><td>FP32 compute</td><td>FP32 compute</td><td>Qwen3-VL head_dim=72 test</td></tr>
+  <tr><td>full attention K/V</td><td>round through FP16</td><td>raw FP32</td><td>contiguous, strided, threaded tests</td></tr>
+  <tr><td>decode KV &lt; 512</td><td>single FP16 online range</td><td>implicit route</td><td>KV=511 oracle</td></tr>
+  <tr><td>decode KV ≥ 512</td><td>worker chunks, FP16 partials, FP32 merge</td><td>single FP32-style reduction possible</td><td>KV=512 and KV=1058 oracle</td></tr>
+</table>
+
+<h2>Compiler Inputs</h2>
+
+<div class="contract-grid">
+  <div class="contract-card"><h3>Weights</h3><p><code>weights_manifest.json</code> supplies tensor names, shapes, dtypes, quant formats, offsets, and model dimensions. It does not choose graph order.</p></div>
+  <div class="contract-card"><h3>Circuits</h3><p><code>version/v8/circuits/*.json</code> supplies operations, explicit edges, branches, stitch points, and <code>required_contracts</code>. Circuits state semantics, never a numerical implementation ID.</p></div>
+  <div class="contract-card"><h3>Kernel Maps</h3><p><code>version/v8/kernel_maps/*.json</code> supplies ABI, layouts, implementation function, <code>provides</code>, and <code>supported_reductions</code>.</p></div>
+  <div class="contract-card"><h3>Contract Registry</h3><p><code>version/v8/contracts/attention_reductions.json</code> defines each semantic ID completely so two kernels cannot reuse a name for different mathematics.</p></div>
+</div>
+
+<h2>Complete Reduction Semantics</h2>
+
+<p>A reduction ID is not a loose dtype such as <code>fp16</code> or <code>strict</code>. Those names are rejected as ambiguous. A registered contract includes:</p>
+
+<ul>
+  <li>query and key compute precision;</li>
+  <li>score accumulator and softmax-statistics precision;</li>
+  <li>value compute and accumulator precision;</li>
+  <li>partial storage and merge order;</li>
+  <li>partition kind, threshold, and chunk policy.</li>
+</ul>
+
+<pre><code>{
+  "id": "f16_online_fp32_merge",
+  "q_compute": "fp16_rounded",
+  "k_compute": "fp16",
+  "score_accumulator": "fp32",
+  "softmax_statistics": "fp32",
+  "value_accumulator": "fp16_rounded_each_update",
+  "partial_storage": "fp16",
+  "partial_merge": "fp32_chunk_order",
+  "partition": {
+    "kind": "kv_chunks_by_workers",
+    "threshold": 512
+  }
+}</code></pre>
+
+<h2>Deterministic Resolution</h2>
+
+<ol>
+  <li>The builder hydrates the current built-in circuit into cached manifests, so old converted models receive current graph and contract defaults.</li>
+  <li>The resolver reads each active <code>required_contracts</code> entry for the requested phase.</li>
+  <li>It matches op, phase, tensor dtype, layout, and complete reduction ID against executable kernel maps.</li>
+  <li>Zero providers fail as unsupported. Multiple providers fail as ambiguous.</li>
+  <li>The resolver selects the provider before GraphIR construction. Contract-bearing operations do not consult legacy circuit overrides or heuristic dispatch.</li>
+  <li>GraphIR records requirements and the resolved kernel/contract IDs. LoweredIR and call-ready IR carry that decision and hard-fail if a later stage changes it.</li>
+  <li>Production promotion additionally requires validated circuit, contract definition, implementation route, stitched parity, and E2E evidence.</li>
+</ol>
+
+<h2 id="gemma3-schedule-case-study">Case Study: Matching a Reference Engine's Schedule Bit-Exactly (Gemma3)</h2>
+
+<p><strong>The insight first: summation order is part of the numerical contract.</strong> One dot product, summed serially or in pairwise SIMD lanes over identical FP32 inputs, can produce different bits. When that result sits next to a quantization boundary, the two orders land on different quantized codes and every downstream value diverges. No kernel is "wrong" in isolation &mdash; but a stitched model that does not execute the oracle's reduction schedule cannot be bit-exact to it. The diagram below makes that concrete, then shows how the Gemma3 circuit pins the schedule as an explicit contract input.</p>
+
+<p>Gemma3 is the strongest demonstration of why the schedule belongs in the contract. Before <a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/pull/463">PR #463</a>, Gemma3's regular attention, RoPE, GeGLU, terminal-row selection, and tied Q8_0 vocabulary projection each computed mathematically equivalent results with a <em>different reduction schedule</em> than the pinned llama.cpp oracle: different accumulation order, different padded reduction extent, different rounding points. The measured starting point was 0/256 exact complete-vocabulary rows (172/256 top-1, initial logit RMSE 6.7481). No single kernel was wrong in isolation &mdash; the stitched model simply did not execute the oracle's schedule, so values landed on opposite sides of quantization boundaries and diverged bit by bit.</p>
+
+<p>The fix did not change any shared arithmetic. The Gemma3 circuit declares the schedule as an explicit contract input: <code>required_contracts</code> requests <code>numerics.attention_reduction: fp32_llama_regular</code>, a validated entry in <code>version/v8/contracts/attention_reductions.json</code> that pins FP16-rounded Q/K operands, FP32 score/softmax/value accumulators, llama.cpp's 256-position KV padding, a single-range partition, and phase-specific GEMM/matvec reduction order. The resolver then binds circuit-selected providers that implement exactly that schedule &mdash; <code>rmsnorm_forward_llama_production</code> and <code>qk_norm_forward_llama_production</code> for the norm boundaries, <code>rope_forward_qk_split_llama</code> under the declared per-layer RoPE schedule (local layers use the 10,000 base, not the global 1,000,000), <code>geglu_forward_ggml_native</code> for the FP16-table GeGLU, and the Q8_0-activation contract for the tied vocabulary projection. Shared provider resolution, layout validation, terminal-row bounds, and thread-pool dispatch were hardened at the same time, and the selection is family-scoped: Gemma4 retains its own providers and tests assert it cannot inherit the Gemma3 normalization or GeGLU route. The full debugging sequence, artifact inventory, and measured trajectory are recorded in <code>docs/logs/gemma3-baseline-parity.md</code>.</p>
+
+<p>One clarification that is easy to misread: the run configuration says <em>FP32 KV</em> while the contract says <em>FP16-rounded operands</em> and the oracle reference says <em>FP16 KV cache</em>. These are three different layers of the story, and they are all true at once:</p>
+
+<table class="table">
+  <thead>
+    <tr><th>Stage</th><th>Precision</th><th>Owner</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>KV cache buffer storage (CKE)</td><td>FP32 buffers in the matched run</td><td>CKE runtime configuration (26-token input, 1024 capacity, regular attention)</td></tr>
+    <tr><td>Operand rounding (Q/K/V at the attention compute boundary)</td><td>FP16-rounded (<code>q_compute</code>/<code>k_compute</code>/<code>value_compute</code>: <code>fp16_rounded</code>)</td><td>Contract <code>fp32_llama_regular</code> in <code>version/v8/contracts/attention_reductions.json</code></td></tr>
+    <tr><td>Score, softmax-statistics, and value accumulators</td><td>FP32, single-range partition, 256-position KV padding</td><td>Contract <code>fp32_llama_regular</code></td></tr>
+    <tr><td>Oracle KV configuration</td><td>FP16 KV cache storage, flash attention disabled</td><td>Pinned llama.cpp oracle (the contract's declared reference)</td></tr>
+  </tbody>
+</table>
+
+<p>CKE keeps KV in FP32 buffers but rounds the Q/K/V operands through FP16 at the compute boundary, so the arithmetic reproduces exactly what the oracle's FP16 KV cache would feed its FP32 accumulators. Storage width and compute rounding are separate contract fields; conflating them is how "FP32 KV" and "FP16 KV" ends up describing the same certified run.</p>
+
+<div class="svg-expand">
+<svg viewBox="0 0 1180 570" width="100%" role="img" tabindex="0" data-svg-title="Reduction order is a numerical contract - Gemma3 bit-exact schedule match (PR #463)"
+     aria-label="Reduction order is a numerical contract. Left panel (illustrative values, not measured): one dot product computed two ways with the same inputs and the same FP32 precision. Order A, a serial accumulation, evaluates (((p0 + p1) + p2) + p3) and yields 0.5000001. Order B, a pairwise SIMD-lane accumulation, evaluates ((p0 + p2) + (p1 + p3)) and yields 0.4999999. On a quantization boundary strip the two results straddle the boundary, so the quantized codes differ by 1 ulp of the quantized grid and the dequantized logits diverge. Right panel: the contract pins the schedule. The gemma3.json circuit's required_contracts requests the fp32_llama_regular contract, which pins FP16-rounded Q and K operands, FP32 score, softmax, and value accumulators, 256-position KV padding, a single-range partition, and phase-specific GEMM or matvec reduction order; the compiler then binds providers that implement exactly that schedule, including the llama production RMSNorm and QK-norm providers, rope_forward_qk_split_llama, geglu_forward_ggml_native, the llama regular sliding attention providers, and the Q8_0-activation vocabulary projection. Gemma4 keeps its own providers and tests assert it cannot inherit the Gemma3 route. Evidence strip for PR #463 (measured): standard Q4_K_M 256 of 256 complete-vocabulary rows bit-exact to llama.cpp, the tested Unsloth UD-Q4_K_XL mixed recipe also 256 of 256 bit-exact, make test-threadpool 308713 assertions, make test-kernel-maps 169 tests and 1216 subtests. Caveats: the 520-token layer-0 boundary differs at five rows so longer-context bit-exact certification remains open, the exact Qwen3.6 35B-A3B artifact fails at its first full-logit row and is not certified, and Flash long-context, BF16, and performance certification remain open."
+     style="max-width: 1180px; margin: 0.5rem auto 1rem; display: block; font-family: 'Inter', system-ui, sans-serif;">
+  <style>
+    .nc-box{fill:#323232;stroke:#454545;stroke-width:1.4;}
+    .nc-panel{fill:#0b1118;stroke:#263242;stroke-width:1.2;}
+    .nc-title{fill:#f5f5f5;font-size:15px;font-weight:700;}
+    .nc-sub{fill:#b0b0b0;font-size:11.5px;font-family:'JetBrains Mono',monospace;}
+    .nc-hi{fill:#7fd8ec;font-size:11.5px;font-family:'JetBrains Mono',monospace;}
+    .nc-hi2{fill:#07adf8;font-size:11.5px;font-family:'JetBrains Mono',monospace;}
+    .nc-good{fill:#7fd4a3;font-size:11.5px;font-family:'JetBrains Mono',monospace;}
+    .nc-warn{fill:#ffd38a;font-size:11.5px;font-family:'JetBrains Mono',monospace;}
+    .nc-band{fill:#9aa7b4;font-size:12px;font-weight:600;letter-spacing:.06em;}
+    .nc-cap{fill:#808080;font-size:12px;font-family:'JetBrains Mono',monospace;}
+  </style>
+  <defs>
+    <marker id="nc-arrow" markerWidth="9" markerHeight="9" refX="6.5" refY="3" orient="auto">
+      <path d="M0,0 L7,3 L0,6 Z" fill="#8aa0b4"/>
+    </marker>
+  </defs>
+
+  <text x="24" y="32" class="nc-band">REDUCTION ORDER IS A NUMERICAL CONTRACT - SAME MATH, DIFFERENT ORDER, DIFFERENT BITS</text>
+
+  <!-- left: same dot product, two accumulation orders -->
+  <rect class="nc-panel" x="24" y="48" width="560" height="310" rx="12"/>
+  <text x="44" y="76" class="nc-title" font-size="13">One dot product, two accumulation orders</text>
+  <text x="44" y="94" class="nc-sub">same inputs, same fp32 - only the summation tree differs</text>
+  <text x="44" y="112" class="nc-warn" font-size="11.5">values in this panel are ILLUSTRATIVE, not measured</text>
+
+  <text x="44" y="126" class="nc-hi">order A - serial (one-row-at-a-time)</text>
+  <rect class="nc-box" x="44" y="136" width="240" height="34" rx="8"/>
+  <text x="164" y="158" text-anchor="middle" class="nc-sub">(((p0+p1)+p2)+p3)</text>
+  <path d="M284,153 L322,153" fill="none" stroke="#8aa0b4" stroke-width="1.5" marker-end="url(#nc-arrow)"/>
+  <rect class="nc-box" x="328" y="136" width="150" height="34" rx="8"/>
+  <text x="403" y="158" text-anchor="middle" class="nc-hi">0.5000001</text>
+
+  <text x="44" y="206" class="nc-warn">order B - pairwise (SIMD lanes)</text>
+  <rect class="nc-box" x="44" y="216" width="240" height="34" rx="8"/>
+  <text x="164" y="238" text-anchor="middle" class="nc-sub">((p0+p2)+(p1+p3))</text>
+  <path d="M284,233 L322,233" fill="none" stroke="#8aa0b4" stroke-width="1.5" marker-end="url(#nc-arrow)"/>
+  <rect class="nc-box" x="328" y="216" width="150" height="34" rx="8"/>
+  <text x="403" y="238" text-anchor="middle" class="nc-warn">0.4999999</text>
+
+  <!-- quantization boundary strip -->
+  <text x="44" y="286" class="nc-sub">quantization boundary strip (quantized grid ticks)</text>
+  <path d="M60,318 L540,318" fill="none" stroke="#454545" stroke-width="1.4"/>
+  <path d="M120,312 L120,324 M200,312 L200,324 M380,312 L380,324 M460,312 L460,324" fill="none" stroke="#454545" stroke-width="1.4"/>
+  <path d="M300,296 L300,340" fill="none" stroke="#ffd38a" stroke-width="1.6" stroke-dasharray="5 4"/>
+  <text x="300" y="354" text-anchor="middle" class="nc-warn" font-size="10.5">boundary</text>
+  <circle cx="318" cy="318" r="6" fill="#7fd8ec"/>
+  <circle cx="282" cy="318" r="6" fill="#ffd38a"/>
+  <text x="336" y="306" class="nc-hi">sum_A -&gt; code N+1</text>
+  <text x="336" y="338" class="nc-warn">sum_B -&gt; code N</text>
+  <text x="44" y="344" class="nc-sub" font-size="10.5">the orders straddle the boundary:</text>
+
+  <!-- right: the contract pins the schedule -->
+  <rect class="nc-panel" x="608" y="48" width="548" height="310" rx="12"/>
+  <text x="628" y="76" class="nc-title" font-size="13">The contract pins the schedule</text>
+
+  <rect class="nc-box" x="628" y="92" width="184" height="66" rx="10"/>
+  <text x="646" y="116" class="nc-title" font-size="12">gemma3.json</text>
+  <text x="646" y="134" class="nc-sub">required_contracts:</text>
+  <text x="646" y="150" class="nc-sub">attention_reduction =</text>
+  <path d="M812,125 L838,125" fill="none" stroke="#8aa0b4" stroke-width="1.5" marker-end="url(#nc-arrow)"/>
+
+  <rect class="nc-box" x="844" y="88" width="292" height="150" rx="10" stroke="#07adf8"/>
+  <text x="862" y="112" class="nc-hi2" font-size="13" font-weight="700">fp32_llama_regular</text>
+  <text x="862" y="134" class="nc-sub">q/k compute: fp16_rounded</text>
+  <text x="862" y="152" class="nc-sub">score/softmax/value acc: fp32</text>
+  <text x="862" y="170" class="nc-sub">KV padding: 256 positions</text>
+  <text x="862" y="188" class="nc-sub">partition: single_range</text>
+  <text x="862" y="206" class="nc-sub">order: phase GEMM / matvec</text>
+  <text x="862" y="226" class="nc-sub" font-size="10.5">terminal rows + RoPE schedule bound too</text>
+
+  <path d="M990,238 L990,258" fill="none" stroke="#8aa0b4" stroke-width="1.5" marker-end="url(#nc-arrow)"/>
+  <rect class="nc-box" x="844" y="264" width="292" height="78" rx="10"/>
+  <text x="862" y="286" class="nc-title" font-size="12">compiler binds exact providers</text>
+  <text x="862" y="304" class="nc-sub">rmsnorm/qk_norm llama_production,</text>
+  <text x="862" y="320" class="nc-sub">rope_qk_split_llama, geglu_ggml_native,</text>
+  <text x="862" y="336" class="nc-sub">llama_regular attn, q8_0-act lm_head</text>
+
+  <rect class="nc-box" x="628" y="264" width="184" height="78" rx="10"/>
+  <text x="646" y="286" class="nc-good" font-size="12">Gemma4 isolation</text>
+  <text x="646" y="304" class="nc-sub">keeps its own providers;</text>
+  <text x="646" y="320" class="nc-sub">tests assert no Gemma3</text>
+  <text x="646" y="336" class="nc-sub">route inheritance</text>
+
+  <!-- evidence strip -->
+  <text x="24" y="386" class="nc-band">EVIDENCE (PR #463, MEASURED) - 256/256 COMPLETE-VOCABULARY ROWS BIT-EXACT TO LLAMA.CPP</text>
+  <rect class="nc-panel" x="24" y="398" width="1132" height="84" rx="12"/>
+  <rect class="nc-box" x="44" y="416" width="262" height="48" rx="8"/>
+  <text x="60" y="436" class="nc-good" font-size="12">Q4_K_M (Gemma3 270M)</text>
+  <text x="60" y="454" class="nc-sub">256/256 rows bit-exact</text>
+  <rect class="nc-box" x="326" y="416" width="282" height="48" rx="8"/>
+  <text x="342" y="436" class="nc-good" font-size="12">UD-Q4_K_XL (mixed recipe)</text>
+  <text x="342" y="454" class="nc-sub">256/256 rows bit-exact</text>
+  <rect class="nc-box" x="628" y="416" width="252" height="48" rx="8"/>
+  <text x="644" y="436" class="nc-title" font-size="12">make test-threadpool</text>
+  <text x="644" y="454" class="nc-sub">308,713 assertions pass</text>
+  <rect class="nc-box" x="900" y="416" width="236" height="48" rx="8"/>
+  <text x="916" y="436" class="nc-title" font-size="12">make test-kernel-maps</text>
+  <text x="916" y="454" class="nc-sub">169 tests / 1,216 subtests</text>
+
+  <text x="24" y="510" class="nc-cap">Evidence (PR #463): identical 26-token input, FP32 KV, regular attention, oracle flash disabled, 256-row teacher-forced</text>
+  <text x="24" y="528" class="nc-cap">trajectory; UD-Q4_K_XL is a mixed Q4_K/Q5_0/Q5_K/Q6_K/Q8_0 per-tensor recipe; repeatability + capture neutrality exact.</text>
+  <text x="24" y="548" class="nc-cap">Caveats: 520-token layer-0 boundary differs at five rows (longer-context bit-exact OPEN); exact Qwen3.6 35B-A3B artifact</text>
+  <text x="24" y="566" class="nc-cap">fails at its first full-logit row (NOT certified); Flash long-context, BF16, and performance certification remain open.</text>
+</svg>
+<div class="svg-expand-hint">click / tap the diagram to expand</div>
+</div>
+
+<p>With the schedule pinned, the measured evidence is CKE's strongest cross-engine claim to date. On a matched numerical run (identical 26-token input, FP32 KV cache, regular attention, oracle flash attention disabled, 256-row teacher-forced trajectory):</p>
+
+<ul>
+  <li>256/256 complete-vocabulary logit rows bit-exact to llama.cpp for the standard Gemma3 270M Q4_K_M artifact, including bit-exact repeatability and X-Ray capture neutrality.</li>
+  <li>256/256 complete-vocabulary rows bit-exact for the tested Unsloth UD-Q4_K_XL artifact &mdash; a mixed Q4_K/Q5_0/Q5_K/Q6_K/Q8_0 per-tensor recipe, not a distinct arithmetic format (see <a href="quant-formats.html#recipes-vs-formats">Recipes vs Formats</a>).</li>
+  <li>Shared-risk gates: <code>make test-threadpool</code> passes 308,713 assertions; <code>make test-kernel-maps</code> passes 169 tests and 1,216 subtests.</li>
+</ul>
+
+<div class="contract-note contract-bad">
+  <strong>Caveats &mdash; what PR #463 does not certify:</strong>
+  <ul style="margin: 0.5rem 0 0;">
+    <li>The 520-token layer-0 boundary differs at five rows (positions 152, 380, 430, 509, 514) &mdash; longer-context bit-exact certification remains <strong>open</strong>.</li>
+    <li>The exact <code>Qwen3.6-35B-A3B-UD-Q4_K_M.gguf</code> artifact still fails at its first full-logit row and is explicitly <strong>not certified</strong>; the planner fix that exposed that failure does not solve it.</li>
+    <li>Flash long-context, BF16, and performance certification remain open; the certified configuration is FP32 KV with regular attention and oracle flash attention disabled.</li>
+    <li>The claim covers the two tested artifacts. UD recipes containing IQ formats without registered providers and oracle coverage are not implied.</li>
+  </ul>
+</div>
+
+<p>The same principle &mdash; reduction order as a numerical contract &mdash; fixed Qwen3.8 Flash Next's M=4 shared-expert staging divergence; see <a href="concepts.html">Kernel Concepts</a>. Together the two stories bracket the claim: schedules that cross engine boundaries (llama.cpp) and schedules that cross shape boundaries (GEMV vs four-row staging) are both contract inputs, not implementation details.</p>
+
+<h2>Compatibility and Migration</h2>
+
+<p>The repository directory is now <code>version/v8/circuits</code>. Embedded BUMP metadata continues to use the historical <code>template</code> key, and chat templates keep their established name; changing serialized formats is not required to correct compiler architecture.</p>
+
+<p>The authoritative migration preserves executable behavior while making the decision visible. Contract metadata is added to GraphIR, LoweredIR, and call-ready IR, while kernel IDs, memory layout, call arguments, and generated C remain unchanged. Gemma3, Qwen2, Qwen3, Qwen3.5, Nanbeige, and Qwen3-VL attention routes resolve without legacy selection.</p>
+
+<h3>Call ABI Ownership</h3>
+
+<p>A resolved kernel map now owns its ordered C call ABI through <code>call_abi.version</code> and <code>call_abi.params</code>. Lower 3 consumes that exact kernel-ID-owned declaration and records its owner in call-ready IR. A contract-governed operation may not fall back to <code>kernel_bindings.json</code> or <code>kernel_bindings.overlay.json</code>; missing ABI metadata, unknown source namespaces, function drift, and duplicate map/legacy ownership hard-fail.</p>
+
+<p>The two legacy binding registries remain only for uncontracted compatibility helpers while migration continues. They are not authoritative inputs for attention reductions, BF16 storage boundaries, vision M-RoPE, or Q4/Q6 numerical execution contracts.</p>
+
+<h2>Compiler Policy Gate</h2>
+
+<p><code>make v8-regression-fast</code> begins with an AST-based DSL policy audit. Generic compiler and code-generation entry points may branch on exact operation IDs, resolved kernel IDs, tensor metadata, and declared capability fields. They may not branch on model, architecture, or family names. Aliasing a family value through local variables does not bypass the audit.</p>
+
+<p>The builder also treats operation families as exact inputs. A missing <code>attention_sliding</code> implementation cannot silently resolve to ordinary <code>attention</code>; missing and ambiguous routes fail with an instruction to fix the circuit or kernel map. Per-layer dimensions are validated arrays, circuit weight policies own aliases and intentionally unused tensors, and unknown policy fields fail schema validation.</p>
+
+<p>The same policy now protects v7 training and backprop through <code>make test-v7-dsl-policy</code>, which is part of <code>make v7-regression-fast</code>. This does not make v7 and v8 share one graph, but it enforces the same ownership rule: the training IR owns backward ordering and the emitter may not acquire model-family behavior.</p>
+
+<pre><code>make test-v8-dsl
+make v8-regression-fast
+make test-v7-dsl-policy
+make v7-regression-fast</code></pre>
+
+<h3>Remaining Migration Debt</h3>
+
+<table>
+  <thead><tr><th>Measured category</th><th>Before this PR</th><th>Current</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td>Executable model-literal AST sites</td><td>78</td><td>76</td><td>A checked-in per-file ceiling now fails on any increase. Reductions must lower the ceiling.</td></tr>
+    <tr><td>Build and IR model-literal sites</td><td>39</td><td>37</td><td>Lower 1 no longer reselects decode attention from model-specific defaults or function-name patterns.</td></tr>
+    <tr><td>Code-generation model-literal sites</td><td>39</td><td>39</td><td>Bridge, tokenizer, debug, and specialized emission remain the largest migration area.</td></tr>
+    <tr><td>Lower-1 decode-attention reselection branches</td><td>7</td><td>0</td><td>Lower 1 validates the exact IR1 kernel and resolved contract, then only wires KV-cache inputs.</td></tr>
+    <tr><td>Compiler functions governed by the no-family-dispatch policy</td><td>8</td><td>9</td><td>The authoritative decode-attention validator is now covered directly.</td></tr>
+    <tr><td>Forbidden family dispatch in governed generic paths</td><td>0</td><td>0</td><td>Direct and aliased model/family dispatch continues to hard-fail.</td></tr>
+  </tbody>
+</table>
+
+<p>The 76-site inventory is deliberately broader than the previous 41-site estimate: it counts executable module-level and function-level string literals containing model-family names across the four principal compiler and code-generation modules, while excluding comments, docstrings, and standalone documentation strings. Not every site selects mathematics, but every site is visible debt that cannot increase silently. The audit reports a per-function inventory so cleanup can proceed in bounded groups instead of relying on an informal grep count.</p>
+
+<p>The next priority is Qwen3-VL bridge generation: multimodal fallback injection, deepstack handling, M-RoPE calls, and position advancement should be explicit call-IR operations. Kimi/DeepSeek MLA decode and prefill selection follows after both phases have exact kernel-map providers. Tokenizer adapters may retain family knowledge only while hydrating external metadata into canonical configuration.</p>
+
+<p>This refactor prevents four concrete failure classes: model names silently changing tensor dimensions, undeclared weights being ignored by family branches, unavailable sliding attention falling back to ordinary attention, and generated runtimes enabling multimodal or quantized behavior from a family-name test instead of a hydrated capability.</p>
+
+<p>Tokenizer and format adapters may identify an external model family while translating source metadata into the canonical circuit/config representation. That knowledge must stop at hydration. It is not permission for GraphIR construction, lowering, memory planning, or codegen to select mathematics from a family name.</p>
+
+<h2>Threading Is an Execution Contract</h2>
+
+<p>Kernel maps also declare ISA dispatch, threading runtime, possible work partitions, dispatch mechanisms, and whether scheduling can alter reduction order. Q4/Q6 GEMM and GEMV maps therefore expose serial, row, column, or output-tile policies instead of hiding threadpool behavior in generated wrappers. GraphIR records this as <code>resolved_execution</code>, and LoweredIR plus call-ready IR hard-fail if the kernel ID changes. When partitioning changes arithmetic order, the numerical contract must define the corresponding reduction and merge behavior.</p>
+
+<h2>Scalar, Production, and Threadpool Evidence</h2>
+
+<p>Quantized linear maps bind three exact functions: the scalar contract oracle, the public production function, and the threadpool dispatch function. The compiler validates these names and carries them into IR; it does not rank or guess functions from ISA, dimensions, or benchmark results. Dimensions and thread counts remain ordinary function inputs.</p>
+
+<ol>
+  <li>Compare an external backend or independent mathematical oracle with the scalar contract implementation.</li>
+  <li>Compare the optimized public function with that scalar implementation.</li>
+  <li>Compare threadpool dispatch with the same scalar implementation at representative thread counts and shapes.</li>
+</ol>
+
+<p>Independent output rows or tiles must preserve each output's reduction order. Split-K is a different numerical contract and must declare its partial accumulator, partition, and merge order. Unavailable llama.cpp or PyTorch evidence is recorded as <code>unresolved</code>, never counted as a pass.</p>
+
+<div class="contract-note contract-bad">
+  <strong>Hard-fail policy:</strong> agents must fix the circuit, canonical contract, or kernel map. They must not add fallbacks, silent defaults, bypass flags, or looser tolerances to make a new model compile.
+</div>
+
+<div class="contract-note">
+  <strong>Migration policy:</strong> add one operator family at a time. Record current semantics, add leaf and public-route tests, declare circuit requirements, enrich real kernel maps, prove generated artifact equivalence, run stitched parity, then promote the route.
+</div>
+
+<h2>X-Ray Fix Progression</h2>
+
+<p>Every X-ray failure follows the same additive progression. The report embeds these steps so another agent does not repeat an already diagnosed numerical bug. <a href="xray.html">X-Ray: Evidence and Divergence Attribution</a> explains the pipeline, capture neutrality and fix-ownership policy this progression runs under.</p>
+
+<ol>
+  <li>Compare execution policy first: prefill segmentation, kernel batch shapes, position progression, cache reset/append behavior, and cache strides. A combined 1,307-row prefill is not numerically equivalent evidence for a backend that executes 33, 1,008, and 266-row segments.</li>
+  <li>For incremental decode, prove cache state before attention math: compare append index, current post-RoPE K/V, stored-row readback, the previous row, and hashes for every valid cache row.</li>
+  <li>Only when query and valid cache bytes agree, compare attention providers, split thresholds, worker partitions, probability/value rounding, and merge order.</li>
+  <li>Stop at the first divergent semantic edge and classify its storage, compute, reduction, position, layout, circuit, binding, and threading contract.</li>
+  <li>Resolve an exact compatible kernel-map capability. Zero or multiple providers hard-fail.</li>
+  <li>Fix the existing implementation or add one new additive variant. Do not alter unrelated numerical variants.</li>
+  <li>Extend the kernel-family matrix across input storage, compute and accumulator precision, reduction and merge order, rounding points, output storage, and threading semantics.</li>
+  <li>Test the leaf kernel against an independent formula and the requested PyTorch or llama.cpp backend oracle.</li>
+  <li>Register the exact validated function in the kernel map, then run isolated, contract-resolution, stitched-checkpoint, mixed-prefill, and teacher-forced gates.</li>
+  <li>Rerun X-ray from the last passing checkpoint. The accepted fix must move the first divergence to a later semantic edge.</li>
+  <li>Publish the capability evidence in the test-report accordion and nightly artifacts before promoting the route.</li>
+</ol>
+
+<p>The bounded execution-state comparator preserves this order in a machine-readable report:</p>
+
+<pre><code>python version/v8/scripts/xray_execution_state_v8.py \
+  --subject-trace build/xray/ck-execution-trace.json \
+  --oracle-trace build/xray/llama-execution-trace.json \
+  --output build/xray/execution-state-report.json</code></pre>
+
+<p>It stops at one of four useful boundaries: execution-policy mismatch, cache metadata/content mismatch, attention-input mismatch, or attention-arithmetic mismatch. Tensor bisection begins only after the execution and state contracts agree.</p>
+
+<h3>Testing the Diagnostic, Not Only the Model</h3>
+
+<p>X-ray has its own nightly injected-fault gate. The fixtures are small public two-layer vision/decoder circuits; no production kernel contains a hidden fault switch. Each fixture changes one tensor, metadata field, circuit edge, or state transition and requires X-ray to report the predetermined first semantic boundary.</p>
+
+<table>
+  <thead><tr><th>Injected fixture</th><th>Required first diagnosis</th></tr></thead>
+  <tbody>
+    <tr><td>BF16 storage boundary at encoder layer 1 attention</td><td><code>STORAGE_CONTRACT_MISMATCH</code></td></tr>
+    <tr><td>Wrong visual-prefix producer</td><td><code>CIRCUIT_PRODUCER_MISMATCH</code></td></tr>
+    <tr><td>Decoder layer output arithmetic change</td><td><code>KERNEL_IMPLEMENTATION_DIVERGENCE</code> with the exact logical coordinate</td></tr>
+    <tr><td>Combined instead of segmented mixed prefill</td><td><code>EXECUTION_POLICY_MISMATCH</code></td></tr>
+    <tr><td>Off-by-one KV-cache append index</td><td><code>CACHE_STATE_METADATA_MISMATCH</code></td></tr>
+    <tr><td>Different attention output with identical Q and cache inputs</td><td><code>ATTENTION_ARITHMETIC_DIVERGENCE</code></td></tr>
+  </tbody>
+</table>
+
+<pre><code>make test-xray-validator-selftest
+# Evidence: build/xray/validator_selftest_report.json</code></pre>
+
+<p>The gate also runs a clean control. It fails if X-ray reports an earlier false positive, accepts an incompatible execution contract, misses the injected edge, or misclassifies state corruption as kernel arithmetic. The nightly test-report publishes this as a dedicated <em>v8 X-ray Injected-Fault Validator</em> row.</p>
+
+<h2>Measured BF16 Vision Progression</h2>
+
+<p>The Qwen3-VL BF16 investigation demonstrates the closure rule on a real 1152&times;896 form image with 4,032 visual tokens. Each row was reached through the normal compiler and exact kernel-map resolution; no generated C was edited by hand.</p>
+
+<table>
+  <thead><tr><th>Semantic edge</th><th>Before relative RMSE</th><th>After relative RMSE</th><th>Resolved capability</th></tr></thead>
+  <tbody>
+    <tr><td>Frontend position output</td><td>1.899e-2</td><td>2.361e-5</td><td>BF16 align-corners position storage</td></tr>
+    <tr><td>Layer 0 norm1</td><td>1.225e-2</td><td>5.538e-5</td><td>BF16 storage with matched FP32 reduction</td></tr>
+    <tr><td>Packed QKV projection</td><td>Not yet isolated</td><td>7.129e-5</td><td>BF16 input/weight, FP32 dot, BF16 output</td></tr>
+    <tr><td>Q after M-RoPE</td><td>Wrong generated sections</td><td>7.811e-5</td><td>Full-width multi-section BF16 output</td></tr>
+    <tr><td>Attention context</td><td>1.744e-3</td><td>9.258e-4</td><td>BF16 Q/K/V, FP32 online reduction, BF16 output</td></tr>
+    <tr><td>Output projection</td><td>Not yet isolated</td><td>6.059e-4</td><td>BF16 input/weight, FP32 dot, BF16 output</td></tr>
+  </tbody>
+</table>
+
+<p>The next edge is always explicit. After output projection the resolver selects the BF16 residual capability, then X-ray continues through norm2, MLP, spatial merge, projector, final prefix, mixed-prefill logits, and teacher-forced generation. A green leaf test without this forward movement is evidence for a kernel only, not closure of the model bug.</p>
+
+<h2>Forward Sensitivity Before Backward Attribution</h2>
+
+<p>A small BF16 forward difference can be numerically harmless or it can be amplified by attention, normalization, or a later residual path. X-ray can now test that distinction without first trusting a CK backward kernel. The sensitivity runner sends both the PyTorch reference tensor and the CK-perturbed tensor through the same authoritative PyTorch operator, applies one deterministic upstream probe, and reports forward and vector-Jacobian-product amplification.</p>
+
+<pre><code>python version/v8/scripts/xray_attention_sensitivity_v8.py \
+  --reference-q build/xray/torch-q.f32 \
+  --reference-k build/xray/torch-k.f32 \
+  --reference-v build/xray/torch-v.f32 \
+  --subject-q build/xray/ck-q.f32 \
+  --subject-k build/xray/ck-k.f32 \
+  --subject-v build/xray/ck-v.f32 \
+  --q-shape 16 4032 72 \
+  --kv-shape 16 4032 72 \
+  --storage-dtype bf16 \
+  --query-start 0 --query-count 32 \
+  --output build/xray/attention-sensitivity.json</code></pre>
+
+<p>The report performs Q-only, K-only, V-only, and combined perturbation ablations. It records the stored input delta, downstream output delta, fixed-probe gradient delta, amplification ratios, and worst logical coordinates. Query bounding limits memory while retaining the complete K/V context for full non-causal vision attention.</p>
+
+<p>This report is diagnostic evidence, not a parity verdict. It proves which existing forward perturbation is amplified by PyTorch's downstream math. It does not prove that a CK backward provider is correct. A CK training provider must separately declare the same full-attention storage, accumulation, reduction, rounding, and threading contract and pass direct gradient parity. Pass/fail thresholds remain in parity profiles rather than circuits or the sensitivity report.</p>
+
+<h2>Execution-Contract X-Ray</h2>
+
+<p>Tensor parity cannot diagnose a backend that executes the same mixed prefix with a different schedule. X-ray therefore records prefill segmentation, cache transitions, position transitions, exact shared-library identity, and the manifest-map identity alongside numerical checkpoints.</p>
+
+<table>
+  <thead><tr><th>Mixed-prefix contract</th><th>Required behavior</th><th>Failure meaning</th></tr></thead>
+  <tbody>
+    <tr><td>Segments</td><td><code>text_before -&gt; visual -&gt; text_after</code></td><td>A combined prefix changes projection reduction shape and rounding.</td></tr>
+    <tr><td>Cache transition</td><td><code>append_preserve</code></td><td>A segment must retain all prior K/V rows and append at the physical token offset.</td></tr>
+    <tr><td>Position transition</td><td><code>segment_defined</code></td><td>Physical cache position and semantic M-RoPE text position must not be conflated.</td></tr>
+    <tr><td>Runtime evidence</td><td>Exact generated library and manifest-map hashes</td><td>A stale converted manifest or rebuilt runtime invalidates attribution.</td></tr>
+  </tbody>
+</table>
+
+<p>On the 1,008-token Qwen3-VL form cases, the old single-call path diverged from llama.cpp as early as generated step 4. Circuit-driven segmented append removed the cache-state failure, but a later close-ranking flip remained. X-ray then showed that the visual M-RoPE cache was exact while only the rotated second half differed. Basis-vector replay isolated two compiler-visible rounding points: llama.cpp rounds the partner product before each <code>fmaf</code>, and its frequency recurrence uses the system <code>powf</code>, <code>sinf</code>, and <code>cosf</code> behavior. CK now names that evaluation order in the numerical contract and implements it explicitly.</p>
+
+<p>The resulting production gate is exact for both canonical OCR forms: each full <code>1008 x 16384</code> decoder-facing visual prefix matches llama.cpp across all 16,515,072 FP32 values, and both 128-token greedy runs match 128/128 top-1 tokens. Minimum logits cosine was 0.98892 and 0.99168 respectively, with at least 14/16 top-k overlap. This closes these two fixtures, not the private corpus sweep or every multimodal family.</p>
+
+<p>The investigation also invalidated an earlier packed Q4_K&times;Q8_K diagnosis. The apparent packed-reduction failure was downstream of the M-RoPE ULP and a report that recorded the generated decoder library but not its dynamically loaded engine library. X-ray now defaults the raw llama.cpp oracle to one thread, rejects multi-threaded exact capture without an explicit opt-in, and records the engine, generated model, llama shim, and manifest identities. A downstream kernel is not blamed until exact-input replay and complete runtime provenance both pass.</p>
+
+<h2>Validation Commands</h2>
+
+<p><code>make test-numerical-contracts</code> is an executable gate, not only a schema check. It builds the engine and runs contract resolution, full attention numerics, and FP16 split-KV reduction cases. The focused commands below remain useful when attributing a failure.</p>
+
+<pre><code>make test-numerical-contracts
+make test-threadpool-parity
+PYTHONPATH=unittest .venv/bin/python unittest/test_attention_full.py -v
+V8_QWEN3VL_ENCODER_PARITY_LLAMA_CPP_ROOT=./llama.cpp \
+  make test-attention-f16-split-kv
+make test-v8-qwen3vl
+make v8-regression-fast</code></pre>
+
+<h2>What This Prevents</h2>
+
+<ul>
+  <li>A correct leaf kernel hidden behind the wrong production wrapper.</li>
+  <li>Prefill and decode silently using different accumulation contracts.</li>
+  <li>KV=511 and KV=512 changing mathematics without a declared threshold.</li>
+  <li>Thread count changing reduction structure without a declared partition policy.</li>
+  <li>A model-specific Python conditional becoming permanent compiler architecture.</li>
+  <li>A fast path being enabled because it is faster while long-token parity is worse.</li>
+</ul>
+
+<p>Related: <a href="architecture.html">System Architecture</a>, <a href="kernel-maps.html">Kernel Maps and Provider Selection</a>, <a href="ir-pipeline.html">IR Pipeline</a>, <a href="v8-vision-encoder.html">v8 Vision Encoder</a>, and <a href="kernel-tuning-methodology.html">Kernel Tuning Methodology</a>.</p>
+
+<div id="nc-svg-overlay" role="dialog" aria-modal="true" aria-label="Expanded diagram">
+  <div class="nc-ov-bar">
+    <span class="nc-ov-title" id="nc-ov-title">Diagram</span>
+    <span>
+      <button type="button" id="nc-ov-out" aria-label="Zoom out">&minus;</button>
+      <button type="button" id="nc-ov-in" aria-label="Zoom in">+</button>
+      <button type="button" id="nc-ov-close" aria-label="Close">&times;</button>
+    </span>
+  </div>
+  <div class="nc-ov-stage" id="nc-ov-stage"><img id="nc-ov-img" alt=""></div>
+</div>
+
+<script>
+  (function() {
+    var overlay = document.getElementById('nc-svg-overlay');
+    var stage = document.getElementById('nc-ov-stage');
+    var img = document.getElementById('nc-ov-img');
+    var title = document.getElementById('nc-ov-title');
+    var scale = 1;
+    function applyScale() {
+      var base = Math.max(stage.clientWidth - 32, 280);
+      img.style.width = Math.round(base * scale) + 'px';
+    }
+    function open(svg) {
+      var xml = new XMLSerializer().serializeToString(svg);
+      img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(xml);
+      img.alt = svg.getAttribute('aria-label') || 'diagram';
+      title.textContent = svg.getAttribute('data-svg-title') || 'Diagram';
+      scale = 1;
+      overlay.style.display = 'block';
+      document.body.style.overflow = 'hidden';
+      img.onload = applyScale;
+      applyScale();
+      document.getElementById('nc-ov-close').focus();
+    }
+    function close() {
+      overlay.style.display = 'none';
+      document.body.style.overflow = '';
+    }
+    document.querySelectorAll('.svg-expand svg[data-svg-title]').forEach(function(svg) {
+      svg.addEventListener('click', function() { open(svg); });
+      svg.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(svg); }
+      });
+    });
+    document.getElementById('nc-ov-in').addEventListener('click', function() { scale = Math.min(4, scale + 0.25); applyScale(); });
+    document.getElementById('nc-ov-out').addEventListener('click', function() { scale = Math.max(0.4, scale - 0.25); applyScale(); });
+    document.getElementById('nc-ov-close').addEventListener('click', close);
+    overlay.addEventListener('click', function(e) { if (e.target === stage || e.target === overlay) close(); });
+    document.addEventListener('keydown', function(e) { if (e.key === 'Escape') close(); });
+  })();
+</script>

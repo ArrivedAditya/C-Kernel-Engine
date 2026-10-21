@@ -1,0 +1,3956 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Report | C-Kernel-Engine</title>
+    <meta name="description" content="Automated C-Kernel-Engine nightly test report with current kernel, inference, architecture contract, and regression status.">
+    <meta name="robots" content="index,follow">
+    <link rel="canonical" href="https://c-kernel-engine.github.io/C-Kernel-Engine/test-report.html">
+    <meta property="og:title" content="Test Report | C-Kernel-Engine">
+    <meta property="og:description" content="Automated C-Kernel-Engine nightly test report with current kernel, inference, architecture contract, and regression status.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://c-kernel-engine.github.io/C-Kernel-Engine/test-report.html">
+    <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+    <style>
+        :root {
+            /* Antsand Brand Colors - Lightened */
+            --orange: #ffb400;
+            --orange-dark: #e5a200;
+            --orange-light: #ffc933;
+            --dark: #2a2a2a;
+            --dark-lighter: #363636;
+            --dark-card: #323232;
+            --grey: #454545;
+            --grey-light: #555555;
+            --text-primary: #f5f5f5;
+            --text-secondary: #b0b0b0;
+            --text-muted: #808080;
+            --bg-dark: #232323;
+            --white: #ffffff;
+            --code-bg: #1a1a1a;
+            --green: #47b475;
+            --blue: #07adf8;
+            --gradient-header: linear-gradient(135deg, #2a2a2a 0%, #363636 50%, #2a2a2a 100%);
+            --shadow-sm: 0 2px 4px rgba(0,0,0,0.3);
+            --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+            --shadow-lg: 0 8px 24px rgba(0,0,0,0.5);
+            --transition: all 0.3s ease;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-dark);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Header */
+        .site-header {
+            background: var(--gradient-header);
+            border-bottom: 3px solid var(--orange);
+            padding: 0.5rem 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 1rem;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            box-shadow: var(--shadow-md);
+        }
+
+        .header-brand {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            text-decoration: none;
+        }
+
+        .header-logo {
+            width: 40px;
+            height: 40px;
+            background: var(--orange);
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            color: var(--dark);
+            font-size: 1.1rem;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .header-title {
+            color: var(--white);
+            font-size: 1.4rem;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+        }
+
+        .header-subtitle {
+            color: var(--orange);
+            font-size: 0.8rem;
+            font-weight: 500;
+        }
+
+        /* Navigation */
+        .site-nav {
+            display: flex;
+            gap: 0.25rem;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .site-nav > a,
+        .nav-dropdown > .nav-trigger {
+            color: var(--text-secondary);
+            text-decoration: none;
+            padding: 0.6rem 1rem;
+            border-radius: 4px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: var(--transition);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            border: none;
+            background: transparent;
+            font-family: inherit;
+        }
+
+        .site-nav > a:hover,
+        .nav-dropdown:hover > .nav-trigger {
+            color: var(--white);
+            background: var(--grey);
+        }
+
+        .site-nav > a.active,
+        .nav-dropdown > .nav-trigger.active {
+            background: var(--orange);
+            color: var(--dark);
+            font-weight: 600;
+        }
+
+        /* Dropdown */
+        .nav-dropdown {
+            position: relative;
+        }
+
+        .nav-trigger::after {
+            content: '';
+            border: solid currentColor;
+            border-width: 0 2px 2px 0;
+            display: inline-block;
+            padding: 3px;
+            transform: rotate(45deg);
+            margin-top: -3px;
+            transition: transform 0.2s;
+        }
+
+        .nav-dropdown:hover .nav-trigger::after {
+            transform: rotate(-135deg);
+            margin-top: 3px;
+        }
+
+        .nav-dropdown-menu {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            background: var(--dark-card);
+            border-radius: 8px;
+            box-shadow: var(--shadow-lg);
+            min-width: 220px;
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(-10px);
+            transition: var(--transition);
+            overflow: hidden;
+            margin-top: 0.5rem;
+            border: 1px solid var(--grey);
+        }
+
+        .nav-dropdown:hover .nav-dropdown-menu {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0);
+        }
+
+        .nav-dropdown-menu a {
+            display: block;
+            padding: 0.75rem 1rem;
+            color: var(--text-secondary);
+            text-decoration: none;
+            transition: var(--transition);
+            border-left: 3px solid transparent;
+        }
+
+        .nav-dropdown-menu a:hover {
+            background: var(--grey);
+            border-left-color: var(--orange);
+            color: var(--white);
+        }
+
+        .nav-dropdown-menu a small {
+            display: block;
+            color: var(--text-muted);
+            font-size: 0.75rem;
+            margin-top: 0.2rem;
+        }
+
+        /* Last dropdown aligns to the right edge */
+        .nav-dropdown:last-child .nav-dropdown-menu {
+            left: auto;
+            right: 0;
+        }
+
+        /* Mega menu for Architecture dropdown */
+        .nav-dropdown-menu.mega-menu {
+            width: min(1180px, calc(100vw - 2rem));
+            min-width: 0;
+            max-height: calc(100vh - 90px);
+            padding: 1.25rem 1.5rem;
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 0.75rem 1.25rem;
+            left: auto;
+            right: 0;
+            overflow-y: auto;
+            transform: translateY(-10px);
+        }
+
+        .nav-dropdown:hover .nav-dropdown-menu.mega-menu {
+            transform: translateY(0);
+        }
+
+        .mega-menu .menu-section {
+            margin-bottom: 0.75rem;
+        }
+
+        .mega-menu .menu-shortcuts {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 0.5rem;
+            margin-top: 0.75rem;
+        }
+
+        .mega-menu .menu-shortcuts a {
+            padding: 0.55rem 0.75rem;
+            background: rgba(255, 180, 0, 0.055);
+            border: 1px solid rgba(255, 180, 0, 0.18);
+        }
+
+        .mega-menu .menu-heading {
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--orange);
+            padding: 0.5rem 0.75rem 0.35rem;
+            border-bottom: 1px solid var(--grey);
+            margin-bottom: 0.35rem;
+        }
+
+        .mega-menu a {
+            padding: 0.6rem 0.75rem;
+            font-size: 0.9rem;
+            border-radius: 4px;
+            border-left: none;
+            line-height: 1.3;
+        }
+
+        .mega-menu a:hover {
+            border-left: none;
+            background: var(--grey);
+        }
+
+        .mega-menu a small {
+            font-size: 0.75rem;
+            margin-top: 0.15rem;
+        }
+
+        /* Main Content */
+        main {
+            box-sizing: border-box;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+            flex: 1;
+            width: 100%;
+        }
+
+        /* Hero Section */
+        .hero {
+            background: var(--gradient-header);
+            border: 1px solid var(--grey);
+            color: var(--white);
+            padding: 3rem 2rem;
+            border-radius: 12px;
+            margin-bottom: 2rem;
+            text-align: center;
+            box-shadow: var(--shadow-lg);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, var(--orange), var(--orange-light), var(--orange));
+        }
+
+        .hero h1 {
+            color: var(--white);
+            border: none;
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .hero p {
+            font-size: 1.1rem;
+            color: var(--text-secondary);
+            max-width: 700px;
+            margin: 0 auto;
+        }
+
+        /* Typography */
+        h1 {
+            color: var(--white);
+            font-size: 2rem;
+            margin-bottom: 1rem;
+            border-bottom: 2px solid var(--orange);
+            padding-bottom: 0.5rem;
+        }
+
+        h2 {
+            color: var(--white);
+            font-size: 1.4rem;
+            margin: 2rem 0 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        h2::before {
+            content: '';
+            width: 4px;
+            height: 1.4rem;
+            background: var(--orange);
+            border-radius: 2px;
+        }
+
+        h3 {
+            color: var(--orange);
+            font-size: 1.15rem;
+            margin: 1.5rem 0 0.75rem;
+        }
+
+        p {
+            margin-bottom: 1rem;
+            color: var(--text-secondary);
+        }
+
+        /* Cards */
+        .card {
+            background: var(--dark-card);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            box-shadow: var(--shadow-sm);
+            border-left: 3px solid var(--grey-light);
+            transition: var(--transition);
+            border: 1px solid var(--grey);
+        }
+
+        .card:hover {
+            box-shadow: var(--shadow-md);
+            border-left-color: var(--orange);
+        }
+
+        .card-accent {
+            border-left-color: var(--orange);
+        }
+
+        .card-green {
+            border-left-color: var(--green);
+        }
+
+        .card-blue {
+            border-left-color: var(--blue);
+        }
+
+        .card h3 {
+            margin-top: 0;
+        }
+
+        /* Clickable Cards */
+        a.card-link {
+            display: block;
+            text-decoration: none;
+            color: inherit;
+        }
+
+        a.card-link .card {
+            cursor: pointer;
+        }
+
+        a.card-link .card:hover {
+            border-left-width: 5px;
+        }
+
+        .card-arrow {
+            color: var(--orange);
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-top: 1rem;
+            transition: var(--transition);
+        }
+
+        a.card-link:hover .card-arrow {
+            gap: 0.75rem;
+        }
+
+        /* Feature Icons */
+        .feature-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .feature-icon.orange { background: rgba(255, 180, 0, 0.15); color: var(--orange); }
+        .feature-icon.green { background: rgba(71, 180, 117, 0.15); color: var(--green); }
+        .feature-icon.blue { background: rgba(7, 173, 248, 0.15); color: var(--blue); }
+        .feature-icon.grey { background: rgba(255, 255, 255, 0.1); color: var(--text-secondary); }
+
+        /* Stats */
+        .stat-number {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: var(--orange);
+            line-height: 1;
+        }
+
+        .stat-label {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+        }
+
+        /* Code blocks */
+        pre {
+            background: var(--code-bg);
+            color: #e0e0e0;
+            padding: 1.25rem;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin: 1rem 0;
+            font-family: 'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            font-size: 0.85rem;
+            border: 1px solid var(--grey);
+        }
+
+        code {
+            font-family: 'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            background: var(--grey);
+            padding: 0.2rem 0.4rem;
+            border-radius: 3px;
+            font-size: 0.85rem;
+            color: var(--orange);
+        }
+
+        pre code {
+            background: none;
+            padding: 0;
+            color: #e0e0e0;
+        }
+
+        /* Tables */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+            background: var(--dark-card);
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid var(--grey);
+        }
+
+        th {
+            background: var(--dark);
+            color: var(--orange);
+            padding: 0.875rem 1rem;
+            text-align: left;
+            font-weight: 600;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        td {
+            padding: 0.875rem 1rem;
+            border-bottom: 1px solid var(--grey);
+            color: var(--text-secondary);
+        }
+
+        tr:hover {
+            background: var(--grey);
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        /* Lists */
+        ul, ol {
+            margin: 1rem 0;
+            padding-left: 1.5rem;
+            color: var(--text-secondary);
+        }
+
+        li {
+            margin-bottom: 0.5rem;
+        }
+
+        /* Links */
+        a {
+            color: var(--orange);
+            transition: var(--transition);
+        }
+
+        a:hover {
+            color: var(--orange-light);
+        }
+
+        /* Grid */
+        .grid {
+            display: grid;
+            gap: 1.5rem;
+        }
+
+        .grid-2 {
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        }
+
+        .grid-3 {
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        }
+
+        .grid-4 {
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        }
+
+        /* Alerts */
+        .alert {
+            padding: 1rem 1.25rem;
+            border-radius: 6px;
+            margin: 1rem 0;
+            display: flex;
+            align-items: flex-start;
+            gap: 0.75rem;
+            border: 1px solid;
+        }
+
+        .alert-icon {
+            font-size: 1.25rem;
+            flex-shrink: 0;
+        }
+
+        .alert-info {
+            background: rgba(7, 173, 248, 0.1);
+            border-color: var(--blue);
+            color: var(--blue);
+        }
+
+        .alert-warning {
+            background: rgba(255, 180, 0, 0.1);
+            border-color: var(--orange);
+            color: var(--orange);
+        }
+
+        .alert-success {
+            background: rgba(71, 180, 117, 0.1);
+            border-color: var(--green);
+            color: var(--green);
+        }
+
+        /* Image containers */
+        .img-container {
+            margin: 1.5rem 0;
+            text-align: center;
+        }
+
+        .img-container img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 8px;
+            box-shadow: var(--shadow-lg);
+            border: 1px solid var(--grey);
+        }
+
+        /* Badge */
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 999px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .badge-orange {
+            background: var(--orange);
+            color: var(--dark);
+        }
+
+        .badge-green {
+            background: var(--green);
+            color: white;
+        }
+
+        .badge-grey {
+            background: var(--grey);
+            color: var(--text-secondary);
+        }
+
+        /* Diagram blocks (monospace pre with colored spans) */
+        .diagram {
+            background: var(--code-bg);
+            border: 1px solid var(--grey);
+            border-radius: 6px;
+            padding: 1.25rem;
+            margin: 1rem 0;
+            overflow-x: auto;
+            font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace;
+            font-size: 0.8rem;
+            line-height: 1.55;
+            white-space: pre;
+            color: var(--text-muted);
+        }
+        .diagram .hl     { color: var(--blue); font-weight: 700; }
+        .diagram .grn    { color: var(--green); }
+        .diagram .wrn    { color: var(--orange); }
+        .diagram .err    { color: #f85149; }
+        .diagram .purple { color: #bc8cff; }
+        .diagram .dim    { color: #484f58; }
+
+        /* Inline status colors */
+        .good { color: var(--green); font-weight: 600; }
+        .bad  { color: #f85149; font-weight: 600; }
+        .meh  { color: var(--orange); font-weight: 600; }
+
+        /* Section numbering */
+        .section-num {
+            color: var(--orange);
+            font-weight: 400;
+            margin-right: 0.25rem;
+        }
+
+        /* Accordion */
+        details {
+            background: var(--dark-card);
+            border-radius: 6px;
+            margin-bottom: 0.75rem;
+            border: 1px solid var(--grey);
+            border-left: 3px solid var(--grey-light);
+            overflow: hidden;
+            transition: var(--transition);
+        }
+
+        details:hover {
+            border-left-color: var(--orange);
+        }
+
+        details[open] {
+            border-left-color: var(--orange);
+        }
+
+        summary {
+            padding: 1rem 1.25rem;
+            cursor: pointer;
+            font-weight: 600;
+            color: var(--white);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            list-style: none;
+            user-select: none;
+            transition: var(--transition);
+        }
+
+        summary::-webkit-details-marker {
+            display: none;
+        }
+
+        summary::after {
+            content: '';
+            border: solid var(--orange);
+            border-width: 0 2px 2px 0;
+            display: inline-block;
+            padding: 4px;
+            transform: rotate(-45deg);
+            transition: transform 0.2s ease;
+            flex-shrink: 0;
+            margin-left: 1rem;
+        }
+
+        details[open] summary::after {
+            transform: rotate(45deg);
+        }
+
+        summary:hover {
+            background: var(--grey);
+        }
+
+        details[open] summary {
+            border-bottom: 1px solid var(--grey);
+        }
+
+        .accordion-content {
+            padding: 1rem 1.25rem;
+        }
+
+        /* Site search */
+        .site-search {
+            display: flex;
+            align-items: center;
+            flex: 0 1 240px;
+            min-width: 140px;
+        }
+
+        .site-search input {
+            width: 100%;
+            background: var(--code-bg);
+            border: 1px solid var(--grey);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-family: inherit;
+            font-size: 0.85rem;
+            padding: 0.5rem 0.75rem;
+            transition: var(--transition);
+        }
+
+        .site-search input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .site-search input:focus {
+            outline: 2px solid var(--orange);
+            outline-offset: 1px;
+            border-color: var(--orange);
+        }
+
+        /* Mobile hamburger button */
+        .nav-toggle {
+            display: none;
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            padding: 0.5rem;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .nav-toggle span {
+            display: block;
+            width: 24px;
+            height: 3px;
+            background: var(--orange);
+            border-radius: 2px;
+            transition: var(--transition);
+        }
+
+        .nav-toggle.active span:nth-child(1) {
+            transform: rotate(45deg) translate(5px, 5px);
+        }
+
+        .nav-toggle.active span:nth-child(2) {
+            opacity: 0;
+        }
+
+        .nav-toggle.active span:nth-child(3) {
+            transform: rotate(-45deg) translate(6px, -6px);
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .site-header {
+                flex-direction: row;
+                justify-content: space-between;
+                padding: 0.75rem 1rem;
+            }
+
+            .nav-toggle {
+                display: flex;
+            }
+
+            .site-search {
+                order: 3;
+                flex: 1 1 100%;
+                min-width: 0;
+            }
+
+            .site-search input {
+                font-size: 1rem;
+            }
+
+            .site-nav {
+                position: fixed;
+                top: 60px;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: var(--dark);
+                flex-direction: column;
+                flex-wrap: nowrap;
+                align-items: stretch;
+                padding: 1rem;
+                gap: 0.5rem;
+                overflow-y: auto;
+                transform: translateX(-100%);
+                transition: transform 0.3s ease;
+                z-index: 999;
+            }
+
+            .site-nav.open {
+                transform: translateX(0);
+            }
+
+            .site-nav > a,
+            .nav-dropdown > .nav-trigger {
+                width: 100%;
+                padding: 1rem;
+                font-size: 1rem;
+            }
+
+            .nav-dropdown {
+                width: 100%;
+            }
+
+            .nav-dropdown-menu {
+                position: static;
+                opacity: 1;
+                visibility: hidden;
+                max-height: 0;
+                overflow: hidden;
+                transform: none;
+                margin-top: 0;
+                transition: max-height 0.3s ease, visibility 0.3s ease;
+                background: var(--dark-lighter);
+                border-radius: 0;
+                border: none;
+                box-shadow: none;
+            }
+
+            .nav-dropdown.open .nav-dropdown-menu {
+                visibility: visible;
+                max-height: 500px;
+            }
+
+            .nav-dropdown-menu a {
+                padding: 0.75rem 1.5rem;
+            }
+
+            /* Disable hover on mobile */
+            .nav-dropdown:hover .nav-dropdown-menu {
+                opacity: 1;
+                visibility: hidden;
+                max-height: 0;
+            }
+
+            .nav-dropdown.open .nav-dropdown-menu,
+            .nav-dropdown.open:hover .nav-dropdown-menu {
+                visibility: visible;
+                max-height: 500px;
+            }
+
+            .nav-dropdown-menu.mega-menu {
+                display: block;
+                width: 100%;
+                min-width: 0;
+                max-height: 0;
+                padding: 0.5rem;
+                left: auto;
+                right: auto;
+                overflow: hidden;
+                transform: none;
+            }
+
+            .nav-dropdown.open .nav-dropdown-menu.mega-menu,
+            .nav-dropdown.open:hover .nav-dropdown-menu.mega-menu {
+                max-height: 70vh;
+                overflow-y: auto;
+                transform: none;
+            }
+
+            .mega-menu .menu-shortcuts {
+                grid-template-columns: 1fr;
+            }
+
+            main {
+                padding: 1rem;
+            }
+
+            h1 {
+                font-size: 1.75rem;
+            }
+
+            .hero {
+                padding: 2rem 1rem;
+            }
+
+            .hero h1 {
+                font-size: 1.75rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="site-header">
+        <a href="index.html" class="header-brand">
+            <div class="header-logo">CK</div>
+            <div>
+                <div class="header-title">C-Kernel-Engine</div>
+                <div class="header-subtitle">High-Performance ML Kernels</div>
+            </div>
+        </a>
+        <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+            <span></span>
+            <span></span>
+            <span></span>
+        </button>
+        <form class="site-search" role="search" action="search.html" method="get" data-test="site-search">
+            <input type="search" name="q" id="site-search-input" aria-label="Search documentation" placeholder="Search docs ( / )" autocomplete="off">
+        </form>
+        <nav class="site-nav">
+            <a href="index.html" class="">Home</a>
+            <a href="spectrum.html" class="" style="color:var(--orange)">⚡ Spectrum</a>
+            <a href="quickstart.html" class="">Getting Started</a>
+            <a href="developer-guide.html" class="">Developer Guide</a>
+            <a href="contributing.html" class="">Contribute</a>
+            <a href="scaling.html" class="">Scaling</a>
+            <a href="support-hardware.html" class="" style="color:var(--green)">Support Lab</a>
+            <a href="cke-throughput-unit.html" class="" style="color:var(--orange)">CKU</a>
+            <div class="nav-dropdown">
+                <span class="nav-trigger ">Architecture</span>
+                <div class="nav-dropdown-menu mega-menu">
+                    <!-- Architecture Home Link -->
+                    <div class="menu-section" style="grid-column: 1 / -1; border-bottom: 1px solid var(--grey); padding-bottom: 0.5rem; margin-bottom: 0.5rem;">
+                        <a href="architecture-links.html" style="font-weight: 600; color: var(--orange);">
+                            View All Architecture Docs
+                            <small>Complete documentation index</small>
+                        </a>
+                        <div class="menu-shortcuts">
+                            <a href="pytorch-parity.html">PyTorch Parity<small>Numerical evidence</small></a>
+                            <a href="research.html">Research<small>Current investigations</small></a>
+                            <a href="decisions.html">Architecture Decisions<small>ADRs and tradeoffs</small></a>
+                            <a href="api.html">API &amp; Source Docs<small>Reference and Doxygen</small></a>
+                        </div>
+                    </div>
+                    <!-- Left Column -->
+                    <div class="menu-section">
+                        <div class="menu-heading">Core</div>
+                        <a href="architecture.html">System Overview<small>IR, Codegen, Kernels</small></a>
+                        <a href="tokenizer.html">Tokenizer<small>BPE, WordPiece, Trie</small></a>
+                        <a href="sentencepiece.html">SentencePiece<small>Viterbi DP, byte fallback</small></a>
+                        <a href="kernels.html">Kernel Reference<small>Forward/backward ops</small></a>
+                        <a href="codegen.html">Code Generation<small>IR to C compilation</small></a>
+                        <a href="iteration-philosophy.html">Iteration Philosophy<small>Why v1→v6 matters</small></a>
+                        <a href="ir-v2.html">IR v2 Format<small>Case study: symbolic dimensions</small></a>
+                        <a href="v7-backprop-ir.html">v7 Backprop IR<small>IR1/IR2 + layout/codegen flow</small></a>
+                        <a href="v7-cross-entropy-parity.html">v7 Cross-Entropy Parity<small>p - one_hot, reduction semantics, drift fixes</small></a>
+                        <a href="concepts.html">Deep Dive Concepts<small>RoPE, Flash Attention, GQA</small></a>
+                        <a href="kernel-maps.html">Kernel Maps<small>Provider selection, ABI, migration</small></a>
+                        <a href="kernel-architecture.html">v8 Kernel Architecture<small>Registry by op family, math</small></a>
+                        <a href="architecture-variants.html">Architecture Variants<small>Laguna, Cohere2, Instella, Nemotron</small></a>
+                        <a href="v8-moe-expert-kernels.html">MoE Expert Kernels<small>Bucketed prefill, mixed-quant experts</small></a>
+                        <a href="v8-cohere-kernels.html">Cohere Kernel Story<small>Reuse, BF16 vision, Transcribe audio</small></a>
+                    </div>
+                    <div class="menu-section">
+                        <div class="menu-heading">Quantization</div>
+                        <a href="quantization.html">Quant Fundamentals<small>Block formats, grouping</small></a>
+                        <a href="gguf-bump.html">GGUF to Bump<small>Weight conversion</small></a>
+                        <a href="gguf-conversion.html">GGUF Parsing<small>Byte-level guide</small></a>
+                    </div>
+                    <!-- Right Column -->
+                    <div class="menu-section">
+                        <div class="menu-heading">Optimization</div>
+                        <a href="gemm-memory-layout.html">GEMM Memory Layout<small>NN/NT layouts, offsets</small></a>
+                        <a href="gemm-optimization.html">GEMM Optimization<small>AVX, MKL, blocking</small></a>
+                        <a href="kernel-tuning-methodology.html">Kernel Tuning Methodology<small>VTune, Advisor, roofline, parity gates</small></a>
+                        <a href="cke-throughput-unit.html">CKE Throughput Unit<small>PB/s active-byte target</small></a>
+                        <a href="gemma4-speculative-pair.html">Gemma4 Speculative Pair<small>Backbone + MTP drafter circuit</small></a>
+                        <a href="v8-mla-kimi.html">v8 MLA / Kimi<small>Explicit decode cache contract</small></a>
+                        <a href="v8-whisper-tiny.html">Whisper Tiny E2E<small>Audio encoder/decoder circuits</small></a>
+                        <a href="simd-architecture.html">SIMD Architecture<small>AVX-512, VNNI, AMX</small></a>
+                        <a href="flash_attention.html" class="">Flash Attention Analysis<small>Why llama.cpp is faster</small></a>
+                    </div>
+                    <div class="menu-section">
+                        <div class="menu-heading">Infrastructure</div>
+                        <a href="memory-safety.html">Memory Safety<small>Bump allocator, canaries</small></a>
+                        <a href="deterministic-memory.html">Deterministic Memory<small>RDMA, interpretability</small></a>
+                        <a href="profiling.html">Profiling Guide<small>Valgrind, perf, flamegraphs</small></a>
+                        <a href="kernel-tuning-methodology.html">Kernel Tuning Methodology<small>CPU-node performance runbook</small></a>
+                        <a href="v7-profiling.html">v7 Profiling Runbook<small>Train kernels: VTune, Advisor, perf</small></a>
+                        <a href="v7-runbook.html">v7 Inference + Training Runbook<small>Copy/paste train + infer workflow</small></a>
+                        <a href="sizing.html">Model Sizing Lab<small>KV, state, concurrency, six-GPU placement</small></a>
+                        <a href="serving.html">Serving &amp; Batching<small>Single-flight, batch2, continuous-batching roadmap</small></a>
+                        <a href="v7-svg-dataset-runbook.html">v7 SVG Dataset Runbook<small>Pretrain + midtrain data generation</small></a>
+                        <a href="testing.html">Testing<small>Numerical parity verification</small></a>
+                        <a href="divergence-harness.html">Stitched Divergence Harness<small>llama.cpp/PyTorch tensor attribution</small></a>
+                        <a href="threadpool.html">Thread Pool<small>Persistent pthreads, dispatch</small></a>
+                    </div>
+                </div>
+            </div>
+            <a href="test-report.html" class="">Test Report</a>
+            <a href="version-history.html" class="">Versions</a>
+        </nav>
+    </header>
+    <main>
+<div class="container">
+  <h1>Test Report</h1>
+  <p class="lead">
+    Automated test results from nightly CI runs. Updated daily at 2am UTC.
+  </p>
+
+  <style>
+    .status-badge {
+      display: inline-block;
+      padding: 0.5rem 1rem;
+      border-radius: 8px;
+      font-weight: bold;
+      font-size: 1.2rem;
+    }
+    .status-pass { background: #48bb78; color: white; }
+    .status-fail { background: #f56565; color: white; }
+    .status-loading { background: #a0aec0; color: white; }
+
+    .summary-cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 1rem;
+      margin: 2rem 0;
+    }
+    .summary-card {
+      background: var(--dark-card);
+      border: 1px solid var(--grey);
+      border-radius: 8px;
+      padding: 1.5rem;
+      text-align: center;
+      min-width: 0;
+    }
+    .summary-card .value {
+      font-size: 2rem;
+      font-weight: bold;
+      color: var(--text-primary);
+      overflow-wrap: break-word;
+    }
+    .summary-card .label {
+      color: var(--text-secondary);
+      font-size: 0.9rem;
+      overflow-wrap: break-word;
+    }
+    .summary-card.passed .value { color: #48bb78; }
+    .summary-card.failed .value { color: #f56565; }
+
+    .copy-failures-bar {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+      margin: 0.75rem 0 1.25rem;
+    }
+    .copy-failures-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      padding: 0.5rem 0.95rem;
+      background: rgba(245, 101, 101, 0.12);
+      color: #f56565;
+      border: 1px solid rgba(245, 101, 101, 0.45);
+      border-radius: 6px;
+      font-family: inherit;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .copy-failures-btn:hover:not(:disabled) {
+      background: rgba(245, 101, 101, 0.22);
+      border-color: #f56565;
+    }
+    .copy-failures-btn:disabled {
+      opacity: 0.45;
+      cursor: default;
+    }
+    .copy-failures-btn.copied {
+      background: rgba(71, 180, 117, 0.15);
+      border-color: var(--green);
+      color: var(--green);
+    }
+    .copy-failures-hint {
+      color: var(--text-muted);
+      font-size: 0.8rem;
+    }
+
+    .runner-hardware {
+      position: relative;
+      overflow: hidden;
+      margin: 1rem 0 2rem;
+      padding: 0.95rem 1.25rem 0.7rem;
+      background:
+        radial-gradient(900px 280px at 10% -50px, rgba(255, 180, 0, 0.13), transparent 60%),
+        radial-gradient(700px 320px at 96% 130%, rgba(255, 180, 0, 0.06), transparent 55%),
+        linear-gradient(165deg, #212125 0%, #17171b 55%, #131316 100%);
+      border: 1px solid rgba(255, 180, 0, 0.22);
+      border-radius: 10px;
+      box-shadow: 0 10px 32px rgba(0, 0, 0, 0.35), inset 0 0 70px rgba(255, 180, 0, 0.025);
+    }
+    .runner-hardware::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, var(--orange) 0%, rgba(255, 180, 0, 0.25) 45%, transparent 70%);
+    }
+    .runner-hardware__header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+    .runner-hardware__header h2 {
+      margin: 0;
+      font-size: 1.4rem;
+      font-weight: 700;
+      line-height: 1.3;
+      letter-spacing: -0.01em;
+    }
+    .runner-hardware__kicker {
+      margin-bottom: 0.3rem;
+      color: var(--orange);
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+    }
+    .runner-hardware__model {
+      color: var(--text-primary);
+    }
+    .runner-hardware__grid {
+      margin-top: 0.7rem;
+    }
+    .runner-hardware__stats {
+      display: flex;
+      flex-wrap: wrap;
+      border-top: 1px solid #3d3a31;
+      border-bottom: 1px solid #3d3a31;
+    }
+    .runner-hardware__stat {
+      padding: 0.6rem 1.2rem 0.55rem 0;
+      margin-right: 1.2rem;
+      border-right: 1px solid #3d3a31;
+    }
+    .runner-hardware__stat:last-child {
+      border-right: none;
+      margin-right: 0;
+      padding-right: 0;
+    }
+    .runner-hardware__stat span {
+      display: block;
+      margin-bottom: 0.18rem;
+      color: #8a8a92;
+      font-size: 0.66rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    .runner-hardware__stat strong {
+      display: block;
+      color: var(--text-primary);
+      font-size: 1.08rem;
+      font-weight: 600;
+    }
+    .runner-hardware__stat strong.mono {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.92rem;
+      font-weight: 500;
+      padding-top: 0.14rem;
+    }
+    .runner-hardware__stat em {
+      display: block;
+      margin-top: 0.12rem;
+      color: #909098;
+      font-size: 0.76rem;
+      font-style: normal;
+    }
+    .runner-hardware__foot {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 0.4rem 1rem;
+      padding-bottom: 0.6rem;
+      margin-bottom: 0.6rem;
+      border-bottom: 1px dashed #3d3a31;
+    }
+    .runner-hardware__meta {
+      color: #9a9aa2;
+      font-size: 0.8rem;
+    }
+    .runner-hardware__meta .rh-sep {
+      margin: 0 0.45rem;
+      color: #4a4a52;
+    }
+    .runner-hardware__meta code {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.76rem;
+      color: #b8b8c0;
+    }
+    .runner-hardware__isa {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.35rem;
+    }
+    .runner-hardware__isa-label {
+      color: #8a8a92;
+      font-size: 0.62rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      margin-right: 0.1rem;
+    }
+    .runner-hardware__isa code {
+      padding: 0.14rem 0.5rem;
+      color: #9ae6b4;
+      background: rgba(72, 187, 120, 0.08);
+      border: 1px solid rgba(72, 187, 120, 0.25);
+      border-radius: 999px;
+      font-size: 0.74rem;
+    }
+    .runner-hardware__linkage {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-top: 0.6rem;
+      color: #cfa254;
+      font-size: 0.76rem;
+      letter-spacing: 0.02em;
+    }
+    .runner-hardware__linkage::before {
+      content: '';
+      width: 1px;
+      height: 0.85rem;
+      background: linear-gradient(180deg, rgba(255, 180, 0, 0.15), var(--orange));
+      border-radius: 1px;
+    }
+    .runner-hardware__linkage svg {
+      flex-shrink: 0;
+    }
+    .runner-hardware details {
+      background: transparent;
+      border: none;
+      border-radius: 0;
+      margin: 0.55rem 0 0;
+      border-top: 1px solid #3d3a31;
+      padding-top: 0.4rem;
+      overflow: visible;
+    }
+    .runner-hardware details:hover {
+      border-left: none;
+    }
+    .runner-hardware summary {
+      padding: 0.15rem 0;
+      cursor: pointer;
+      color: #9a9aa2;
+      font-size: 0.84rem;
+      font-weight: 500;
+      transition: color 0.15s;
+    }
+    .runner-hardware summary:hover {
+      background: transparent;
+      color: var(--orange-light);
+    }
+    .runner-hardware details[open] summary {
+      border-bottom: none;
+      margin-bottom: 0.4rem;
+    }
+    .runner-hardware__capture-label {
+      margin: 1rem 0 0.35rem;
+      color: var(--text-muted);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.72rem;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+    .runner-hardware pre {
+      max-height: 28rem;
+      margin: 0;
+      padding: 0.9rem;
+      overflow: auto;
+      white-space: pre;
+      color: #cbd5e0;
+      background: #080d12;
+      border: 1px solid #1f2a37;
+      border-radius: 6px;
+      font-size: 0.75rem;
+      line-height: 1.5;
+    }
+    @media (max-width: 640px) {
+      .runner-hardware__header { flex-direction: column; }
+    }
+
+    .results-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1rem 0;
+    }
+    .results-table th, .results-table td {
+      padding: 0.75rem;
+      text-align: left;
+      border-bottom: 1px solid var(--grey);
+    }
+    .results-table th {
+      background: var(--dark-lighter);
+      font-weight: 600;
+    }
+    .results-table tr:hover {
+      background: var(--dark-card);
+    }
+
+    .test-pass { color: #48bb78; }
+    .test-fail { color: #f56565; }
+    .test-skip { color: #a0aec0; }
+    .test-timeout { color: #ed8936; }
+
+    .category-badge {
+      display: inline-block;
+      padding: 0.2rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      background: var(--grey);
+      color: var(--text-secondary);
+    }
+
+    .history-chart {
+      margin: 2rem 0;
+      padding: 1rem 1rem 1.5rem 1rem;
+      background: var(--dark-card);
+      border-radius: 8px;
+    }
+    .history-bar {
+      display: flex;
+      gap: 2px;
+      height: 70px;
+      align-items: flex-end;
+    }
+    .history-day {
+      flex: 1;
+      min-width: 20px;
+      border-radius: 2px 2px 0 0;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+    .history-day:hover {
+      opacity: 0.8;
+    }
+    .history-day.all-pass { background: #48bb78; }
+    .history-day.has-fail { background: #f56565; }
+    .history-day.no-data { background: var(--grey); }
+
+    /* Legend */
+    .history-legend {
+      display: flex;
+      gap: 1.5rem;
+      justify-content: center;
+      margin-top: 1rem;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .legend-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 2px;
+    }
+    .legend-dot.pass { background: #48bb78; }
+    .legend-dot.fail { background: #f56565; }
+    .legend-dot.nodata { background: var(--grey); }
+
+    /* Date labels */
+    .history-labels {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 1.25rem;
+      padding: 0 2px;
+      height: 50px;
+    }
+    .history-label {
+      font-size: 0.7rem;
+      color: #888;
+      transform: rotate(-45deg);
+      transform-origin: left top;
+      white-space: nowrap;
+      position: relative;
+      top: 12px;
+    }
+    .history-labels span {
+      text-align: left;
+    }
+
+    .error-msg {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      max-width: 400px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    #loading-state, #error-state, #results-content {
+      display: none;
+    }
+    #loading-state.active, #error-state.active, #results-content.active {
+      display: block;
+    }
+
+    .refresh-btn {
+      background: #4299e1;
+      color: white;
+      border: none;
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .refresh-btn:hover {
+      background: #3182ce;
+    }
+
+    .updated-time {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+
+    .regression-section {
+      min-width: 0;
+      margin: 2rem 0;
+      padding: 1.25rem;
+      background: var(--dark-card);
+      border: 1px solid var(--grey);
+      border-radius: 8px;
+    }
+    .regression-section h2 {
+      margin-top: 0;
+      margin-bottom: 0.4rem;
+    }
+    .regression-meta {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      margin-bottom: 1rem;
+    }
+    .regression-badge {
+      display: inline-block;
+      padding: 0.25rem 0.6rem;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 700;
+      margin-right: 0.6rem;
+    }
+    .regression-badge.pass { background: rgba(72, 187, 120, 0.16); color: #48bb78; }
+    .regression-badge.fail { background: rgba(245, 101, 101, 0.16); color: #f56565; }
+    .regression-badge.skip { background: rgba(160, 174, 192, 0.18); color: #cbd5e0; }
+    .regression-family-note {
+      max-width: 420px;
+      color: var(--text-muted);
+      font-size: 0.8rem;
+      white-space: normal;
+    }
+    .regression-warning-cell {
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      white-space: normal;
+    }
+    .contract-accordion {
+      display: grid;
+      gap: 0.6rem;
+      margin-top: 1rem;
+    }
+    .contract-accordion details {
+      background: #0f151c;
+      border: 1px solid var(--grey);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .contract-accordion summary {
+      cursor: pointer;
+      padding: 0.75rem 0.9rem;
+      color: var(--text-primary);
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.8rem;
+    }
+    .contract-body {
+      border-top: 1px solid var(--grey);
+      padding: 0.8rem 0.9rem 0.95rem;
+      color: var(--text-secondary);
+      font-size: 0.9rem;
+    }
+    .contract-pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      margin: 0.55rem 0;
+    }
+    .contract-pill {
+      background: #121a24;
+      border: 1px solid #263242;
+      border-radius: 999px;
+      padding: 0.2rem 0.5rem;
+      color: var(--text-secondary);
+      font-size: 0.78rem;
+    }
+    .coverage-lane {
+      display: inline-block;
+      min-width: 2.4rem;
+      padding: 0.12rem 0.45rem;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 800;
+      text-align: center;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .coverage-lane.v7 {
+      background: rgba(72, 187, 120, 0.15);
+      border: 1px solid rgba(72, 187, 120, 0.35);
+      color: #48bb78;
+    }
+    .coverage-lane.v8 {
+      background: rgba(66, 153, 225, 0.15);
+      border: 1px solid rgba(66, 153, 225, 0.38);
+      color: #63b3ed;
+    }
+    .coverage-detail {
+      max-width: 520px;
+      white-space: normal;
+      color: var(--text-secondary);
+      font-size: 0.86rem;
+    }
+    .contract-table-wrap {
+      overflow-x: auto;
+      margin-top: 0.7rem;
+    }
+    /* Wide audit tables (e.g. kernel allocation debt) stay inside their panel:
+       the wrapper scrolls as a last resort, and long code spans wrap in-cell. */
+    .table-scroll {
+      overflow-x: auto;
+      width: 100%;
+      max-width: 100%;
+    }
+    .table-scroll .results-table td code {
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+    /* Short call names (malloc(), aligned_alloc()) stay on one line. */
+    #kernel-allocation-tbody td:nth-child(4) code {
+      white-space: nowrap;
+      overflow-wrap: normal;
+      word-break: normal;
+    }
+    /* Allocation-debt accordion */
+    .alloc-accordion summary {
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.6rem 0.75rem;
+      border: 1px solid var(--grey);
+      border-radius: 6px;
+      background: var(--dark-lighter);
+      color: var(--text-primary);
+      font-weight: 600;
+      list-style: none;
+      user-select: none;
+    }
+    .alloc-accordion summary::-webkit-details-marker { display: none; }
+    .alloc-accordion summary::before {
+      content: "\25B6";
+      color: var(--text-secondary);
+      font-size: 0.8rem;
+      transition: transform 0.15s ease;
+    }
+    .alloc-accordion[open] summary::before { transform: rotate(90deg); }
+    .alloc-accordion[open] summary { border-radius: 6px 6px 0 0; border-bottom: none; }
+    .alloc-accordion-count {
+      margin-left: auto;
+      color: var(--text-secondary);
+      font-weight: 400;
+      font-size: 0.85rem;
+    }
+    .alloc-guide {
+      margin: 0.75rem 0 0.5rem;
+      color: var(--text-secondary);
+      font-size: 0.9rem;
+    }
+    .alloc-class-production {
+      color: #ffc933;
+      font-weight: 600;
+    }
+
+    /* What-this-tests explainers and status semantics */
+    .contract-explainer {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 0.7rem;
+      margin: 0.9rem 0 1.1rem;
+    }
+    .contract-explainer__card {
+      padding: 0.75rem 0.9rem;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid #3d3a31;
+      border-left: 3px solid var(--orange);
+      border-radius: 8px;
+    }
+    .contract-explainer__card h3 {
+      margin: 0;
+      color: var(--text-primary);
+      font-size: 0.88rem;
+    }
+    .contract-explainer__card p {
+      margin: 0.4rem 0 0.55rem;
+      color: var(--text-secondary);
+      font-size: 0.78rem;
+      line-height: 1.5;
+    }
+    .cmd-chip {
+      display: inline-block;
+      padding: 0.16rem 0.5rem;
+      color: var(--orange-light);
+      background: rgba(255, 180, 0, 0.08);
+      border: 1px solid rgba(255, 180, 0, 0.28);
+      border-radius: 6px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.7rem;
+      text-decoration: none;
+      transition: background 0.15s;
+    }
+    .cmd-chip:hover {
+      background: rgba(255, 180, 0, 0.16);
+    }
+    .status-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.45rem 1.3rem;
+      margin: 0.6rem 0 1rem;
+      padding: 0.55rem 0.8rem;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid #3d3a31;
+      border-radius: 8px;
+      font-size: 0.76rem;
+      color: var(--text-secondary);
+    }
+    .status-legend .legend-key {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-weight: 600;
+    }
+    .status-legend .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .status-legend .dot.pass { background: #48bb78; }
+    .status-legend .dot.warn { background: var(--orange); }
+    .status-legend .dot.fail { background: #f56565; }
+    .status-legend .dot.skip { background: #a0aec0; }
+    .capability-table { min-width: 980px; }
+    .capability-table th:nth-child(-n+3),
+    .capability-table td:nth-child(-n+3) { white-space: nowrap; }
+    .capability-table th:nth-child(4) { min-width: 250px; }
+    .capability-table th:nth-child(5) { min-width: 220px; }
+  </style>
+
+  <div id="loading-state" class="active">
+    <p><span class="status-badge status-loading">Loading...</span></p>
+    <p>Fetching latest test results...</p>
+  </div>
+
+  <div id="error-state">
+    <p><span class="status-badge status-fail">Error</span></p>
+    <p id="error-message">Failed to load test results.</p>
+    <button class="refresh-btn" onclick="loadResults()">Retry</button>
+  </div>
+
+  <div id="results-content">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+      <div>
+        <span id="overall-status" class="status-badge status-pass">ALL PASS</span>
+        <span id="updated-time" class="updated-time"></span>
+      </div>
+      <button class="refresh-btn" onclick="loadResults()">Refresh</button>
+    </div>
+
+    <section id="runner-hardware" class="runner-hardware" aria-labelledby="runner-hardware-title">
+      <div class="runner-hardware__header">
+        <div>
+          <div class="runner-hardware__kicker">Executed on &middot; nightly CI runner</div>
+          <h2 id="runner-hardware-title"><span id="runner-hardware-model" class="runner-hardware__model">Hardware evidence was not published by this run.</span></h2>
+        </div>
+        <span id="runner-hardware-provider" class="regression-badge skip">NOT PUBLISHED</span>
+      </div>
+      <div id="runner-hardware-grid" class="runner-hardware__grid"></div>
+      <div id="runner-hardware-isa" class="runner-hardware__isa"></div>
+      <div class="runner-hardware__linkage">
+        <svg width="9" height="9" viewBox="0 0 10 10" fill="none" aria-hidden="true"><path d="M5 1v6M5 7L2 4.2M5 7l3-2.8" stroke="#ffb400" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>Every result below was produced on this machine &mdash; kernel dispatch follows its detected ISA surface.</span>
+      </div>
+      <details id="runner-hardware-details" hidden>
+        <summary>Show runner provenance and exact system evidence</summary>
+        <div id="runner-hardware-provenance" class="runner-hardware__foot"></div>
+        <div id="runner-hardware-cpu-group">
+          <div id="runner-hardware-cpu-label" class="runner-hardware__capture-label">CPU</div>
+          <pre id="runner-hardware-cpu"></pre>
+        </div>
+        <div id="runner-hardware-free-group">
+          <div class="runner-hardware__capture-label"><code>free -h</code></div>
+          <pre id="runner-hardware-free"></pre>
+        </div>
+        <div id="runner-hardware-meminfo-group">
+          <div class="runner-hardware__capture-label"><code>/proc/meminfo</code></div>
+          <pre id="runner-hardware-meminfo"></pre>
+        </div>
+      </details>
+    </section>
+
+    <div class="summary-cards">
+      <div class="summary-card passed">
+        <div class="value" id="passed-count">0</div>
+        <div class="label">Passed</div>
+      </div>
+      <div class="summary-card failed">
+        <div class="value" id="failed-count">0</div>
+        <div class="label">Failed</div>
+      </div>
+      <div class="summary-card">
+        <div class="value" id="total-count">0</div>
+        <div class="label">Total</div>
+      </div>
+      <div class="summary-card">
+        <div class="value" id="duration">0s</div>
+        <div class="label">Duration</div>
+      </div>
+    </div>
+
+    <div class="copy-failures-bar">
+      <button type="button" class="copy-failures-btn" id="copy-failures-btn" disabled
+              title="Copy a Markdown summary of every failed suite and sub-test to the clipboard">
+        ⧉ Copy failed tests
+      </button>
+      <span class="copy-failures-hint">Copies a ready-to-paste Markdown report of failing suites, sub-tests, and runner hardware — hand it straight to an AI agent or issue.</span>
+    </div>
+
+    <div class="regression-section">
+      <h2>Current Capability Evidence</h2>
+      <p class="regression-meta" id="capability-evidence-meta">
+        No current-run capability evidence was published in this report.
+      </p>
+      <div class="summary-cards" style="margin: 0 0 1rem 0;">
+        <div class="summary-card passed"><div class="value" id="capability-passed">0</div><div class="label">Passed</div></div>
+        <div class="summary-card failed"><div class="value" id="capability-failed">0</div><div class="label">Failed / Error</div></div>
+        <div class="summary-card"><div class="value" id="capability-not-tested">0</div><div class="label">Not Tested</div></div>
+        <div class="summary-card"><div class="value" id="capability-total">0</div><div class="label">Registered Cases</div></div>
+      </div>
+      <div class="table-scroll">
+        <table class="results-table capability-table">
+          <thead><tr><th>Status</th><th>Family</th><th>Evidence</th><th>Phases</th><th>Case</th><th>Reason</th></tr></thead>
+          <tbody id="capability-evidence-tbody">
+            <tr><td colspan="6" class="updated-time">No current-run capability evidence was published.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="regression-section">
+      <h2>v8 Inference Regression</h2>
+      <p class="regression-meta" id="regression-fast-meta">
+        `make regression-fast` / `make v8-regression-fast` status is not available in this report yet.
+      </p>
+
+      <div class="summary-cards" style="margin: 0 0 1rem 0;">
+        <div class="summary-card">
+          <div class="value" id="regression-fast-status">-</div>
+          <div class="label">Overall</div>
+        </div>
+        <div class="summary-card passed">
+          <div class="value" id="regression-fast-passed">0</div>
+          <div class="label">Families Passed</div>
+        </div>
+        <div class="summary-card failed">
+          <div class="value" id="regression-fast-failed">0</div>
+          <div class="label">Families Failed</div>
+        </div>
+        <div class="summary-card">
+          <div class="value" id="regression-fast-total">0</div>
+          <div class="label">Families Total</div>
+        </div>
+      </div>
+
+      <table class="results-table">
+        <thead>
+          <tr>
+            <th>Family</th>
+            <th>Status</th>
+            <th>Build</th>
+            <th>Smoke</th>
+            <th>Coherence</th>
+            <th>Contract</th>
+            <th>1stTok</th>
+            <th>Note</th>
+          </tr>
+        </thead>
+        <tbody id="regression-fast-tbody">
+          <tr><td colspan="8" class="updated-time">No regression-fast data published in this report.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="regression-section">
+      <h2>Architecture Contract Dashboard</h2>
+      <p class="regression-meta" id="architecture-contract-meta">
+        `make test-architecture-contracts` status is not available in this report yet.
+      </p>
+
+      <div class="contract-explainer">
+        <div class="contract-explainer__card">
+          <h3>What this tests</h3>
+          <p>Every promoted circuit template declares critical tensor edges &mdash; the wiring that carries activations between ops. This dashboard checks whether those edges are <strong>explicit</strong> in each template or still <strong>implicit</strong> (inferred by the compiler).</p>
+          <a class="cmd-chip" href="testing.html">make test-architecture-contracts</a>
+        </div>
+        <div class="contract-explainer__card">
+          <h3>How to read it</h3>
+          <p><strong>WARN is not broken.</strong> It marks hardening debt: the wiring is correct, but some edges are still implicit and must be made explicit. <strong>FAIL</strong> means a declared contract was actually violated.</p>
+          <a class="cmd-chip" href="v8-runbook.html">v8 runbook</a>
+        </div>
+      </div>
+
+      <div class="status-legend">
+        <span class="legend-key"><span class="dot pass"></span>PASS</span><span>all critical edges explicit</span>
+        <span class="legend-key"><span class="dot warn"></span>WARN</span><span>correct wiring, implicit edges remain</span>
+        <span class="legend-key"><span class="dot fail"></span>FAIL</span><span>declared contract violated</span>
+      </div>
+
+      <div class="summary-cards" style="margin: 0 0 1rem 0;">
+        <div class="summary-card">
+          <div class="value" id="architecture-contract-status">-</div>
+          <div class="label">Overall</div>
+        </div>
+        <div class="summary-card passed">
+          <div class="value" id="architecture-contract-passed">0</div>
+          <div class="label">Sections Passed</div>
+        </div>
+        <div class="summary-card">
+          <div class="value" id="architecture-contract-warn">0</div>
+          <div class="label">Warnings</div>
+        </div>
+        <div class="summary-card failed">
+          <div class="value" id="architecture-contract-failed">0</div>
+          <div class="label">Sections Failed</div>
+        </div>
+      </div>
+
+      <div class="contract-accordion" id="architecture-contract-sections">
+        <div class="updated-time">No architecture contract dashboard published in this report.</div>
+      </div>
+    </div>
+
+    <div class="regression-section" id="v8-dsl-contract-dashboard">
+      <h2>v8 DSL &amp; Compiler Contracts</h2>
+      <p class="regression-meta" id="v8-dsl-contract-meta">
+        Waiting for the three nightly rows that compose <code>make test-v8-dsl</code>.
+      </p>
+
+      <div class="contract-explainer">
+        <div class="contract-explainer__card">
+          <h3>Zero Hardcoding</h3>
+          <p>Generated code may not bake in model-specific values &mdash; every constant must trace back to the circuit or the weights, so a new model family never needs a compiler branch.</p>
+          <a class="cmd-chip" href="testing.html">make test-v8-dsl-policy</a>
+        </div>
+        <div class="contract-explainer__card">
+          <h3>Numerical Kernel Contracts</h3>
+          <p>Each kernel declares its input/compute/reduction/output dtypes and its oracle parity envelope; the suite checks the declarations hold.</p>
+          <a class="cmd-chip" href="testing.html">make test-numerical-contracts</a>
+        </div>
+        <div class="contract-explainer__card">
+          <h3>Circuit / Dataflow Audit</h3>
+          <p>Template wiring is audited so tensors flow only through declared edges &mdash; no silent paths around the circuit map.</p>
+          <a class="cmd-chip" href="testing.html">make test-v8-template-circuit-audit</a>
+        </div>
+      </div>
+
+      <div class="status-legend">
+        <span class="legend-key"><span class="dot pass"></span>PASS</span><span>contract held on this runner</span>
+        <span class="legend-key"><span class="dot skip"></span>SKIP</span><span>suite not applicable or not run on this runner &mdash; not a failure</span>
+        <span class="legend-key"><span class="dot fail"></span>FAIL</span><span>contract violated &mdash; investigate before merging</span>
+      </div>
+
+      <div class="summary-cards" style="margin: 0 0 1rem 0;">
+        <div class="summary-card"><div class="value" id="v8-dsl-contract-status">-</div><div class="label">Overall</div></div>
+        <div class="summary-card"><div class="value" id="v8-dsl-policy-status">-</div><div class="label">Zero Hardcoding</div></div>
+        <div class="summary-card"><div class="value" id="v8-dsl-numerical-status">-</div><div class="label">Numerical</div></div>
+        <div class="summary-card"><div class="value" id="v8-dsl-circuit-status">-</div><div class="label">Circuit/Dataflow</div></div>
+      </div>
+
+      <table class="results-table">
+        <thead><tr><th>Status</th><th>Nightly Row</th><th>Local Target</th><th>Duration</th></tr></thead>
+        <tbody id="v8-dsl-contract-tbody">
+          <tr><td colspan="4" class="updated-time">No DSL contract rows published in this report.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="regression-section">
+      <h2>Visualizer Contract Matrix</h2>
+      <p class="regression-meta">
+        v7 remains the promoted training/backprop visualizer lane. v8 is the promoted inference and multimodal
+        observability lane: decoder-only reports, v8 run hub discovery, dataset viewer contracts, and encoder
+        &rarr; bridge &rarr; decoder graph rendering for vision artifacts.
+      </p>
+
+      <table class="results-table">
+        <thead>
+          <tr>
+            <th>Version</th>
+            <th>Lane</th>
+            <th>Run Locally</th>
+            <th>What It Proves</th>
+            <th>Report Surface</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="coverage-lane v7">v7</span></td>
+            <td>Visualizer health</td>
+            <td><code>make v7-visualizer-health</code></td>
+            <td class="coverage-detail">Source-level tab, panel, render-function, and pure JS utility contracts for the v7 IR Visualizer and Dataset Viewer.</td>
+            <td>IR Visualizer, Dataset Viewer, IR Hub</td>
+          </tr>
+          <tr>
+            <td><span class="coverage-lane v7">v7</span></td>
+            <td>Generated E2E</td>
+            <td><code>make v7-visualizer-generated-e2e</code></td>
+            <td class="coverage-detail">Generates and validates <code>ir_report.html</code>, <code>dataset_viewer.html</code>, and <code>ir_hub.html</code> from a real run directory.</td>
+            <td>Nightly generated-file chain</td>
+          </tr>
+          <tr>
+            <td><span class="coverage-lane v7">v7</span></td>
+            <td>Training/backprop</td>
+            <td><code>make v7-backprop-plumbing</code><br><code>make v7-backprop-stitch-runtime</code></td>
+            <td class="coverage-detail">Validated backprop plumbing, gradient stitch runtime, training parity, and training-family regression artifacts.</td>
+            <td>Training, Parity, and Backprop report artifacts</td>
+          </tr>
+          <tr>
+            <td><span class="coverage-lane v8">v8</span></td>
+            <td>Visualizer health</td>
+            <td><code>make v8-visualizer-health</code></td>
+            <td class="coverage-detail">Contract-driven source and JS utility checks against v8 IR Visualizer, Dataset Viewer, and tool-path contracts.</td>
+            <td>v8 IR Visualizer, Dataset Viewer, IR Hub</td>
+          </tr>
+          <tr>
+            <td><span class="coverage-lane v8">v8</span></td>
+            <td>Generated E2E</td>
+            <td><code>make v8-visualizer-generated-e2e</code></td>
+            <td class="coverage-detail">Generates and validates v8 <code>ir_report.html</code>, <code>dataset_viewer.html</code>, <code>ir_hub_v8.html</code>, embedded JSON, and cross-artifact structure.</td>
+            <td>Nightly generated-file chain</td>
+          </tr>
+          <tr>
+            <td><span class="coverage-lane v8">v8</span></td>
+            <td>Vision/multimodal</td>
+            <td><code>make v8-visualizer-vision-artifacts</code></td>
+            <td class="coverage-detail">Synthetic Qwen3-VL-style encoder, bridge, decoder, unified kernel-flow, logical memory, and embedded HTML contracts.</td>
+            <td>Vision Visualizer Artifacts section below</td>
+          </tr>
+          <tr>
+            <td><span class="coverage-lane v8">v8</span></td>
+            <td>Backprop artifact rendering</td>
+            <td>Published run artifacts</td>
+            <td class="coverage-detail">Can load v7-style finite-difference, replay, qk-norm, parity, and stitch artifacts when present. Full v8 training runtime is not promoted yet.</td>
+            <td>Training and Parity tabs in the v8 visualizer</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="regression-section">
+      <h2>Vision Encoder Accuracy</h2>
+      <p class="regression-meta" id="vision-encoder-accuracy-meta">
+        No fresh artifact-backed encoder result was published by this run.
+      </p>
+      <div class="summary-cards" style="margin: 0 0 1rem 0;">
+        <div class="summary-card"><div class="value" id="vision-encoder-accuracy-status">-</div><div class="label">Overall</div></div>
+        <div class="summary-card"><div class="value" id="vision-encoder-q4-status">-</div><div class="label">Q8_0 vs llama.cpp</div></div>
+        <div class="summary-card"><div class="value" id="vision-encoder-bf16-status">-</div><div class="label">BF16 vs PyTorch</div></div>
+        <div class="summary-card"><div class="value" id="vision-encoder-layer-count">0</div><div class="label">Layer Checkpoints</div></div>
+      </div>
+      <div id="vision-encoder-accuracy-details" class="updated-time"></div>
+    </div>
+
+    <div class="regression-section">
+      <h2>Vision Visualizer Artifacts</h2>
+      <p class="regression-meta" id="vision-visualizer-meta">
+        `make v8-visualizer-vision-artifacts` status is not available in this report yet.
+      </p>
+
+      <div class="summary-cards" style="margin: 0 0 1rem 0;">
+        <div class="summary-card">
+          <div class="value" id="vision-visualizer-status">-</div>
+          <div class="label">Overall</div>
+        </div>
+        <div class="summary-card passed">
+          <div class="value" id="vision-visualizer-passed">0</div>
+          <div class="label">Checks Passed</div>
+        </div>
+        <div class="summary-card failed">
+          <div class="value" id="vision-visualizer-failed">0</div>
+          <div class="label">Checks Failed</div>
+        </div>
+        <div class="summary-card">
+          <div class="value" id="vision-visualizer-total">0</div>
+          <div class="label">Checks Total</div>
+        </div>
+      </div>
+
+      <table class="results-table">
+        <thead>
+          <tr><th>Status</th><th>Check</th><th>Detail</th></tr>
+        </thead>
+        <tbody id="vision-visualizer-tbody">
+          <tr><td colspan="3" class="updated-time">No vision visualizer artifact data published in this report.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="regression-section">
+      <h2>v7 Kernel Map Contracts</h2>
+      <p class="regression-meta" id="kernel-map-meta">
+        `make v7-kernel-map-contracts` status is not available in this report yet.
+      </p>
+
+      <div class="summary-cards" style="margin: 0 0 1rem 0;">
+        <div class="summary-card">
+          <div class="value" id="kernel-map-status">-</div>
+          <div class="label">Overall</div>
+        </div>
+        <div class="summary-card passed">
+          <div class="value" id="kernel-map-passed">0</div>
+          <div class="label">Maps Passed</div>
+        </div>
+        <div class="summary-card failed">
+          <div class="value" id="kernel-map-failed">0</div>
+          <div class="label">Maps Failed</div>
+        </div>
+        <div class="summary-card">
+          <div class="value" id="kernel-map-warnings">0</div>
+          <div class="label">Warnings</div>
+        </div>
+      </div>
+
+      <table class="results-table">
+        <thead>
+          <tr>
+            <th>Validator Notes</th>
+          </tr>
+        </thead>
+        <tbody id="kernel-map-warning-tbody">
+          <tr><td class="updated-time">No kernel-map summary published in this report.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="regression-section">
+      <h2>v8 Kernel Allocation Debt</h2>
+      <p class="regression-meta" id="kernel-allocation-meta"><code>make test-v8-kernel-allocations</code> status is not available in this report yet.</p>
+      <div class="summary-cards" style="margin: 0 0 1rem 0;">
+        <div class="summary-card"><div class="value" id="kernel-allocation-status">-</div><div class="label">Overall</div></div>
+        <div class="summary-card"><div class="value" id="kernel-allocation-total">0</div><div class="label">Allocation Calls</div></div>
+        <div class="summary-card"><div class="value" id="kernel-allocation-production">0</div><div class="label">Production Allocations</div></div>
+        <div class="summary-card"><div class="value" id="kernel-allocation-frees">0</div><div class="label">Free Calls</div></div>
+        <div class="summary-card"><div class="value" id="kernel-allocation-mapped">0</div><div class="label">Mapped Providers</div></div>
+        <div class="summary-card"><div class="value" id="kernel-allocation-missing-scratch">0</div><div class="label">Missing Scratch Contracts</div></div>
+        <div class="summary-card"><div class="value" id="kernel-allocation-warnings">0</div><div class="label">Warnings</div></div>
+      </div>
+      <div class="table-scroll">
+      <details class="alloc-accordion" id="kernel-allocation-details">
+        <summary><span class="alloc-accordion-title">Allocation call sites</span><span class="alloc-accordion-count" id="kernel-allocation-rowcount">click to expand</span></summary>
+        <p class="alloc-guide">How to read this table: these are static allocator source locations, not live allocations or leak evidence. A row whose <em>Mapped Provider</em> is <code>-</code> has no direct map association; it may be a compatibility wrapper, an internal helper, or unmapped debt. Leak detection requires ownership/control-flow analysis and runtime memory checks. See the <a href="v8-kernel-allocation-ownership.html">reviewed ownership inventory and cleanup order</a>.</p>
+      <table class="results-table">
+        <thead><tr><th>Class</th><th>Source</th><th>Function</th><th>Call</th><th>Mapped Provider</th></tr></thead>
+        <tbody id="kernel-allocation-tbody"><tr><td colspan="5" class="updated-time">No kernel allocation audit was published in this report.</td></tr></tbody>
+      </table>
+      </details>
+      </div>
+    </div>
+
+    <div class="regression-section">
+      <h2>v8 FP32 Training Certification</h2>
+      <p class="regression-meta" id="training-certification-meta"><code>make v8-training-certify-fp32</code> status is not available in this report yet.</p>
+      <div class="summary-cards" style="margin: 0 0 1rem 0;">
+        <div class="summary-card"><div class="value" id="training-certification-status">-</div><div class="label">Overall</div></div>
+        <div class="summary-card"><div class="value" id="training-certification-parameters">0</div><div class="label">Parameters Compared</div></div>
+        <div class="summary-card"><div class="value" id="training-certification-gradients">-</div><div class="label">Gradient Parity</div></div>
+        <div class="summary-card"><div class="value" id="training-certification-controls">0/0</div><div class="label">Negative Controls</div></div>
+      </div>
+    </div>
+
+    <div class="regression-section">
+      <h2>v8 Training-to-Inference Workflow</h2>
+      <p class="regression-meta" id="training-workflow-meta"><code>make v8-training-workflow-fp32</code> status is not available in this report yet.</p>
+      <div class="summary-cards" style="margin: 0 0 1rem 0;">
+        <div class="summary-card"><div class="value" id="training-workflow-status">-</div><div class="label">Overall</div></div>
+        <div class="summary-card"><div class="value" id="training-workflow-loss">-</div><div class="label">Train Loss</div></div>
+        <div class="summary-card"><div class="value" id="training-workflow-resume">-</div><div class="label">Fresh Resume</div></div>
+        <div class="summary-card"><div class="value" id="training-workflow-export">-</div><div class="label">v8 Export</div></div>
+        <div class="summary-card"><div class="value" id="training-workflow-throughput">-</div><div class="label">Generated C tok/s</div></div>
+      </div>
+    </div>
+
+    <div class="regression-section">
+      <h2>v7 Training Family Regression</h2>
+      <p class="regression-meta" id="backprop-regression-meta">
+        `make regression-training-full` status is not available in this report yet.
+      </p>
+
+      <div class="summary-cards" style="margin: 0 0 1rem 0;">
+        <div class="summary-card">
+          <div class="value" id="backprop-regression-status">-</div>
+          <div class="label">Overall</div>
+        </div>
+        <div class="summary-card passed">
+          <div class="value" id="backprop-regression-passed">0</div>
+          <div class="label">Families Passed</div>
+        </div>
+        <div class="summary-card failed">
+          <div class="value" id="backprop-regression-failed">0</div>
+          <div class="label">Families Failed</div>
+        </div>
+        <div class="summary-card">
+          <div class="value" id="backprop-regression-total">0</div>
+          <div class="label">Families Total</div>
+        </div>
+      </div>
+
+      <table class="results-table">
+        <thead>
+          <tr>
+            <th>Family</th>
+            <th>Status</th>
+            <th>A</th>
+            <th>B</th>
+            <th>C</th>
+            <th>D</th>
+            <th>E</th>
+            <th>F</th>
+            <th>Failed Stages</th>
+          </tr>
+        </thead>
+        <tbody id="backprop-regression-tbody">
+          <tr><td colspan="9" class="updated-time">No training family summary published in this report.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>30-Day History</h2>
+    <div class="history-chart">
+      <div class="history-bar" id="history-bar"></div>
+      <div class="history-labels" id="history-labels"></div>
+      <div class="history-legend">
+        <div class="legend-item">
+          <span class="legend-dot pass"></span>
+          <span>All passed</span>
+        </div>
+        <div class="legend-item">
+          <span class="legend-dot fail"></span>
+          <span>Some failed</span>
+        </div>
+        <div class="legend-item">
+          <span class="legend-dot nodata"></span>
+          <span>No data</span>
+        </div>
+      </div>
+    </div>
+
+    <h2>Test Details</h2>
+    <p class="sub-test-summary">
+      <span id="sub-tests-passed">0</span> reported cases passed,
+      <span id="sub-tests-failed">0</span> failed,
+      <span id="sub-tests-not-tested">0</span> without a correctness verdict
+      (click rows to expand)
+    </p>
+    <table class="results-table">
+      <thead>
+        <tr>
+          <th style="width: 40px;"></th>
+          <th>Status</th>
+          <th>Test</th>
+          <th>Category</th>
+          <th>Cases</th>
+          <th>Duration</th>
+        </tr>
+      </thead>
+      <tbody id="results-tbody">
+      </tbody>
+    </table>
+  </div>
+
+  <style>
+    .sub-test-summary {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      margin-bottom: 1rem;
+    }
+    .sub-test-summary span {
+      font-weight: bold;
+    }
+    #sub-tests-passed { color: #48bb78; }
+    #sub-tests-failed { color: #f56565; }
+    #sub-tests-not-tested { color: var(--text-muted); }
+
+    .expandable-row {
+      cursor: pointer;
+    }
+    .expandable-row:hover {
+      background: var(--grey) !important;
+    }
+    .expand-icon {
+      display: inline-block;
+      transition: transform 0.2s;
+      color: var(--text-muted);
+    }
+    .expanded .expand-icon {
+      transform: rotate(90deg);
+    }
+
+    .sub-tests-row {
+      display: none;
+    }
+    .sub-tests-row.visible {
+      display: table-row;
+    }
+    .sub-tests-row td {
+      padding: 0;
+      background: var(--dark-lighter);
+    }
+    .sub-tests-container {
+      padding: 0.5rem 1rem 0.5rem 3rem;
+    }
+    .sub-tests-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 0.5rem;
+    }
+    .sub-test-item {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.4rem 0.6rem;
+      background: var(--dark-card);
+      border-radius: 4px;
+      border: 1px solid var(--grey);
+      font-size: 0.85rem;
+    }
+    .sub-test-item.pass {
+      border-left: 3px solid #48bb78;
+    }
+    .sub-test-item.fail {
+      border-left: 3px solid #f56565;
+    }
+    .sub-test-item.not-tested {
+      border-left: 3px solid var(--text-muted);
+    }
+    .sub-test-name {
+      flex: 1;
+      font-weight: 500;
+      color: var(--text-primary);
+    }
+    .sub-test-metrics {
+      display: flex;
+      gap: 0.75rem;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+    .sub-test-diff {
+      font-family: monospace;
+    }
+    .sub-test-speedup {
+      font-weight: 600;
+    }
+    .sub-test-speedup.fast { color: #48bb78; }
+    .sub-test-speedup.slow { color: #ed8936; }
+
+    .kernel-count {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+    .kernel-count .passed { color: #48bb78; }
+    .kernel-count .failed { color: #f56565; }
+  </style>
+
+  <hr>
+
+  <h2>About Nightly Tests</h2>
+  <p>
+    The nightly test suite runs automatically at 2am UTC every day. It includes:
+  </p>
+  <ul>
+    <li><strong>E2E Integration Tests</strong>: Full pipeline validation (kernel compile → IR codegen → inference)
+      <ul style="margin-top: 0.5rem; color: var(--text-muted);">
+        <li>Kernel compilation (all SIMD variants)</li>
+        <li>IR codegen validation (generates compilable C code)</li>
+        <li>Parallel decode codegen (OpenMP pragmas for v6.6)</li>
+        <li>Inference verification (prompts model, validates coherent response)</li>
+      </ul>
+    </li>
+    <li><strong>Kernel Unit Tests</strong>: Individual kernel parity with PyTorch</li>
+    <li><strong>v8 DSL and Codegen Contracts</strong>: The aggregate <code>make test-v8-dsl</code> gate is reported as three
+      independently visible nightly rows so a failure identifies the responsible layer: <code>test-v8-dsl-policy</code> enforces
+      zero model/provider hardcoding and map-owned codegen capabilities, <code>test-numerical-contracts</code> validates resolved
+      numerical execution semantics, and <code>test-v8-template-circuit-audit</code> verifies circuit dataflow and lowered bindings.</li>
+    <li><strong>v8 Vision Kernel Parity</strong>: Vision kernel parity for patch extraction/reconstruction, tiled position embeddings,
+      Qwen3-VL resized position interpolation order, spatial merge/reorder, feature concat/slice, and vision M-RoPE
+      (<code>make test-v8-vision-kernels</code>)</li>
+    <li><strong>Qwen3-VL Template/Codegen Contracts</strong>: Synthetic GGUF/BF16-independent guards for Qwen3-VL circuit lowering,
+      align-corners position-kernel selection, valid vision M-RoPE width/sections, and bounded semantic tensor exports
+      (<code>make test-v8-qwen3vl</code>)</li>
+    <li><strong>Qwen3-VL Methodical Layer Parity</strong>: Runs the production circuit in semantic order through position, LayerNorm,
+      Q8 QKV, M-RoPE, attention, Q8 output projection, residual, MLP-up, GELU, MLP-down, and layer output contracts. The nightly row
+      executes production-shape deterministic oracles; <code>make test-qwen3vl-methodical-parity-full</code> requires real artifacts
+      and walks all 27 encoder layers with X-ray, failing at the first divergent edge.</li>
+    <li><strong>v8 BF16 Safetensors Lowering</strong>: Synthetic BF16 conversion and lowering guard that asserts all vision weights are
+      consumed, align-corners interpolation is selected, and M-RoPE arguments remain valid through generated calls. The target builds
+      both engine and vision libraries first so hardware-independent M-RoPE checks cannot silently skip
+      (<code>make nightly-bf16</code>)</li>
+    <li><strong>Vision Encoder Full Accuracy Gate</strong>: One local/nightly command runs Qwen3-VL Q8_0 mmproj parity against
+      llama.cpp, then BF16 safetensors parity against PyTorch when the checkpoint and AVX-512 BF16 runtime are available. The gate uses
+      a generated public <code>1152x896</code> form-like stress image, validates sparse encoder boundaries
+      (<code>0, 8, 16, 24, 26</code>) plus the final <code>1008x16384</code>-class prefix, and removes raw tensor dumps by default.
+      Use <code>make vision-encoder-full</code>; set <code>V8_VISION_ENCODER_REQUIRE_ARTIFACTS=1</code> on provisioned runners,
+      or <code>V8_VISION_ENCODER_FULL_LAYERS=1</code> for an exhaustive local sweep.</li>
+    <li><strong>Scheduled Q4 Vision Encoder Parity</strong>: Scheduled GitHub nightly runs download the Qwen3-VL Q8_0 mmproj only
+      when at least 8 GiB RAM and 6 GiB disk are available, then invoke the same <code>vision-encoder-full</code> target. Real BF16
+      tensor parity remains a periodic AVX-512 BF16 lane; synthetic BF16 conversion/lowering guards continue on every nightly.</li>
+    <li><strong>FP16 Attention Contracts</strong>: Named numerical guards for llama.cpp-compatible unfused causal prefill and split-KV decode,
+      including FP16 Q/K rounding, FP16 probability/value reduction, FP16 online-softmax partials, FP32 ordered reduction, GQA/padding,
+      the KV 511/512 semantic boundary, and the Qwen3-VL <code>KV=1058, H=32, D=128</code> shape
+      (<code>make test-attention-f16-split-kv</code>)</li>
+    <li><strong>v8 Numerical Reduction Contracts</strong>: Circuits request complete attention semantics and executable kernel maps advertise supported reductions; zero or ambiguous providers fail deterministically, while migration tests prove contract validation preserves generated artifacts (<code>make test-numerical-contracts</code>)</li>
+    <li><strong>v8 Stitched Dump Alignment</strong>: Guards canonical output-projection aliases and preserves absolute CK/llama
+      source-token provenance when mixed-prefix dumps are rebased for per-token comparison
+      (<code>make test-v8-dump-alignment</code>)</li>
+    <li><strong>Qwen3-VL Parity Guard Sweep</strong>: Local aggregate for GGUF FP16 attention contracts, stitched dump alignment,
+      shared vision kernels, and the BF16 parity lane (<code>make qwen3vl-parity-guards</code>)</li>
+    <li><strong>Llama Pairwise RoPE Contract</strong>: explicit regression for consecutive-pair RoPE layout selection plus kernel-level pairwise forward coverage and timing
+      (<code>version/v7/scripts/parity/test_check_decode_attention_contract.py</code>, <code>unittest/test_rope.py</code>)</li>
+    <li><strong>Sliding-Window Contract</strong>: Explicit sliding attention prefill/decode contract test
+      (<code>unittest/test_attention_sliding_contract.py</code>)</li>
+    <li><strong>BF16 Tests</strong>: BFloat16 precision tests (when CPU supports it)</li>
+    <li><strong>Quantization Tests</strong>: Q4_K, Q6_K quantized kernel tests</li>
+    <li><strong>v7 Kernel Map Contracts</strong>: sync + validator + contract tests for the active v7 map surface
+      (<code>make v7-kernel-map-contracts</code>)</li>
+    <li><strong>v8 Kernel Allocation Debt</strong>: scans every C source under <code>src/kernels</code> for allocator and free calls,
+      classifies production, frontend, oracle, and test debt, rejects new call sites or count increases, and publishes remaining
+      mapped providers with scratch ownership status (<code>make test-v8-kernel-allocations</code>)</li>
+    <li><strong>v7 Backprop Kernel Parity</strong>: Optimizer + QK-norm backward ISA matrix + RMSNorm/SwiGLU backward + GEMM backward sweep
+      (<code>make v7-kernel-parity-train</code>)</li>
+    <li><strong>v7 Training Family Regression</strong>: family-level <code>A/B/C/D/E/F</code> training regimen across the full decoder family matrix
+      (<code>make regression-training-full</code> nightly, <code>make regression-training-fast</code> for local fast coverage)</li>
+    <li><strong>v7 IR Visualizer E2E</strong>: Runbook-path regression with explicit run-dir wiring, decode profile checks, and tiny train-runtime ASan artifact validation
+      (<code>make visualizer</code>, <code>make visualizer-full</code>)</li>
+    <li><strong>v7 Visualizer Health Gate</strong>: Contract-driven static analysis (160 checks) + JS unit tests (100 test vectors) for IR visualizer, dataset viewer, and IR hub
+      (<code>make v7-visualizer-health</code>)</li>
+    <li><strong>v8 Inference Regression</strong>: Family bring-up gate for Gemma3, Qwen2, Qwen3, Qwen3.5, and Nanbeige with build/smoke/coherence/contract checks
+      (<code>make regression-fast</code>, aliasing the promoted <code>make v8-regression-fast</code> lane)</li>
+    <li><strong>Architecture Contract Dashboard</strong>: v8 template/circuit, lowered IR dataflow, generated-C preservation, runtime-path equivalence, and model contract coverage summary
+      (<code>make test-architecture-contracts</code>)</li>
+    <li><strong>v8 Qwen3-VL Vision Smoke</strong>: Cached image → mmproj → decoder smoke for the 8B multimodal path; skips cleanly when the runner does not have the large artifacts
+      (<code>make test-v8-qwen3vl-e2e-smoke</code>)</li>
+    <li><strong>v8 Gemma4 Vision Smoke</strong>: Cached Gemma4 Q4_K_M decoder plus <code>mmproj-F16.gguf</code> image bridge smoke; gated by high-memory and local artifact checks
+      (<code>make test-v8-gemma4-vision-smoke</code>)</li>
+    <li><strong>v8 High-Memory Model Smokes</strong>: Gemma4, Nemotron Nano 9B, and GLM-4 9B run as explicit inference lanes and skip when the runner does not have enough RAM
+      (<code>make test-v8-gemma4-highmem</code>, <code>make test-v8-nemotron9-highmem</code>, <code>make test-v8-glm4-highmem</code>)</li>
+    <li><strong>v7 Regression Ledger</strong>: Canonical root-cause log for fixed and monitored bugs, consumed by operators in the visualizer
+      (<code>version/v7/reports/REGRESSION_LEDGER.md</code>, <code>version/v7/reports/REGRESSION_LEDGER.json</code>)</li>
+    <li><strong>llama.cpp Parity</strong>: CK vs llama.cpp kernel parity flow
+      (<code>scripts/run_parity_smoketest.sh</code>, <code>make llamacpp-parity-full</code>)</li>
+    <li><strong>v6.6 Preflight Gates</strong>: Tooling contracts + 3-model matrix validation
+      (<code>make v6.6-validate-contracts</code>, <code>make v6.6-validate-matrix</code>)</li>
+    <li><strong>Integration Tests</strong>: Full layer and model parity</li>
+  </ul>
+
+  <div class="alert alert-info" style="margin-top: 1rem;">
+    <span class="alert-icon">💡</span>
+    <div>
+      <strong>Run locally:</strong> <code>make test</code> (kernel-focused), <code>make vision-encoder-full</code> (artifact-backed encoder parity), <code>make visualizer</code> (fast path), <code>make visualizer-full</code> (includes tiny train-runtime ASan checks), <code>make nightly</code> (full matrix).
+      <br>
+      <span style="color: var(--text-muted);">Nightly coverage now includes v7 kernel-map contracts, v7 backprop kernel parity, v8 vision kernel parity, published training family regression, visualizer runbook regression checks, and published <code>regression-fast</code> family summaries.</span>
+    </div>
+  </div>
+
+  <p>
+    View the <a href="https://github.com/antshiv/C-Kernel-Engine/actions/workflows/nightly.yml">GitHub Actions workflow</a>
+    for detailed logs.
+  </p>
+
+  <p>
+    See also: <a href="version-history.html">Version History</a> for project roadmap and milestone tracking.
+  </p>
+
+  <hr>
+
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <!-- VISUALIZER HEALTH MATRIX                                       -->
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+
+  <h2>Visualizer Health Matrix</h2>
+  <p>
+    Contract-driven test coverage for the IR Visualizer and Dataset Viewer.
+    Each component declares its tab/function/DOM contracts in JSON; tests
+    validate against those contracts at every push. v7 owns the promoted
+    training/backprop visualizer lane; v8 owns the inference and multimodal
+    observability lane with its own IR report, run hub, dataset viewer, and
+    dedicated vision artifact coverage.
+    See the <a href="v7-visualizer-test-runbook.html">full test runbook</a>.
+  </p>
+
+  <p style="font-size: 0.85rem; color: var(--text-muted);">
+    Run locally: <code>make v7-visualizer-health</code> · <code>make v8-visualizer-health</code> · <code>make v8-visualizer-vision-artifacts</code>
+  </p>
+
+  <style>
+    main code { overflow-wrap: anywhere; }
+    @media (max-width: 700px) {
+      .viz-matrix { display: block; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    }
+    .viz-matrix {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+      margin: 1rem 0;
+    }
+    .viz-matrix th {
+      text-align: left;
+      padding: 0.5rem 0.6rem;
+      border-bottom: 2px solid rgba(255,180,0,0.3);
+      color: #ffb400;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .viz-matrix td {
+      padding: 0.35rem 0.6rem;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+    .viz-matrix tr:hover td {
+      background: rgba(255,180,0,0.03);
+    }
+    .viz-component {
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+    .viz-level {
+      display: inline-block;
+      padding: 0.1rem 0.4rem;
+      border-radius: 4px;
+      font-size: 0.68rem;
+      font-weight: 700;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .viz-l1 { background: rgba(71,180,117,0.12); border: 1px solid rgba(71,180,117,0.3); color: #47b475; }
+    .viz-l2 { background: rgba(7,173,248,0.12); border: 1px solid rgba(7,173,248,0.3); color: #07adf8; }
+    .viz-l3 { background: rgba(255,140,0,0.12); border: 1px solid rgba(255,140,0,0.3); color: #ff8c00; }
+    .viz-count {
+      font-family: 'JetBrains Mono', monospace;
+      color: #ffb400;
+      font-weight: 600;
+    }
+    .viz-fn-list {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      max-width: 500px;
+    }
+    .viz-fn-list code {
+      font-size: 0.72rem;
+      color: #8cb4ff;
+    }
+  </style>
+
+  <h3>IR Visualizer — 11 tabs, 19 core functions</h3>
+  <table class="viz-matrix">
+    <thead>
+      <tr>
+        <th>Tab</th>
+        <th>Render Function</th>
+        <th>L1 Static</th>
+        <th>L2 Unit Tests</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td class="viz-component">Memory</td><td><code>renderMemory</code></td><td><span class="viz-level viz-l1">tab + panel + fn</span></td><td>—</td></tr>
+      <tr><td class="viz-component">Kernel Flow</td><td><code>renderKernelFlow</code></td><td><span class="viz-level viz-l1">tab + panel + fn</span></td><td>—</td></tr>
+      <tr><td class="viz-component">Stats</td><td><code>renderStats</code></td><td><span class="viz-level viz-l1">tab + panel + fn</span></td><td>—</td></tr>
+      <tr><td class="viz-component">Training</td><td><code>renderTraining</code></td><td><span class="viz-level viz-l1">tab + panel + fn</span></td><td>—</td></tr>
+      <tr><td class="viz-component">Quantization</td><td><code>renderQuantizationAudit</code></td><td><span class="viz-level viz-l1">tab + panel + fn</span></td><td>—</td></tr>
+      <tr><td class="viz-component">Dataflow</td><td><code>renderDataflow</code></td><td><span class="viz-level viz-l1">tab + panel + fn</span></td><td>—</td></tr>
+      <tr><td class="viz-component">Interpretability</td><td><code>renderOperatorMathIntuition</code></td><td><span class="viz-level viz-l1">tab + panel + fn</span></td><td>—</td></tr>
+      <tr><td class="viz-component">Profile</td><td><code>renderProfile</code></td><td><span class="viz-level viz-l1">tab + panel + fn</span></td><td>—</td></tr>
+      <tr><td class="viz-component">Data Pipeline</td><td><code>renderDataPipeline</code></td><td><span class="viz-level viz-l1">tab + panel + fn</span></td><td>—</td></tr>
+      <tr><td class="viz-component">Parity</td><td><code>renderParityCockpit</code></td><td><span class="viz-level viz-l1">tab + panel + fn</span></td><td>—</td></tr>
+    </tbody>
+  </table>
+
+  <p class="viz-fn-list">
+    <strong>L2-tested utilities:</strong>
+    <code>formatBytes</code> (4) ·
+    <code>normalizeShapeInput</code> (7) ·
+    <code>formatShapeDisplay</code> (3) ·
+    <code>normalizeMode</code> (3) ·
+    <code>escapeHtml</code> (3) ·
+    <code>quoteShell</code> (3) ·
+    <code>normalizePathString</code> (2) ·
+    <code>pathDirname</code> (3) ·
+    <code>extractGgufStem</code> (3) ·
+    <code>relativePathFromTo</code> (4)
+    — <span class="viz-count">35 tests</span>
+  </p>
+
+  <h3>Dataset Viewer — 12 tabs, 30 core functions</h3>
+  <table class="viz-matrix">
+    <thead>
+      <tr>
+        <th>Tab</th>
+        <th>Render Function</th>
+        <th>L1 Static</th>
+        <th>L2 Unit Tests</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td class="viz-component">Overview</td><td><code>renderOverview</code></td><td><span class="viz-level viz-l1">tab + panel + fn</span></td><td>—</td></tr>
+      <tr><td class="viz-component">Preflight</td><td><code>renderPreflight</code></td><td><span class="viz-level viz-l1">tab + panel + fn</span></td><td>—</td></tr>
+      <tr><td class="viz-component">Gallery</td><td><code>renderGallery</code></td><td><span class="viz-level viz-l1">tab + panel + fn</span></td><td>—</td></tr>
+      <tr><td class="viz-component">Text</td><td><code>renderTextSamples</code></td><td><span class="viz-level viz-l1">tab + panel + fn</span></td><td>—</td></tr>
+      <tr><td class="viz-component">Tokenizer</td><td><code>renderTokenizer</code></td><td><span class="viz-level viz-l1">tab + panel + fn</span></td><td>—</td></tr>
+      <tr><td class="viz-component">Vocabulary</td><td><code>renderVocabulary</code></td><td><span class="viz-level viz-l1">tab + panel + fn</span></td><td>—</td></tr>
+      <tr><td class="viz-component">Classification</td><td><code>renderClassification</code></td><td><span class="viz-level viz-l1">tab + panel + fn</span></td><td>—</td></tr>
+      <tr><td class="viz-component">Browse</td><td><code>renderBrowse</code></td><td><span class="viz-level viz-l1">tab + panel + fn</span></td><td>—</td></tr>
+      <tr><td class="viz-component">Candidates</td><td><code>renderCandidates</code></td><td><span class="viz-level viz-l1">tab + panel + fn</span></td><td>—</td></tr>
+      <tr><td class="viz-component">Quality</td><td><code>renderQuality</code></td><td><span class="viz-level viz-l1">tab + panel + fn</span></td><td>—</td></tr>
+      <tr><td class="viz-component">Embeddings</td><td><code>renderEmbeddings</code></td><td><span class="viz-level viz-l1">tab + panel + fn</span></td><td><span class="viz-level viz-l2">embColor · embNormalise · cosineSim</span></td></tr>
+      <tr><td class="viz-component">Attention</td><td><code>renderAttention</code></td><td><span class="viz-level viz-l1">tab + panel + fn</span></td><td><span class="viz-level viz-l2">attnColor · attnEntropy · avgMatrices</span></td></tr>
+    </tbody>
+  </table>
+
+  <p class="viz-fn-list">
+    <strong>L2-tested functions:</strong>
+    <code>attnColor</code> (9) ·
+    <code>embColor</code> (3) ·
+    <code>cosineSim</code> (4) ·
+    <code>attnEntropy</code> (4) ·
+    <code>avgMatrices</code> (3) ·
+    <code>embNormalise</code> (4)
+    — <span class="viz-count">27 tests</span>
+  </p>
+
+  <h3>Coverage Summary</h3>
+  <table class="viz-matrix">
+    <thead>
+      <tr><th>Level</th><th>Component</th><th>Checks</th><th>Run In</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><span class="viz-level viz-l1">L1</span></td><td>IR Visualizer</td><td class="viz-count">~68</td><td><code>pre-push</code></td></tr>
+      <tr><td><span class="viz-level viz-l1">L1</span></td><td>Dataset Viewer</td><td class="viz-count">~78</td><td><code>pre-push</code></td></tr>
+      <tr><td><span class="viz-level viz-l1">L1</span></td><td>IR Hub</td><td class="viz-count">~5</td><td><code>pre-push</code></td></tr>
+      <tr><td><span class="viz-level viz-l2">L2</span></td><td>IR Pure Functions</td><td class="viz-count">~50</td><td><code>pre-push</code></td></tr>
+      <tr><td><span class="viz-level viz-l2">L2</span></td><td>DS Pure Functions</td><td class="viz-count">~50</td><td><code>pre-push</code></td></tr>
+      <tr><td><span class="viz-level viz-l3">L3</span></td><td>Generated E2E (all 3 visualizers)</td><td class="viz-count">~24-44</td><td><code>nightly</code></td></tr>
+      <tr><td><span class="viz-level viz-l3">L3</span></td><td>v8 Vision Artifacts</td><td class="viz-count">~20</td><td><code>nightly</code></td></tr>
+      <tr>
+        <td colspan="2" style="text-align: right; font-weight: 700;">Total</td>
+        <td class="viz-count" style="font-size: 1rem;">~280</td>
+        <td><code>&lt; 3 seconds</code></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="alert alert-info" style="margin-top: 1rem;">
+    <span class="alert-icon">📋</span>
+    <div>
+      <strong>Contract-driven:</strong> All tab, function, and test vector definitions live in
+      <code>version/v7/tests/contracts/ir_visualizer_contract.json</code> and
+      <code>dataset_viewer_contract.json</code>, with v8 equivalents under
+      <code>version/v8/tests/contracts/</code>. Add a tab or function? Update the contract — tests auto-expand.
+    </div>
+  </div>
+
+  <h3>Level 3 — Generated-File E2E (Nightly)</h3>
+  <p>
+    Validates the full generation → validation chain: generate all three
+    visualizer HTML files from the latest run, then run L1 health checks +
+    embedded JSON structure + cross-artifact consistency on the output. The v7
+    version uses a training-capable run; the v8 version uses the v8 inference
+    cache and hub/tool wrappers.
+  </p>
+  <p style="font-size: 0.85rem; color: var(--text-muted);">
+    Run locally: <code>make v7-visualizer-generated-e2e</code>
+    · <code>make v8-visualizer-generated-e2e</code>
+    · Specific run: <code>make v7-visualizer-generated-e2e RUN=/path/to/run</code>
+  </p>
+
+  <table class="viz-matrix">
+    <thead>
+      <tr><th>Stage</th><th>What it validates</th><th>Artifact</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="viz-component">Generate</td><td>ir_report.html via <code>open_ir_visualizer.py</code></td><td>ir_report.html</td></tr>
+      <tr><td class="viz-component">Generate</td><td>dataset_viewer.html via <code>prepare_run_viewer.py</code></td><td>dataset_viewer.html</td></tr>
+      <tr><td class="viz-component">Generate</td><td>ir_hub.html / ir_hub_v8.html via <code>open_ir_hub.py</code> or <code>open_ir_hub_v8.py</code></td><td>run hub HTML</td></tr>
+      <tr><td class="viz-component">L1 Health</td><td>Tabs, functions, DOM targets in generated output</td><td>All three files</td></tr>
+      <tr><td class="viz-component">JSON Structure</td><td>Embedded JSON blobs (run_config, ir1_decode, layout_decode)</td><td>ir_report.html</td></tr>
+      <tr><td class="viz-component">Panel Structure</td><td>Panel IDs, attnColor presence, file size</td><td>dataset_viewer.html</td></tr>
+      <tr><td class="viz-component">Hub Structure</td><td>Run cards, ir_report links, navigation</td><td>ir_hub.html</td></tr>
+      <tr><td class="viz-component">Cross-artifact</td><td>Run name in hub, vocab consistency, config.json</td><td>All three files</td></tr>
+      <tr><td class="viz-component">v8 Vision</td><td>Encoder, bridge, decoder, unified kernel flow, logical memory, bridge report wiring, and embedded HTML helpers</td><td>vision visualizer artifact HTML</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<script>
+const RESULTS_URL = './site/nightly-results/latest.json';
+const INDEX_URL = './site/nightly-results/index.json';
+
+function loadResults() {
+  document.getElementById('loading-state').classList.add('active');
+  document.getElementById('error-state').classList.remove('active');
+  document.getElementById('results-content').classList.remove('active');
+
+  Promise.all([
+    fetch(RESULTS_URL).then(r => r.ok ? r.json() : Promise.reject('No latest results')),
+    fetch(INDEX_URL).then(r => r.ok ? r.json() : { reports: [] }).catch(() => ({ reports: [] }))
+  ])
+  .then(([latest, index]) => {
+    renderResults(latest);
+    renderHistory(index.reports);
+    document.getElementById('loading-state').classList.remove('active');
+    document.getElementById('results-content').classList.add('active');
+  })
+  .catch(err => {
+    console.error('Fetch error:', err);
+    document.getElementById('loading-state').classList.remove('active');
+    document.getElementById('error-state').classList.add('active');
+    document.getElementById('error-message').textContent = 'Failed to load: ' + (err.message || err);
+  });
+}
+
+function renderResults(data) {
+  window.__ckReportData = data;
+  const copyBtn = document.getElementById('copy-failures-btn');
+  if (copyBtn) copyBtn.disabled = false;
+  const summary = data.summary || {};
+  const passed = summary.passed || 0;
+  const failed = summary.failed || 0;
+  const total = summary.total || 0;
+  const duration = data.duration_sec || 0;
+
+  document.getElementById('passed-count').textContent = passed;
+  document.getElementById('failed-count').textContent = failed;
+  document.getElementById('total-count').textContent = total;
+  document.getElementById('duration').textContent = duration.toFixed(1) + 's';
+
+  // Sub-test summary
+  const subPassed = summary.sub_tests_passed || 0;
+  const subFailed = summary.sub_tests_failed || 0;
+  const subNotTested = summary.sub_tests_not_tested || 0;
+  document.getElementById('sub-tests-passed').textContent = subPassed;
+  document.getElementById('sub-tests-failed').textContent = subFailed;
+  document.getElementById('sub-tests-not-tested').textContent = subNotTested;
+  renderRunnerHardware(data.runner_hardware || null);
+  renderCapabilityEvidence(data.capability_evidence || null);
+  renderRegressionFast(data.regression_fast || null);
+  renderArchitectureContracts(data.architecture_contracts || null);
+  renderV8DSLContracts(data.results || []);
+  renderVisionEncoderAccuracy(data.vision_encoder_accuracy || null);
+  renderVisionVisualizer(data.vision_visualizer || null);
+  renderKernelMapContracts(data.kernel_map_contracts || null);
+  renderKernelAllocation(data.kernel_allocation || null);
+  renderTrainingCertification(data.training_certification || null);
+  renderTrainingWorkflow(data.training_workflow || null);
+  renderBackpropRegression(data.backprop_regression || null);
+
+  const statusEl = document.getElementById('overall-status');
+  const timeout = summary.timeout || 0;
+  const capabilityIntegrity = capabilityEvidenceIntegrity(data.capability_evidence);
+  const capabilityFailures = countRequiredCapabilityFailures(data.capability_evidence, data.event);
+  const suiteFailures = failed + timeout;
+  if (suiteFailures > 0) {
+    statusEl.textContent = suiteFailures + ' FAILED';
+    statusEl.className = 'status-badge status-fail';
+  } else if (!capabilityIntegrity.complete) {
+    statusEl.textContent = 'EVIDENCE INCOMPLETE';
+    statusEl.className = 'status-badge status-fail';
+  } else if (capabilityFailures > 0) {
+    statusEl.textContent = capabilityFailures + ' CAPABILITY GAPS';
+    statusEl.className = 'status-badge status-fail';
+  } else {
+    statusEl.textContent = 'ALL PASS';
+    statusEl.className = 'status-badge status-pass';
+  }
+
+  if (data.timestamp) {
+    const date = new Date(data.timestamp);
+    document.getElementById('updated-time').textContent = ' Updated: ' + date.toLocaleString();
+  }
+
+  // Render results table
+  const tbody = document.getElementById('results-tbody');
+  tbody.innerHTML = '';
+
+  const results = data.results || [];
+  results.sort((a, b) => {
+    // Failed first, then by name
+    if (a.status !== b.status) {
+      if (a.status === 'fail' || a.status === 'timeout') return -1;
+      if (b.status === 'fail' || b.status === 'timeout') return 1;
+    }
+    return a.name.localeCompare(b.name);
+  });
+
+  results.forEach((result, idx) => {
+    const tr = document.createElement('tr');
+    tr.className = 'expandable-row';
+    tr.dataset.idx = idx;
+
+    let statusIcon, statusClass;
+    switch (result.status) {
+      case 'pass': statusIcon = '✓'; statusClass = 'test-pass'; break;
+      case 'fail': statusIcon = '✗'; statusClass = 'test-fail'; break;
+      case 'skip': statusIcon = '○'; statusClass = 'test-skip'; break;
+      case 'timeout': statusIcon = '⏱'; statusClass = 'test-timeout'; break;
+      default: statusIcon = '?'; statusClass = ''; break;
+    }
+
+    const subTests = result.sub_tests || [];
+    const subPassed = subTests.filter(s => s.status === 'pass').length;
+    const subFailed = subTests.filter(s => s.status === 'fail').length;
+    const subNotTested = subTests.filter(s => s.status === 'not_tested').length;
+    const kernelCount = subTests.length > 0
+      ? `<span class="kernel-count"><span class="passed">${subPassed}✓</span>${subFailed > 0 ? ` <span class="failed">${subFailed}✗</span>` : ''}${subNotTested > 0 ? ` ${subNotTested}○` : ''}</span>`
+      : '-';
+
+    tr.innerHTML = `
+      <td><span class="expand-icon">▶</span></td>
+      <td><span class="${statusClass}" style="font-size: 1.2rem;">${statusIcon}</span></td>
+      <td><code>${result.name}</code></td>
+      <td><span class="category-badge">${result.category || 'general'}</span></td>
+      <td>${kernelCount}</td>
+      <td>${result.duration_sec ? result.duration_sec.toFixed(2) + 's' : '-'}</td>
+    `;
+
+    // Click handler to expand/collapse
+    tr.addEventListener('click', () => toggleSubTests(tr, idx));
+    tbody.appendChild(tr);
+
+    // Create sub-tests row (hidden by default)
+    if (subTests.length > 0) {
+      const subTr = document.createElement('tr');
+      subTr.className = 'sub-tests-row';
+      subTr.id = 'sub-tests-' + idx;
+      subTr.innerHTML = `
+        <td colspan="6">
+          <div class="sub-tests-container">
+            <div class="sub-tests-grid">
+              ${result.oracle_report_source ? `<details style="grid-column: 1 / -1"><summary>Oracle environment provenance</summary><pre>${escapeHtml(JSON.stringify(result.oracle_report_source, null, 2))}</pre></details>` : ''}
+              ${subTests.map(st => renderSubTest(st)).join('')}
+            </div>
+          </div>
+        </td>
+      `;
+      tbody.appendChild(subTr);
+    }
+  });
+}
+
+function normalizedCapabilityEvent(eventName) {
+  if (eventName === 'pull_request') return 'pull_request';
+  if (['push', 'schedule', 'workflow_dispatch'].includes(eventName)) return 'nightly';
+  return '';
+}
+
+function capabilityEvidenceIntegrity(data) {
+  if (!data || !Array.isArray(data.cases)) {
+    return {complete: false, reason: 'No current-run capability evidence was published.'};
+  }
+  if (!data.summary || typeof data.summary !== 'object') {
+    return {complete: false, reason: 'Capability evidence has no valid summary.'};
+  }
+  if (Array.isArray(data.errors) && data.errors.length > 0) {
+    return {complete: false, reason: `Capability evidence reported ${data.errors.length} generation error(s).`};
+  }
+  if (data.cases.length === 0) {
+    return {complete: false, reason: 'Capability evidence contains no registered cases.'};
+  }
+  const counts = {pass: 0, fail: 0, error: 0, timeout: 0, not_tested: 0};
+  for (const row of data.cases) {
+    if (!(row.status in counts)) {
+      return {complete: false, reason: `Capability evidence contains invalid status ${String(row.status)}.`};
+    }
+    counts[row.status] += 1;
+  }
+  const expected = {
+    total: data.cases.length,
+    passed: counts.pass,
+    failed: counts.fail,
+    errors: counts.error,
+    timeouts: counts.timeout,
+    not_tested: counts.not_tested,
+  };
+  for (const [key, value] of Object.entries(expected)) {
+    if (data.summary[key] !== value) {
+      return {complete: false, reason: `Capability evidence summary ${key} is inconsistent.`};
+    }
+  }
+  return {complete: true, reason: ''};
+}
+
+function countRequiredCapabilityFailures(data, eventName) {
+  if (!data || !Array.isArray(data.cases)) return 0;
+  const event = normalizedCapabilityEvent(eventName);
+  if (!event) return 0;
+  return data.cases.filter(row =>
+    ((row.schedule && row.schedule.events) || []).includes(event) && row.status !== 'pass'
+  ).length;
+}
+
+function renderCapabilityEvidence(data) {
+  const meta = document.getElementById('capability-evidence-meta');
+  const tbody = document.getElementById('capability-evidence-tbody');
+  const passed = document.getElementById('capability-passed');
+  const failed = document.getElementById('capability-failed');
+  const notTested = document.getElementById('capability-not-tested');
+  const total = document.getElementById('capability-total');
+  const integrity = capabilityEvidenceIntegrity(data);
+  if (!integrity.complete && (!data || !Array.isArray(data.cases) || data.cases.length === 0)) {
+    meta.textContent = integrity.reason;
+    tbody.innerHTML = `<tr><td colspan="6" class="updated-time">${escapeHtml(integrity.reason)}</td></tr>`;
+    return;
+  }
+
+  const summary = data.summary || {};
+  passed.textContent = summary.passed || 0;
+  failed.textContent = (summary.failed || 0) + (summary.errors || 0) + (summary.timeouts || 0);
+  notTested.textContent = summary.not_tested || 0;
+  total.textContent = summary.total || data.cases.length;
+  const commit = (data.source && data.source.repository_commit) || '';
+  meta.textContent = integrity.complete
+    ? `Current commit ${commit ? commit.slice(0, 12) : 'unknown'}; skipped and unavailable lanes remain NOT TESTED.`
+    : `INCOMPLETE: ${integrity.reason}`;
+
+  const order = {fail: 0, error: 0, timeout: 0, not_tested: 1, pass: 2};
+  const rows = [...data.cases].sort((a, b) =>
+    (order[a.status] ?? 3) - (order[b.status] ?? 3) || String(a.id).localeCompare(String(b.id))
+  );
+  tbody.innerHTML = rows.map(row => {
+    const status = String(row.status || 'error').toUpperCase();
+    const badge = row.status === 'pass' ? 'pass' : row.status === 'not_tested' ? 'skip' : 'fail';
+    return `<tr>
+      <td><span class="regression-badge ${badge}">${escapeHtml(status)}</span></td>
+      <td><code>${escapeHtml(row.family || '-')}</code></td>
+      <td>${escapeHtml(row.evidence_level || '-')}</td>
+      <td>${escapeHtml((row.phases || []).join(', '))}</td>
+      <td><code>${escapeHtml(row.id || '-')}</code></td>
+      <td class="regression-family-note">${escapeHtml(row.reason || '')}</td>
+    </tr>`;
+  }).join('');
+}
+
+function buildFailureReport() {
+  const data = window.__ckReportData || {};
+  const summary = data.summary || {};
+  const results = data.results || [];
+  const failedSuites = results.filter(r => r.status === 'fail' || r.status === 'timeout');
+  const lines = [];
+
+  lines.push('# CKE Nightly Test Report — Failed Tests');
+  lines.push('');
+  const meta = [];
+  if (data.timestamp) meta.push('Report time: ' + data.timestamp);
+  const hw = data.runner_hardware;
+  if (hw && hw.available) {
+    const cpu = (hw.cpu && hw.cpu.model_name) || 'unknown CPU';
+    const isa = Object.entries(hw.isa || {}).filter(([, v]) => v).map(([k]) => k).join(', ');
+    meta.push('Runner: ' + cpu + (isa ? ' (ISA: ' + isa + ')' : ''));
+  }
+  meta.push('Overall: ' + (summary.passed || 0) + ' passed / ' + (summary.failed || 0) +
+            ' failed / ' + (summary.total || 0) + ' total' +
+            (data.duration_sec ? ' in ' + data.duration_sec.toFixed(1) + 's' : ''));
+  meta.push('Page: ' + location.href);
+  lines.push(meta.join('  \n'));
+  lines.push('');
+
+  if (failedSuites.length === 0) {
+    lines.push('No failed suites in this report.');
+  }
+  failedSuites.forEach((r, i) => {
+    const subs = r.sub_tests || [];
+    const badSubs = subs.filter(s => s.status !== 'pass');
+    const head = '## ' + (i + 1) + '. ' + r.name + '  [' + r.status + ']' +
+      '  (' + (r.category || 'general') + (r.duration_sec ? ', ' + r.duration_sec.toFixed(2) + 's' : '') + ')';
+    lines.push(head);
+    if (subs.length > 0) {
+      lines.push(subs.length - badSubs.length + '/' + subs.length + ' sub-tests passed.');
+    }
+    badSubs.forEach(s => {
+      let line = '- ✗ ' + s.name;
+      const m = [];
+      if (s.max_diff !== null && s.max_diff !== undefined) m.push('max_diff: ' + s.max_diff.toExponential(2));
+      if (s.speedup !== null && s.speedup !== undefined) m.push('speedup: ' + s.speedup.toFixed(2) + 'x');
+      if (m.length) line += '  (' + m.join(', ') + ')';
+      lines.push(line);
+    });
+    lines.push('');
+  });
+
+  const rf = data.regression_fast;
+  if (rf && Array.isArray(rf.rows || rf.families)) {
+    const rfRows = rf.rows || rf.families;
+    const badFamilies = rfRows.filter(row => String(row.status || '').toUpperCase() === 'FAIL');
+    if (badFamilies.length) {
+      lines.push('## Regression-fast failing families');
+      badFamilies.forEach(row => {
+        let line = '- ' + (row.label || row.family_id || '?');
+        const stages = ['build_status', 'smoke_status', 'coherence_status', 'contract_status', 'first_token_status']
+          .filter(k => String(row[k] || '').toUpperCase() === 'FAIL')
+          .map(k => k.replace('_status', ''));
+        if (stages.length) line += ' — failed stages: ' + stages.join(', ');
+        const note = row.failure_detail || row.failure_reason;
+        if (note) line += ' — ' + note;
+        lines.push(line);
+      });
+      lines.push('');
+    }
+  }
+
+  return { text: lines.join('\n'), count: failedSuites.length };
+}
+
+function copyFailedTests() {
+  const btn = document.getElementById('copy-failures-btn');
+  const report = buildFailureReport();
+  const done = () => {
+    btn.classList.add('copied');
+    btn.textContent = report.count > 0
+      ? '✓ Copied ' + report.count + ' failed suite' + (report.count === 1 ? '' : 's')
+      : '✓ Copied (no failures)';
+    setTimeout(() => {
+      btn.classList.remove('copied');
+      btn.textContent = '⧉ Copy failed tests';
+    }, 2500);
+  };
+  const fallback = () => {
+    const ta = document.createElement('textarea');
+    ta.value = report.text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); done(); }
+    catch (e) { btn.textContent = 'Copy failed — select manually'; }
+    document.body.removeChild(ta);
+  };
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(report.text).then(done, fallback);
+  } else {
+    fallback();
+  }
+}
+
+function renderRunnerHardware(data) {
+  const modelEl = document.getElementById('runner-hardware-model');
+  const providerEl = document.getElementById('runner-hardware-provider');
+  const gridEl = document.getElementById('runner-hardware-grid');
+  const isaEl = document.getElementById('runner-hardware-isa');
+  const detailsEl = document.getElementById('runner-hardware-details');
+  const provenanceEl = document.getElementById('runner-hardware-provenance');
+  const cpuGroupEl = document.getElementById('runner-hardware-cpu-group');
+  const cpuLabelEl = document.getElementById('runner-hardware-cpu-label');
+  const cpuRawEl = document.getElementById('runner-hardware-cpu');
+  const freeGroupEl = document.getElementById('runner-hardware-free-group');
+  const freeRawEl = document.getElementById('runner-hardware-free');
+  const meminfoGroupEl = document.getElementById('runner-hardware-meminfo-group');
+  const meminfoRawEl = document.getElementById('runner-hardware-meminfo');
+
+  if (!data || !data.available) {
+    modelEl.textContent = data && data.error ? data.error : 'Hardware evidence was not published by this run.';
+    providerEl.textContent = 'NOT PUBLISHED';
+    providerEl.className = 'regression-badge skip';
+    gridEl.innerHTML = '';
+    isaEl.innerHTML = '';
+    detailsEl.hidden = true;
+    return;
+  }
+
+  const cpu = data.cpu || {};
+  const runner = data.runner || {};
+  const memory = data.memory || {};
+  const topologySub = [
+    cpu.sockets ? `${cpu.sockets} socket${cpu.sockets === '1' ? '' : 's'}` : '',
+    cpu.cores_per_socket ? `${cpu.cores_per_socket} cores/socket` : '',
+    cpu.threads_per_core ? `${cpu.threads_per_core} threads/core` : '',
+  ].filter(Boolean).join(' · ');
+  const image = [runner.image_os, runner.image_version].filter(Boolean).join(' ');
+  const stats = [
+    {label: 'Architecture', value: cpu.architecture || runner.arch || '', sub: ''},
+    {label: 'Logical CPUs', value: cpu.logical_cpus || '', sub: topologySub},
+    {label: 'Memory', value: memory.total ? formatMemoryKiB(memory.total) : '', sub: memory.available ? `${formatMemoryKiB(memory.available)} available` : ''},
+    {label: 'Kernel', value: runner.kernel || '', sub: '', mono: true},
+  ].filter(s => s.value);
+  const metaParts = [
+    cpu.vendor_id || '',
+    image ? `runner <code>${escapeHtml(image)}</code>` : (runner.os ? `runner ${escapeHtml(runner.os)}` : ''),
+    runner.run_id ? `workflow <code>#${escapeHtml(runner.run_id)}</code>${runner.run_attempt ? ` · attempt ${escapeHtml(runner.run_attempt)}` : ''}` : '',
+    data.cpu_source ? `evidence <code>${escapeHtml(data.cpu_source)}</code>` : '',
+  ].filter(Boolean);
+
+  modelEl.textContent = cpu.model_name || 'Unknown CPU model';
+  providerEl.textContent = data.provider === 'github-actions' ? 'GITHUB-HOSTED' : String(data.provider || 'LOCAL').toUpperCase();
+  providerEl.className = 'regression-badge pass';
+
+  const supportedIsa = Object.entries(data.isa || {}).filter(([, enabled]) => enabled).map(([name]) => name);
+  const isaHtml = supportedIsa.length
+    ? `<span class="runner-hardware__isa"><span class="runner-hardware__isa-label">ISA</span>` +
+      supportedIsa.map(name => `<code>${escapeHtml(name)}</code>`).join('') + `</span>`
+    : '';
+  const metaHtml = metaParts.length
+    ? `<span class="runner-hardware__meta">${metaParts.join('<span class="rh-sep">&middot;</span>')}</span>`
+    : '';
+  gridEl.innerHTML =
+    `<div class="runner-hardware__stats">` + stats.map(s =>
+      `<div class="runner-hardware__stat"><span>${escapeHtml(s.label)}</span>` +
+      `<strong${s.mono ? ' class="mono"' : ''}>${escapeHtml(s.value)}</strong>` +
+      (s.sub ? `<em>${escapeHtml(s.sub)}</em>` : '') + `</div>`
+    ).join('') + `</div>`;
+  isaEl.innerHTML = '';
+  provenanceEl.innerHTML = metaHtml || isaHtml ? `${metaHtml}${isaHtml}` : '';
+
+  const cpuRaw = String(data.raw_lscpu || data.raw_cpuinfo || '');
+  const freeRaw = String(data.raw_free_h || '');
+  const meminfoRaw = String(data.raw_meminfo || '');
+  detailsEl.hidden = !(provenanceEl.innerHTML || cpuRaw || freeRaw || meminfoRaw);
+  cpuGroupEl.hidden = !cpuRaw;
+  freeGroupEl.hidden = !freeRaw;
+  meminfoGroupEl.hidden = !meminfoRaw;
+  cpuLabelEl.textContent = data.cpu_source === '/proc/cpuinfo' ? '/proc/cpuinfo (redacted)' : 'lscpu';
+  cpuRawEl.textContent = cpuRaw;
+  freeRawEl.textContent = freeRaw;
+  meminfoRawEl.textContent = meminfoRaw;
+}
+
+function formatMemoryKiB(value) {
+  const match = String(value || '').match(/^([\d.]+)\s*kB$/i);
+  if (!match) return String(value || '-');
+  return `${(Number(match[1]) / 1048576).toFixed(1)} GiB`;
+}
+
+function renderRegressionFast(data) {
+  const metaEl = document.getElementById('regression-fast-meta');
+  const statusEl = document.getElementById('regression-fast-status');
+  const passedEl = document.getElementById('regression-fast-passed');
+  const failedEl = document.getElementById('regression-fast-failed');
+  const totalEl = document.getElementById('regression-fast-total');
+  const tbody = document.getElementById('regression-fast-tbody');
+
+  if (!data) {
+    metaEl.textContent = 'make regression-fast status is not available in this report yet.';
+    statusEl.textContent = '-';
+    passedEl.textContent = '0';
+    failedEl.textContent = '0';
+    totalEl.textContent = '0';
+    tbody.innerHTML = '<tr><td colspan="8" class="updated-time">No regression-fast data published in this report.</td></tr>';
+    return;
+  }
+
+  const rows = data.family_rows || [];
+  const status = String(data.status || 'not_run').toLowerCase();
+  const familiesPassed = Number.isFinite(data.families_passed) ? data.families_passed : rows.filter(r => String(r.status || '').toUpperCase() === 'PASS').length;
+  const familiesFailed = Number.isFinite(data.families_failed) ? data.families_failed : Math.max(0, rows.length - familiesPassed);
+  const familiesTotal = Number.isFinite(data.families_total) ? data.families_total : rows.length;
+
+  metaEl.textContent = data.note || `Mode: ${data.mode || 'fast'}${data.generated_at ? ' · Generated: ' + new Date(data.generated_at).toLocaleString() : ''}`;
+  statusEl.textContent = status === 'pass' ? 'PASS' : status === 'fail' ? 'FAIL' : 'N/R';
+  passedEl.textContent = String(familiesPassed);
+  failedEl.textContent = String(familiesFailed);
+  totalEl.textContent = String(familiesTotal);
+
+  if (rows.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="8" class="updated-time">No family rows were published for regression-fast.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = '';
+  rows.forEach(row => {
+    const tr = document.createElement('tr');
+    const rowStatus = String(row.status || 'SKIP').toUpperCase();
+    const badgeClass = rowStatus === 'PASS' ? 'pass' : rowStatus === 'FAIL' ? 'fail' : 'skip';
+    tr.innerHTML = `
+      <td><code>${row.label || row.family_id || '-'}</code></td>
+      <td><span class="regression-badge ${badgeClass}">${rowStatus}</span></td>
+      <td>${row.build_status || '-'}</td>
+      <td>${row.smoke_status || '-'}</td>
+      <td>${row.coherence_status || '-'}</td>
+      <td>${row.contract_status || '-'}</td>
+      <td>${row.first_token_status || '-'}</td>
+      <td class="regression-family-note">${row.failure_detail || row.failure_reason || ''}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+function contractBadge(status) {
+  const s = String(status || 'not_run').toLowerCase();
+  const cls = s === 'pass' ? 'pass' : s === 'fail' ? 'fail' : 'skip';
+  const text = s === 'pass' ? 'PASS' : s === 'fail' ? 'FAIL' : s === 'warn' ? 'WARN' : s === 'partial' ? 'PARTIAL' : 'N/R';
+  return `<span class="regression-badge ${cls}">${text}</span>`;
+}
+
+function renderV8DSLContracts(results) {
+  const definitions = [
+    {name: 'v8 DSL Zero-Hardcoding Policy', target: 'test-v8-dsl-policy', statusId: 'v8-dsl-policy-status'},
+    {name: 'v8 Numerical Kernel Contracts', target: 'test-numerical-contracts', statusId: 'v8-dsl-numerical-status'},
+    {name: 'v8 Template Circuit/Dataflow Audit', target: 'test-v8-template-circuit-audit', statusId: 'v8-dsl-circuit-status'},
+  ];
+  const byName = new Map((Array.isArray(results) ? results : []).map(row => [row.name, row]));
+  const rows = definitions.map(definition => ({...definition, result: byName.get(definition.name)}));
+  const published = rows.filter(row => row.result);
+  const statuses = published.map(row => String(row.result.status || 'skip').toLowerCase());
+  const overall = published.length !== definitions.length
+    ? 'PARTIAL'
+    : statuses.some(status => status === 'fail' || status === 'timeout')
+      ? 'FAIL'
+      : statuses.every(status => status === 'pass') ? 'PASS' : 'PARTIAL';
+
+  const overallEl = document.getElementById('v8-dsl-contract-status');
+  overallEl.textContent = overall;
+  overallEl.className = overall === 'PASS' ? 'value test-pass' : overall === 'FAIL' ? 'value test-fail' : 'value test-skip';
+  document.getElementById('v8-dsl-contract-meta').textContent =
+    `${published.length}/3 component rows published. Monitor this panel for aggregate health; expand the same rows under Test Details for diagnostics.`;
+
+  rows.forEach(row => {
+    const status = row.result ? String(row.result.status || 'skip').toUpperCase() : 'N/R';
+    const element = document.getElementById(row.statusId);
+    element.textContent = status;
+    element.className = status === 'PASS' ? 'value test-pass' : status === 'FAIL' || status === 'TIMEOUT' ? 'value test-fail' : 'value test-skip';
+  });
+
+  document.getElementById('v8-dsl-contract-tbody').innerHTML = rows.map(row => {
+    const status = row.result ? String(row.result.status || 'skip').toUpperCase() : 'N/R';
+    const badgeClass = status === 'PASS' ? 'pass' : status === 'FAIL' || status === 'TIMEOUT' ? 'fail' : 'skip';
+    const duration = row.result && row.result.duration_sec ? `${Number(row.result.duration_sec).toFixed(2)}s` : '-';
+    return `<tr>
+      <td><span class="regression-badge ${badgeClass}">${escapeHtml(status)}</span></td>
+      <td><code>${escapeHtml(row.name)}</code></td>
+      <td><code>make ${escapeHtml(row.target)}</code></td>
+      <td>${duration}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderVisionEncoderAccuracy(data) {
+  const meta = document.getElementById('vision-encoder-accuracy-meta');
+  const status = document.getElementById('vision-encoder-accuracy-status');
+  const q4 = document.getElementById('vision-encoder-q4-status');
+  const bf16 = document.getElementById('vision-encoder-bf16-status');
+  const layers = document.getElementById('vision-encoder-layer-count');
+  const details = document.getElementById('vision-encoder-accuracy-details');
+  if (!data) return;
+
+  const phases = data.phases || {};
+  const q4Phase = phases.q8_mmproj_llamacpp || phases.q4_llamacpp || {};
+  const bf16Phase = phases.bf16_pytorch || {};
+  const layerList = Array.isArray(data.layers) ? data.layers : [];
+  status.textContent = String(data.status || '-').toUpperCase();
+  q4.textContent = String(q4Phase.status || 'skip').toUpperCase();
+  bf16.textContent = String(bf16Phase.status || 'skip').toUpperCase();
+  layers.textContent = String(layerList.length);
+  meta.textContent = `family: ${data.family || '-'} | image: ${data.image_geometry ? data.image_geometry.join('x') : 'external'} | elapsed: ${Number(data.elapsed_sec || 0).toFixed(1)}s`;
+  const failures = Array.isArray(data.failures) ? data.failures : [];
+  details.innerHTML = failures.length
+    ? `<strong>Failures:</strong> ${failures.map(escapeHtml).join(' | ')}`
+    : `Checkpoints: ${layerList.join(', ') || '-'}; raw tensor dumps cleaned after metrics.`;
+}
+
+function renderVisionVisualizer(data) {
+  const metaEl = document.getElementById('vision-visualizer-meta');
+  const statusEl = document.getElementById('vision-visualizer-status');
+  const passedEl = document.getElementById('vision-visualizer-passed');
+  const failedEl = document.getElementById('vision-visualizer-failed');
+  const totalEl = document.getElementById('vision-visualizer-total');
+  const tbody = document.getElementById('vision-visualizer-tbody');
+  if (!metaEl || !statusEl || !passedEl || !failedEl || !totalEl || !tbody) return;
+
+  if (!data) {
+    metaEl.textContent = 'make v8-visualizer-vision-artifacts status is not available in this report yet.';
+    statusEl.textContent = '-';
+    passedEl.textContent = '0';
+    failedEl.textContent = '0';
+    totalEl.textContent = '0';
+    tbody.innerHTML = '<tr><td colspan="3" class="updated-time">No vision visualizer artifact data published in this report.</td></tr>';
+    return;
+  }
+
+  const summary = data.summary || {};
+  const status = String(data.status || 'unknown').toUpperCase();
+  metaEl.textContent = `${data.schema || 'ck.v8.vision_visualizer_harness'} · generated ${data.generated_at || 'unknown time'}`;
+  statusEl.textContent = status;
+  statusEl.className = status === 'PASS' ? 'value test-pass' : 'value test-fail';
+  passedEl.textContent = summary.passed || 0;
+  failedEl.textContent = summary.failed || 0;
+  totalEl.textContent = summary.total || 0;
+
+  const checks = Array.isArray(data.checks) ? data.checks : [];
+  if (checks.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="3" class="updated-time">No vision visualizer checks were published.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = checks.map(row => {
+    const rowStatus = String(row.status || '').toUpperCase();
+    const badgeClass = rowStatus === 'PASS' ? 'pass' : (rowStatus === 'SKIP' ? 'skip' : 'fail');
+    return `
+      <tr>
+        <td><span class="regression-badge ${badgeClass}">${escapeHtml(rowStatus)}</span></td>
+        <td>${escapeHtml(row.name || '-')}</td>
+        <td class="regression-family-note">${escapeHtml(row.detail || '')}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function renderArchitectureContracts(data) {
+  const metaEl = document.getElementById('architecture-contract-meta');
+  const statusEl = document.getElementById('architecture-contract-status');
+  const passedEl = document.getElementById('architecture-contract-passed');
+  const warnEl = document.getElementById('architecture-contract-warn');
+  const failedEl = document.getElementById('architecture-contract-failed');
+  const container = document.getElementById('architecture-contract-sections');
+
+  if (!data) {
+    metaEl.textContent = 'make test-architecture-contracts status is not available in this report yet.';
+    statusEl.textContent = '-';
+    passedEl.textContent = '0';
+    warnEl.textContent = '0';
+    failedEl.textContent = '0';
+    container.innerHTML = '<div class="updated-time">No architecture contract dashboard published in this report.</div>';
+    return;
+  }
+
+  const summary = data.summary || {};
+  const sections = Array.isArray(data.sections) ? data.sections : [];
+  const status = String(data.status || 'not_run').toLowerCase();
+  statusEl.textContent = status === 'pass' ? 'PASS' : status === 'fail' ? 'FAIL' : status === 'warn' ? 'WARN' : 'N/R';
+  passedEl.textContent = String(summary.sections_passed || 0);
+  warnEl.textContent = String(summary.warnings || summary.sections_warn || 0);
+  failedEl.textContent = String(summary.sections_failed || 0);
+  metaEl.textContent = `Generated: ${data.generated_at || '-'} · templates: ${summary.templates_total || 0} · explicit edges: ${summary.explicit_template_edges || 0} · missing/implicit edges: ${summary.missing_template_edges || 0}`;
+
+  if (sections.length === 0) {
+    container.innerHTML = '<div class="updated-time">Architecture contract payload had no sections.</div>';
+    return;
+  }
+
+  container.innerHTML = sections.map((section, idx) => {
+    const rows = Array.isArray(section.rows) ? section.rows : [];
+    const rowTable = rows.length ? renderContractRows(section.id, rows) : '';
+    const details = section.details || section.description || '';
+    const open = idx === 0 ? ' open' : '';
+    return `
+      <details${open}>
+        <summary>
+          <span>${escapeHtml(section.label || section.id || 'Contract Section')}</span>
+          <span>${contractBadge(section.status)}</span>
+        </summary>
+        <div class="contract-body">
+          <div>${escapeHtml(details)}</div>
+          <div class="contract-pill-row">
+            <span class="contract-pill">passed: ${section.checks_passed || 0}</span>
+            <span class="contract-pill">failed: ${section.checks_failed || 0}</span>
+            <span class="contract-pill">warnings: ${section.warnings || 0}</span>
+          </div>
+          ${rowTable}
+        </div>
+      </details>
+    `;
+  }).join('');
+}
+
+function renderContractRows(sectionId, rows) {
+  if (sectionId === 'numerical_kernel_capabilities') {
+    return `
+      <div class="contract-table-wrap">
+        <table class="results-table">
+          <thead><tr><th>Family</th><th>Capability</th><th>Status</th><th>Input</th><th>Compute</th><th>Reduction</th><th>Output</th><th>Oracle</th><th>Shape</th><th>Threads</th><th>Max Abs</th></tr></thead>
+          <tbody>
+            ${rows.map(row => `
+              <tr>
+                <td><code>${escapeHtml(row.kernel_family || '-')}</code></td>
+                <td><code>${escapeHtml(row.capability || '-')}</code></td>
+                <td>${contractBadge(row.status)}</td>
+                <td>${escapeHtml(row.input_storage || '-')}</td>
+                <td>${escapeHtml(row.compute || '-')}</td>
+                <td>${escapeHtml(row.reduction || '-')}</td>
+                <td>${escapeHtml(row.output_storage || '-')}</td>
+                <td>${escapeHtml(row.oracle || '-')}</td>
+                <td><code>D=${escapeHtml(row.head_dim ?? '-')}</code></td>
+                <td>${escapeHtml(row.threads || '-')}</td>
+                <td><code>${escapeHtml(row.max_abs ?? '-')}</code></td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  }
+  if (sectionId === 'model_contract_coverage') {
+    return `
+      <div class="contract-table-wrap">
+        <table class="results-table">
+          <thead><tr><th>Family</th><th>Template</th><th>IR</th><th>C</th><th>Runtime</th><th>Model</th><th>Notes</th></tr></thead>
+          <tbody>
+            ${rows.map(row => `
+              <tr>
+                <td><code>${escapeHtml(row.family || '-')}</code></td>
+                <td>${contractBadge(row.template)}</td>
+                <td>${contractBadge(row.ir)}</td>
+                <td>${contractBadge(row.generated_c)}</td>
+                <td>${contractBadge(row.runtime)}</td>
+                <td>${contractBadge(row.model)}</td>
+                <td class="regression-family-note">${escapeHtml(row.notes || '')}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  }
+
+  return `
+    <div class="contract-table-wrap">
+      <table class="results-table">
+        <thead><tr><th>Name</th><th>Status</th><th>Explicit</th><th>Missing</th><th>Warning Sample</th></tr></thead>
+        <tbody>
+          ${rows.map(row => `
+            <tr>
+              <td><code>${escapeHtml(row.template || row.name || '-')}</code></td>
+              <td>${contractBadge(row.status)}</td>
+              <td>${row.explicit_count || 0}</td>
+              <td>${row.missing_count || 0}</td>
+              <td class="regression-family-note">${escapeHtml((row.warnings || []).slice(0, 2).join(' | '))}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function renderKernelMapContracts(data) {
+  const metaEl = document.getElementById('kernel-map-meta');
+  const statusEl = document.getElementById('kernel-map-status');
+  const passedEl = document.getElementById('kernel-map-passed');
+  const failedEl = document.getElementById('kernel-map-failed');
+  const warningsEl = document.getElementById('kernel-map-warnings');
+  const tbody = document.getElementById('kernel-map-warning-tbody');
+
+  if (!data) {
+    metaEl.textContent = 'make v7-kernel-map-contracts status is not available in this report yet.';
+    statusEl.textContent = '-';
+    passedEl.textContent = '0';
+    failedEl.textContent = '0';
+    warningsEl.textContent = '0';
+    tbody.innerHTML = '<tr><td class="updated-time">No kernel-map summary published in this report.</td></tr>';
+    return;
+  }
+
+  const status = String(data.status || 'not_run').toLowerCase();
+  const kernelMaps = Number(data.kernel_maps || 0);
+  const passed = Number(data.passed || 0);
+  const failed = Number(data.failed || 0);
+  const warnings = Number(data.warnings || 0);
+  const samples = Array.isArray(data.sample_warnings) ? data.sample_warnings : [];
+
+  metaEl.textContent = data.note || `Generated: ${data.generated_at || '-'}`;
+  statusEl.textContent = status === 'pass' ? 'PASS' : status === 'fail' ? 'FAIL' : 'N/R';
+  passedEl.textContent = String(passed || (status === 'pass' ? kernelMaps : 0));
+  failedEl.textContent = String(failed);
+  warningsEl.textContent = String(warnings);
+
+  if (samples.length === 0) {
+    const note = warnings > 0
+      ? `${warnings} warning(s) recorded. See validator artifact for the full list.`
+      : 'No kernel-map warnings recorded in this run.';
+    tbody.innerHTML = `<tr><td class="regression-warning-cell">${note}</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = '';
+  samples.forEach(item => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td class="regression-warning-cell">${item}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+function renderKernelAllocation(data) {
+  const metaEl = document.getElementById('kernel-allocation-meta');
+  const statusEl = document.getElementById('kernel-allocation-status');
+  const totalEl = document.getElementById('kernel-allocation-total');
+  const productionEl = document.getElementById('kernel-allocation-production');
+  const freesEl = document.getElementById('kernel-allocation-frees');
+  const mappedEl = document.getElementById('kernel-allocation-mapped');
+  const missingScratchEl = document.getElementById('kernel-allocation-missing-scratch');
+  const warningsEl = document.getElementById('kernel-allocation-warnings');
+  const tbody = document.getElementById('kernel-allocation-tbody');
+  const rowCountEl = document.getElementById('kernel-allocation-rowcount');
+  const setRowCount = (n) => { if (rowCountEl) rowCountEl.textContent = n > 0 ? `${n} call site${n === 1 ? '' : 's'}` : 'no call sites'; };
+  if (!data) {
+    metaEl.textContent = 'make test-v8-kernel-allocations status is not available in this report yet.';
+    statusEl.textContent = '-';
+    [totalEl, productionEl, freesEl, mappedEl, missingScratchEl, warningsEl].forEach(el => { el.textContent = '0'; });
+    setRowCount(0);
+    tbody.innerHTML = '<tr><td colspan="5" class="updated-time">No kernel allocation audit was published in this report.</td></tr>';
+    return;
+  }
+  const counts = data.counts || {};
+  const sites = Array.isArray(data.allocation_sites) ? data.allocation_sites : [];
+  const warnings = Array.isArray(data.warnings) ? data.warnings : [];
+  const status = String(data.status || 'not_run').toLowerCase();
+  metaEl.textContent = data.note || `Generated: ${data.generated_at || '-'}`;
+  statusEl.textContent = status === 'pass' ? 'PASS' : status === 'warn' ? 'WARN' : status === 'fail' ? 'FAIL' : 'N/R';
+  totalEl.textContent = String(Number(counts.allocation_calls || 0));
+  productionEl.textContent = String(Number(counts.production_allocation_calls || 0));
+  freesEl.textContent = String(Number(counts.free_calls || 0));
+  mappedEl.textContent = String(Number(counts.mapped_allocating_providers || 0));
+  missingScratchEl.textContent = String(Number(counts.mapped_allocating_without_scratch_contract || 0));
+  warningsEl.textContent = String(warnings.length);
+  if (sites.length === 0) {
+    setRowCount(0);
+    tbody.innerHTML = '<tr><td colspan="5" class="regression-warning-cell">No kernel allocation call sites remain.</td></tr>';
+    return;
+  }
+  setRowCount(sites.length);
+  tbody.innerHTML = sites.map(row => {
+    const cls = String(row.classification || '-');
+    const clsHtml = cls === 'production' ? `<span class="alloc-class-production">${escapeHtml(cls)}</span>` : escapeHtml(cls);
+    return `<tr>
+    <td>${clsHtml}</td>
+    <td><code>${escapeHtml(row.path || '-')}:${Number(row.line || 0)}</code></td>
+    <td><code>${escapeHtml(row.function || '-')}</code></td>
+    <td><code>${escapeHtml(row.allocator || '-')}()</code></td>
+    <td>${escapeHtml((row.provider_ids || []).join(', ') || '-')}</td></tr>`;
+  }).join('');
+}
+
+function renderTrainingCertification(data) {
+  const metaEl = document.getElementById('training-certification-meta');
+  const statusEl = document.getElementById('training-certification-status');
+  const parametersEl = document.getElementById('training-certification-parameters');
+  const gradientsEl = document.getElementById('training-certification-gradients');
+  const controlsEl = document.getElementById('training-certification-controls');
+  if (!data) return;
+  const checks = data.checks || {};
+  const gradients = checks.gradients || {};
+  const inventory = checks.parameter_inventory || {};
+  const controls = data.negative_controls || {};
+  const controlRows = Object.values(controls).filter(row => row && typeof row === 'object');
+  const controlsPassed = controlRows.filter(row => row.passed === true).length;
+  const status = String(data.status || 'not_run').toLowerCase();
+  metaEl.textContent = data.note || 'Generated forward/backward parity against independent PyTorch.';
+  statusEl.textContent = status === 'pass' ? 'PASS' : status === 'fail' ? 'FAIL' : 'N/R';
+  parametersEl.textContent = String(Number(inventory.count || gradients.compared || 0));
+  gradientsEl.textContent = gradients.passed === true ? 'PASS' : gradients.passed === false ? 'FAIL' : '-';
+  controlsEl.textContent = `${controlsPassed}/${controlRows.length}`;
+}
+
+function renderTrainingWorkflow(data) {
+  if (!data) return;
+  const checks = data.checks || {};
+  const learning = checks.learning || {};
+  const resume = checks.fresh_process_resume || {};
+  const exported = checks.inference_export || {};
+  const performance = data.performance || {};
+  const status = String(data.status || 'not_run').toLowerCase();
+  document.getElementById('training-workflow-meta').textContent = data.note || 'Four-layer FP32 generated-C training, restart, and v8 inference export.';
+  document.getElementById('training-workflow-status').textContent = status === 'pass' ? 'PASS' : status === 'fail' ? 'FAIL' : 'N/R';
+  const first = Number(learning.first_epoch_loss);
+  const last = Number(learning.last_epoch_loss);
+  document.getElementById('training-workflow-loss').textContent = Number.isFinite(first) && Number.isFinite(last) ? `${first.toFixed(3)} → ${last.toFixed(3)}` : '-';
+  document.getElementById('training-workflow-resume').textContent = resume.passed === true ? 'PASS' : resume.passed === false ? 'FAIL' : '-';
+  document.getElementById('training-workflow-export').textContent = exported.passed === true ? 'PASS' : exported.passed === false ? 'FAIL' : '-';
+  const throughput = Number(performance.tokens_per_second);
+  document.getElementById('training-workflow-throughput').textContent = Number.isFinite(throughput) ? throughput.toFixed(0) : '-';
+}
+
+function renderBackpropRegression(data) {
+  const metaEl = document.getElementById('backprop-regression-meta');
+  const statusEl = document.getElementById('backprop-regression-status');
+  const passedEl = document.getElementById('backprop-regression-passed');
+  const failedEl = document.getElementById('backprop-regression-failed');
+  const totalEl = document.getElementById('backprop-regression-total');
+  const tbody = document.getElementById('backprop-regression-tbody');
+
+  if (!data) {
+    metaEl.textContent = 'make regression-training-full status is not available in this report yet.';
+    statusEl.textContent = '-';
+    passedEl.textContent = '0';
+    failedEl.textContent = '0';
+    totalEl.textContent = '0';
+    tbody.innerHTML = '<tr><td colspan="9" class="updated-time">No training family summary published in this report.</td></tr>';
+    return;
+  }
+
+  const rows = Array.isArray(data.family_rows) ? data.family_rows : [];
+  const status = String(data.status || 'not_run').toLowerCase();
+  const familiesPassed = Number(data.families_passed || 0);
+  const familiesFailed = Number(data.families_failed || 0);
+  const familiesTotal = Number(data.families_total || rows.length);
+
+  metaEl.textContent = data.note || `Mode: ${data.mode || 'fast'} · Profile: ${data.stage_profile || 'default'}`;
+  statusEl.textContent = status === 'pass' ? 'PASS' : status === 'fail' ? 'FAIL' : 'N/R';
+  passedEl.textContent = String(familiesPassed);
+  failedEl.textContent = String(familiesFailed);
+  totalEl.textContent = String(familiesTotal);
+
+  if (rows.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="9" class="updated-time">No family rows were published for training regression.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = '';
+  rows.forEach(row => {
+    const tr = document.createElement('tr');
+    const rowStatus = String(row.status || 'SKIP').toUpperCase();
+    const badgeClass = rowStatus === 'PASS' ? 'pass' : rowStatus === 'FAIL' ? 'fail' : 'skip';
+    const failedStageText = Array.isArray(row.failed_stage_ids) && row.failed_stage_ids.length > 0
+      ? row.failed_stage_ids.join(', ')
+      : '-';
+    tr.innerHTML = `
+      <td><code>${row.family || '-'}</code></td>
+      <td><span class="regression-badge ${badgeClass}">${rowStatus}</span></td>
+      <td>${row.a_status || '-'}</td>
+      <td>${row.b_status || '-'}</td>
+      <td>${row.c_status || '-'}</td>
+      <td>${row.d_status || '-'}</td>
+      <td>${row.e_status || '-'}</td>
+      <td>${row.f_status || '-'}</td>
+      <td class="regression-family-note">${failedStageText}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+function renderSubTest(st) {
+  const statusClass = st.status === 'pass' ? 'pass' : (st.status === 'fail' ? 'fail' : 'not-tested');
+  const statusIcon = st.status === 'pass' ? '✓' : (st.status === 'fail' ? '✗' : '○');
+  const iconClass = st.status === 'pass' ? 'test-pass' : (st.status === 'fail' ? 'test-fail' : 'test-skip');
+  const diagnosticLabel = st.status === 'fail' && st.metadata?.gate === 'diagnostic' && st.metadata?.blocking === false
+    ? ' <small>Known mismatch · non-blocking diagnostic</small>' : '';
+
+  let metrics = '';
+  if (st.max_diff !== null && st.max_diff !== undefined) {
+    metrics += `<span class="sub-test-diff">diff: ${st.max_diff.toExponential(2)}</span>`;
+  }
+  if (st.speedup !== null && st.speedup !== undefined) {
+    const speedClass = st.speedup >= 1 ? 'fast' : 'slow';
+    metrics += `<span class="sub-test-speedup ${speedClass}">${st.speedup.toFixed(2)}x</span>`;
+  }
+
+  const evidence = st.metadata && Object.keys(st.metadata).length
+    ? `<details style="grid-column: 1 / -1"><summary>${st.evidence_kind === 'test_execution' ? 'Test execution' : 'Numerical contract and oracle'}</summary><pre>${escapeHtml(JSON.stringify({case_id: st.case_id, tolerance: st.tolerance, ...st.metadata}, null, 2))}</pre></details>`
+    : '';
+  return `
+    <div class="sub-test-item ${statusClass}">
+      <span class="${iconClass}">${statusIcon}</span>
+      <span class="sub-test-name">${escapeHtml(st.name)}${diagnosticLabel}${st.configuration ? ` <small>${escapeHtml(st.configuration)}</small>` : ''}</span>
+      <span class="sub-test-metrics">${metrics}</span>
+      ${evidence}
+    </div>
+  `;
+}
+
+function toggleSubTests(row, idx) {
+  const subRow = document.getElementById('sub-tests-' + idx);
+  if (!subRow) return;
+
+  row.classList.toggle('expanded');
+  subRow.classList.toggle('visible');
+}
+
+function renderHistory(reports) {
+  const bar = document.getElementById('history-bar');
+  const labelsContainer = document.getElementById('history-labels');
+  bar.innerHTML = '';
+  labelsContainer.innerHTML = '';
+
+  // Create 30 days of data
+  const days = [];
+  for (let i = 29; i >= 0; i--) {
+    const date = new Date();
+    date.setDate(date.getDate() - i);
+    const dateStr = date.toISOString().split('T')[0];
+    const report = reports.find(r => r.date === dateStr);
+    days.push({
+      date: date,
+      dateStr: dateStr,
+      report: report
+    });
+  }
+
+  // Create label positions (every 5 days and at the end)
+  const labelPositions = [0, 4, 9, 14, 19, 24, 29];
+
+  days.forEach((day, idx) => {
+    const div = document.createElement('div');
+    div.className = 'history-day';
+
+    if (day.report) {
+      const summary = day.report.summary || {};
+      const passed = summary.passed || 0;
+      const failed = summary.failed || 0;
+      const total = summary.total || 1;
+
+      div.style.height = Math.max(10, (passed / total) * 100) + '%';
+
+      if (failed > 0) {
+        div.classList.add('has-fail');
+        div.title = `${day.dateStr}: ${failed} failed / ${total} total`;
+      } else {
+        div.classList.add('all-pass');
+        div.title = `${day.dateStr}: ${passed} passed`;
+      }
+    } else {
+      div.classList.add('no-data');
+      div.style.height = '10%';
+      div.title = `${day.dateStr}: No data`;
+    }
+
+    bar.appendChild(div);
+
+    // Add date label every 5 days
+    if (labelPositions.includes(idx)) {
+      const label = document.createElement('span');
+      label.className = 'history-label';
+      // Format: "Jan 2"
+      const month = day.date.toLocaleString('en-US', { month: 'short' });
+      const dayNum = day.date.getDate();
+      label.textContent = `${month} ${dayNum}`;
+      labelsContainer.appendChild(label);
+    } else {
+      // Add spacer for alignment
+      const spacer = document.createElement('span');
+      spacer.style.width = `${100/30}%`;
+      labelsContainer.appendChild(spacer);
+    }
+  });
+}
+
+// Load on page load
+document.addEventListener('DOMContentLoaded', loadResults);
+document.getElementById('copy-failures-btn').addEventListener('click', copyFailedTests);
+</script>
+    </main>
+
+    <!-- SVG Viewer Overlay (shared across all pages) -->
+    <style>
+    .svg-viewer { cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
+    .svg-viewer:hover { transform: scale(1.01); box-shadow: 0 8px 32px rgba(255, 180, 0, 0.3); }
+    #svg-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.95); z-index: 999999; }
+    #svg-overlay .toolbar { position: fixed; top: 0; left: 0; right: 0; padding: 10px 20px; background: rgba(0,0,0,0.9); display: flex; justify-content: space-between; align-items: center; z-index: 1000000; border-bottom: 1px solid #333; }
+    #svg-overlay .toolbar .title { color: #ccc; font-size: 14px; }
+    #svg-overlay .toolbar .controls { display: flex; gap: 8px; align-items: center; }
+    #svg-overlay .toolbar button { background: #333; color: #ffb400; border: 1px solid #555; padding: 8px 14px; cursor: pointer; border-radius: 4px; font-size: 14px; }
+    #svg-overlay .toolbar button:hover { background: #444; border-color: #ffb400; }
+    #svg-overlay .toolbar .close-btn { font-size: 20px; padding: 4px 12px; }
+    #svg-overlay .toolbar .zoom-display { color: #888; font-size: 12px; min-width: 45px; text-align: center; }
+    #svg-overlay .toolbar .separator { color: #444; }
+    #svg-overlay .image-container { display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 60px 20px 20px; cursor: grab; }
+    #svg-overlay .image-container:active { cursor: grabbing; }
+    #svg-overlay .image-container img { max-width: 95%; max-height: 90vh; transform-origin: center center; }
+    #svg-overlay .nav-btn { position: fixed; top: 50%; transform: translateY(-50%); background: rgba(0,0,0,0.7); color: #ffb400; border: 1px solid #555; font-size: 30px; padding: 20px 15px; cursor: pointer; z-index: 1000000; border-radius: 4px; }
+    #svg-overlay .nav-btn:hover { background: rgba(255,180,0,0.2); border-color: #ffb400; }
+    #svg-overlay .nav-prev { left: 10px; }
+    #svg-overlay .nav-next { right: 10px; }
+    #svg-overlay .hint { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); color: #666; font-size: 12px; background: rgba(0,0,0,0.8); padding: 8px 20px; border-radius: 20px; }
+    </style>
+
+    <div id="svg-overlay">
+        <div class="toolbar">
+            <span class="title" id="svg-title">Image</span>
+            <div class="controls">
+                <button onclick="svgViewer.zoomOut()" title="Zoom Out (-)">-</button>
+                <span class="zoom-display" id="zoom-display">100%</span>
+                <button onclick="svgViewer.zoomIn()" title="Zoom In (+)">+</button>
+                <span class="separator">|</span>
+                <button onclick="svgViewer.fitWidth()" title="Fit Width (W)">Width</button>
+                <button onclick="svgViewer.fitHeight()" title="Fit Height (H)">Height</button>
+                <button onclick="svgViewer.resetZoom()" title="Reset (0)">Reset</button>
+                <span class="separator">|</span>
+                <button class="close-btn" onclick="svgViewer.close()" title="Close (ESC)">&times;</button>
+            </div>
+        </div>
+        <button class="nav-btn nav-prev" onclick="svgViewer.prev()" title="Previous">&larr;</button>
+        <button class="nav-btn nav-next" onclick="svgViewer.next()" title="Next">&rarr;</button>
+        <div class="image-container" id="svg-container">
+            <img id="svg-image" src="" alt="">
+        </div>
+        <div class="hint">Scroll to zoom | Drag to pan | W/H to fit | 0 to reset | ESC to close</div>
+    </div>
+
+    <script>
+    var svgViewer = (function() {
+        var overlay, img, titleEl, container;
+        var images = [];
+        var currentIndex = 0;
+        var scale = 1, panX = 0, panY = 0;
+        var isDragging = false, dragStartX, dragStartY, panStartX, panStartY;
+
+        function init() {
+            overlay = document.getElementById('svg-overlay');
+            img = document.getElementById('svg-image');
+            titleEl = document.getElementById('svg-title');
+            container = document.getElementById('svg-container');
+            if (!overlay || !img) return;
+
+            document.querySelectorAll('.svg-viewer').forEach(function(viewer, index) {
+                var viewerImg = viewer.querySelector('img');
+                if (viewerImg) {
+                    images.push({ src: viewerImg.src, title: viewer.getAttribute('data-title') || viewerImg.alt || 'Diagram' });
+                    viewer.onclick = function(e) { e.preventDefault(); open(index); };
+                }
+            });
+
+            container.addEventListener('wheel', function(e) {
+                e.preventDefault();
+                scale = Math.max(0.5, Math.min(10, scale + (e.deltaY > 0 ? -0.2 : 0.2)));
+                updateTransform();
+            });
+
+            container.addEventListener('mousedown', function(e) { isDragging = true; dragStartX = e.clientX; dragStartY = e.clientY; panStartX = panX; panStartY = panY; });
+            document.addEventListener('mousemove', function(e) { if (!isDragging) return; panX = panStartX + (e.clientX - dragStartX); panY = panStartY + (e.clientY - dragStartY); updateTransform(); });
+            document.addEventListener('mouseup', function() { isDragging = false; });
+
+            document.addEventListener('keydown', function(e) {
+                if (overlay.style.display !== 'block') return;
+                if (e.key === 'Escape') close();
+                if (e.key === 'ArrowLeft') prev();
+                if (e.key === 'ArrowRight') next();
+                if (e.key === '+' || e.key === '=') zoomIn();
+                if (e.key === '-') zoomOut();
+                if (e.key === '0') resetZoom();
+                if (e.key === 'w' || e.key === 'W') fitWidth();
+                if (e.key === 'h' || e.key === 'H') fitHeight();
+            });
+
+            overlay.addEventListener('click', function(e) { if (e.target === overlay || e.target === container) close(); });
+        }
+
+        function updateTransform() {
+            img.style.transform = 'translate(' + panX + 'px, ' + panY + 'px) scale(' + scale + ')';
+            var zd = document.getElementById('zoom-display');
+            if (zd) zd.textContent = Math.round(scale * 100) + '%';
+        }
+
+        function open(index) {
+            if (!images[index]) return;
+            currentIndex = index; scale = 1; panX = 0; panY = 0;
+            img.src = images[index].src;
+            titleEl.textContent = images[index].title + ' (' + (index + 1) + '/' + images.length + ')';
+            updateTransform();
+            overlay.style.display = 'block';
+            document.body.style.overflow = 'hidden';
+        }
+
+        function close() { overlay.style.display = 'none'; document.body.style.overflow = ''; }
+        function prev() { open((currentIndex - 1 + images.length) % images.length); }
+        function next() { open((currentIndex + 1) % images.length); }
+        function zoomIn() { scale = Math.min(10, scale + 0.25); updateTransform(); }
+        function zoomOut() { scale = Math.max(0.5, scale - 0.25); updateTransform(); }
+        function resetZoom() { scale = 1; panX = 0; panY = 0; updateTransform(); }
+
+        function fitWidth() {
+            if (!img.naturalWidth || !img.complete) { img.onload = fitWidth; return; }
+            scale = Math.max(0.1, Math.min(10, (window.innerWidth - 150) / img.naturalWidth));
+            panX = 0; panY = 0; updateTransform();
+        }
+
+        function fitHeight() {
+            if (!img.naturalHeight || !img.complete) { img.onload = fitHeight; return; }
+            scale = Math.max(0.1, Math.min(10, (window.innerHeight - 120) / img.naturalHeight));
+            panX = 0; panY = 0; updateTransform();
+        }
+
+        if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', init); } else { init(); }
+
+        return { open: open, close: close, prev: prev, next: next, zoomIn: zoomIn, zoomOut: zoomOut, resetZoom: resetZoom, fitWidth: fitWidth, fitHeight: fitHeight };
+    })();
+
+    // Mobile navigation
+    (function() {
+        var navToggle = document.querySelector('.nav-toggle');
+        var siteNav = document.querySelector('.site-nav');
+        var dropdowns = document.querySelectorAll('.nav-dropdown');
+
+        if (navToggle && siteNav) {
+            navToggle.addEventListener('click', function() {
+                navToggle.classList.toggle('active');
+                siteNav.classList.toggle('open');
+                navToggle.setAttribute('aria-expanded', siteNav.classList.contains('open'));
+            });
+
+            // Close menu when clicking a non-dropdown link
+            siteNav.querySelectorAll('a:not(.nav-dropdown-menu a)').forEach(function(link) {
+                link.addEventListener('click', function() {
+                    if (window.innerWidth <= 768) {
+                        navToggle.classList.remove('active');
+                        siteNav.classList.remove('open');
+                    }
+                });
+            });
+        }
+
+        // Handle dropdowns on mobile
+        dropdowns.forEach(function(dropdown) {
+            var trigger = dropdown.querySelector('.nav-trigger');
+            if (trigger) {
+                trigger.addEventListener('click', function(e) {
+                    if (window.innerWidth <= 768) {
+                        e.preventDefault();
+                        // Close other dropdowns
+                        dropdowns.forEach(function(d) {
+                            if (d !== dropdown) d.classList.remove('open');
+                        });
+                        dropdown.classList.toggle('open');
+                    }
+                });
+            }
+        });
+
+        // Close dropdowns when clicking outside on mobile
+        document.addEventListener('click', function(e) {
+            if (window.innerWidth <= 768 && !e.target.closest('.nav-dropdown')) {
+                dropdowns.forEach(function(d) { d.classList.remove('open'); });
+            }
+        });
+    })();
+
+    // Site search keyboard shortcuts: "/" or Ctrl+K / Cmd+K focuses the header search box.
+    (function() {
+        var searchInput = document.getElementById('site-search-input');
+        if (!searchInput) return;
+        document.addEventListener('keydown', function(e) {
+            var target = e.target;
+            var tag = (target.tagName || '').toLowerCase();
+            var typing = tag === 'input' || tag === 'textarea' || tag === 'select' || target.isContentEditable;
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+                e.preventDefault();
+                searchInput.focus();
+                searchInput.select();
+            } else if (e.key === '/' && !typing) {
+                e.preventDefault();
+                searchInput.focus();
+            }
+        });
+    })();
+    </script>
+
+    <!-- MathJax for LaTeX equations across docs pages -->
+    <script>
+    window.MathJax = {
+        tex: {
+            inlineMath: [['\\(', '\\)'], ['$', '$']],
+            displayMath: [['\\[', '\\]'], ['$$', '$$']],
+            processEscapes: true,
+            processEnvironments: true
+        },
+        options: {
+            skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
+        },
+        svg: {
+            fontCache: 'global'
+        }
+    };
+    </script>
+    <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+
+    <footer style="background: #2a2a2a; border-top: 1px solid #454545; color: #b0b0b0; padding: 3rem 2rem; margin-top: auto;">
+        <div style="max-width: 1200px; margin: 0 auto; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 2rem;">
+            <div>
+                <h4 style="color: #ffb400; margin-bottom: 0.75rem; font-size: 1rem;">C-Kernel-Engine</h4>
+                <p style="color: #707070; font-size: 0.875rem; margin: 0;">High-performance ML kernels with full PyTorch parity.</p>
+            </div>
+            <div>
+                <h4 style="color: #ffb400; margin-bottom: 0.75rem; font-size: 1rem;">Resources</h4>
+                <ul style="list-style: none; padding: 0; margin: 0;">
+                    <li style="margin-bottom: 0.5rem;"><a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine" style="color: #909090; text-decoration: none; font-size: 0.875rem;">GitHub</a></li>
+                    <li style="margin-bottom: 0.5rem;"><a href="contributing.html" style="color: #909090; text-decoration: none; font-size: 0.875rem;">Contributor Path</a></li>
+                    <li style="margin-bottom: 0.5rem;"><a href="architecture.html" style="color: #909090; text-decoration: none; font-size: 0.875rem;">Architecture</a></li>
+                    <li style="margin-bottom: 0.5rem;"><a href="api.html" style="color: #909090; text-decoration: none; font-size: 0.875rem;">API Reference</a></li>
+                </ul>
+            </div>
+            <div>
+                <h4 style="color: #ffb400; margin-bottom: 0.75rem; font-size: 1rem;">Related</h4>
+                <ul style="list-style: none; padding: 0; margin: 0;">
+                    <li style="margin-bottom: 0.5rem;"><a href="https://www.shivasnotes.com/" style="color: #909090; text-decoration: none; font-size: 0.875rem;">ShivasNotes</a></li>
+                    <li style="margin-bottom: 0.5rem;"><a href="https://www.shivasnotes.com/work-with-us" style="color: #909090; text-decoration: none; font-size: 0.875rem;">Work With Us</a></li>
+                    <li style="margin-bottom: 0.5rem;"><a href="https://antshiv.com/" style="color: #909090; text-decoration: none; font-size: 0.875rem;">antshiv.com</a></li>
+                </ul>
+            </div>
+            <div style="text-align: right;">
+                <p style="color: #606060; font-size: 0.75rem; margin: 0;">Static docs · C-first execution</p>
+                <p style="color: #606060; font-size: 0.75rem; margin: 0.5rem 0 0 0;">2026-10-21</p>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>

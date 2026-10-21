@@ -1,0 +1,2851 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Version History and Roadmap | C-Kernel-Engine</title>
+    <meta name="description" content="Version-by-version roadmap for C-Kernel-Engine, including inference, training, parity, distributed systems, and future capability milestones.">
+    <meta name="robots" content="index,follow">
+    <link rel="canonical" href="https://c-kernel-engine.github.io/C-Kernel-Engine/version-history.html">
+    <meta property="og:title" content="Version History and Roadmap | C-Kernel-Engine">
+    <meta property="og:description" content="Version-by-version roadmap for C-Kernel-Engine, including inference, training, parity, distributed systems, and future capability milestones.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://c-kernel-engine.github.io/C-Kernel-Engine/version-history.html">
+    <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+    <style>
+        :root {
+            /* Antsand Brand Colors - Lightened */
+            --orange: #ffb400;
+            --orange-dark: #e5a200;
+            --orange-light: #ffc933;
+            --dark: #2a2a2a;
+            --dark-lighter: #363636;
+            --dark-card: #323232;
+            --grey: #454545;
+            --grey-light: #555555;
+            --text-primary: #f5f5f5;
+            --text-secondary: #b0b0b0;
+            --text-muted: #808080;
+            --bg-dark: #232323;
+            --white: #ffffff;
+            --code-bg: #1a1a1a;
+            --green: #47b475;
+            --blue: #07adf8;
+            --gradient-header: linear-gradient(135deg, #2a2a2a 0%, #363636 50%, #2a2a2a 100%);
+            --shadow-sm: 0 2px 4px rgba(0,0,0,0.3);
+            --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+            --shadow-lg: 0 8px 24px rgba(0,0,0,0.5);
+            --transition: all 0.3s ease;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-dark);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Header */
+        .site-header {
+            background: var(--gradient-header);
+            border-bottom: 3px solid var(--orange);
+            padding: 0.5rem 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 1rem;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            box-shadow: var(--shadow-md);
+        }
+
+        .header-brand {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            text-decoration: none;
+        }
+
+        .header-logo {
+            width: 40px;
+            height: 40px;
+            background: var(--orange);
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            color: var(--dark);
+            font-size: 1.1rem;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .header-title {
+            color: var(--white);
+            font-size: 1.4rem;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+        }
+
+        .header-subtitle {
+            color: var(--orange);
+            font-size: 0.8rem;
+            font-weight: 500;
+        }
+
+        /* Navigation */
+        .site-nav {
+            display: flex;
+            gap: 0.25rem;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .site-nav > a,
+        .nav-dropdown > .nav-trigger {
+            color: var(--text-secondary);
+            text-decoration: none;
+            padding: 0.6rem 1rem;
+            border-radius: 4px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: var(--transition);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            border: none;
+            background: transparent;
+            font-family: inherit;
+        }
+
+        .site-nav > a:hover,
+        .nav-dropdown:hover > .nav-trigger {
+            color: var(--white);
+            background: var(--grey);
+        }
+
+        .site-nav > a.active,
+        .nav-dropdown > .nav-trigger.active {
+            background: var(--orange);
+            color: var(--dark);
+            font-weight: 600;
+        }
+
+        /* Dropdown */
+        .nav-dropdown {
+            position: relative;
+        }
+
+        .nav-trigger::after {
+            content: '';
+            border: solid currentColor;
+            border-width: 0 2px 2px 0;
+            display: inline-block;
+            padding: 3px;
+            transform: rotate(45deg);
+            margin-top: -3px;
+            transition: transform 0.2s;
+        }
+
+        .nav-dropdown:hover .nav-trigger::after {
+            transform: rotate(-135deg);
+            margin-top: 3px;
+        }
+
+        .nav-dropdown-menu {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            background: var(--dark-card);
+            border-radius: 8px;
+            box-shadow: var(--shadow-lg);
+            min-width: 220px;
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(-10px);
+            transition: var(--transition);
+            overflow: hidden;
+            margin-top: 0.5rem;
+            border: 1px solid var(--grey);
+        }
+
+        .nav-dropdown:hover .nav-dropdown-menu {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0);
+        }
+
+        .nav-dropdown-menu a {
+            display: block;
+            padding: 0.75rem 1rem;
+            color: var(--text-secondary);
+            text-decoration: none;
+            transition: var(--transition);
+            border-left: 3px solid transparent;
+        }
+
+        .nav-dropdown-menu a:hover {
+            background: var(--grey);
+            border-left-color: var(--orange);
+            color: var(--white);
+        }
+
+        .nav-dropdown-menu a small {
+            display: block;
+            color: var(--text-muted);
+            font-size: 0.75rem;
+            margin-top: 0.2rem;
+        }
+
+        /* Last dropdown aligns to the right edge */
+        .nav-dropdown:last-child .nav-dropdown-menu {
+            left: auto;
+            right: 0;
+        }
+
+        /* Mega menu for Architecture dropdown */
+        .nav-dropdown-menu.mega-menu {
+            width: min(1180px, calc(100vw - 2rem));
+            min-width: 0;
+            max-height: calc(100vh - 90px);
+            padding: 1.25rem 1.5rem;
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 0.75rem 1.25rem;
+            left: auto;
+            right: 0;
+            overflow-y: auto;
+            transform: translateY(-10px);
+        }
+
+        .nav-dropdown:hover .nav-dropdown-menu.mega-menu {
+            transform: translateY(0);
+        }
+
+        .mega-menu .menu-section {
+            margin-bottom: 0.75rem;
+        }
+
+        .mega-menu .menu-shortcuts {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 0.5rem;
+            margin-top: 0.75rem;
+        }
+
+        .mega-menu .menu-shortcuts a {
+            padding: 0.55rem 0.75rem;
+            background: rgba(255, 180, 0, 0.055);
+            border: 1px solid rgba(255, 180, 0, 0.18);
+        }
+
+        .mega-menu .menu-heading {
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--orange);
+            padding: 0.5rem 0.75rem 0.35rem;
+            border-bottom: 1px solid var(--grey);
+            margin-bottom: 0.35rem;
+        }
+
+        .mega-menu a {
+            padding: 0.6rem 0.75rem;
+            font-size: 0.9rem;
+            border-radius: 4px;
+            border-left: none;
+            line-height: 1.3;
+        }
+
+        .mega-menu a:hover {
+            border-left: none;
+            background: var(--grey);
+        }
+
+        .mega-menu a small {
+            font-size: 0.75rem;
+            margin-top: 0.15rem;
+        }
+
+        /* Main Content */
+        main {
+            box-sizing: border-box;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+            flex: 1;
+            width: 100%;
+        }
+
+        /* Hero Section */
+        .hero {
+            background: var(--gradient-header);
+            border: 1px solid var(--grey);
+            color: var(--white);
+            padding: 3rem 2rem;
+            border-radius: 12px;
+            margin-bottom: 2rem;
+            text-align: center;
+            box-shadow: var(--shadow-lg);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, var(--orange), var(--orange-light), var(--orange));
+        }
+
+        .hero h1 {
+            color: var(--white);
+            border: none;
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .hero p {
+            font-size: 1.1rem;
+            color: var(--text-secondary);
+            max-width: 700px;
+            margin: 0 auto;
+        }
+
+        /* Typography */
+        h1 {
+            color: var(--white);
+            font-size: 2rem;
+            margin-bottom: 1rem;
+            border-bottom: 2px solid var(--orange);
+            padding-bottom: 0.5rem;
+        }
+
+        h2 {
+            color: var(--white);
+            font-size: 1.4rem;
+            margin: 2rem 0 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        h2::before {
+            content: '';
+            width: 4px;
+            height: 1.4rem;
+            background: var(--orange);
+            border-radius: 2px;
+        }
+
+        h3 {
+            color: var(--orange);
+            font-size: 1.15rem;
+            margin: 1.5rem 0 0.75rem;
+        }
+
+        p {
+            margin-bottom: 1rem;
+            color: var(--text-secondary);
+        }
+
+        /* Cards */
+        .card {
+            background: var(--dark-card);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            box-shadow: var(--shadow-sm);
+            border-left: 3px solid var(--grey-light);
+            transition: var(--transition);
+            border: 1px solid var(--grey);
+        }
+
+        .card:hover {
+            box-shadow: var(--shadow-md);
+            border-left-color: var(--orange);
+        }
+
+        .card-accent {
+            border-left-color: var(--orange);
+        }
+
+        .card-green {
+            border-left-color: var(--green);
+        }
+
+        .card-blue {
+            border-left-color: var(--blue);
+        }
+
+        .card h3 {
+            margin-top: 0;
+        }
+
+        /* Clickable Cards */
+        a.card-link {
+            display: block;
+            text-decoration: none;
+            color: inherit;
+        }
+
+        a.card-link .card {
+            cursor: pointer;
+        }
+
+        a.card-link .card:hover {
+            border-left-width: 5px;
+        }
+
+        .card-arrow {
+            color: var(--orange);
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-top: 1rem;
+            transition: var(--transition);
+        }
+
+        a.card-link:hover .card-arrow {
+            gap: 0.75rem;
+        }
+
+        /* Feature Icons */
+        .feature-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .feature-icon.orange { background: rgba(255, 180, 0, 0.15); color: var(--orange); }
+        .feature-icon.green { background: rgba(71, 180, 117, 0.15); color: var(--green); }
+        .feature-icon.blue { background: rgba(7, 173, 248, 0.15); color: var(--blue); }
+        .feature-icon.grey { background: rgba(255, 255, 255, 0.1); color: var(--text-secondary); }
+
+        /* Stats */
+        .stat-number {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: var(--orange);
+            line-height: 1;
+        }
+
+        .stat-label {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+        }
+
+        /* Code blocks */
+        pre {
+            background: var(--code-bg);
+            color: #e0e0e0;
+            padding: 1.25rem;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin: 1rem 0;
+            font-family: 'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            font-size: 0.85rem;
+            border: 1px solid var(--grey);
+        }
+
+        code {
+            font-family: 'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            background: var(--grey);
+            padding: 0.2rem 0.4rem;
+            border-radius: 3px;
+            font-size: 0.85rem;
+            color: var(--orange);
+        }
+
+        pre code {
+            background: none;
+            padding: 0;
+            color: #e0e0e0;
+        }
+
+        /* Tables */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+            background: var(--dark-card);
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid var(--grey);
+        }
+
+        th {
+            background: var(--dark);
+            color: var(--orange);
+            padding: 0.875rem 1rem;
+            text-align: left;
+            font-weight: 600;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        td {
+            padding: 0.875rem 1rem;
+            border-bottom: 1px solid var(--grey);
+            color: var(--text-secondary);
+        }
+
+        tr:hover {
+            background: var(--grey);
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        /* Lists */
+        ul, ol {
+            margin: 1rem 0;
+            padding-left: 1.5rem;
+            color: var(--text-secondary);
+        }
+
+        li {
+            margin-bottom: 0.5rem;
+        }
+
+        /* Links */
+        a {
+            color: var(--orange);
+            transition: var(--transition);
+        }
+
+        a:hover {
+            color: var(--orange-light);
+        }
+
+        /* Grid */
+        .grid {
+            display: grid;
+            gap: 1.5rem;
+        }
+
+        .grid-2 {
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        }
+
+        .grid-3 {
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        }
+
+        .grid-4 {
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        }
+
+        /* Alerts */
+        .alert {
+            padding: 1rem 1.25rem;
+            border-radius: 6px;
+            margin: 1rem 0;
+            display: flex;
+            align-items: flex-start;
+            gap: 0.75rem;
+            border: 1px solid;
+        }
+
+        .alert-icon {
+            font-size: 1.25rem;
+            flex-shrink: 0;
+        }
+
+        .alert-info {
+            background: rgba(7, 173, 248, 0.1);
+            border-color: var(--blue);
+            color: var(--blue);
+        }
+
+        .alert-warning {
+            background: rgba(255, 180, 0, 0.1);
+            border-color: var(--orange);
+            color: var(--orange);
+        }
+
+        .alert-success {
+            background: rgba(71, 180, 117, 0.1);
+            border-color: var(--green);
+            color: var(--green);
+        }
+
+        /* Image containers */
+        .img-container {
+            margin: 1.5rem 0;
+            text-align: center;
+        }
+
+        .img-container img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 8px;
+            box-shadow: var(--shadow-lg);
+            border: 1px solid var(--grey);
+        }
+
+        /* Badge */
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 999px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .badge-orange {
+            background: var(--orange);
+            color: var(--dark);
+        }
+
+        .badge-green {
+            background: var(--green);
+            color: white;
+        }
+
+        .badge-grey {
+            background: var(--grey);
+            color: var(--text-secondary);
+        }
+
+        /* Diagram blocks (monospace pre with colored spans) */
+        .diagram {
+            background: var(--code-bg);
+            border: 1px solid var(--grey);
+            border-radius: 6px;
+            padding: 1.25rem;
+            margin: 1rem 0;
+            overflow-x: auto;
+            font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace;
+            font-size: 0.8rem;
+            line-height: 1.55;
+            white-space: pre;
+            color: var(--text-muted);
+        }
+        .diagram .hl     { color: var(--blue); font-weight: 700; }
+        .diagram .grn    { color: var(--green); }
+        .diagram .wrn    { color: var(--orange); }
+        .diagram .err    { color: #f85149; }
+        .diagram .purple { color: #bc8cff; }
+        .diagram .dim    { color: #484f58; }
+
+        /* Inline status colors */
+        .good { color: var(--green); font-weight: 600; }
+        .bad  { color: #f85149; font-weight: 600; }
+        .meh  { color: var(--orange); font-weight: 600; }
+
+        /* Section numbering */
+        .section-num {
+            color: var(--orange);
+            font-weight: 400;
+            margin-right: 0.25rem;
+        }
+
+        /* Accordion */
+        details {
+            background: var(--dark-card);
+            border-radius: 6px;
+            margin-bottom: 0.75rem;
+            border: 1px solid var(--grey);
+            border-left: 3px solid var(--grey-light);
+            overflow: hidden;
+            transition: var(--transition);
+        }
+
+        details:hover {
+            border-left-color: var(--orange);
+        }
+
+        details[open] {
+            border-left-color: var(--orange);
+        }
+
+        summary {
+            padding: 1rem 1.25rem;
+            cursor: pointer;
+            font-weight: 600;
+            color: var(--white);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            list-style: none;
+            user-select: none;
+            transition: var(--transition);
+        }
+
+        summary::-webkit-details-marker {
+            display: none;
+        }
+
+        summary::after {
+            content: '';
+            border: solid var(--orange);
+            border-width: 0 2px 2px 0;
+            display: inline-block;
+            padding: 4px;
+            transform: rotate(-45deg);
+            transition: transform 0.2s ease;
+            flex-shrink: 0;
+            margin-left: 1rem;
+        }
+
+        details[open] summary::after {
+            transform: rotate(45deg);
+        }
+
+        summary:hover {
+            background: var(--grey);
+        }
+
+        details[open] summary {
+            border-bottom: 1px solid var(--grey);
+        }
+
+        .accordion-content {
+            padding: 1rem 1.25rem;
+        }
+
+        /* Site search */
+        .site-search {
+            display: flex;
+            align-items: center;
+            flex: 0 1 240px;
+            min-width: 140px;
+        }
+
+        .site-search input {
+            width: 100%;
+            background: var(--code-bg);
+            border: 1px solid var(--grey);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-family: inherit;
+            font-size: 0.85rem;
+            padding: 0.5rem 0.75rem;
+            transition: var(--transition);
+        }
+
+        .site-search input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .site-search input:focus {
+            outline: 2px solid var(--orange);
+            outline-offset: 1px;
+            border-color: var(--orange);
+        }
+
+        /* Mobile hamburger button */
+        .nav-toggle {
+            display: none;
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            padding: 0.5rem;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .nav-toggle span {
+            display: block;
+            width: 24px;
+            height: 3px;
+            background: var(--orange);
+            border-radius: 2px;
+            transition: var(--transition);
+        }
+
+        .nav-toggle.active span:nth-child(1) {
+            transform: rotate(45deg) translate(5px, 5px);
+        }
+
+        .nav-toggle.active span:nth-child(2) {
+            opacity: 0;
+        }
+
+        .nav-toggle.active span:nth-child(3) {
+            transform: rotate(-45deg) translate(6px, -6px);
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .site-header {
+                flex-direction: row;
+                justify-content: space-between;
+                padding: 0.75rem 1rem;
+            }
+
+            .nav-toggle {
+                display: flex;
+            }
+
+            .site-search {
+                order: 3;
+                flex: 1 1 100%;
+                min-width: 0;
+            }
+
+            .site-search input {
+                font-size: 1rem;
+            }
+
+            .site-nav {
+                position: fixed;
+                top: 60px;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: var(--dark);
+                flex-direction: column;
+                flex-wrap: nowrap;
+                align-items: stretch;
+                padding: 1rem;
+                gap: 0.5rem;
+                overflow-y: auto;
+                transform: translateX(-100%);
+                transition: transform 0.3s ease;
+                z-index: 999;
+            }
+
+            .site-nav.open {
+                transform: translateX(0);
+            }
+
+            .site-nav > a,
+            .nav-dropdown > .nav-trigger {
+                width: 100%;
+                padding: 1rem;
+                font-size: 1rem;
+            }
+
+            .nav-dropdown {
+                width: 100%;
+            }
+
+            .nav-dropdown-menu {
+                position: static;
+                opacity: 1;
+                visibility: hidden;
+                max-height: 0;
+                overflow: hidden;
+                transform: none;
+                margin-top: 0;
+                transition: max-height 0.3s ease, visibility 0.3s ease;
+                background: var(--dark-lighter);
+                border-radius: 0;
+                border: none;
+                box-shadow: none;
+            }
+
+            .nav-dropdown.open .nav-dropdown-menu {
+                visibility: visible;
+                max-height: 500px;
+            }
+
+            .nav-dropdown-menu a {
+                padding: 0.75rem 1.5rem;
+            }
+
+            /* Disable hover on mobile */
+            .nav-dropdown:hover .nav-dropdown-menu {
+                opacity: 1;
+                visibility: hidden;
+                max-height: 0;
+            }
+
+            .nav-dropdown.open .nav-dropdown-menu,
+            .nav-dropdown.open:hover .nav-dropdown-menu {
+                visibility: visible;
+                max-height: 500px;
+            }
+
+            .nav-dropdown-menu.mega-menu {
+                display: block;
+                width: 100%;
+                min-width: 0;
+                max-height: 0;
+                padding: 0.5rem;
+                left: auto;
+                right: auto;
+                overflow: hidden;
+                transform: none;
+            }
+
+            .nav-dropdown.open .nav-dropdown-menu.mega-menu,
+            .nav-dropdown.open:hover .nav-dropdown-menu.mega-menu {
+                max-height: 70vh;
+                overflow-y: auto;
+                transform: none;
+            }
+
+            .mega-menu .menu-shortcuts {
+                grid-template-columns: 1fr;
+            }
+
+            main {
+                padding: 1rem;
+            }
+
+            h1 {
+                font-size: 1.75rem;
+            }
+
+            .hero {
+                padding: 2rem 1rem;
+            }
+
+            .hero h1 {
+                font-size: 1.75rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="site-header">
+        <a href="index.html" class="header-brand">
+            <div class="header-logo">CK</div>
+            <div>
+                <div class="header-title">C-Kernel-Engine</div>
+                <div class="header-subtitle">High-Performance ML Kernels</div>
+            </div>
+        </a>
+        <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+            <span></span>
+            <span></span>
+            <span></span>
+        </button>
+        <form class="site-search" role="search" action="search.html" method="get" data-test="site-search">
+            <input type="search" name="q" id="site-search-input" aria-label="Search documentation" placeholder="Search docs ( / )" autocomplete="off">
+        </form>
+        <nav class="site-nav">
+            <a href="index.html" class="">Home</a>
+            <a href="spectrum.html" class="" style="color:var(--orange)">⚡ Spectrum</a>
+            <a href="quickstart.html" class="">Getting Started</a>
+            <a href="developer-guide.html" class="">Developer Guide</a>
+            <a href="contributing.html" class="">Contribute</a>
+            <a href="scaling.html" class="">Scaling</a>
+            <a href="support-hardware.html" class="" style="color:var(--green)">Support Lab</a>
+            <a href="cke-throughput-unit.html" class="" style="color:var(--orange)">CKU</a>
+            <div class="nav-dropdown">
+                <span class="nav-trigger active">Architecture</span>
+                <div class="nav-dropdown-menu mega-menu">
+                    <!-- Architecture Home Link -->
+                    <div class="menu-section" style="grid-column: 1 / -1; border-bottom: 1px solid var(--grey); padding-bottom: 0.5rem; margin-bottom: 0.5rem;">
+                        <a href="architecture-links.html" style="font-weight: 600; color: var(--orange);">
+                            View All Architecture Docs
+                            <small>Complete documentation index</small>
+                        </a>
+                        <div class="menu-shortcuts">
+                            <a href="pytorch-parity.html">PyTorch Parity<small>Numerical evidence</small></a>
+                            <a href="research.html">Research<small>Current investigations</small></a>
+                            <a href="decisions.html">Architecture Decisions<small>ADRs and tradeoffs</small></a>
+                            <a href="api.html">API &amp; Source Docs<small>Reference and Doxygen</small></a>
+                        </div>
+                    </div>
+                    <!-- Left Column -->
+                    <div class="menu-section">
+                        <div class="menu-heading">Core</div>
+                        <a href="architecture.html">System Overview<small>IR, Codegen, Kernels</small></a>
+                        <a href="tokenizer.html">Tokenizer<small>BPE, WordPiece, Trie</small></a>
+                        <a href="sentencepiece.html">SentencePiece<small>Viterbi DP, byte fallback</small></a>
+                        <a href="kernels.html">Kernel Reference<small>Forward/backward ops</small></a>
+                        <a href="codegen.html">Code Generation<small>IR to C compilation</small></a>
+                        <a href="iteration-philosophy.html">Iteration Philosophy<small>Why v1→v6 matters</small></a>
+                        <a href="ir-v2.html">IR v2 Format<small>Case study: symbolic dimensions</small></a>
+                        <a href="v7-backprop-ir.html">v7 Backprop IR<small>IR1/IR2 + layout/codegen flow</small></a>
+                        <a href="v7-cross-entropy-parity.html">v7 Cross-Entropy Parity<small>p - one_hot, reduction semantics, drift fixes</small></a>
+                        <a href="concepts.html">Deep Dive Concepts<small>RoPE, Flash Attention, GQA</small></a>
+                        <a href="kernel-maps.html">Kernel Maps<small>Provider selection, ABI, migration</small></a>
+                        <a href="kernel-architecture.html">v8 Kernel Architecture<small>Registry by op family, math</small></a>
+                        <a href="architecture-variants.html">Architecture Variants<small>Laguna, Cohere2, Instella, Nemotron</small></a>
+                        <a href="v8-moe-expert-kernels.html">MoE Expert Kernels<small>Bucketed prefill, mixed-quant experts</small></a>
+                        <a href="v8-cohere-kernels.html">Cohere Kernel Story<small>Reuse, BF16 vision, Transcribe audio</small></a>
+                    </div>
+                    <div class="menu-section">
+                        <div class="menu-heading">Quantization</div>
+                        <a href="quantization.html">Quant Fundamentals<small>Block formats, grouping</small></a>
+                        <a href="gguf-bump.html">GGUF to Bump<small>Weight conversion</small></a>
+                        <a href="gguf-conversion.html">GGUF Parsing<small>Byte-level guide</small></a>
+                    </div>
+                    <!-- Right Column -->
+                    <div class="menu-section">
+                        <div class="menu-heading">Optimization</div>
+                        <a href="gemm-memory-layout.html">GEMM Memory Layout<small>NN/NT layouts, offsets</small></a>
+                        <a href="gemm-optimization.html">GEMM Optimization<small>AVX, MKL, blocking</small></a>
+                        <a href="kernel-tuning-methodology.html">Kernel Tuning Methodology<small>VTune, Advisor, roofline, parity gates</small></a>
+                        <a href="cke-throughput-unit.html">CKE Throughput Unit<small>PB/s active-byte target</small></a>
+                        <a href="gemma4-speculative-pair.html">Gemma4 Speculative Pair<small>Backbone + MTP drafter circuit</small></a>
+                        <a href="v8-mla-kimi.html">v8 MLA / Kimi<small>Explicit decode cache contract</small></a>
+                        <a href="v8-whisper-tiny.html">Whisper Tiny E2E<small>Audio encoder/decoder circuits</small></a>
+                        <a href="simd-architecture.html">SIMD Architecture<small>AVX-512, VNNI, AMX</small></a>
+                        <a href="flash_attention.html" class="">Flash Attention Analysis<small>Why llama.cpp is faster</small></a>
+                    </div>
+                    <div class="menu-section">
+                        <div class="menu-heading">Infrastructure</div>
+                        <a href="memory-safety.html">Memory Safety<small>Bump allocator, canaries</small></a>
+                        <a href="deterministic-memory.html">Deterministic Memory<small>RDMA, interpretability</small></a>
+                        <a href="profiling.html">Profiling Guide<small>Valgrind, perf, flamegraphs</small></a>
+                        <a href="kernel-tuning-methodology.html">Kernel Tuning Methodology<small>CPU-node performance runbook</small></a>
+                        <a href="v7-profiling.html">v7 Profiling Runbook<small>Train kernels: VTune, Advisor, perf</small></a>
+                        <a href="v7-runbook.html">v7 Inference + Training Runbook<small>Copy/paste train + infer workflow</small></a>
+                        <a href="sizing.html">Model Sizing Lab<small>KV, state, concurrency, six-GPU placement</small></a>
+                        <a href="serving.html">Serving &amp; Batching<small>Single-flight, batch2, continuous-batching roadmap</small></a>
+                        <a href="v7-svg-dataset-runbook.html">v7 SVG Dataset Runbook<small>Pretrain + midtrain data generation</small></a>
+                        <a href="testing.html">Testing<small>Numerical parity verification</small></a>
+                        <a href="divergence-harness.html">Stitched Divergence Harness<small>llama.cpp/PyTorch tensor attribution</small></a>
+                        <a href="threadpool.html">Thread Pool<small>Persistent pthreads, dispatch</small></a>
+                    </div>
+                </div>
+            </div>
+            <a href="test-report.html" class="">Test Report</a>
+            <a href="version-history.html" class="">Versions</a>
+        </nav>
+    </header>
+    <main>
+
+<div class="container">
+  <h1>Version History & Roadmap</h1>
+  <p class="lead">
+    C-Kernel-Engine development roadmap. Every version builds on the IR graph
+    and kernel foundation, enabling new capabilities without breaking existing code.
+  </p>
+
+  <style>
+    /* Version Timeline Styles */
+    .version-timeline {
+      margin: 2rem 0;
+    }
+
+    .version-row {
+      display: flex;
+      align-items: flex-start;
+      margin-bottom: 1.5rem;
+      gap: 1rem;
+    }
+
+    .version-badge {
+      display: inline-block;
+      padding: 0.5rem 1rem;
+      border-radius: 8px;
+      font-weight: bold;
+      font-size: 1.1rem;
+      min-width: 80px;
+      text-align: center;
+    }
+    .version-badge.v18 { background: #2c3e50; color: white; }
+    .version-badge.v17 { background: #7f8c8d; color: white; }
+    .version-badge.v16 { background: #16a085; color: white; }
+    .version-badge.v15 { background: #34495e; color: white; }
+    .version-badge.v14 { background: #9b59b6; color: white; }
+    .version-badge.v13 { background: #e74c3c; color: white; }
+    .version-badge.v12 { background: #3498db; color: white; }
+    .version-badge.v11 { background: #1abc9c; color: white; }
+    .version-badge.v10 { background: #e91e63; color: white; }
+    .version-badge.v9 { background: #ff9800; color: white; }
+    .version-badge.v8 { background: #00bcd4; color: white; }
+    .version-badge.v7 { background: #47b475; color: white; }
+    .version-badge.v6 { background: #07adf8; color: white; }
+
+    .version-content {
+      flex: 1;
+      background: var(--dark-card);
+      border: 1px solid var(--grey);
+      border-radius: 8px;
+      padding: 1rem 1.5rem;
+    }
+
+    .version-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 0.75rem;
+    }
+
+    .version-status {
+      font-size: 0.85rem;
+      padding: 0.25rem 0.75rem;
+      border-radius: 4px;
+    }
+    .status-released { background: #47b475; color: white; }
+    .status-current { background: #ffb400; color: var(--dark); }
+    .status-building { background: #07adf8; color: white; }
+    .status-planned { background: var(--grey); color: var(--text-secondary); }
+
+    .version-date {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    .version-tagline {
+      color: var(--orange);
+      font-size: 0.95rem;
+      margin-bottom: 1rem;
+      font-style: italic;
+    }
+
+    .milestone-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+
+    .milestone {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+      padding: 0.5rem 0;
+      border-bottom: 1px solid var(--grey);
+    }
+    .milestone:last-child {
+      border-bottom: none;
+    }
+
+    .milestone-icon {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.75rem;
+      flex-shrink: 0;
+    }
+    .milestone-icon.done { background: #47b475; color: white; }
+    .milestone-icon.current { background: #ffb400; color: var(--dark); }
+    .milestone-icon.building { background: #07adf8; color: white; }
+    .milestone-icon.planned { background: var(--grey); color: var(--text-muted); }
+
+    .milestone-text {
+      flex: 1;
+      color: var(--text-secondary);
+    }
+    .milestone-text.done { color: var(--text-primary); }
+    .milestone.current .milestone-text {
+      color: var(--orange);
+      font-weight: 500;
+    }
+
+    /* Roadmap Table */
+    .roadmap-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 2rem 0;
+    }
+    .roadmap-table th, .roadmap-table td {
+      padding: 0.75rem 1rem;
+      text-align: left;
+      border-bottom: 1px solid var(--grey);
+    }
+    .roadmap-table th {
+      background: var(--dark-card);
+      color: var(--orange);
+      font-weight: 600;
+    }
+    .roadmap-table tr:hover {
+      background: var(--dark-card);
+    }
+    .roadmap-table .dep-cell {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    .roadmap-bridge {
+      display: grid;
+      grid-template-columns: 1.5fr 1fr;
+      gap: 1rem;
+      margin: 1.25rem 0 2rem 0;
+      padding: 1rem 1.15rem;
+      border-radius: 10px;
+      border: 1px solid rgba(255,180,0,0.28);
+      background: linear-gradient(135deg, rgba(255,180,0,0.12), rgba(7,173,248,0.08));
+    }
+
+    .roadmap-bridge h3 {
+      margin: 0 0 0.35rem 0;
+      font-size: 1.05rem;
+    }
+
+    .roadmap-bridge p {
+      margin: 0;
+      color: var(--text-secondary);
+    }
+
+    .roadmap-bridge-links {
+      display: flex;
+      flex-direction: column;
+      gap: 0.55rem;
+      justify-content: center;
+    }
+
+    .roadmap-bridge-links a {
+      display: block;
+      padding: 0.7rem 0.9rem;
+      border-radius: 8px;
+      text-decoration: none;
+      background: rgba(50,50,50,0.88);
+      border: 1px solid var(--grey);
+      color: var(--text-primary);
+      transition: var(--transition);
+    }
+
+    .roadmap-bridge-links a:hover {
+      transform: translateY(-1px);
+      border-color: rgba(255,180,0,0.35);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .roadmap-bridge-links span {
+      display: block;
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      margin-top: 0.15rem;
+    }
+
+    @media (max-width: 860px) {
+      .roadmap-bridge {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+
+  <div class="roadmap-bridge">
+    <div>
+      <h3>New: CK-Native Training Curriculum</h3>
+      <p>
+        Use the curriculum page to see how <strong>v7 training foundations</strong> feed the rest of the roadmap:
+        <code>v8-v11</code> multimodal training, <code>v12-v13</code> sparse scale, <code>v14</code> adapters,
+        <code>v15</code> embedded runtime, and <code>v16-v17</code> interpretability plus control integration.
+      </p>
+    </div>
+    <div class="roadmap-bridge-links">
+      <a href="training-curriculum.html">
+        Open training-curriculum.html
+        <span>version-integrated learning plan and cluster readiness gates</span>
+      </a>
+      <a href="v7-training-progression-playbook.html">
+        Open v7-training-progression-playbook.html
+        <span>current staged experiments across SVG, routing, and code tracks</span>
+      </a>
+    </div>
+  </div>
+
+  <!-- Compact Architecture Path -->
+  <h2>Architecture Evolution</h2>
+  <p style="color: var(--text-secondary); margin-bottom: 1rem;">
+    Every version builds on the <strong>IR graph + kernel foundation</strong>.
+    Click to explore the journey from C orchestrator to pure IR-driven code generation.
+  </p>
+
+  <div class="arch-timeline">
+    <div class="arch-node done">
+      <div class="arch-node-badge arch-v66">v6.6</div>
+      <div class="arch-node-label">IR + Tooling</div>
+      <div class="arch-node-dot"></div>
+    </div>
+    <div class="arch-arrow-right">→</div>
+    <div class="arch-node current">
+      <div class="arch-node-badge arch-v7">v7</div>
+      <div class="arch-node-label">Training Build</div>
+      <div class="arch-node-dot"></div>
+    </div>
+    <div class="arch-arrow-right">→</div>
+    <div class="arch-node current">
+      <div class="arch-node-badge arch-v8">v8-9</div>
+      <div class="arch-node-label">Vision</div>
+      <div class="arch-node-dot"></div>
+    </div>
+    <div class="arch-arrow-right">→</div>
+    <div class="arch-node">
+      <div class="arch-node-badge arch-v10">v10-11</div>
+      <div class="arch-node-label">Audio</div>
+      <div class="arch-node-dot"></div>
+    </div>
+    <div class="arch-arrow-right">→</div>
+    <div class="arch-node">
+      <div class="arch-node-badge arch-v11">v12-13</div>
+      <div class="arch-node-label">MoE</div>
+      <div class="arch-node-dot"></div>
+    </div>
+    <div class="arch-arrow-right">→</div>
+    <div class="arch-node">
+      <div class="arch-node-badge arch-v14">v14</div>
+      <div class="arch-node-label">LoRA</div>
+      <div class="arch-node-dot"></div>
+    </div>
+    <div class="arch-arrow-right">→</div>
+    <div class="arch-node">
+      <div class="arch-node-badge arch-v15">v15</div>
+      <div class="arch-node-label">Embedded Compat</div>
+      <div class="arch-node-dot"></div>
+    </div>
+    <div class="arch-arrow-right">→</div>
+    <div class="arch-node">
+      <div class="arch-node-badge arch-v16">v16</div>
+      <div class="arch-node-label">Mech Interp</div>
+      <div class="arch-node-dot"></div>
+    </div>
+    <div class="arch-arrow-right">→</div>
+    <div class="arch-node">
+      <div class="arch-node-badge arch-v17">v17</div>
+      <div class="arch-node-label">LLM+Vision Ctrl</div>
+      <div class="arch-node-dot"></div>
+    </div>
+    <div class="arch-arrow-right">→</div>
+    <div class="arch-node planned">
+      <div class="arch-node-badge arch-v18">v18</div>
+      <div class="arch-node-label">Dist HPC Train</div>
+      <div class="arch-node-dot"></div>
+    </div>
+  </div>
+
+  <style>
+    .arch-timeline {
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+      gap: 0.25rem;
+      padding: 1.5rem 1rem;
+      margin: 1rem 0;
+      overflow-x: auto;
+      background: var(--dark-card);
+      border: 1px solid var(--grey);
+      border-radius: 8px;
+    }
+    .arch-node {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.5rem;
+      min-width: 70px;
+    }
+    .arch-node.done .arch-node-badge {
+      box-shadow: 0 0 0 2px rgba(71, 180, 117, 0.35);
+    }
+    .arch-node.done .arch-node-dot {
+      background: #47b475;
+      box-shadow: 0 0 6px rgba(71, 180, 117, 0.5);
+    }
+    .arch-node.current .arch-node-badge {
+      box-shadow: 0 0 0 3px rgba(255, 180, 0, 0.4);
+    }
+    .arch-node.current .arch-node-dot {
+      background: #ffb400;
+      box-shadow: 0 0 8px #ffb400;
+    }
+    .arch-node-badge {
+      padding: 0.4rem 0.75rem;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+    .arch-node-badge.arch-v66 { background: #ffb400; color: var(--dark); }
+    .arch-node-badge.arch-v7 { background: #47b475; color: white; }
+    .arch-node-badge.arch-v8 { background: #00bcd4; color: white; }
+    .arch-node-badge.arch-v10 { background: #e91e63; color: white; }
+    .arch-node-badge.arch-v11 { background: #1abc9c; color: white; }
+    .arch-node-badge.arch-v13 { background: #e74c3c; color: white; }
+    .arch-node-badge.arch-v14 { background: #9b59b6; color: white; }
+    .arch-node-badge.arch-v15 { background: #34495e; color: white; }
+    .arch-node-badge.arch-v16 { background: #16a085; color: white; }
+    .arch-node-badge.arch-v17 { background: #7f8c8d; color: white; }
+    .arch-node-badge.arch-v18 { background: #2c3e50; color: white; }
+    .arch-node-label {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      text-align: center;
+    }
+    .arch-node-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--grey);
+      margin-top: 0.25rem;
+    }
+    .arch-arrow-right {
+      color: var(--text-muted);
+      font-size: 1.25rem;
+      margin: 0 0.5rem;
+      padding: 0 0.25rem;
+    }
+  </style>
+
+  <!-- IR Evolution Accordion -->
+  <h2>IR Evolution: v6.x Orchestrator -> v6.6 Inference IR -> v7 Training IR</h2>
+  <p style="color: var(--text-secondary); margin-bottom: 1rem;">
+    The progression is explicit: v6.x hardcoded orchestration, v6.5 generated-hybrid paths,
+    v6.6 pure IR-driven inference, and v7 IR-driven training lowering with backward synthesis,
+    contiguous training layout, and runtime safety diagnostics.
+  </p>
+
+  <style>
+    .ir-accordion {
+      margin: 1.5rem 0;
+    }
+    .ir-accordion-item {
+      border: 1px solid var(--grey);
+      border-radius: 8px;
+      margin-bottom: 0.75rem;
+      overflow: hidden;
+    }
+    .ir-accordion-header {
+      display: flex;
+      align-items: center;
+      padding: 1rem 1.5rem;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .ir-accordion-header:hover {
+      background: var(--dark-card);
+    }
+    .ir-accordion-header.current {
+      background: linear-gradient(90deg, rgba(255,180,0,0.15) 0%, transparent 100%);
+      border-left: 4px solid var(--orange);
+    }
+    .ir-version-badge {
+      min-width: 70px;
+      font-weight: bold;
+      font-size: 0.9rem;
+      padding: 0.35rem 0.75rem;
+    }
+    .ir-version-badge.v6-0 { background: #555; color: white; }
+    .ir-version-badge.v6-5 { background: #666; color: white; }
+    .ir-version-badge.v6-6 { background: #ffb400; color: var(--dark); }
+    .ir-version-badge.v7 { background: #47b475; color: white; }
+    .ir-title {
+      flex: 1;
+      font-weight: 500;
+      margin-left: 1rem;
+    }
+    .ir-badge {
+      font-size: 0.75rem;
+      padding: 0.25rem 0.6rem;
+      border-radius: 4px;
+      margin-left: 0.75rem;
+    }
+    .ir-badge-hardcoded { background: #e74c3c; color: white; }
+    .ir-badge-hybrid { background: #f39c12; color: white; }
+    .ir-badge-ir { background: #47b475; color: white; }
+    .ir-badge-released { background: #2e8b57; color: white; }
+    .ir-badge-building { background: #ffb400; color: var(--dark); }
+    .ir-toggle {
+      color: var(--text-muted);
+      font-size: 1.25rem;
+      transition: transform 0.3s;
+      margin-left: 0.75rem;
+      padding: 0.25rem;
+    }
+    .ir-accordion-item.open .ir-toggle {
+      transform: rotate(180deg);
+    }
+    .ir-accordion-content {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 0.3s ease-out;
+      background: var(--darker);
+    }
+    .ir-accordion-item.open .ir-accordion-content {
+      max-height: 1000px;
+    }
+    .ir-details {
+      padding: 1.5rem;
+    }
+    .ir-comparison {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 1.25rem;
+      margin-top: 1.25rem;
+    }
+    .ir-column {
+      background: var(--dark-card);
+      border-radius: 6px;
+      padding: 1.25rem;
+    }
+    .ir-column h4 {
+      margin: 0 0 1rem 0;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding-bottom: 0.5rem;
+      border-bottom: 1px solid var(--grey);
+    }
+    .ir-feature-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+    .ir-feature-list li {
+      padding: 0.5rem 0;
+      font-size: 0.9rem;
+      border-bottom: 1px solid var(--grey);
+    }
+    .ir-feature-list li:last-child {
+      border-bottom: none;
+    }
+    .ir-feature-list .yes { color: #47b475; }
+    .ir-feature-list .no { color: #e74c3c; }
+    .ir-example {
+      background: var(--dark);
+      border-radius: 4px;
+      padding: 1rem;
+      margin-top: 1rem;
+      font-family: monospace;
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+    .ir-stats {
+      display: flex;
+      gap: 2rem;
+      margin-top: 1.25rem;
+      padding-top: 1.25rem;
+      border-top: 1px solid var(--grey);
+    }
+    .ir-stat {
+      text-align: center;
+      padding: 0 1rem;
+    }
+    .ir-stat:not(:last-child) {
+      border-right: 1px solid var(--grey);
+    }
+    .ir-stat-value {
+      font-size: 1.5rem;
+      font-weight: bold;
+      color: var(--orange);
+    }
+    .ir-stat-label {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 0.25rem;
+    }
+    .current-indicator {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      background: #47b475;
+      border-radius: 50%;
+      margin-right: 0.5rem;
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+  </style>
+
+  <div class="ir-accordion">
+    <!-- v6.x - C Orchestrator -->
+    <div class="ir-accordion-item">
+      <div class="ir-accordion-header" onclick="toggleIrAccordion(this)">
+        <span class="ir-version-badge v6-0">v6.x</span>
+        <span class="ir-title">C Orchestrator: Kernel Dispatch</span>
+        <span class="ir-badge ir-badge-hardcoded">Orchestrator</span>
+        <span class="ir-toggle">▼</span>
+      </div>
+      <div class="ir-accordion-content">
+        <div class="ir-details">
+          <p style="color: var(--text-secondary);">
+            v6.x used a <strong>C orchestrator</strong> that dispatched to kernels based on operation type.
+            No code generation - the orchestrator called kernels directly.
+          </p>
+          <div class="ir-comparison">
+            <div class="ir-column">
+              <h4>Code Path</h4>
+              <ul class="ir-feature-list">
+                <li><span class="no">✗</span> Code generation</li>
+                <li><span class="yes">✓</span> C orchestrator</li>
+                <li><span class="yes">✓</span> Kernel dispatch</li>
+                <li><span class="no">✗</span> IR graph</li>
+              </ul>
+            </div>
+            <div class="ir-column">
+              <h4>Kernels</h4>
+              <ul class="ir-feature-list">
+                <li>gemm_nt_q4_k</li>
+                <li>gemv_q8_0</li>
+                <li>attention_decode</li>
+                <li>rope_forward_qk</li>
+              </ul>
+            </div>
+            <div class="ir-column">
+              <h4>Limitations</h4>
+              <ul class="ir-feature-list">
+                <li>No fusion patterns</li>
+                <li>Fixed execution order</li>
+                <li>Manual kernel dispatch</li>
+              </ul>
+            </div>
+          </div>
+          <div class="ir-example">
+            // v6.x style: C orchestrator dispatches
+            ckernel_orchestrator_run(ctx, CK_MODE_DECODE);
+            // Dispatcher calls kernels based on op_type
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- v6.5 - Generated C with Hardcoded Logic -->
+    <div class="ir-accordion-item">
+      <div class="ir-accordion-header" onclick="toggleIrAccordion(this)">
+        <span class="ir-version-badge v6-5">v6.5</span>
+        <span class="ir-title">Generated C: IR with Hardcoded Paths</span>
+        <span class="ir-badge ir-badge-hybrid">Generated C</span>
+        <span class="ir-toggle">▼</span>
+      </div>
+      <div class="ir-accordion-content">
+        <div class="ir-details">
+          <p style="color: var(--text-secondary);">
+            v6.5 introduced <strong>code generation</strong> from IR, but the generated C code
+            contained hardcoded logic paths. Templates determined structure, not the IR.
+          </p>
+          <div class="ir-comparison">
+            <div class="ir-column">
+              <h4>Code Generation</h4>
+              <ul class="ir-feature-list">
+                <li><span class="no">✗</span> Pure IR-driven</li>
+                <li><span class="yes">✓</span> Template-based gen</li>
+                <li><span class="yes">✓</span> IR v1 defined</li>
+                <li><span class="no">✗</span> Fusion detection</li>
+              </ul>
+            </div>
+            <div class="ir-column">
+              <h4>IR Structure</h4>
+              <ul class="ir-feature-list">
+                <li>ops: ["layer_norm", "matmul"]</li>
+                <li>attrs: {eps, n_heads}</li>
+                <li>No fusion annotations</li>
+                <li>Templates hardcoded</li>
+              </ul>
+            </div>
+            <div class="ir-column">
+              <h4>New in v6.5</h4>
+              <ul class="ir-feature-list">
+                <li>Memory layout defined</li>
+                <li>Weight manifest</li>
+                <li>BUMP format</li>
+                <li>Template codegen</li>
+              </ul>
+            </div>
+          </div>
+          <div class="ir-example">
+            // v6.5 style: Template generates C with hardcoded paths
+            generate_code(ir, template_decode);
+            // Output has if(mode==DECODE) { ... hardcoded ... }
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- v6.6 - Pure IR-Driven -->
+    <div class="ir-accordion-item">
+      <div class="ir-accordion-header" onclick="toggleIrAccordion(this)">
+        <span class="ir-version-badge v6-6">v6.6</span>
+        <span class="ir-title">Pure IR-Driven Inference (Released)</span>
+        <span class="ir-badge ir-badge-released">Released</span>
+        <span class="ir-toggle">▼</span>
+      </div>
+      <div class="ir-accordion-content">
+        <div class="ir-details">
+          <p style="color: var(--text-secondary);">
+            <strong>v6.6</strong> achieves <strong>pure IR-driven code generation</strong> for the
+            core inference flow. Ops are emitted from IR, kernels selected automatically,
+            memory from layout.json. Model dimensions like <strong>attn_out_dim</strong> are now
+            part of the config contract (parsed from weights), reducing hardcoded paths.
+          </p>
+          <p style="margin-top: 0.75rem;">
+            See the <a href="ir-pipeline.html">IR Pipeline v6.6</a> visual guide for templates → IR1/IR2 → lowering → memory layout → codegen.
+          </p>
+          <div class="ir-comparison">
+            <div class="ir-column">
+              <h4>IR-Driven (Correct)</h4>
+              <ul class="ir-feature-list">
+                <li><span class="yes">✓</span> Ops from IR</li>
+                <li><span class="yes">✓</span> Kernel selection auto</li>
+                <li><span class="yes">✓</span> Memory from layout.json</li>
+                <li><span class="yes">✓</span> Fusion patterns</li>
+                <li><span class="yes">✓</span> Config contract (attn_out_dim)</li>
+              </ul>
+            </div>
+            <div class="ir-column">
+              <h4>MEGA Kernels</h4>
+              <ul class="ir-feature-list">
+                <li>mega_fused_attention_prefill</li>
+                <li>mega_fused_outproj_mlp</li>
+                <li>Norm + QKV + RoPE fuse</li>
+                <li>MLP + Residual fuse</li>
+              </ul>
+            </div>
+            <div class="ir-column">
+              <h4>Tech Debt (Qwen2-specific)</h4>
+              <ul class="ir-feature-list">
+                <li>RoPE scaling type</li>
+                <li>KV cache layout</li>
+                <li>Activation function</li>
+                <li>Chat template selection</li>
+              </ul>
+            </div>
+          </div>
+          <div class="ir-stats">
+            <div class="ir-stat">
+              <div class="ir-stat-value">100%</div>
+              <div class="ir-stat-label">IR Coverage</div>
+            </div>
+            <div class="ir-stat">
+              <div class="ir-stat-value">7</div>
+              <div class="ir-stat-label">MEGA Kernels</div>
+            </div>
+            <div class="ir-stat">
+              <div class="ir-stat-value">~4</div>
+              <div class="ir-stat-label">Tech Debt Items</div>
+            </div>
+            <div class="ir-stat">
+              <div class="ir-stat-value">1</div>
+              <div class="ir-stat-label">IR→C Pass</div>
+            </div>
+          </div>
+          <div class="ir-example">
+            // v6.6 style: IR-driven with config contract
+            ir = ir_from_model(model)           // Build IR from model
+            fused = fuse_patterns(ir)           // Detect fusion patterns
+            code = generate_c(fused, registry)  // Generate C
+            // Core flow IR-driven; remaining model-specific defaults isolated
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- v7 - IR-Driven Training Runtime -->
+    <div class="ir-accordion-item open">
+      <div class="ir-accordion-header current" onclick="toggleIrAccordion(this)">
+        <span class="ir-version-badge v7">v7</span>
+        <span class="ir-title">
+          <span class="current-indicator"></span>
+          IR-Driven Training Runtime (Building)
+        </span>
+        <span class="ir-badge ir-badge-building">Current Build</span>
+        <span class="ir-toggle">▼</span>
+      </div>
+      <div class="ir-accordion-content">
+        <div class="ir-details">
+          <p style="color: var(--text-secondary);">
+            <strong>v7</strong> keeps the same IR-first architecture and adds training-specific lowering:
+            IR1 train-forward, IR2 backward synthesis with explicit gradient accumulation,
+            contiguous training memory layout, generated C runtime, and canary/layout diagnostics.
+          </p>
+          <p style="margin-top: 0.75rem;">
+            See <a href="v7-backprop-ir.html">v7 Backprop IR Pipeline</a> for the full visual walk-through.
+          </p>
+          <div class="ir-comparison">
+            <div class="ir-column">
+              <h4>Lowered Artifacts</h4>
+              <ul class="ir-feature-list">
+                <li><span class="yes">✓</span> <code>ir1_train_forward.json</code></li>
+                <li><span class="yes">✓</span> <code>ir2_train_backward.json</code></li>
+                <li><span class="yes">✓</span> <code>layout_train.json</code></li>
+                <li><span class="yes">✓</span> <code>generated_train_runtime_v7.c</code></li>
+              </ul>
+            </div>
+            <div class="ir-column">
+              <h4>Safety + Diagnostics</h4>
+              <ul class="ir-feature-list">
+                <li><span class="yes">✓</span> canary checks by phase</li>
+                <li><span class="yes">✓</span> layout audit report</li>
+                <li><span class="yes">✓</span> first-divergence tracing</li>
+                <li><span class="yes">✓</span> CK vs PyTorch parity gates</li>
+              </ul>
+            </div>
+            <div class="ir-column">
+              <h4>Next Lowering Steps</h4>
+              <ul class="ir-feature-list">
+                <li>Execution-plan JSON (<code>train_exec_plan.json</code>)</li>
+                <li>Threaded GEMM split policy (M/N/K)</li>
+                <li>Deterministic reduction contracts</li>
+                <li>One-command operator train gate</li>
+              </ul>
+            </div>
+          </div>
+          <div class="ir-stats">
+            <div class="ir-stat">
+              <div class="ir-stat-value">IR1+IR2</div>
+              <div class="ir-stat-label">Training Graph</div>
+            </div>
+            <div class="ir-stat">
+              <div class="ir-stat-value">Contiguous</div>
+              <div class="ir-stat-label">Train Memory</div>
+            </div>
+            <div class="ir-stat">
+              <div class="ir-stat-value">Canary</div>
+              <div class="ir-stat-label">Runtime Safety</div>
+            </div>
+            <div class="ir-stat">
+              <div class="ir-stat-value">Oracle</div>
+              <div class="ir-stat-label">Parity Tracking</div>
+            </div>
+          </div>
+          <div class="ir-example">
+            // v7 style: training lowering pipeline
+            ir1 = build_ir_train_forward(template, manifest)
+            ir2 = synthesize_backward(ir1, grad_rules)
+            layout = plan_train_memory(ir2)             // layout_train.json
+            code = generate_train_runtime(ir2, layout)  // generated_train_runtime_v7.c
+            // diagnostics + parity gates validate execution
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function toggleIrAccordion(header) {
+      const item = header.parentElement;
+      const wasOpen = item.classList.contains('open');
+
+      // Close all
+      document.querySelectorAll('.ir-accordion-item').forEach(i => {
+        i.classList.remove('open');
+      });
+
+      // Open clicked if it wasn't open
+      if (!wasOpen) {
+        item.classList.add('open');
+      }
+    }
+  </script>
+
+  <h2>Current Execution Order</h2>
+  <p style="color: var(--text-secondary);">
+    New model families are added only after their mathematical requirements can be expressed by circuits and
+    resolved exactly through kernel capabilities. The compiler emits the resolved decision; it does not infer a
+    model-specific fallback. This keeps correctness work reusable across text, vision, and audio.
+  </p>
+  <table class="roadmap-table">
+    <thead>
+      <tr>
+        <th>Order</th>
+        <th>Workstream</th>
+        <th>Exit Gate</th>
+        <th>State</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1</td>
+        <td><strong>v8 compiler and numerical hardening</strong><br>Circuits, <a href="kernel-maps.html">kernel maps</a>, exact resolution, bounded X-ray attribution, and zero model-family dispatch in protected compiler paths.</td>
+        <td>Supported text and vision circuits compile deterministically; incompatible or ambiguous capabilities hard-fail; stitched and end-to-end regressions remain clean.</td>
+        <td><span class="version-status status-building">Active</span></td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td><strong>Qwen3-VL parity closure</strong><br>Encoder checkpoints, mixed prefill, teacher-forced decode, and persistent decode against llama.cpp and PyTorch references.</td>
+        <td>First-divergence reports advance through every remaining boundary and each fix is retained by a numerical contract plus nightly coverage.</td>
+        <td><span class="version-status status-building">Active</span></td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td><strong>Whisper Tiny/Base inference</strong><br>Slated for v10, but the v8 compiler lane is incorporating and hardening it ahead of the original plan: Whisper Tiny and Base transcribe end to end &mdash; WAV parsing, an optimized FFT/log-Mel frontend, and generated FP32 encoder and decoder circuits compose through the same kernel-contract path. On the public JFK sample both sizes emit the same greedy tokens as Hugging Face through EOS. See the <a href="v8-whisper-tiny.html">Whisper audio end-to-end page</a>.</td>
+        <td>Done: WAV container parsing, band-limited windowed-sinc resampling, optimized FFT, generated encoder/decoder composition, and English no-timestamp transcript parity for Tiny and Base on the JFK fixture. Remaining: timestamp decoding, corpus certification beyond JFK, whisper.cpp fixtures, and attribution of Base encoder tensor drift that does not alter the certified transcript.</td>
+        <td><span class="version-status status-building">Active</span></td>
+      </tr>
+      <tr>
+        <td>4</td>
+        <td><strong>Audio performance and FP32 training</strong><br>Encoder tiling/threading, cached cross-attention K/V, then Conv1D and cross-attention backward in v7.</td>
+        <td>Inference parity is stable; performance evidence separates frontend, encoder, and autoregressive decode; FP32 backward matches PyTorch.</td>
+        <td><span class="version-status status-planned">Gated</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- Detailed Roadmap Table -->
+  <h2>Detailed Roadmap</h2>
+  <div class="alert alert-success" style="margin: 0.5rem 0 1.25rem;">
+    <span class="alert-icon">&#9889;</span>
+    <div>
+      <strong>Pulled forward into v8.</strong> Several capabilities originally scheduled for later versions
+      hardened inside the v8 compiler instead of waiting:
+      <strong>audio inference</strong> (v10 &rarr; v8: Whisper Tiny/Base end-to-end),
+      <strong>MoE inference</strong> (v12 &rarr; v8: router + expert providers in production),
+      <strong>distributed evidence</strong> (v18 &rarr; first measured two-node ZIP prefill, research lane),
+      and the <strong>kernel-map hardening</strong> program (297 maps, fail-closed selection, X-Ray resolver traces).
+      What did <em>not</em> move: hardened training backprop stays with v7, and distributed <em>training</em>
+      stays with v18. Rows below carry the PR references.
+    </div>
+  </div>
+  <table class="roadmap-table">
+    <thead>
+      <tr>
+        <th>Version</th>
+        <th>Focus</th>
+        <th>Key Features</th>
+        <th>Depends On</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>v6.6</strong></td>
+        <td>IR Fusion + Parallel</td>
+        <td>IR-driven fusion kernels, OpenMP parallelization, MEGA kernels</td>
+        <td>Base</td>
+        <td><span class="version-status status-released">Released</span></td>
+      </tr>
+      <tr>
+        <td><strong>v7.0</strong></td>
+        <td>Training IR + Data Pipeline Foundation</td>
+        <td>IR1 train-forward + IR2 backward synthesis, Stage A/Stage B dataset preparation (ASCII cleanup + tokenizer roundtrip gates), v7 init/train/parity CLI flow</td>
+        <td>v6.6</td>
+        <td><span class="version-status status-building">Building</span></td>
+      </tr>
+      <tr>
+        <td><strong>v7.1</strong></td>
+        <td>Runtime Safety + Diagnostics</td>
+        <td>Contiguous train memory layout, canary diagnostics, CK-vs-PyTorch parity regimen (epoch + grad-accum sweeps), deterministic replay + drift triage artifacts, IR visualizer training-dashboard hardening (artifact ingestion + bug-fix cadence), and GGUF inference contract stabilization across Gemma / Qwen3.5 / Nanbeige bring-up</td>
+        <td>v7.0</td>
+        <td><span class="version-status status-building">Building</span></td>
+      </tr>
+      <tr>
+        <td><strong>v7.2</strong></td>
+        <td>Threaded Training Runtime</td>
+        <td>IR3 execution plan for dispatch, threaded GEMM policy (split M/N/K), deterministic reductions</td>
+        <td>v7.1</td>
+        <td><span class="version-status status-planned">Planned</span></td>
+      </tr>
+      <tr>
+        <td><strong>v8.0</strong></td>
+        <td>Inference Compiler + Vision Encoder</td>
+        <td>Circuit-owned topology and weight policy, fail-closed kernel capability resolution, explicit numerical and threading contracts, GraphIR-to-call-IR decision preservation, bounded X-ray attribution, patch embedding, resized position encoding, M-RoPE, deepstack, and multimodal stitching &mdash; plus the first audio lane: Whisper Tiny/Base encoder and decoder circuits, originally slated for v10, now incorporating and hardening inside the v8 compiler. The kernel-map layer hardened into <a href="kernel-maps.html">297 machine-checked provider maps with fail-closed selection</a>, and the family surface widened far past the original plan: Qwen3.5/3.6/3.8 (<a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/pull/387" target="_blank" rel="noopener">#387</a>, <a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/pull/388" target="_blank" rel="noopener">#388</a>), Gemma3/4 (<a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/pull/375" target="_blank" rel="noopener">#375</a>), GLM4 (<a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/pull/386" target="_blank" rel="noopener">#386</a>), Instella (<a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/pull/389" target="_blank" rel="noopener">#389</a>), Cohere2 (<a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/pull/401" target="_blank" rel="noopener">#401</a>), Kimi (<a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/pull/403" target="_blank" rel="noopener">#403</a>), Laguna (<a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/pull/404" target="_blank" rel="noopener">#404</a>), and Nemotron-H (<a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/pull/402" target="_blank" rel="noopener">#402</a>, <a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/pull/412" target="_blank" rel="noopener">#412</a>), with long-context certification sweeps (<a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/pull/407" target="_blank" rel="noopener">#407</a>, <a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/pull/408" target="_blank" rel="noopener">#408</a>) &mdash; see <a href="model-kernel-matrix.html">Model + Kernel Matrix</a> and <a href="architecture-variants.html">Architecture Variants</a></td>
+        <td>v7.x training</td>
+        <td><span class="version-status status-building">Building</span></td>
+      </tr>
+      <tr>
+        <td><strong>v9.0</strong></td>
+        <td>Vision Parity + Training</td>
+        <td>Qwen3-VL encoder, mixed-prefill, teacher-forced and persistent-decode parity; then FP32 backward through vision encoder and image fine-tuning</td>
+        <td>v8.0</td>
+        <td><span class="version-status status-planned">Planned</span></td>
+      </tr>
+      <tr>
+        <td><strong>v10.0</strong></td>
+        <td>Audio Inference</td>
+        <td>Whisper Tiny/Base/Small. The first audio lane landed early: v8 transcribes all three sizes end to end from PCM16 WAV through generated FP32 frontend, encoder, and decoder circuits &mdash; band-limited windowed-sinc resampling included, English text-only and paired monotonic timestamp decoding, JFK fixture exact against Hugging Face (<a href="v8-whisper-tiny.html">details and limitations</a>). v10 remains the full audio release: long-audio window stitching, broader corpus certification, whisper.cpp fixtures, and larger model sizes.</td>
+        <td>v8 exact resolution + X-ray gates</td>
+        <td><span class="version-status status-building">Building</span></td>
+      </tr>
+      <tr>
+        <td><strong>v11.0</strong></td>
+        <td>Audio Training</td>
+        <td>FP32 Conv1D, encoder-attention and cross-attention backward; speech recognition training after inference parity. Log-Mel remains fixed preprocessing initially.</td>
+        <td>v10.0 inference parity</td>
+        <td><span class="version-status status-planned">Planned</span></td>
+      </tr>
+      <tr>
+        <td><strong>v12.0</strong></td>
+        <td>MoE - Mixture of Experts</td>
+        <td>Expert selection kernels, router computation, load balancing loss. The inference half landed early in v8: group-limited top-k routing with correction bias, Q4_K/Q5_K/Q8_0 expert GEMM providers, shared experts, and parallel decode expert routes (<a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/pull/376" target="_blank" rel="noopener">#376</a>, <a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/pull/378" target="_blank" rel="noopener">#378</a>, <a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/pull/380" target="_blank" rel="noopener">#380</a>) power the production Qwen3.5/3.6 MoE and Laguna runtimes &mdash; see <a href="kernel-architecture.html">v8 Kernel Architecture</a>. Load-balancing loss and MoE backward stay with the training lane.</td>
+        <td>v7.x training</td>
+        <td><span class="version-status status-building">Building</span></td>
+      </tr>
+      <tr>
+        <td><strong>v13.0</strong></td>
+        <td>MoE Backward</td>
+        <td>Backward pass through MoE gates and experts</td>
+        <td>v12.0</td>
+        <td><span class="version-status status-planned">Planned</span></td>
+      </tr>
+      <tr>
+        <td><strong>v14.0</strong></td>
+        <td>LoRA / QLoRA</td>
+        <td>Adapter injection, low-rank decomposition, 4-bit LoRA support</td>
+        <td>v7.x training</td>
+        <td><span class="version-status status-planned">Planned</span></td>
+      </tr>
+      <tr>
+        <td><strong>v15.0</strong></td>
+        <td>Embedded AI Inference</td>
+        <td>Bring LLM/AI inference to constrained flight-control and robotics hardware with deterministic runtime contracts and portable HAL integration</td>
+        <td>v7.x training sign-off + v1-v14 kernel families</td>
+        <td><span class="version-status status-planned">Planned</span></td>
+      </tr>
+      <tr>
+        <td><strong>v16.0</strong></td>
+        <td>Mechanistic Interpretability</td>
+        <td>Train sparse autoencoders on traced activations, stitch features back to IR ops/kernels, and add causal intervention tooling for explainable model behavior</td>
+        <td>v15.0</td>
+        <td><span class="version-status status-planned">Planned</span></td>
+      </tr>
+      <tr>
+        <td><strong>v17.0</strong></td>
+        <td>LLM + Vision Policy Integration</td>
+        <td>Integrate embedded LLM + vision policy outputs into real-time control loops and validate end-to-end autonomy behavior on robotics-class systems</td>
+        <td>v16.0</td>
+        <td><span class="version-status status-planned">Planned</span></td>
+      </tr>
+      <tr>
+        <td><strong>v18.0</strong></td>
+        <td>Distributed HPC Training</td>
+        <td>Multi-node CPU training with RDMA (InfiniBand/RoCE), gradient compression, and HPC cluster orchestration for large-scale model training (10-100B parameters) on commodity hardware. Distributed <em>inference</em> has its first measured evidence already: the research ZIP lane sharded Qwen3.5-35B-A3B MoE prefill across a Ryzen plus P3 over 1 GbE with a bit-exact same-ISA control (<a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/pull/377" target="_blank" rel="noopener">#377</a>, <a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/pull/378" target="_blank" rel="noopener">#378</a>, <a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/pull/382" target="_blank" rel="noopener">#382</a>), and the architectural case lives in <a href="distributed-cpu.html">Distributed CPU: Zip Fusion</a>. The training-scale version stays planned.</td>
+        <td>v17.0</td>
+        <td><span class="version-status status-planned">Planned</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- Version Timeline -->
+  <h2>Version Timeline</h2>
+
+  <!-- v7.0 (Next) -->
+  <div class="version-timeline">
+    <div class="version-row">
+      <div class="version-badge v7">v7.0</div>
+      <div class="version-content">
+        <div class="version-header">
+          <span class="version-status status-building">Building</span>
+          <span class="version-date">Current sprint track</span>
+        </div>
+        <p class="version-tagline">"Training IR Runtime + Operator Cockpit" - From data preparation and parity-first training to fully lowered train execution</p>
+        <ul class="milestone-list">
+          <li class="milestone">
+            <span class="milestone-icon done">✓</span>
+            <span class="milestone-text done"><strong>PR1:</strong> v7 CLI contracts + strict validation + inference smoke gate</span>
+          </li>
+          <li class="milestone">
+            <span class="milestone-icon done">✓</span>
+            <span class="milestone-text done"><strong>PR2:</strong> Generated train runtime path wired (ck backend callable)</span>
+          </li>
+          <li class="milestone">
+            <span class="milestone-icon done">✓</span>
+            <span class="milestone-text done"><strong>PR3:</strong> Contiguous train layout + canary diagnostics + strict first-divergence tracing</span>
+          </li>
+          <li class="milestone current">
+            <span class="milestone-icon building">▶</span>
+            <span class="milestone-text"><strong>PR4 (current):</strong> Oracle cadence + drift triage artifacts + deterministic replay hardening + training telemetry ingestion for IR visualizer</span>
+          </li>
+          <li class="milestone">
+            <span class="milestone-icon planned">○</span>
+            <span class="milestone-text"><strong>PR5:</strong> Threaded GEMM dispatch lowered from IR3 execution plan</span>
+          </li>
+          <li class="milestone">
+            <span class="milestone-icon planned">○</span>
+            <span class="milestone-text"><strong>PR6:</strong> Run-dir artifact unification + one-command v7 train gate</span>
+          </li>
+          <li class="milestone current">
+            <span class="milestone-icon building">▶</span>
+            <span class="milestone-text"><strong>IR Visualizer (ongoing):</strong> training tabs, parity cockpit, data/tokenizer transparency, and robustness bug fixes (path loading, mode wiring, runtime JS errors).</span>
+          </li>
+        </ul>
+        <p style="margin:0.85rem 0 0.4rem 0; color:var(--text-muted); font-size:0.85rem;">Operator history highlights (training stack):</p>
+        <ul class="milestone-list">
+          <li class="milestone">
+            <span class="milestone-icon done">✓</span>
+            <span class="milestone-text done"><strong>Data preparation:</strong> Stage 0.5/0.55 corpus path (docs SVG assets -> UTF-8/ASCII cleanup -> manifests + tokenizer map).</span>
+          </li>
+          <li class="milestone">
+            <span class="milestone-icon done">✓</span>
+            <span class="milestone-text done"><strong>Stage A / Stage B flow:</strong> pretrain/midtrain dataset tracks with checkpoint promotion and run-scoped reports.</span>
+          </li>
+          <li class="milestone">
+            <span class="milestone-icon done">✓</span>
+            <span class="milestone-text done"><strong>PyTorch parity analysis:</strong> first-divergence localizer, 10-epoch cadence, grad-accum sweeps, replay determinism checks.</span>
+          </li>
+          <li class="milestone">
+            <span class="milestone-icon done">✓</span>
+            <span class="milestone-text done"><strong>IR visualizer training cockpit:</strong> training dashboard, parity tracker, data/tokenizer transparency, and operator runbook command blocks.</span>
+          </li>
+        </ul>
+        <p style="margin:0.85rem 0 0.4rem 0; color:var(--text-muted); font-size:0.85rem;">Recent inference/runtime fixes on the same branch:</p>
+        <ul class="milestone-list">
+          <li class="milestone">
+            <span class="milestone-icon done">✓</span>
+            <span class="milestone-text done"><strong>Gemma 3 parity fix:</strong> RoPE was being applied with the wrong Q/K pairing style. Gemma expects split-half RoPE; the runtime now reads exported <code>rope_layout</code> and selects the matching <code>rope_qk</code> kernel automatically.</span>
+          </li>
+          <li class="milestone">
+            <span class="milestone-icon done">✓</span>
+            <span class="milestone-text done"><strong>Qwen3.5 recurrent bring-up:</strong> hybrid recurrent-attention decode, Gated DeltaNet parity, and contract-driven visible/suppressed thinking now run on the built-in C tokenizer path.</span>
+          </li>
+          <li class="milestone">
+            <span class="milestone-icon done">✓</span>
+            <span class="milestone-text done"><strong>Nanbeige bring-up lane:</strong> SentencePiece + ChatML contracts stabilized on the C tokenizer path with untied <code>output.weight</code> preserved and long-think output treated as model behavior.</span>
+          </li>
+        </ul>
+        <p style="margin:0.85rem 0 0.4rem 0; color:var(--text-muted); font-size:0.85rem;">Recent v7 milestone commits:</p>
+        <ul class="milestone-list">
+          <li class="milestone">
+            <span class="milestone-icon done">✓</span>
+            <span class="milestone-text done"><code>524791c4</code> <strong>fix(v7/regression):</strong> inference-family regression gate hardened, contract audit added, and <code>make regression-fast</code> promoted into nightly CI.</span>
+          </li>
+          <li class="milestone">
+            <span class="milestone-icon done">✓</span>
+            <span class="milestone-text done"><code>af99d411</code> <strong>fix(v7/inference):</strong> chat contracts unified, Gemma split-half RoPE selected from exported metadata, Qwen families kept on the C tokenizer path, and Nanbeige contract bring-up stabilized.</span>
+          </li>
+          <li class="milestone">
+            <span class="milestone-icon done">✓</span>
+            <span class="milestone-text done"><code>80d88071</code> <strong>docs(v7):</strong> model-kernel matrix, runbook, and version-history pages updated to record the family bring-up fixes and canonical cache-backed bring-up flow.</span>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <h2>Execution Order (Current Priority: Training First)</h2>
+  <p style="color: var(--text-secondary); margin-bottom: 1rem;">
+    Methodical completion path: finish <strong>v7.x training sign-off</strong> end-to-end before opening active v15 embedded implementation.
+    v15-v17 stay visible as downstream roadmap, but are gated by training completion criteria.
+  </p>
+  <table class="roadmap-table">
+    <thead>
+      <tr>
+        <th>Phase</th>
+        <th>Objective</th>
+        <th>Exit Criteria (must pass)</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>T0</strong></td>
+        <td>Runbook Lock</td>
+        <td>Single canonical Stage A/B command path + deterministic env contract documented and reproducible on clean checkout</td>
+        <td><span class="version-status status-building">Building</span></td>
+      </tr>
+      <tr>
+        <td><strong>T1</strong></td>
+        <td>Data + Tokenizer Integrity</td>
+        <td>ASCII/SVG cleanup gates, tokenizer roundtrip gates, manifest invariants all passing</td>
+        <td><span class="version-status status-building">Building</span></td>
+      </tr>
+      <tr>
+        <td><strong>T2</strong></td>
+        <td>Train Correctness</td>
+        <td>CK-vs-PyTorch parity cadence, first-divergence triage closure, deterministic replay stability</td>
+        <td><span class="version-status status-building">Building</span></td>
+      </tr>
+      <tr>
+        <td><strong>T3</strong></td>
+        <td>Runtime + Throughput Stability</td>
+        <td>IR3 threaded dispatch, deterministic reductions, no regressions in train contracts/smokes</td>
+        <td><span class="version-status status-planned">Planned</span></td>
+      </tr>
+      <tr>
+        <td><strong>T4</strong></td>
+        <td>Release Gate + Handoff</td>
+        <td>One-command v7 train gate green, run-dir artifacts unified, operator docs frozen for release handoff</td>
+        <td><span class="version-status status-planned">Planned</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>v15 Entry Criteria (Hard Gate)</h3>
+  <ul class="milestone-list">
+    <li class="milestone">
+      <span class="milestone-icon planned">○</span>
+      <span class="milestone-text">Stage A and Stage B runs reproducible from the runbook on a clean machine.</span>
+    </li>
+    <li class="milestone">
+      <span class="milestone-icon planned">○</span>
+      <span class="milestone-text">Parity/drift gates pass at declared cadence with stable replay artifacts.</span>
+    </li>
+    <li class="milestone">
+      <span class="milestone-icon planned">○</span>
+      <span class="milestone-text">IR visualizer training cockpit stable for run-dir artifacts (data, tokenizer, parity, profile).</span>
+    </li>
+    <li class="milestone">
+      <span class="milestone-icon planned">○</span>
+      <span class="milestone-text">v7 train release checklist and docs sign-off completed.</span>
+    </li>
+  </ul>
+
+  <h2>Embedded + Interpretability Arc (v15 -> v17)</h2>
+  <p style="color: var(--text-secondary); margin-bottom: 1rem;">
+    v1-v14 expands model/training architecture options first; v15 lands embedded deployment targets with hard realtime constraints; v16 adds mechanistic interpretability to de-risk policy behavior before v17 autonomy integration.
+  </p>
+
+  <table class="roadmap-table">
+    <thead>
+      <tr>
+        <th>v15 Component</th>
+        <th>Target</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Memory footprint</strong></td>
+        <td><code>&lt;= 512KB</code> runtime core</td>
+        <td>Sub-512KB inference/runtime core for MCU-class deployment (model weights budget tracked separately).</td>
+      </tr>
+      <tr>
+        <td><strong>Latency targets</strong></td>
+        <td><code>&lt; 10ms</code> control-inference step</td>
+        <td>Cortex-M baseline loop target for control inference; higher-throughput token targets tracked for Cortex-A/NPU tiers.</td>
+      </tr>
+      <tr>
+        <td><strong>Determinism</strong></td>
+        <td>WCET + jitter budgets</td>
+        <td>Worst-case execution-time guarantees and bounded jitter suitable for real-time control loops.</td>
+      </tr>
+      <tr>
+        <td><strong>HAL abstraction</strong></td>
+        <td>Portable I/O interfaces</td>
+        <td>Unified hooks for IMUs, motor control (PWM), and sensor buses (I2C/SPI/UART/CAN).</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>v15.0 Timeline (Q2-Q4 2026)</h3>
+  <ul class="milestone-list">
+    <li class="milestone">
+      <span class="milestone-icon planned">○</span>
+      <span class="milestone-text"><strong>Phase 1:</strong> Core runtime with deterministic memory and loop contracts.</span>
+    </li>
+    <li class="milestone">
+      <span class="milestone-icon planned">○</span>
+      <span class="milestone-text"><strong>Phase 2:</strong> ARM Cortex-M4/M7 baseline (STM32 and NXP target track).</span>
+    </li>
+    <li class="milestone">
+      <span class="milestone-icon planned">○</span>
+      <span class="milestone-text"><strong>Phase 3:</strong> Sensor/actuator HAL hooks (IMU, motor PWM, serial buses).</span>
+    </li>
+    <li class="milestone">
+      <span class="milestone-icon planned">○</span>
+      <span class="milestone-text"><strong>Phase 4:</strong> Benchmarks for memory, latency, and control quality vs cloud/offboard baselines.</span>
+    </li>
+  </ul>
+
+  <h3>v16.0 Timeline (2027): Mechanistic Interpretability</h3>
+  <ul class="milestone-list">
+    <li class="milestone">
+      <span class="milestone-icon planned">○</span>
+      <span class="milestone-text"><strong>PR16.1:</strong> Activation tap points in lowered IR (decode/prefill) with stable op/layer IDs and deterministic dump contracts.</span>
+    </li>
+    <li class="milestone">
+      <span class="milestone-icon planned">○</span>
+      <span class="milestone-text"><strong>PR16.2:</strong> Sparse autoencoder (SAE) training pipeline on traced activations with feature dictionary/version artifacts.</span>
+    </li>
+    <li class="milestone">
+      <span class="milestone-icon planned">○</span>
+      <span class="milestone-text"><strong>PR16.3:</strong> IR-to-feature stitching layer to map SAE features to kernel paths, sections, and memory ranges.</span>
+    </li>
+    <li class="milestone">
+      <span class="milestone-icon planned">○</span>
+      <span class="milestone-text"><strong>PR16.4:</strong> Causal intervention harness (feature ablate/patch) with impact reports on logits and control-relevant metrics.</span>
+    </li>
+    <li class="milestone">
+      <span class="milestone-icon planned">○</span>
+      <span class="milestone-text"><strong>PR16.5:</strong> Interpretability artifacts integrated into ir_visualizer and operator reports.</span>
+    </li>
+  </ul>
+
+  <h3>v17 Timeline (2027+)</h3>
+  <ul class="milestone-list">
+    <li class="milestone">
+      <span class="milestone-icon planned">○</span>
+      <span class="milestone-text">Embedded LLM + vision multimodal policy execution.</span>
+    </li>
+    <li class="milestone">
+      <span class="milestone-icon planned">○</span>
+      <span class="milestone-text">Policy adapters tied into real-time control loops.</span>
+    </li>
+    <li class="milestone">
+      <span class="milestone-icon planned">○</span>
+      <span class="milestone-text">Field validation for drones and broader robotics deployments.</span>
+    </li>
+  </ul>
+
+  <h3>v18 Timeline (2028+)</h3>
+  <ul class="milestone-list">
+    <li class="milestone">
+      <span class="milestone-icon planned">○</span>
+      <span class="milestone-text">RDMA transport layer (InfiniBand/RoCE) for gradient synchronization.</span>
+    </li>
+    <li class="milestone">
+      <span class="milestone-icon planned">○</span>
+      <span class="milestone-text">Distributed optimizer state sharding (ZeRO-2/3 style for CPU memory).</span>
+    </li>
+    <li class="milestone">
+      <span class="milestone-icon planned">○</span>
+      <span class="milestone-text">Gradient compression (top-k, quantization) to reduce bandwidth requirements.</span>
+    </li>
+    <li class="milestone">
+      <span class="milestone-icon planned">○</span>
+      <span class="milestone-text">Activation checkpointing (recompute forward activations to trade compute for memory).</span>
+    </li>
+    <li class="milestone">
+      <span class="milestone-icon planned">○</span>
+      <span class="milestone-text">Pipeline parallelism for model-layer distribution across nodes.</span>
+    </li>
+    <li class="milestone">
+      <span class="milestone-icon planned">○</span>
+      <span class="milestone-text">HPC cluster job scheduler integration (SLURM, PBS, Flux).</span>
+    </li>
+    <li class="milestone">
+      <span class="milestone-icon planned">○</span>
+      <span class="milestone-text">Fault tolerance with checkpoint restart and node failure recovery.</span>
+    </li>
+    <li class="milestone">
+      <span class="milestone-icon planned">○</span>
+      <span class="milestone-text">Validation on 64+ node cluster with 10-100B parameter models.</span>
+    </li>
+  </ul>
+
+  <h2>v7 PR Progress (As of 2026-02-15)</h2>
+  <p style="color: var(--text-secondary); margin-bottom: 1rem;">
+    Snapshot of current v7 workstream in this repository. Status is based on implemented PR slices and current gate behavior.
+  </p>
+  <table class="roadmap-table">
+    <thead>
+      <tr>
+        <th>PR</th>
+        <th>Scope</th>
+        <th>Status</th>
+        <th>Notes</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>PR1</strong></td>
+        <td>v7 CLI contracts + strict preflight + inference smoke</td>
+        <td><span class="version-status status-released">Done</span></td>
+        <td class="dep-cell">Foundation for safe training iteration</td>
+      </tr>
+      <tr>
+        <td><strong>PR2</strong></td>
+        <td>Generated runtime callable via <code>--backend ck</code></td>
+        <td><span class="version-status status-released">Done</span></td>
+        <td class="dep-cell">CK runtime path executes train step loop</td>
+      </tr>
+      <tr>
+        <td><strong>PR3</strong></td>
+        <td>Contiguous train layout, canary diagnostics, layout audit, drift localization</td>
+        <td><span class="version-status status-released">Done</span></td>
+        <td class="dep-cell">Major safety/stability milestone for v7 runtime</td>
+      </tr>
+      <tr>
+        <td><strong>PR4</strong></td>
+        <td>Oracle cadence + drift triage + replay determinism</td>
+        <td><span class="version-status status-building">Building</span></td>
+        <td class="dep-cell">Tighten parity and first-divergence operator diagnostics</td>
+      </tr>
+      <tr>
+        <td><strong>PR5</strong></td>
+        <td>IR3-lowered threaded GEMM dispatch</td>
+        <td><span class="version-status status-planned">Planned</span></td>
+        <td class="dep-cell">Primary performance milestone (split M/N/K policy)</td>
+      </tr>
+      <tr>
+        <td><strong>PR6</strong></td>
+        <td>Run-dir unification + single v7 train gate command</td>
+        <td><span class="version-status status-planned">Planned</span></td>
+        <td class="dep-cell">Operator-grade end-to-end workflow</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>v7 Commit Progression (Recent)</h3>
+  <p style="color: var(--text-secondary); margin-bottom: 0.75rem;">
+    Recent v7 commits on this branch that map to the PR progression above:
+  </p>
+  <table class="roadmap-table">
+    <thead>
+      <tr>
+        <th>Commit</th>
+        <th>Summary</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td><code>40a3b221</code></td><td>land training-oracle runtime updates + regenerated docs</td></tr>
+      <tr><td><code>20b7fcbe</code></td><td>runtime checkpoints + PR4.5 roadmap/docs</td></tr>
+      <tr><td><code>c3041b1a</code></td><td>train IR/layout/codegen runtime + parity-visible tooling</td></tr>
+      <tr><td><code>db570fe5</code></td><td>train layout audit + default training kernel parity gates</td></tr>
+      <tr><td><code>f2e30342</code></td><td>execute generated C runtime for <code>--backend ck</code></td></tr>
+      <tr><td><code>e7b81c56</code></td><td>strict train CLI + inference smoke gate</td></tr>
+      <tr><td><code>115143a6</code></td><td>run-dir training viewer + PyTorch oracle parity scaffolding</td></tr>
+      <tr><td><code>9b98139d</code></td><td>initial v7 backprop foundation</td></tr>
+    </tbody>
+  </table>
+  <p style="color: var(--text-muted); font-size: 0.9rem; margin-top: 0.5rem;">
+    Full log command: <code>git log --oneline -- version/v7</code>
+  </p>
+
+  <!-- v6.6 (Current) -->
+  <div class="version-timeline">
+    <div class="version-row">
+      <div class="version-badge v6">v6.6</div>
+      <div class="version-content">
+        <div class="version-header">
+          <span class="version-status status-released">Released</span>
+          <span class="version-date">2026-01-15</span>
+        </div>
+        <p class="version-tagline">"IR Fusion + Operator Tooling" - shipped with profiler-integrated diagnostics</p>
+        <ul class="milestone-list">
+          <li class="milestone">
+            <span class="milestone-icon done">✓</span>
+            <span class="milestone-text done">Fusion patterns in IR (RMSNorm+QKV+RoPE fuse)</span>
+          </li>
+          <li class="milestone">
+            <span class="milestone-icon done">✓</span>
+            <span class="milestone-text done">MEGA kernels: mega_fused_attention_prefill</span>
+          </li>
+          <li class="milestone">
+            <span class="milestone-icon done">✓</span>
+            <span class="milestone-text done">Thread pool for parallel prefill/decode</span>
+          </li>
+          <li class="milestone">
+            <span class="milestone-icon done">✓</span>
+            <span class="milestone-text done">IR visualizer with perf gate artifacts (perf/flamegraph/VTune integration)</span>
+          </li>
+          <li class="milestone">
+            <span class="milestone-icon done">✓</span>
+            <span class="milestone-text done">v6.6 tooling contracts + 3-model matrix validation targets</span>
+          </li>
+          <li class="milestone">
+            <span class="milestone-icon done">✓</span>
+            <span class="milestone-text done">Sliding-window attention contract test integrated into make/nightly parity flow</span>
+          </li>
+          <li class="milestone">
+            <span class="milestone-icon done">✓</span>
+            <span class="milestone-text done">llama.cpp parity flow completed in prepared environments (torch + llama parity lib available)</span>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- v6.5 -->
+  <div class="version-timeline">
+    <div class="version-row">
+      <div class="version-badge v6">v6.5</div>
+      <div class="version-content">
+        <div class="version-header">
+          <span class="version-status status-released">Released</span>
+          <span class="version-date">2026-01-01</span>
+        </div>
+        <p class="version-tagline">"IR Foundation" - Complete IR-based code generation</p>
+        <ul class="milestone-list">
+          <li class="milestone">
+            <span class="milestone-icon done">✓</span>
+            <span class="milestone-text done">IR v1 → IR v2 → IR v3 lowering pipeline</span>
+          </li>
+          <li class="milestone">
+            <span class="milestone-icon done">✓</span>
+            <span class="milestone-text done">Full FP32 inference engine</span>
+          </li>
+          <li class="milestone">
+            <span class="milestone-icon done">✓</span>
+            <span class="milestone-text done">Q4_K + Q5 + Q6_K quantization support</span>
+          </li>
+          <li class="milestone">
+            <span class="milestone-icon done">✓</span>
+            <span class="milestone-text done">GGUF → BUMP weight format</span>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Design Philosophy -->
+  <h2>Design Philosophy</h2>
+  <div class="roadmap-chart">
+    <h3>Why This Roadmap?</h3>
+    <p style="color: var(--text-secondary); margin-bottom: 1rem;">
+      Every version builds on the <strong>IR graph + kernel foundation</strong>. This means:
+    </p>
+    <ul class="milestone-list">
+      <li class="milestone">
+        <span class="milestone-icon done">✓</span>
+        <span class="milestone-text">IR continuity: v7 training reuses the same IR-first architecture, with train-specific layout and execution artifacts</span>
+      </li>
+      <li class="milestone">
+        <span class="milestone-icon done">✓</span>
+        <span class="milestone-text">Fusion works for both forward and backward (doubles speed)</span>
+      </li>
+      <li class="milestone">
+        <span class="milestone-icon done">✓</span>
+        <span class="milestone-text">Multi-modal is just adding new kernel types to IR</span>
+      </li>
+      <li class="milestone">
+        <span class="milestone-icon done">✓</span>
+        <span class="milestone-text">Capability-first sequencing: v1-v14 expands architecture/training options before v15 embedded hardening</span>
+      </li>
+      <li class="milestone">
+        <span class="milestone-icon done">✓</span>
+        <span class="milestone-text">Execution discipline: close v7.x training gates before active v15 implementation</span>
+      </li>
+      <li class="milestone">
+        <span class="milestone-icon done">✓</span>
+        <span class="milestone-text">Graph-based = easy optimization passes, validation, debugging</span>
+      </li>
+    </ul>
+
+    <h3>Key Principles</h3>
+    <ul class="milestone-list">
+      <li class="milestone">
+        <span class="milestone-icon planned">○</span>
+        <span class="milestone-text"><strong>IR First:</strong> All capabilities expressed in IR, generated to C</span>
+      </li>
+      <li class="milestone">
+        <span class="milestone-icon planned">○</span>
+        <span class="milestone-text"><strong>Kernel Fusion:</strong> Every version expands fusion patterns</span>
+      </li>
+      <li class="milestone">
+        <span class="milestone-icon planned">○</span>
+        <span class="milestone-text"><strong>No Premature Optimization:</strong> Explore fast-moving architectures first, then harden for embedded constraints</span>
+      </li>
+      <li class="milestone">
+        <span class="milestone-icon planned">○</span>
+        <span class="milestone-text"><strong>No GPU Dependency:</strong> Pure CPU execution, any x86_64 machine</span>
+      </li>
+      <li class="milestone">
+        <span class="milestone-icon planned">○</span>
+        <span class="milestone-text"><strong>Transparency:</strong> See every operation via ir_visualizer.html</span>
+      </li>
+    </ul>
+  </div>
+
+  <!-- Version Naming -->
+  <h2>Version Numbering</h2>
+  <p style="color: var(--text-secondary);">
+    Version numbers follow this convention:
+  </p>
+  <ul style="color: var(--text-secondary);">
+    <li><strong>Current priority (2026):</strong> Keep v7 FP32 training parity stable, finish v8 fail-closed compiler and Qwen3-VL numerical hardening, then bring up Whisper tiny/base inference through the same circuit and kernel-contract path</li>
+    <li><strong>v6.x:</strong> Inference-only (forward pass)</li>
+    <li><strong>v7.x:</strong> Training foundation (forward + backward)</li>
+    <li><strong>v8.x:</strong> Deterministic inference compiler, numerical contracts, X-ray attribution, and vision encoding, now in active hardening</li>
+    <li><strong>v10.x:</strong> The full audio release &mdash; Whisper-style audio inference was planned here, but v8 already hardens Tiny, Base, and Small text/timestamp transcription on the JFK fixture; v10 completes long-audio window stitching, broader corpus certification, larger-model support, and whisper.cpp comparison, while FP32 audio training follows in v11</li>
+    <li><strong>v12.x:</strong> MoE architecture (efficient large models)</li>
+    <li><strong>v14.x:</strong> Parameter-efficient fine-tuning (LoRA)</li>
+    <li><strong>v15.x:</strong> Embedded AI inference on constrained hardware (enabled by v1-v14 groundwork)</li>
+    <li><strong>v16.x:</strong> Mechanistic interpretability (SAE feature learning, IR feature mapping, causal intervention tooling)</li>
+    <li><strong>v17.x:</strong> LLM + vision policy integration for realtime autonomy loops</li>
+    <li><strong>v18.x:</strong> Distributed HPC training on CPUs with RDMA (InfiniBand/RoCE), gradient compression, and multi-node orchestration for 10-100B parameter models</li>
+  </ul>
+
+  <div class="alert alert-info" style="margin-top: 1rem;">
+    <span class="alert-icon">💡</span>
+    <div>
+      <strong>Track Progress:</strong> See <a href="test-report.html">Test Report</a> for nightly results
+      or <a href="https://github.com/antshiv/C-Kernel-Engine/issues">GitHub Issues</a> for tasks.
+    </div>
+  </div>
+</div>
+
+<script>
+// Version tracking data
+const versionData = {
+  current: {
+    major: 7,
+    minor: 0,
+    date: "2026-02-26",
+    phase: "training_ir_runtime",
+    milestones_completed: 4,
+    milestones_total: 6
+  },
+  next: {
+    major: 7,
+    minor: 0,
+    phase: "training_ir_runtime",
+    target: "2026-04-15",
+    milestones_planned: 6
+  },
+  roadmap: [
+    { major: 6, minor: 6, phase: "IR Fusion + Parallel", done: true },
+    { major: 7, minor: 0, phase: "Training IR Foundation", building: true },
+    { major: 7, minor: 1, phase: "Runtime Safety + Diagnostics", building: true },
+    { major: 7, minor: 2, phase: "Threaded Train Runtime", planned: true },
+    { major: 8, minor: 0, phase: "Vision Encoder", planned: true },
+    { major: 9, minor: 0, phase: "Vision Training", planned: true },
+    { major: 10, minor: 0, phase: "Audio Encoder", planned: true },
+    { major: 11, minor: 0, phase: "Audio Training", planned: true },
+    { major: 12, minor: 0, phase: "MoE Architecture", planned: true },
+    { major: 13, minor: 0, phase: "MoE Backward", planned: true },
+    { major: 14, minor: 0, phase: "LoRA / QLoRA", planned: true },
+    { major: 15, minor: 0, phase: "Embedded AI Inference", planned: true },
+    { major: 16, minor: 0, phase: "Mechanistic Interpretability", planned: true },
+    { major: 17, minor: 0, phase: "LLM + Vision Policy Integration", planned: true }
+  ]
+};
+
+console.log('Version History loaded. Current: v' + versionData.current.major + '.' + versionData.current.minor);
+console.log('Roadmap: ' + versionData.roadmap.map(v => 'v' + v.major).join(' → '));
+</script>
+    </main>
+
+    <!-- SVG Viewer Overlay (shared across all pages) -->
+    <style>
+    .svg-viewer { cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
+    .svg-viewer:hover { transform: scale(1.01); box-shadow: 0 8px 32px rgba(255, 180, 0, 0.3); }
+    #svg-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.95); z-index: 999999; }
+    #svg-overlay .toolbar { position: fixed; top: 0; left: 0; right: 0; padding: 10px 20px; background: rgba(0,0,0,0.9); display: flex; justify-content: space-between; align-items: center; z-index: 1000000; border-bottom: 1px solid #333; }
+    #svg-overlay .toolbar .title { color: #ccc; font-size: 14px; }
+    #svg-overlay .toolbar .controls { display: flex; gap: 8px; align-items: center; }
+    #svg-overlay .toolbar button { background: #333; color: #ffb400; border: 1px solid #555; padding: 8px 14px; cursor: pointer; border-radius: 4px; font-size: 14px; }
+    #svg-overlay .toolbar button:hover { background: #444; border-color: #ffb400; }
+    #svg-overlay .toolbar .close-btn { font-size: 20px; padding: 4px 12px; }
+    #svg-overlay .toolbar .zoom-display { color: #888; font-size: 12px; min-width: 45px; text-align: center; }
+    #svg-overlay .toolbar .separator { color: #444; }
+    #svg-overlay .image-container { display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 60px 20px 20px; cursor: grab; }
+    #svg-overlay .image-container:active { cursor: grabbing; }
+    #svg-overlay .image-container img { max-width: 95%; max-height: 90vh; transform-origin: center center; }
+    #svg-overlay .nav-btn { position: fixed; top: 50%; transform: translateY(-50%); background: rgba(0,0,0,0.7); color: #ffb400; border: 1px solid #555; font-size: 30px; padding: 20px 15px; cursor: pointer; z-index: 1000000; border-radius: 4px; }
+    #svg-overlay .nav-btn:hover { background: rgba(255,180,0,0.2); border-color: #ffb400; }
+    #svg-overlay .nav-prev { left: 10px; }
+    #svg-overlay .nav-next { right: 10px; }
+    #svg-overlay .hint { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); color: #666; font-size: 12px; background: rgba(0,0,0,0.8); padding: 8px 20px; border-radius: 20px; }
+    </style>
+
+    <div id="svg-overlay">
+        <div class="toolbar">
+            <span class="title" id="svg-title">Image</span>
+            <div class="controls">
+                <button onclick="svgViewer.zoomOut()" title="Zoom Out (-)">-</button>
+                <span class="zoom-display" id="zoom-display">100%</span>
+                <button onclick="svgViewer.zoomIn()" title="Zoom In (+)">+</button>
+                <span class="separator">|</span>
+                <button onclick="svgViewer.fitWidth()" title="Fit Width (W)">Width</button>
+                <button onclick="svgViewer.fitHeight()" title="Fit Height (H)">Height</button>
+                <button onclick="svgViewer.resetZoom()" title="Reset (0)">Reset</button>
+                <span class="separator">|</span>
+                <button class="close-btn" onclick="svgViewer.close()" title="Close (ESC)">&times;</button>
+            </div>
+        </div>
+        <button class="nav-btn nav-prev" onclick="svgViewer.prev()" title="Previous">&larr;</button>
+        <button class="nav-btn nav-next" onclick="svgViewer.next()" title="Next">&rarr;</button>
+        <div class="image-container" id="svg-container">
+            <img id="svg-image" src="" alt="">
+        </div>
+        <div class="hint">Scroll to zoom | Drag to pan | W/H to fit | 0 to reset | ESC to close</div>
+    </div>
+
+    <script>
+    var svgViewer = (function() {
+        var overlay, img, titleEl, container;
+        var images = [];
+        var currentIndex = 0;
+        var scale = 1, panX = 0, panY = 0;
+        var isDragging = false, dragStartX, dragStartY, panStartX, panStartY;
+
+        function init() {
+            overlay = document.getElementById('svg-overlay');
+            img = document.getElementById('svg-image');
+            titleEl = document.getElementById('svg-title');
+            container = document.getElementById('svg-container');
+            if (!overlay || !img) return;
+
+            document.querySelectorAll('.svg-viewer').forEach(function(viewer, index) {
+                var viewerImg = viewer.querySelector('img');
+                if (viewerImg) {
+                    images.push({ src: viewerImg.src, title: viewer.getAttribute('data-title') || viewerImg.alt || 'Diagram' });
+                    viewer.onclick = function(e) { e.preventDefault(); open(index); };
+                }
+            });
+
+            container.addEventListener('wheel', function(e) {
+                e.preventDefault();
+                scale = Math.max(0.5, Math.min(10, scale + (e.deltaY > 0 ? -0.2 : 0.2)));
+                updateTransform();
+            });
+
+            container.addEventListener('mousedown', function(e) { isDragging = true; dragStartX = e.clientX; dragStartY = e.clientY; panStartX = panX; panStartY = panY; });
+            document.addEventListener('mousemove', function(e) { if (!isDragging) return; panX = panStartX + (e.clientX - dragStartX); panY = panStartY + (e.clientY - dragStartY); updateTransform(); });
+            document.addEventListener('mouseup', function() { isDragging = false; });
+
+            document.addEventListener('keydown', function(e) {
+                if (overlay.style.display !== 'block') return;
+                if (e.key === 'Escape') close();
+                if (e.key === 'ArrowLeft') prev();
+                if (e.key === 'ArrowRight') next();
+                if (e.key === '+' || e.key === '=') zoomIn();
+                if (e.key === '-') zoomOut();
+                if (e.key === '0') resetZoom();
+                if (e.key === 'w' || e.key === 'W') fitWidth();
+                if (e.key === 'h' || e.key === 'H') fitHeight();
+            });
+
+            overlay.addEventListener('click', function(e) { if (e.target === overlay || e.target === container) close(); });
+        }
+
+        function updateTransform() {
+            img.style.transform = 'translate(' + panX + 'px, ' + panY + 'px) scale(' + scale + ')';
+            var zd = document.getElementById('zoom-display');
+            if (zd) zd.textContent = Math.round(scale * 100) + '%';
+        }
+
+        function open(index) {
+            if (!images[index]) return;
+            currentIndex = index; scale = 1; panX = 0; panY = 0;
+            img.src = images[index].src;
+            titleEl.textContent = images[index].title + ' (' + (index + 1) + '/' + images.length + ')';
+            updateTransform();
+            overlay.style.display = 'block';
+            document.body.style.overflow = 'hidden';
+        }
+
+        function close() { overlay.style.display = 'none'; document.body.style.overflow = ''; }
+        function prev() { open((currentIndex - 1 + images.length) % images.length); }
+        function next() { open((currentIndex + 1) % images.length); }
+        function zoomIn() { scale = Math.min(10, scale + 0.25); updateTransform(); }
+        function zoomOut() { scale = Math.max(0.5, scale - 0.25); updateTransform(); }
+        function resetZoom() { scale = 1; panX = 0; panY = 0; updateTransform(); }
+
+        function fitWidth() {
+            if (!img.naturalWidth || !img.complete) { img.onload = fitWidth; return; }
+            scale = Math.max(0.1, Math.min(10, (window.innerWidth - 150) / img.naturalWidth));
+            panX = 0; panY = 0; updateTransform();
+        }
+
+        function fitHeight() {
+            if (!img.naturalHeight || !img.complete) { img.onload = fitHeight; return; }
+            scale = Math.max(0.1, Math.min(10, (window.innerHeight - 120) / img.naturalHeight));
+            panX = 0; panY = 0; updateTransform();
+        }
+
+        if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', init); } else { init(); }
+
+        return { open: open, close: close, prev: prev, next: next, zoomIn: zoomIn, zoomOut: zoomOut, resetZoom: resetZoom, fitWidth: fitWidth, fitHeight: fitHeight };
+    })();
+
+    // Mobile navigation
+    (function() {
+        var navToggle = document.querySelector('.nav-toggle');
+        var siteNav = document.querySelector('.site-nav');
+        var dropdowns = document.querySelectorAll('.nav-dropdown');
+
+        if (navToggle && siteNav) {
+            navToggle.addEventListener('click', function() {
+                navToggle.classList.toggle('active');
+                siteNav.classList.toggle('open');
+                navToggle.setAttribute('aria-expanded', siteNav.classList.contains('open'));
+            });
+
+            // Close menu when clicking a non-dropdown link
+            siteNav.querySelectorAll('a:not(.nav-dropdown-menu a)').forEach(function(link) {
+                link.addEventListener('click', function() {
+                    if (window.innerWidth <= 768) {
+                        navToggle.classList.remove('active');
+                        siteNav.classList.remove('open');
+                    }
+                });
+            });
+        }
+
+        // Handle dropdowns on mobile
+        dropdowns.forEach(function(dropdown) {
+            var trigger = dropdown.querySelector('.nav-trigger');
+            if (trigger) {
+                trigger.addEventListener('click', function(e) {
+                    if (window.innerWidth <= 768) {
+                        e.preventDefault();
+                        // Close other dropdowns
+                        dropdowns.forEach(function(d) {
+                            if (d !== dropdown) d.classList.remove('open');
+                        });
+                        dropdown.classList.toggle('open');
+                    }
+                });
+            }
+        });
+
+        // Close dropdowns when clicking outside on mobile
+        document.addEventListener('click', function(e) {
+            if (window.innerWidth <= 768 && !e.target.closest('.nav-dropdown')) {
+                dropdowns.forEach(function(d) { d.classList.remove('open'); });
+            }
+        });
+    })();
+
+    // Site search keyboard shortcuts: "/" or Ctrl+K / Cmd+K focuses the header search box.
+    (function() {
+        var searchInput = document.getElementById('site-search-input');
+        if (!searchInput) return;
+        document.addEventListener('keydown', function(e) {
+            var target = e.target;
+            var tag = (target.tagName || '').toLowerCase();
+            var typing = tag === 'input' || tag === 'textarea' || tag === 'select' || target.isContentEditable;
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+                e.preventDefault();
+                searchInput.focus();
+                searchInput.select();
+            } else if (e.key === '/' && !typing) {
+                e.preventDefault();
+                searchInput.focus();
+            }
+        });
+    })();
+    </script>
+
+    <!-- MathJax for LaTeX equations across docs pages -->
+    <script>
+    window.MathJax = {
+        tex: {
+            inlineMath: [['\\(', '\\)'], ['$', '$']],
+            displayMath: [['\\[', '\\]'], ['$$', '$$']],
+            processEscapes: true,
+            processEnvironments: true
+        },
+        options: {
+            skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
+        },
+        svg: {
+            fontCache: 'global'
+        }
+    };
+    </script>
+    <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+
+    <footer style="background: #2a2a2a; border-top: 1px solid #454545; color: #b0b0b0; padding: 3rem 2rem; margin-top: auto;">
+        <div style="max-width: 1200px; margin: 0 auto; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 2rem;">
+            <div>
+                <h4 style="color: #ffb400; margin-bottom: 0.75rem; font-size: 1rem;">C-Kernel-Engine</h4>
+                <p style="color: #707070; font-size: 0.875rem; margin: 0;">High-performance ML kernels with full PyTorch parity.</p>
+            </div>
+            <div>
+                <h4 style="color: #ffb400; margin-bottom: 0.75rem; font-size: 1rem;">Resources</h4>
+                <ul style="list-style: none; padding: 0; margin: 0;">
+                    <li style="margin-bottom: 0.5rem;"><a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine" style="color: #909090; text-decoration: none; font-size: 0.875rem;">GitHub</a></li>
+                    <li style="margin-bottom: 0.5rem;"><a href="contributing.html" style="color: #909090; text-decoration: none; font-size: 0.875rem;">Contributor Path</a></li>
+                    <li style="margin-bottom: 0.5rem;"><a href="architecture.html" style="color: #909090; text-decoration: none; font-size: 0.875rem;">Architecture</a></li>
+                    <li style="margin-bottom: 0.5rem;"><a href="api.html" style="color: #909090; text-decoration: none; font-size: 0.875rem;">API Reference</a></li>
+                </ul>
+            </div>
+            <div>
+                <h4 style="color: #ffb400; margin-bottom: 0.75rem; font-size: 1rem;">Related</h4>
+                <ul style="list-style: none; padding: 0; margin: 0;">
+                    <li style="margin-bottom: 0.5rem;"><a href="https://www.shivasnotes.com/" style="color: #909090; text-decoration: none; font-size: 0.875rem;">ShivasNotes</a></li>
+                    <li style="margin-bottom: 0.5rem;"><a href="https://www.shivasnotes.com/work-with-us" style="color: #909090; text-decoration: none; font-size: 0.875rem;">Work With Us</a></li>
+                    <li style="margin-bottom: 0.5rem;"><a href="https://antshiv.com/" style="color: #909090; text-decoration: none; font-size: 0.875rem;">antshiv.com</a></li>
+                </ul>
+            </div>
+            <div style="text-align: right;">
+                <p style="color: #606060; font-size: 0.75rem; margin: 0;">Static docs · C-first execution</p>
+                <p style="color: #606060; font-size: 0.75rem; margin: 0.5rem 0 0 0;">2026-10-21</p>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>

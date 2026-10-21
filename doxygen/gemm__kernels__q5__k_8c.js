@@ -1,0 +1,28 @@
+var gemm__kernels__q5__k_8c =
+[
+    [ "CK_Q5K_STACK_Q8_BLOCKS", "gemm__kernels__q5__k_8c.html#a9f70d4a7653a179018a1583a10d33c97", null ],
+    [ "QK_K", "gemm__kernels__q5__k_8c.html#afd2f43dcca46f268b2008cb200198e50", null ],
+    [ "ck_q5_k_prepare_weight", "gemm__kernels__q5__k_8c.html#a1d2c4fe4bf009a92a62d7d7b803b78e2", null ],
+    [ "ck_q5_k_prepared_block_size", "gemm__kernels__q5__k_8c.html#ab79f02085140f8d858ae1ab0ef6f58fe", null ],
+    [ "ck_q5k_debug_fp32_fallback", "gemm__kernels__q5__k_8c.html#a97d5f32d99bfce1027e26f89ef4d09de", null ],
+    [ "ck_q5k_debug_generic_dot", "gemm__kernels__q5__k_8c.html#a05e8183a955190d9e7e87b9b5d04642e", null ],
+    [ "dot_q5_k_q8_k_row", "gemm__kernels__q5__k_8c.html#aaff0e20a1ba7d0fb69911995c0347431", null ],
+    [ "gemm_nt_q5_k", "gemm__kernels__q5__k_8c.html#af1ba72d73c6d788f686bfc12a60281a4", null ],
+    [ "gemm_nt_q5_k_prepared", "gemm__kernels__q5__k_8c.html#ade3e51af530aef1d7883f755b978920e", null ],
+    [ "gemm_nt_q5_k_prepared_m4", "gemm__kernels__q5__k_8c.html#a624942249ce60cd1067badff49addf0d", null ],
+    [ "gemm_nt_q5_k_prepared_q8_m4_nrange", "gemm__kernels__q5__k_8c.html#ae35b341df2c29c2ffd3d6312ad0efccf", null ],
+    [ "gemm_nt_q5_k_q8_k", "gemm__kernels__q5__k_8c.html#aa42d4abdad51556e030da79dd53fb5f0", null ],
+    [ "gemm_nt_q5_k_q8_k_m2", "gemm__kernels__q5__k_8c.html#a239b8b97259e792be99ae39958109006", null ],
+    [ "gemm_nt_q5_k_q8_k_ref", "gemm__kernels__q5__k_8c.html#aab121e92f0792fcfc1de07cea6cd5e0d", null ],
+    [ "gemm_nt_q5_k_ref", "gemm__kernels__q5__k_8c.html#aa165bcff171b4bc4877ac5d604ddb698", null ],
+    [ "gemm_nt_q5_k_ref_fp32", "gemm__kernels__q5__k_8c.html#a037305c0ba58ea1cae37e0f5e7f04de2", null ],
+    [ "gemm_q5_k_q8_k_compact_rows4", "gemm__kernels__q5__k_8c.html#a303448aab08b1fbc5ede119c7afc67bf", null ],
+    [ "gemv_q5_k", "gemm__kernels__q5__k_8c.html#a7d97db74bd955fdebfb0564fc33b6eaf", null ],
+    [ "gemv_q5_k_q8_k", "gemm__kernels__q5__k_8c.html#a52a3b8297ab2727dbe0f75fdb5f78a3d", null ],
+    [ "gemv_q5_k_q8_k_ref", "gemm__kernels__q5__k_8c.html#af70c58d2a66aba5bee573b46bee8222d", null ],
+    [ "gemv_q5_k_ref", "gemm__kernels__q5__k_8c.html#a0d2f4480df784df8fa9db194489a70c3", null ],
+    [ "gemv_q5_k_ref_fp32", "gemm__kernels__q5__k_8c.html#ab7421a7835c15bf10a2ea016fb114383", null ],
+    [ "q5_k_quant_value", "gemm__kernels__q5__k_8c.html#a3b4cb4ffeda004b789c591599faffb5d", null ],
+    [ "quantize_row_q8_k", "gemm__kernels__q5__k_8c.html#a64b28ca8a25883986a0d22e39a574a32", null ],
+    [ "unpack_q5_k_scales", "gemm__kernels__q5__k_8c.html#acbf9397ded137f5585b51b93c94522ef", null ]
+];

@@ -1,0 +1,216 @@
+<!-- TITLE: Contributor Path -->
+<!-- NAV: contributing -->
+
+<style>
+.contrib-hero { position: relative; overflow: hidden; margin: 0 0 2rem; padding: 2.4rem; border: 1px solid rgba(7,173,248,.35); border-radius: 18px; background: radial-gradient(circle at 85% 15%, rgba(7,173,248,.18), transparent 34%), linear-gradient(135deg, #26333a, #202529 58%, #302c20); }
+.contrib-hero:before { content: ''; position: absolute; inset: 0; pointer-events: none; opacity: .18; background-image: linear-gradient(rgba(255,255,255,.08) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.08) 1px, transparent 1px); background-size: 34px 34px; }
+.contrib-hero > * { position: relative; }
+.contrib-kicker { color: var(--orange); font: 700 .78rem 'JetBrains Mono', monospace; letter-spacing: .13em; text-transform: uppercase; }
+.contrib-hero h1 { max-width: 900px; margin: .55rem 0 .9rem; font-size: clamp(2.2rem, 5vw, 4.8rem); line-height: .98; }
+.contrib-lead { max-width: 880px; color: var(--text-secondary); font-size: 1.14rem; }
+.contrib-actions { display: flex; gap: .75rem; flex-wrap: wrap; margin-top: 1.35rem; }
+.contrib-button { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: .75rem 1rem; border: 1px solid var(--orange); border-radius: 7px; color: var(--dark); background: var(--orange); font-weight: 750; text-decoration: none; }
+.contrib-button.secondary { color: var(--white); border-color: var(--grey-light); background: rgba(255,255,255,.045); }
+.contrib-figure { margin: 2rem 0; padding: .7rem; border: 1px solid var(--grey); border-radius: 14px; background: #171d22; }
+.contrib-figure img { display: block; width: 100%; height: auto; border-radius: 10px; }
+.contrib-figure figcaption { padding: .75rem .45rem .2rem; color: var(--text-muted); font-size: .86rem; }
+.contrib-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; margin: 1rem 0 2rem; }
+.contrib-card { padding: 1.35rem; border: 1px solid var(--grey); border-top: 4px solid var(--blue); border-radius: 10px; background: var(--dark-card); }
+.contrib-card.green { border-top-color: var(--green); }
+.contrib-card.orange { border-top-color: var(--orange); }
+.contrib-card h3 { margin-top: 0; }
+.contrib-levels { display: grid; gap: .8rem; margin: 1rem 0 2rem; }
+.contrib-level { display: grid; grid-template-columns: 100px minmax(0, 1.15fr) minmax(0, 1fr); gap: 1rem; align-items: start; padding: 1rem 1.1rem; border: 1px solid var(--grey); border-left: 5px solid var(--green); border-radius: 8px; background: rgba(255,255,255,.025); }
+.contrib-level:nth-child(2), .contrib-level:nth-child(3) { border-left-color: var(--blue); }
+.contrib-level:nth-child(4), .contrib-level:nth-child(5) { border-left-color: var(--orange); }
+.contrib-level-id { color: var(--orange); font: 800 .82rem 'JetBrains Mono', monospace; letter-spacing: .06em; }
+.contrib-level strong { display: block; margin-bottom: .25rem; color: var(--white); }
+.contrib-level p { margin: 0; color: var(--text-secondary); }
+.contrib-flow { counter-reset: onboarding; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .65rem; margin: 1rem 0 2rem; }
+.contrib-step { min-height: 150px; padding: 1rem; border: 1px solid var(--grey); border-radius: 9px; background: var(--dark-card); }
+.contrib-step:before { counter-increment: onboarding; content: counter(onboarding, decimal-leading-zero); display: block; margin-bottom: .65rem; color: var(--blue); font: 800 1rem 'JetBrains Mono', monospace; }
+.contrib-step strong { display: block; margin-bottom: .35rem; color: var(--white); }
+.contrib-step p { margin: 0; color: var(--text-muted); font-size: .88rem; }
+.contrib-callout { margin: 1.5rem 0; padding: 1.25rem 1.4rem; border: 1px solid rgba(71,180,117,.4); border-left: 5px solid var(--green); border-radius: 8px; background: rgba(71,180,117,.07); }
+.contrib-callout.warning { border-color: rgba(255,180,0,.4); border-left-color: var(--orange); background: rgba(255,180,0,.065); }
+.contrib-table { width: 100%; border-collapse: collapse; margin: 1rem 0 2rem; }
+.contrib-table th, .contrib-table td { padding: .8rem; border: 1px solid var(--grey); vertical-align: top; text-align: left; }
+.contrib-table th { color: var(--orange); background: rgba(255,180,0,.07); }
+@media (max-width: 900px) { .contrib-grid { grid-template-columns: 1fr; } .contrib-level { grid-template-columns: 82px 1fr; } .contrib-level > :last-child { grid-column: 2; } .contrib-flow { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 600px) { .contrib-hero { padding: 1.5rem; } .contrib-level { grid-template-columns: 1fr; } .contrib-level > :last-child { grid-column: auto; } .contrib-flow { grid-template-columns: 1fr; } .contrib-actions, .contrib-button { width: 100%; } .contrib-table { display: block; overflow-x: auto; } }
+</style>
+
+<section class="contrib-hero">
+  <div class="contrib-kicker">Build evidence with us</div>
+  <h1>Start small. Learn one boundary. Make it reproducible.</h1>
+  <p class="contrib-lead">C-Kernel-Engine spans model mathematics, generated C, numerical contracts, SIMD kernels, Linux profiling, multimodal execution, and future distributed CPU systems. You do not need to understand all of it before contributing. Begin with one bounded problem whose result another engineer can reproduce.</p>
+  <div class="contrib-actions">
+    <a class="contrib-button" href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/issues">Find or open an issue</a>
+    <a class="contrib-button secondary" href="quickstart.html">Build CKE first</a>
+    <a class="contrib-button secondary" href="model-bringup-guide.html">Bring a model to CKE</a>
+    <a class="contrib-button secondary" href="test-report.html">Inspect current evidence</a>
+  </div>
+</section>
+
+<section class="contrib-callout">
+  <h2 style="margin-top:0">The hard research problem is not the entrance exam</h2>
+  <p style="margin-bottom:0">Current work may involve Qwen3-VL long-context divergence, BF16 reduction semantics, AVX2/AVX-512/AMX dispatch, compiler ownership, or multimodal parity. Those are Level-5 problems. A distribution fix, profiler adapter, benchmark artifact, documentation correction, or independent numerical fixture is a complete and useful contribution.</p>
+</section>
+
+<figure class="contrib-figure svg-viewer" data-title="CKE contributor ladder">
+  <img src="assets/contributor-ladder.svg" alt="Five-level CKE contributor ladder from documentation and compatibility through profiling, numerical tests, kernels, and compiler or distributed systems work">
+  <figcaption>Progression is optional, not a ranking. Own the smallest level where you can produce a reliable result.</figcaption>
+</figure>
+
+<h2>The Five Contribution Levels</h2>
+
+<div class="contrib-levels">
+  <article class="contrib-level">
+    <div class="contrib-level-id">LEVEL 1</div>
+    <div><strong>Documentation, compatibility, and build fixes</strong><p>Improve setup instructions, repair one distribution-specific failure, clarify a command, or make an existing workflow reproducible on a named machine.</p></div>
+    <div><strong>Completion evidence</strong><p>Environment details, failing command, corrected command or patch, and proof the documented path now succeeds.</p></div>
+  </article>
+  <article class="contrib-level">
+    <div class="contrib-level-id">LEVEL 2</div>
+    <div><strong>Benchmarks and profiling adapters</strong><p>Add a repeatable perf, FlameGraph, flamegraph-rs, VTune, Advisor, cache, assembly, or power-measurement lane without breaking existing platforms.</p></div>
+    <div><strong>Completion evidence</strong><p>Exact command, CPU and compiler metadata, workload, raw artifact, interpretation, and known sources of measurement noise.</p></div>
+  </article>
+  <article class="contrib-level">
+    <div class="contrib-level-id">LEVEL 3</div>
+    <div><strong>Reference tests and numerical fixtures</strong><p>Exercise one operation or canonical tensor boundary against PyTorch, llama.cpp, SciPy, a finite-difference gradient, or another independent implementation.</p></div>
+    <div><strong>Completion evidence</strong><p>Deterministic fixture, independent oracle, tolerance and dtype policy, failure reproduction, and regression test.</p></div>
+  </article>
+  <article class="contrib-level">
+    <div class="contrib-level-id">LEVEL 4</div>
+    <div><strong>Kernel implementation and optimization</strong><p>Implement or tune one C kernel, SIMD route, memory layout, fusion, quantized path, or thread-pool boundary.</p></div>
+    <div><strong>Completion evidence</strong><p>Parity first, supported-ISA detection, before/after benchmark, profiler attribution, fallback behavior, and no unsupported performance claim.</p></div>
+  </article>
+  <article class="contrib-level">
+    <div class="contrib-level-id">LEVEL 5</div>
+    <div><strong>Compiler, DSL, multimodal, and distributed systems</strong><p>Change circuit semantics, lowering, kernel binding, generated runtime ownership, numerical X-ray attribution, multimodal stitching, or multi-node execution.</p></div>
+    <div><strong>Completion evidence</strong><p>Written contract, cross-layer tests, generated-C inspection, architecture regression coverage, migration impact, and end-to-end evidence.</p></div>
+  </article>
+</div>
+
+<h2>Three Good First Paths</h2>
+
+<div class="contrib-grid">
+  <article class="contrib-card green">
+    <h3>Linux distribution and profiling adapter</h3>
+    <p>Build one known model on Arch, CachyOS, Fedora, Debian, or another Linux environment. Preserve Ubuntu behavior while adding explicit commands for the platform's profiler package and interface.</p>
+    <p><strong>Concrete example:</strong> detect or document <code>flamegraph-rs</code> on Arch/CachyOS instead of assuming the Perl FlameGraph command line, then capture the resulting SVG and baseline metadata.</p>
+  </article>
+  <article class="contrib-card">
+    <h3>Reproducible benchmark artifact</h3>
+    <p>Run one supported model with a fixed prompt and thread count. Record CPU topology, ISA flags, compiler, CKE commit, model hash, command, prompt-eval rate, decode rate, RSS, and profiler output.</p>
+    <p>The contribution is the reproducible evidence package, not a context-free tokens-per-second number.</p>
+  </article>
+  <article class="contrib-card orange">
+    <h3>One numerical boundary</h3>
+    <p>Choose RMSNorm, RoPE, quantized dot product, softmax, Conv1D, attention, or another bounded operation. Compare CKE against an independent oracle using deterministic tensors and an explicit precision policy.</p>
+    <p>Do not begin with complete model generation unless the smaller boundary already passes.</p>
+  </article>
+  <article class="contrib-card">
+    <h3>Documentation that follows the code</h3>
+    <p>Reproduce a public guide from a clean checkout. Correct stale paths, unsupported assumptions, missing dependencies, or unclear evidence labels. Link every claim to the current implementation or test.</p>
+    <p>Documentation-only changes still need reproduction evidence.</p>
+  </article>
+</div>
+
+<p>Finding the right page to update is easier with the built-in site search: press <code>/</code> on any docs page (or <code>Ctrl+K</code>) and search across every published guide, runbook, and section anchor. Search runs fully client-side in the browser against <code>search-index.json</code>, which <code>docs/site/build.sh</code> regenerates on every build, so new or updated pages become searchable as soon as the site is rebuilt.</p>
+
+<h2>The Onboarding Loop</h2>
+
+<div class="contrib-flow">
+  <article class="contrib-step"><strong>Build</strong><p>Follow the quickstart and record your machine, OS, CPU, compiler, and commit.</p></article>
+  <article class="contrib-step"><strong>Choose one boundary</strong><p>Use an existing issue or open a focused issue describing one observable failure or missing path.</p></article>
+  <article class="contrib-step"><strong>Reproduce</strong><p>Capture the failing and passing commands before broadening the change.</p></article>
+  <article class="contrib-step"><strong>Open a draft PR</strong><p>Share direction early. Do not wait until a large rewrite is complete.</p></article>
+  <article class="contrib-step"><strong>Close with evidence</strong><p>Attach tests, artifacts, limits, and the exact claim the change supports.</p></article>
+</div>
+
+<h2>Discord Onboarding</h2>
+
+<section class="contrib-callout">
+  <p><strong>If you are already in the CKE Discord:</strong> introduce yourself with your operating system, CPU, compiler, the CKE path you successfully ran, and one contribution level that interests you. Link a focused GitHub issue or draft PR so technical decisions remain searchable outside chat.</p>
+  <p><strong>If you need an invite:</strong> open a short onboarding issue in the CKE repository. The public repository remains the durable source for scope, commands, patches, evidence, and review; Discord is for coordination and questions, not the only copy of a technical decision.</p>
+  <p style="margin-bottom:0"><strong>Good first message:</strong> "I built commit <code>&lt;sha&gt;</code> on <code>&lt;OS&gt;</code> with <code>&lt;CPU/compiler&gt;</code>. I want to work at Level 2 on the Arch/CachyOS flamegraph-rs path. Here is my baseline command and draft issue."</p>
+</section>
+
+<h2>Pull Request Evidence Contract</h2>
+
+<table class="contrib-table">
+  <thead><tr><th>Include</th><th>Why it matters</th></tr></thead>
+  <tbody>
+    <tr><td>Problem and bounded scope</td><td>Reviewers can tell what changed and what deliberately did not.</td></tr>
+    <tr><td>Hardware, OS, compiler, model, and commit</td><td>CPU behavior and performance claims are environment-dependent.</td></tr>
+    <tr><td>Exact reproduction commands</td><td>Another contributor can rerun the result without reconstructing your shell history.</td></tr>
+    <tr><td>Independent correctness evidence</td><td>An implementation must not validate only against itself.</td></tr>
+    <tr><td>Before/after artifacts for performance work</td><td>Optimization requires attribution, not intuition or CPU utilization alone.</td></tr>
+    <tr><td>Known limits and unsupported cases</td><td>A narrow validated path must not become a broad accidental claim.</td></tr>
+    <tr><td>Focused commit history</td><td>Intent remains inspectable and unrelated changes do not hide in the patch.</td></tr>
+  </tbody>
+</table>
+
+<h2>Build and Test Before Review</h2>
+
+<p>Enable the repository hooks after cloning:</p>
+
+<pre><code>./scripts/setup-hooks.sh
+git config core.hooksPath</code></pre>
+
+<p>The configured path should be <code>.githooks</code>. Run the tests relevant to your changed boundary and report exactly what ran. Do not claim the complete engine passed if you ran only a scoped test.</p>
+
+<pre><code>make
+make test
+
+# Examples of focused Python gates
+python3 -m pytest tests/test_v8_attention_contracts.py
+python3 -m pytest tests/test_v8_numerical_execution_contracts.py</code></pre>
+
+<section class="contrib-callout warning">
+  <h2 style="margin-top:0">AI assistance does not transfer responsibility</h2>
+  <p style="margin-bottom:0">AI tools may help inspect code, propose tests, or draft a patch. The human contributor remains accountable for every equation, hardware assumption, generated artifact, claim, and line submitted, and represents that they have the right to submit the material for project review. AI providers are not listed as contributors merely because their tools were used. Correct-looking code without independent evidence is not a completed contribution.</p>
+</section>
+
+<h2>Contribution, Recognition, Copyright, And Licence Are Different</h2>
+
+<p>A contribution is the engineering act of finding a bounded problem, reproducing it, submitting a correction with evidence, and passing review. Recognition records who performed that work. Copyright concerns legal rights in original expression. A software licence states what permissions a rights holder grants to users. Merging one pull request does not collapse those four concepts into one.</p>
+
+<figure class="contrib-figure svg-viewer" data-title="CKE contribution and rights flow">
+  <img src="assets/contribution-rights-flow.svg" alt="Contribution lifecycle from discovery through merge, followed by separate recognition, copyright, and project licensing contracts">
+  <figcaption>A merge preserves engineering history. It does not silently create a copyright assignment or a project-wide software licence.</figcaption>
+</figure>
+
+<div class="contrib-grid">
+  <article class="contrib-card green"><h3>Engineering contribution</h3><p>The person found or clarified a real boundary, produced reproducible evidence, and submitted a reviewed improvement. This can be meaningful even when the final patch is small.</p></article>
+  <article class="contrib-card"><h3>Recognition</h3><p>Git commits, pull requests, <code>CONTRIBUTORS.md</code>, <code>.mailmap</code>, and release notes preserve who did the work. Recognition survives later refactoring.</p></article>
+  <article class="contrib-card"><h3>Copyright</h3><p>Copyright, where it exists, concerns original human expression. CKE currently has no CLA or DCO, so a merge is not documented as an automatic copyright assignment.</p></article>
+  <article class="contrib-card orange"><h3>Software licence</h3><p>A root licence grants reuse permissions for the project. Dependency licences apply to those dependencies only; they do not automatically license CKE's original code.</p></article>
+</div>
+
+<section class="contrib-callout warning">
+  <h2 style="margin-top:0">Current CKE licensing status</h2>
+  <p>CKE does not currently publish a root <code>LICENSE</code> file. Repository visibility is not the same as an open-source licence. Until explicit terms are adopted, do not infer a general grant to copy, modify, redistribute, sublicense, or sell CKE code from the licences of llama.cpp, PyTorch, or any other included project.</p>
+  <p style="margin-bottom:0">Read <a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/blob/main/LICENSING.md">LICENSING.md</a> for the current boundary and the governance steps required before a stable licensed release.</p>
+</section>
+
+<h2>Recognition Survives Refactoring</h2>
+
+<p>CKE recognizes the person who found the problem, established the reproduction, and submitted the reviewed correction. Recognition is not measured only by line count, and replacing those lines later does not erase the original engineering contribution.</p>
+
+<ul>
+  <li>Merged commits and pull requests remain the authoritative historical record.</li>
+  <li><a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/blob/main/CONTRIBUTORS.md">CONTRIBUTORS.md</a> provides a curated index of community work.</li>
+  <li><code>.mailmap</code> consolidates known identities for accurate shortlogs without rewriting published history.</li>
+  <li>Release notes credit the contributor and link the pull request when a change affects a supported workflow.</li>
+</ul>
+
+<h2>Where To Go Next</h2>
+
+<div class="contrib-grid">
+  <article class="contrib-card"><h3>Understand the runtime</h3><p><a href="quickstart.html">Quickstart</a>, <a href="architecture.html">architecture</a>, <a href="ir-pipeline.html">IR pipeline</a>, and <a href="v8-runbook.html">v8 runbook</a>.</p></article>
+  <article class="contrib-card"><h3>Work on performance</h3><p><a href="profiling.html">Profiling guide</a>, <a href="kernel-tuning-methodology.html">kernel tuning methodology</a>, and <a href="simd-architecture.html">SIMD architecture</a>.</p></article>
+  <article class="contrib-card"><h3>Work on correctness</h3><p><a href="pytorch-parity.html">PyTorch parity</a>, <a href="divergence-harness.html">divergence harness</a>, and <a href="v8-numerical-contracts.html">numerical contracts</a>.</p></article>
+  <article class="contrib-card"><h3>Coordinate publicly</h3><p><a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/issues">Issues</a>, <a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/pulls">draft pull requests</a>, and the current <a href="test-report.html">test report</a>.</p></article>
+</div>

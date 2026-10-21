@@ -1,0 +1,3326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Model + Kernel Matrix | C-Kernel-Engine</title>
+    <meta name="description" content="Visual matrix of C-Kernel-Engine v8 model families (Qwen, Gemma, GLM4, Nemotron-H, Kimi, Cohere2, Muse-Glimmer, Laguna, Instella, Whisper, Parakeet) mapped to IR templates, kernel families, and quant contracts.">
+    <meta name="robots" content="index,follow">
+    <link rel="canonical" href="https://c-kernel-engine.github.io/C-Kernel-Engine/model-kernel-matrix.html">
+    <meta property="og:title" content="Model + Kernel Matrix | C-Kernel-Engine">
+    <meta property="og:description" content="Visual matrix of C-Kernel-Engine v8 model families (Qwen, Gemma, GLM4, Nemotron-H, Kimi, Cohere2, Muse-Glimmer, Laguna, Instella, Whisper, Parakeet) mapped to IR templates, kernel families, and quant contracts.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://c-kernel-engine.github.io/C-Kernel-Engine/model-kernel-matrix.html">
+    <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+    <style>
+        :root {
+            /* Antsand Brand Colors - Lightened */
+            --orange: #ffb400;
+            --orange-dark: #e5a200;
+            --orange-light: #ffc933;
+            --dark: #2a2a2a;
+            --dark-lighter: #363636;
+            --dark-card: #323232;
+            --grey: #454545;
+            --grey-light: #555555;
+            --text-primary: #f5f5f5;
+            --text-secondary: #b0b0b0;
+            --text-muted: #808080;
+            --bg-dark: #232323;
+            --white: #ffffff;
+            --code-bg: #1a1a1a;
+            --green: #47b475;
+            --blue: #07adf8;
+            --gradient-header: linear-gradient(135deg, #2a2a2a 0%, #363636 50%, #2a2a2a 100%);
+            --shadow-sm: 0 2px 4px rgba(0,0,0,0.3);
+            --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+            --shadow-lg: 0 8px 24px rgba(0,0,0,0.5);
+            --transition: all 0.3s ease;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-dark);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Header */
+        .site-header {
+            background: var(--gradient-header);
+            border-bottom: 3px solid var(--orange);
+            padding: 0.5rem 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 1rem;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            box-shadow: var(--shadow-md);
+        }
+
+        .header-brand {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            text-decoration: none;
+        }
+
+        .header-logo {
+            width: 40px;
+            height: 40px;
+            background: var(--orange);
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            color: var(--dark);
+            font-size: 1.1rem;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .header-title {
+            color: var(--white);
+            font-size: 1.4rem;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+        }
+
+        .header-subtitle {
+            color: var(--orange);
+            font-size: 0.8rem;
+            font-weight: 500;
+        }
+
+        /* Navigation */
+        .site-nav {
+            display: flex;
+            gap: 0.25rem;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .site-nav > a,
+        .nav-dropdown > .nav-trigger {
+            color: var(--text-secondary);
+            text-decoration: none;
+            padding: 0.6rem 1rem;
+            border-radius: 4px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: var(--transition);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            border: none;
+            background: transparent;
+            font-family: inherit;
+        }
+
+        .site-nav > a:hover,
+        .nav-dropdown:hover > .nav-trigger {
+            color: var(--white);
+            background: var(--grey);
+        }
+
+        .site-nav > a.active,
+        .nav-dropdown > .nav-trigger.active {
+            background: var(--orange);
+            color: var(--dark);
+            font-weight: 600;
+        }
+
+        /* Dropdown */
+        .nav-dropdown {
+            position: relative;
+        }
+
+        .nav-trigger::after {
+            content: '';
+            border: solid currentColor;
+            border-width: 0 2px 2px 0;
+            display: inline-block;
+            padding: 3px;
+            transform: rotate(45deg);
+            margin-top: -3px;
+            transition: transform 0.2s;
+        }
+
+        .nav-dropdown:hover .nav-trigger::after {
+            transform: rotate(-135deg);
+            margin-top: 3px;
+        }
+
+        .nav-dropdown-menu {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            background: var(--dark-card);
+            border-radius: 8px;
+            box-shadow: var(--shadow-lg);
+            min-width: 220px;
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(-10px);
+            transition: var(--transition);
+            overflow: hidden;
+            margin-top: 0.5rem;
+            border: 1px solid var(--grey);
+        }
+
+        .nav-dropdown:hover .nav-dropdown-menu {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0);
+        }
+
+        .nav-dropdown-menu a {
+            display: block;
+            padding: 0.75rem 1rem;
+            color: var(--text-secondary);
+            text-decoration: none;
+            transition: var(--transition);
+            border-left: 3px solid transparent;
+        }
+
+        .nav-dropdown-menu a:hover {
+            background: var(--grey);
+            border-left-color: var(--orange);
+            color: var(--white);
+        }
+
+        .nav-dropdown-menu a small {
+            display: block;
+            color: var(--text-muted);
+            font-size: 0.75rem;
+            margin-top: 0.2rem;
+        }
+
+        /* Last dropdown aligns to the right edge */
+        .nav-dropdown:last-child .nav-dropdown-menu {
+            left: auto;
+            right: 0;
+        }
+
+        /* Mega menu for Architecture dropdown */
+        .nav-dropdown-menu.mega-menu {
+            width: min(1180px, calc(100vw - 2rem));
+            min-width: 0;
+            max-height: calc(100vh - 90px);
+            padding: 1.25rem 1.5rem;
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 0.75rem 1.25rem;
+            left: auto;
+            right: 0;
+            overflow-y: auto;
+            transform: translateY(-10px);
+        }
+
+        .nav-dropdown:hover .nav-dropdown-menu.mega-menu {
+            transform: translateY(0);
+        }
+
+        .mega-menu .menu-section {
+            margin-bottom: 0.75rem;
+        }
+
+        .mega-menu .menu-shortcuts {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 0.5rem;
+            margin-top: 0.75rem;
+        }
+
+        .mega-menu .menu-shortcuts a {
+            padding: 0.55rem 0.75rem;
+            background: rgba(255, 180, 0, 0.055);
+            border: 1px solid rgba(255, 180, 0, 0.18);
+        }
+
+        .mega-menu .menu-heading {
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--orange);
+            padding: 0.5rem 0.75rem 0.35rem;
+            border-bottom: 1px solid var(--grey);
+            margin-bottom: 0.35rem;
+        }
+
+        .mega-menu a {
+            padding: 0.6rem 0.75rem;
+            font-size: 0.9rem;
+            border-radius: 4px;
+            border-left: none;
+            line-height: 1.3;
+        }
+
+        .mega-menu a:hover {
+            border-left: none;
+            background: var(--grey);
+        }
+
+        .mega-menu a small {
+            font-size: 0.75rem;
+            margin-top: 0.15rem;
+        }
+
+        /* Main Content */
+        main {
+            box-sizing: border-box;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+            flex: 1;
+            width: 100%;
+        }
+
+        /* Hero Section */
+        .hero {
+            background: var(--gradient-header);
+            border: 1px solid var(--grey);
+            color: var(--white);
+            padding: 3rem 2rem;
+            border-radius: 12px;
+            margin-bottom: 2rem;
+            text-align: center;
+            box-shadow: var(--shadow-lg);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, var(--orange), var(--orange-light), var(--orange));
+        }
+
+        .hero h1 {
+            color: var(--white);
+            border: none;
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .hero p {
+            font-size: 1.1rem;
+            color: var(--text-secondary);
+            max-width: 700px;
+            margin: 0 auto;
+        }
+
+        /* Typography */
+        h1 {
+            color: var(--white);
+            font-size: 2rem;
+            margin-bottom: 1rem;
+            border-bottom: 2px solid var(--orange);
+            padding-bottom: 0.5rem;
+        }
+
+        h2 {
+            color: var(--white);
+            font-size: 1.4rem;
+            margin: 2rem 0 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        h2::before {
+            content: '';
+            width: 4px;
+            height: 1.4rem;
+            background: var(--orange);
+            border-radius: 2px;
+        }
+
+        h3 {
+            color: var(--orange);
+            font-size: 1.15rem;
+            margin: 1.5rem 0 0.75rem;
+        }
+
+        p {
+            margin-bottom: 1rem;
+            color: var(--text-secondary);
+        }
+
+        /* Cards */
+        .card {
+            background: var(--dark-card);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            box-shadow: var(--shadow-sm);
+            border-left: 3px solid var(--grey-light);
+            transition: var(--transition);
+            border: 1px solid var(--grey);
+        }
+
+        .card:hover {
+            box-shadow: var(--shadow-md);
+            border-left-color: var(--orange);
+        }
+
+        .card-accent {
+            border-left-color: var(--orange);
+        }
+
+        .card-green {
+            border-left-color: var(--green);
+        }
+
+        .card-blue {
+            border-left-color: var(--blue);
+        }
+
+        .card h3 {
+            margin-top: 0;
+        }
+
+        /* Clickable Cards */
+        a.card-link {
+            display: block;
+            text-decoration: none;
+            color: inherit;
+        }
+
+        a.card-link .card {
+            cursor: pointer;
+        }
+
+        a.card-link .card:hover {
+            border-left-width: 5px;
+        }
+
+        .card-arrow {
+            color: var(--orange);
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-top: 1rem;
+            transition: var(--transition);
+        }
+
+        a.card-link:hover .card-arrow {
+            gap: 0.75rem;
+        }
+
+        /* Feature Icons */
+        .feature-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .feature-icon.orange { background: rgba(255, 180, 0, 0.15); color: var(--orange); }
+        .feature-icon.green { background: rgba(71, 180, 117, 0.15); color: var(--green); }
+        .feature-icon.blue { background: rgba(7, 173, 248, 0.15); color: var(--blue); }
+        .feature-icon.grey { background: rgba(255, 255, 255, 0.1); color: var(--text-secondary); }
+
+        /* Stats */
+        .stat-number {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: var(--orange);
+            line-height: 1;
+        }
+
+        .stat-label {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+        }
+
+        /* Code blocks */
+        pre {
+            background: var(--code-bg);
+            color: #e0e0e0;
+            padding: 1.25rem;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin: 1rem 0;
+            font-family: 'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            font-size: 0.85rem;
+            border: 1px solid var(--grey);
+        }
+
+        code {
+            font-family: 'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            background: var(--grey);
+            padding: 0.2rem 0.4rem;
+            border-radius: 3px;
+            font-size: 0.85rem;
+            color: var(--orange);
+        }
+
+        pre code {
+            background: none;
+            padding: 0;
+            color: #e0e0e0;
+        }
+
+        /* Tables */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+            background: var(--dark-card);
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid var(--grey);
+        }
+
+        th {
+            background: var(--dark);
+            color: var(--orange);
+            padding: 0.875rem 1rem;
+            text-align: left;
+            font-weight: 600;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        td {
+            padding: 0.875rem 1rem;
+            border-bottom: 1px solid var(--grey);
+            color: var(--text-secondary);
+        }
+
+        tr:hover {
+            background: var(--grey);
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        /* Lists */
+        ul, ol {
+            margin: 1rem 0;
+            padding-left: 1.5rem;
+            color: var(--text-secondary);
+        }
+
+        li {
+            margin-bottom: 0.5rem;
+        }
+
+        /* Links */
+        a {
+            color: var(--orange);
+            transition: var(--transition);
+        }
+
+        a:hover {
+            color: var(--orange-light);
+        }
+
+        /* Grid */
+        .grid {
+            display: grid;
+            gap: 1.5rem;
+        }
+
+        .grid-2 {
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        }
+
+        .grid-3 {
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        }
+
+        .grid-4 {
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        }
+
+        /* Alerts */
+        .alert {
+            padding: 1rem 1.25rem;
+            border-radius: 6px;
+            margin: 1rem 0;
+            display: flex;
+            align-items: flex-start;
+            gap: 0.75rem;
+            border: 1px solid;
+        }
+
+        .alert-icon {
+            font-size: 1.25rem;
+            flex-shrink: 0;
+        }
+
+        .alert-info {
+            background: rgba(7, 173, 248, 0.1);
+            border-color: var(--blue);
+            color: var(--blue);
+        }
+
+        .alert-warning {
+            background: rgba(255, 180, 0, 0.1);
+            border-color: var(--orange);
+            color: var(--orange);
+        }
+
+        .alert-success {
+            background: rgba(71, 180, 117, 0.1);
+            border-color: var(--green);
+            color: var(--green);
+        }
+
+        /* Image containers */
+        .img-container {
+            margin: 1.5rem 0;
+            text-align: center;
+        }
+
+        .img-container img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 8px;
+            box-shadow: var(--shadow-lg);
+            border: 1px solid var(--grey);
+        }
+
+        /* Badge */
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 999px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .badge-orange {
+            background: var(--orange);
+            color: var(--dark);
+        }
+
+        .badge-green {
+            background: var(--green);
+            color: white;
+        }
+
+        .badge-grey {
+            background: var(--grey);
+            color: var(--text-secondary);
+        }
+
+        /* Diagram blocks (monospace pre with colored spans) */
+        .diagram {
+            background: var(--code-bg);
+            border: 1px solid var(--grey);
+            border-radius: 6px;
+            padding: 1.25rem;
+            margin: 1rem 0;
+            overflow-x: auto;
+            font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace;
+            font-size: 0.8rem;
+            line-height: 1.55;
+            white-space: pre;
+            color: var(--text-muted);
+        }
+        .diagram .hl     { color: var(--blue); font-weight: 700; }
+        .diagram .grn    { color: var(--green); }
+        .diagram .wrn    { color: var(--orange); }
+        .diagram .err    { color: #f85149; }
+        .diagram .purple { color: #bc8cff; }
+        .diagram .dim    { color: #484f58; }
+
+        /* Inline status colors */
+        .good { color: var(--green); font-weight: 600; }
+        .bad  { color: #f85149; font-weight: 600; }
+        .meh  { color: var(--orange); font-weight: 600; }
+
+        /* Section numbering */
+        .section-num {
+            color: var(--orange);
+            font-weight: 400;
+            margin-right: 0.25rem;
+        }
+
+        /* Accordion */
+        details {
+            background: var(--dark-card);
+            border-radius: 6px;
+            margin-bottom: 0.75rem;
+            border: 1px solid var(--grey);
+            border-left: 3px solid var(--grey-light);
+            overflow: hidden;
+            transition: var(--transition);
+        }
+
+        details:hover {
+            border-left-color: var(--orange);
+        }
+
+        details[open] {
+            border-left-color: var(--orange);
+        }
+
+        summary {
+            padding: 1rem 1.25rem;
+            cursor: pointer;
+            font-weight: 600;
+            color: var(--white);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            list-style: none;
+            user-select: none;
+            transition: var(--transition);
+        }
+
+        summary::-webkit-details-marker {
+            display: none;
+        }
+
+        summary::after {
+            content: '';
+            border: solid var(--orange);
+            border-width: 0 2px 2px 0;
+            display: inline-block;
+            padding: 4px;
+            transform: rotate(-45deg);
+            transition: transform 0.2s ease;
+            flex-shrink: 0;
+            margin-left: 1rem;
+        }
+
+        details[open] summary::after {
+            transform: rotate(45deg);
+        }
+
+        summary:hover {
+            background: var(--grey);
+        }
+
+        details[open] summary {
+            border-bottom: 1px solid var(--grey);
+        }
+
+        .accordion-content {
+            padding: 1rem 1.25rem;
+        }
+
+        /* Site search */
+        .site-search {
+            display: flex;
+            align-items: center;
+            flex: 0 1 240px;
+            min-width: 140px;
+        }
+
+        .site-search input {
+            width: 100%;
+            background: var(--code-bg);
+            border: 1px solid var(--grey);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-family: inherit;
+            font-size: 0.85rem;
+            padding: 0.5rem 0.75rem;
+            transition: var(--transition);
+        }
+
+        .site-search input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .site-search input:focus {
+            outline: 2px solid var(--orange);
+            outline-offset: 1px;
+            border-color: var(--orange);
+        }
+
+        /* Mobile hamburger button */
+        .nav-toggle {
+            display: none;
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            padding: 0.5rem;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .nav-toggle span {
+            display: block;
+            width: 24px;
+            height: 3px;
+            background: var(--orange);
+            border-radius: 2px;
+            transition: var(--transition);
+        }
+
+        .nav-toggle.active span:nth-child(1) {
+            transform: rotate(45deg) translate(5px, 5px);
+        }
+
+        .nav-toggle.active span:nth-child(2) {
+            opacity: 0;
+        }
+
+        .nav-toggle.active span:nth-child(3) {
+            transform: rotate(-45deg) translate(6px, -6px);
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .site-header {
+                flex-direction: row;
+                justify-content: space-between;
+                padding: 0.75rem 1rem;
+            }
+
+            .nav-toggle {
+                display: flex;
+            }
+
+            .site-search {
+                order: 3;
+                flex: 1 1 100%;
+                min-width: 0;
+            }
+
+            .site-search input {
+                font-size: 1rem;
+            }
+
+            .site-nav {
+                position: fixed;
+                top: 60px;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: var(--dark);
+                flex-direction: column;
+                flex-wrap: nowrap;
+                align-items: stretch;
+                padding: 1rem;
+                gap: 0.5rem;
+                overflow-y: auto;
+                transform: translateX(-100%);
+                transition: transform 0.3s ease;
+                z-index: 999;
+            }
+
+            .site-nav.open {
+                transform: translateX(0);
+            }
+
+            .site-nav > a,
+            .nav-dropdown > .nav-trigger {
+                width: 100%;
+                padding: 1rem;
+                font-size: 1rem;
+            }
+
+            .nav-dropdown {
+                width: 100%;
+            }
+
+            .nav-dropdown-menu {
+                position: static;
+                opacity: 1;
+                visibility: hidden;
+                max-height: 0;
+                overflow: hidden;
+                transform: none;
+                margin-top: 0;
+                transition: max-height 0.3s ease, visibility 0.3s ease;
+                background: var(--dark-lighter);
+                border-radius: 0;
+                border: none;
+                box-shadow: none;
+            }
+
+            .nav-dropdown.open .nav-dropdown-menu {
+                visibility: visible;
+                max-height: 500px;
+            }
+
+            .nav-dropdown-menu a {
+                padding: 0.75rem 1.5rem;
+            }
+
+            /* Disable hover on mobile */
+            .nav-dropdown:hover .nav-dropdown-menu {
+                opacity: 1;
+                visibility: hidden;
+                max-height: 0;
+            }
+
+            .nav-dropdown.open .nav-dropdown-menu,
+            .nav-dropdown.open:hover .nav-dropdown-menu {
+                visibility: visible;
+                max-height: 500px;
+            }
+
+            .nav-dropdown-menu.mega-menu {
+                display: block;
+                width: 100%;
+                min-width: 0;
+                max-height: 0;
+                padding: 0.5rem;
+                left: auto;
+                right: auto;
+                overflow: hidden;
+                transform: none;
+            }
+
+            .nav-dropdown.open .nav-dropdown-menu.mega-menu,
+            .nav-dropdown.open:hover .nav-dropdown-menu.mega-menu {
+                max-height: 70vh;
+                overflow-y: auto;
+                transform: none;
+            }
+
+            .mega-menu .menu-shortcuts {
+                grid-template-columns: 1fr;
+            }
+
+            main {
+                padding: 1rem;
+            }
+
+            h1 {
+                font-size: 1.75rem;
+            }
+
+            .hero {
+                padding: 2rem 1rem;
+            }
+
+            .hero h1 {
+                font-size: 1.75rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="site-header">
+        <a href="index.html" class="header-brand">
+            <div class="header-logo">CK</div>
+            <div>
+                <div class="header-title">C-Kernel-Engine</div>
+                <div class="header-subtitle">High-Performance ML Kernels</div>
+            </div>
+        </a>
+        <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+            <span></span>
+            <span></span>
+            <span></span>
+        </button>
+        <form class="site-search" role="search" action="search.html" method="get" data-test="site-search">
+            <input type="search" name="q" id="site-search-input" aria-label="Search documentation" placeholder="Search docs ( / )" autocomplete="off">
+        </form>
+        <nav class="site-nav">
+            <a href="index.html" class="">Home</a>
+            <a href="spectrum.html" class="" style="color:var(--orange)">⚡ Spectrum</a>
+            <a href="quickstart.html" class="">Getting Started</a>
+            <a href="developer-guide.html" class="">Developer Guide</a>
+            <a href="contributing.html" class="">Contribute</a>
+            <a href="scaling.html" class="">Scaling</a>
+            <a href="support-hardware.html" class="" style="color:var(--green)">Support Lab</a>
+            <a href="cke-throughput-unit.html" class="" style="color:var(--orange)">CKU</a>
+            <div class="nav-dropdown">
+                <span class="nav-trigger active">Architecture</span>
+                <div class="nav-dropdown-menu mega-menu">
+                    <!-- Architecture Home Link -->
+                    <div class="menu-section" style="grid-column: 1 / -1; border-bottom: 1px solid var(--grey); padding-bottom: 0.5rem; margin-bottom: 0.5rem;">
+                        <a href="architecture-links.html" style="font-weight: 600; color: var(--orange);">
+                            View All Architecture Docs
+                            <small>Complete documentation index</small>
+                        </a>
+                        <div class="menu-shortcuts">
+                            <a href="pytorch-parity.html">PyTorch Parity<small>Numerical evidence</small></a>
+                            <a href="research.html">Research<small>Current investigations</small></a>
+                            <a href="decisions.html">Architecture Decisions<small>ADRs and tradeoffs</small></a>
+                            <a href="api.html">API &amp; Source Docs<small>Reference and Doxygen</small></a>
+                        </div>
+                    </div>
+                    <!-- Left Column -->
+                    <div class="menu-section">
+                        <div class="menu-heading">Core</div>
+                        <a href="architecture.html">System Overview<small>IR, Codegen, Kernels</small></a>
+                        <a href="tokenizer.html">Tokenizer<small>BPE, WordPiece, Trie</small></a>
+                        <a href="sentencepiece.html">SentencePiece<small>Viterbi DP, byte fallback</small></a>
+                        <a href="kernels.html">Kernel Reference<small>Forward/backward ops</small></a>
+                        <a href="codegen.html">Code Generation<small>IR to C compilation</small></a>
+                        <a href="iteration-philosophy.html">Iteration Philosophy<small>Why v1→v6 matters</small></a>
+                        <a href="ir-v2.html">IR v2 Format<small>Case study: symbolic dimensions</small></a>
+                        <a href="v7-backprop-ir.html">v7 Backprop IR<small>IR1/IR2 + layout/codegen flow</small></a>
+                        <a href="v7-cross-entropy-parity.html">v7 Cross-Entropy Parity<small>p - one_hot, reduction semantics, drift fixes</small></a>
+                        <a href="concepts.html">Deep Dive Concepts<small>RoPE, Flash Attention, GQA</small></a>
+                        <a href="kernel-maps.html">Kernel Maps<small>Provider selection, ABI, migration</small></a>
+                        <a href="kernel-architecture.html">v8 Kernel Architecture<small>Registry by op family, math</small></a>
+                        <a href="architecture-variants.html">Architecture Variants<small>Laguna, Cohere2, Instella, Nemotron</small></a>
+                        <a href="v8-moe-expert-kernels.html">MoE Expert Kernels<small>Bucketed prefill, mixed-quant experts</small></a>
+                        <a href="v8-cohere-kernels.html">Cohere Kernel Story<small>Reuse, BF16 vision, Transcribe audio</small></a>
+                    </div>
+                    <div class="menu-section">
+                        <div class="menu-heading">Quantization</div>
+                        <a href="quantization.html">Quant Fundamentals<small>Block formats, grouping</small></a>
+                        <a href="gguf-bump.html">GGUF to Bump<small>Weight conversion</small></a>
+                        <a href="gguf-conversion.html">GGUF Parsing<small>Byte-level guide</small></a>
+                    </div>
+                    <!-- Right Column -->
+                    <div class="menu-section">
+                        <div class="menu-heading">Optimization</div>
+                        <a href="gemm-memory-layout.html">GEMM Memory Layout<small>NN/NT layouts, offsets</small></a>
+                        <a href="gemm-optimization.html">GEMM Optimization<small>AVX, MKL, blocking</small></a>
+                        <a href="kernel-tuning-methodology.html">Kernel Tuning Methodology<small>VTune, Advisor, roofline, parity gates</small></a>
+                        <a href="cke-throughput-unit.html">CKE Throughput Unit<small>PB/s active-byte target</small></a>
+                        <a href="gemma4-speculative-pair.html">Gemma4 Speculative Pair<small>Backbone + MTP drafter circuit</small></a>
+                        <a href="v8-mla-kimi.html">v8 MLA / Kimi<small>Explicit decode cache contract</small></a>
+                        <a href="v8-whisper-tiny.html">Whisper Tiny E2E<small>Audio encoder/decoder circuits</small></a>
+                        <a href="simd-architecture.html">SIMD Architecture<small>AVX-512, VNNI, AMX</small></a>
+                        <a href="flash_attention.html" class="">Flash Attention Analysis<small>Why llama.cpp is faster</small></a>
+                    </div>
+                    <div class="menu-section">
+                        <div class="menu-heading">Infrastructure</div>
+                        <a href="memory-safety.html">Memory Safety<small>Bump allocator, canaries</small></a>
+                        <a href="deterministic-memory.html">Deterministic Memory<small>RDMA, interpretability</small></a>
+                        <a href="profiling.html">Profiling Guide<small>Valgrind, perf, flamegraphs</small></a>
+                        <a href="kernel-tuning-methodology.html">Kernel Tuning Methodology<small>CPU-node performance runbook</small></a>
+                        <a href="v7-profiling.html">v7 Profiling Runbook<small>Train kernels: VTune, Advisor, perf</small></a>
+                        <a href="v7-runbook.html">v7 Inference + Training Runbook<small>Copy/paste train + infer workflow</small></a>
+                        <a href="sizing.html">Model Sizing Lab<small>KV, state, concurrency, six-GPU placement</small></a>
+                        <a href="serving.html">Serving &amp; Batching<small>Single-flight, batch2, continuous-batching roadmap</small></a>
+                        <a href="v7-svg-dataset-runbook.html">v7 SVG Dataset Runbook<small>Pretrain + midtrain data generation</small></a>
+                        <a href="testing.html">Testing<small>Numerical parity verification</small></a>
+                        <a href="divergence-harness.html">Stitched Divergence Harness<small>llama.cpp/PyTorch tensor attribution</small></a>
+                        <a href="threadpool.html">Thread Pool<small>Persistent pthreads, dispatch</small></a>
+                    </div>
+                </div>
+            </div>
+            <a href="test-report.html" class="">Test Report</a>
+            <a href="version-history.html" class="">Versions</a>
+        </nav>
+    </header>
+    <main>
+
+<div class="container">
+  <h1>Model + Kernel Matrix</h1>
+  <p class="lead">
+    A visual map of what the C Kernel Engine supports: IR templates, kernel families, quant contracts, and pipeline coverage (inference-only vs. inference + v7 training). Grounded in the actual templates, IR lowering passes, and GGUF test corpus run locally.
+  </p>
+
+  <style>
+    .matrix-hero {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+      gap: 1rem;
+      margin-top: 1.5rem;
+    }
+    .model-card {
+      background: var(--dark-card);
+      border: 1px solid var(--grey);
+      border-radius: 12px;
+      padding: 1.1rem 1.2rem 1rem;
+      position: relative;
+      overflow: hidden;
+    }
+    /* top accent bar per model */
+    .model-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+    }
+    .model-card.mc-qwen2::before  { background: var(--orange); }
+    .model-card.mc-qwen3::before  { background: var(--green); }
+    .model-card.mc-qwen35::before { background: #1abc9c; }
+    .model-card.mc-qwen36::before { background: #ff8c42; }
+    .model-card.mc-qwen3vl::before { background: #00bcd4; }
+    .model-card.mc-gemma4v::before { background: #ff6f91; }
+    .model-card.mc-siglip::before  { background: #a78bfa; }
+    .model-card.mc-qwen::before   { background: #16a085; }
+    .model-card.mc-gemma3::before { background: var(--blue); }
+    .model-card.mc-gemma4::before { background: #f39c12; }
+    .model-card.mc-kimi::before   { background: #b48cff; }
+    .model-card.mc-whisper::before { background: #f59e0b; }
+    .model-card.mc-parakeet::before { background: #22c55e; }
+    .model-card.mc-llama::before  { background: #e74c3c; }
+    .model-card.mc-gpt2::before   { background: #9b59b6; }
+    .model-card.mc-qwen38::before   { background: #26c6da; }
+    .model-card.mc-instella::before { background: #ab47bc; }
+    .model-card.mc-cohere2::before  { background: #ff7043; }
+    .model-card.mc-laguna::before   { background: #5c6bc0; }
+
+    .model-badge {
+      font-size: 0.75rem;
+      padding: 0.18rem 0.55rem;
+      border-radius: 999px;
+      background: #15202b;
+      color: #9ed6ff;
+      border: 1px solid #22313f;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .model-title {
+      margin: 0.3rem 0 0.25rem;
+      font-size: 1.25rem;
+      color: var(--text-primary);
+      font-weight: 700;
+    }
+    .model-arch {
+      font-size: 0.73rem;
+      color: var(--text-muted);
+      font-family: 'JetBrains Mono', monospace;
+      margin-bottom: 0.75rem;
+      line-height: 1.5;
+    }
+    /* pipeline coverage indicators */
+    .model-pipeline {
+      display: flex;
+      flex-direction: column;
+      gap: 0.28rem;
+      margin-bottom: 0.85rem;
+    }
+    .mp-row {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.76rem;
+    }
+    .mp-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .mp-dot.inference { background: var(--blue); }
+    .mp-dot.training  { background: var(--green); }
+    .mp-dot.no        { background: var(--grey); }
+    /* evidence-specific status dots (see the legend above the cards) */
+    .mp-dot.st-traj     { background: #47b475; }
+    .mp-dot.st-num      { background: #ffb400; }
+    .mp-dot.st-e2e      { background: #07adf8; }
+    .mp-dot.st-contract { background: #9e9e9e; }
+    .mp-dot.st-plan     { background: #ab47bc; }
+    .status-legend {
+      display: flex; flex-wrap: wrap; gap: 0.5rem 1.1rem;
+      margin-top: 0.75rem; font-size: 0.78rem; color: var(--text-secondary);
+    }
+    .status-legend .sl-item { display: flex; align-items: center; gap: 0.45rem; }
+    .status-legend .sl-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .status-legend .sl-dot.st-traj     { background: #47b475; }
+    .status-legend .sl-dot.st-num      { background: #ffb400; }
+    .status-legend .sl-dot.st-e2e      { background: #07adf8; }
+    .status-legend .sl-dot.st-contract { background: #9e9e9e; }
+    .status-legend .sl-dot.st-plan     { background: #ab47bc; }
+    .status-legend strong { color: var(--text-primary); font-weight: 600; }
+
+    .cert-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; margin-top: 0.85rem; }
+    .cert-table { border-collapse: collapse; min-width: 1080px; width: 100%; font-size: 0.82rem; }
+    .cert-table th, .cert-table td {
+      border: 1px solid var(--grey); padding: 0.45rem 0.6rem;
+      text-align: left; vertical-align: top; color: var(--text-secondary);
+    }
+    .cert-table th { color: var(--orange); font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.05em; background: #121a24; }
+    .cert-table td.cert-model { font-weight: 700; color: var(--text-primary); white-space: nowrap; position: sticky; left: 0; background: #0f151c; }
+    .cert-status { display: inline-flex; align-items: center; gap: 0.4rem; font-weight: 600; white-space: nowrap; }
+    .cert-status::before { content: ''; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .cert-status.st-traj     { color: #7fd4a3; } .cert-status.st-traj::before     { background: #47b475; }
+    .cert-status.st-num      { color: #ffd38a; } .cert-status.st-num::before      { background: #ffb400; }
+    .cert-status.st-e2e      { color: #7dd3fc; } .cert-status.st-e2e::before      { background: #07adf8; }
+    .cert-status.st-contract { color: #b9b9b9; } .cert-status.st-contract::before { background: #9e9e9e; }
+    .cert-status.st-plan     { color: #d0a8f0; } .cert-status.st-plan::before     { background: #ab47bc; }
+
+    .jump-nav {
+      display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.9rem;
+    }
+    .jump-nav a {
+      font-family: 'JetBrains Mono', monospace; font-size: 0.72rem;
+      padding: 0.18rem 0.55rem; border-radius: 999px;
+      background: #15202b; color: #9ed6ff; border: 1px solid #22313f;
+      text-decoration: none;
+    }
+    .jump-nav a:hover { border-color: var(--orange); color: var(--orange); }
+    .jump-nav a:focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
+
+    details.card-details { margin: 0.6rem 0 0.2rem; }
+    details.card-details > summary {
+      cursor: pointer; font-size: 0.78rem; color: #9ed6ff;
+      font-family: 'JetBrains Mono', monospace; user-select: none;
+      padding: 0.3rem 0.55rem; border: 1px solid #22313f; border-radius: 6px;
+      background: #0f151c; display: inline-block;
+    }
+    details.card-details > summary:hover { border-color: var(--orange); color: var(--orange); }
+    details.card-details > summary:focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
+    details.card-details[open] > summary { margin-bottom: 0.4rem; }
+    details.card-details .model-command { margin-top: 0.5rem; }
+
+    .matrix-scroll {
+      width: 100%; max-width: 100%; overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    .matrix-grid { min-width: 1120px; }
+    .matrix-grid .row-head { position: sticky; left: 0; z-index: 1; box-shadow: 2px 0 0 #22313f; }
+
+    .svg-expand { position: relative; }
+    .svg-expand svg { cursor: zoom-in; }
+    .svg-expand svg:focus-visible { outline: 2px solid var(--orange); outline-offset: 3px; }
+    .svg-expand-hint {
+      text-align: center; font-size: 0.72rem; color: var(--text-muted);
+      margin-top: -0.9rem; margin-bottom: 1.2rem; font-family: 'JetBrains Mono', monospace;
+    }
+    #mk-svg-overlay {
+      display: none; position: fixed; inset: 0; z-index: 999999;
+      background: rgba(0, 0, 0, 0.95); padding: 3.2rem 1rem 1rem;
+    }
+    #mk-svg-overlay .mk-ov-bar {
+      position: fixed; top: 0; left: 0; right: 0; padding: 0.55rem 1rem;
+      background: rgba(0,0,0,0.9); border-bottom: 1px solid #333;
+      display: flex; justify-content: space-between; align-items: center; gap: 0.6rem;
+    }
+    #mk-svg-overlay .mk-ov-title { color: #ccc; font-size: 0.82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #mk-svg-overlay .mk-ov-bar button {
+      background: #333; color: #ffb400; border: 1px solid #555; padding: 0.3rem 0.7rem;
+      cursor: pointer; border-radius: 4px; font-size: 0.85rem;
+    }
+    #mk-svg-overlay .mk-ov-stage { width: 100%; height: 100%; overflow: auto; display: flex; align-items: flex-start; justify-content: center; }
+    #mk-svg-overlay .mk-ov-stage img { max-width: none; height: auto; }
+    .mp-text { color: var(--text-secondary); }
+    .mp-text.dim { color: var(--text-muted); }
+
+    /* quant badges */
+    .model-quant {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.28rem;
+      padding-top: 0.75rem;
+      border-top: 1px solid var(--grey);
+    }
+    .mq-chip {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.67rem;
+      padding: 0.12rem 0.42rem;
+      border-radius: 4px;
+      background: rgba(7,173,248,0.1);
+      border: 1px solid rgba(7,173,248,0.22);
+      color: #7dd3fc;
+    }
+    .mq-chip.preferred {
+      background: rgba(255,180,0,0.12);
+      border-color: rgba(255,180,0,0.28);
+      color: var(--orange);
+    }
+
+    .model-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      margin-top: 0.5rem;
+    }
+    .tag {
+      background: #0f151c;
+      border: 1px solid #263242;
+      color: var(--text-secondary);
+      border-radius: 6px;
+      padding: 0.15rem 0.45rem;
+      font-size: 0.78rem;
+      white-space: nowrap;
+    }
+    .tag.learned {
+      border-color: #2b3a4a;
+      color: #b7d6ff;
+    }
+    .tag.fixed {
+      border-color: #3b2a2a;
+      color: #ffb6b6;
+    }
+    .matrix-section {
+      margin-top: 2rem;
+      background: #0f151c;
+      border: 1px solid #22313f;
+      border-radius: 12px;
+      padding: 1.2rem;
+    }
+    .matrix-grid {
+      display: grid;
+      grid-template-columns: 160px repeat(8, minmax(110px, 1fr));
+      gap: 0.4rem;
+      margin-top: 1rem;
+      font-size: 0.9rem;
+    }
+    .matrix-grid .cell {
+      background: var(--dark-card);
+      border: 1px solid var(--grey);
+      border-radius: 8px;
+      padding: 0.5rem 0.6rem;
+      text-align: center;
+    }
+    .matrix-grid .row-head {
+      text-align: left;
+      font-weight: 700;
+      color: var(--orange);
+    }
+    .ok {
+      color: #47b475;
+      font-weight: 700;
+    }
+    .warn {
+      color: #ffb400;
+      font-weight: 700;
+    }
+    .dim {
+      color: var(--text-muted);
+    }
+    .kernel-list {
+      margin-top: 1rem;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 0.6rem;
+      font-size: 0.9rem;
+    }
+    .kernel-chip {
+      background: #121a24;
+      border: 1px solid #263242;
+      border-radius: 8px;
+      padding: 0.5rem 0.7rem;
+      color: var(--text-secondary);
+    }
+    .quant-badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      margin-top: 0.75rem;
+    }
+    .qchip {
+      background: #151f2b;
+      border: 1px solid #2b3a4a;
+      color: #9ed6ff;
+      border-radius: 6px;
+      padding: 0.2rem 0.5rem;
+      font-size: 0.78rem;
+    }
+    .test-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 0.5rem;
+      margin-top: 0.75rem;
+      font-size: 0.9rem;
+      color: var(--text-secondary);
+    }
+    .test-item {
+      background: var(--dark-card);
+      border: 1px solid var(--grey);
+      border-radius: 8px;
+      padding: 0.5rem 0.7rem;
+    }
+    .roadmap {
+      margin-top: 1.2rem;
+      background: #0d141b;
+      border: 1px dashed #2a3a4f;
+      border-radius: 10px;
+      padding: 1rem;
+      color: var(--text-secondary);
+      font-size: 0.95rem;
+    }
+    .roadmap strong {
+      color: var(--orange);
+    }
+    .why-grid {
+      margin-top: 1.2rem;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 1rem;
+      align-items: center;
+    }
+    .why-card {
+      background: #0f151c;
+      border: 1px solid #22313f;
+      border-radius: 12px;
+      padding: 1rem 1.1rem;
+      color: var(--text-secondary);
+      font-size: 0.95rem;
+      line-height: 1.5;
+    }
+    .why-card strong {
+      color: var(--orange);
+    }
+    .why-figure {
+      background: #0f151c;
+      border: 1px solid #22313f;
+      border-radius: 12px;
+      padding: 0.5rem;
+    }
+    .why-figure img {
+      width: 100%;
+      height: auto;
+      display: block;
+      border-radius: 8px;
+    }
+    .source-note {
+      margin-top: 0.6rem;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    .runner-callout {
+      margin-top: 1.25rem;
+      background: #0f151c;
+      border: 1px solid #263242;
+      border-radius: 12px;
+      padding: 1rem 1.1rem;
+      color: var(--text-secondary);
+      line-height: 1.55;
+    }
+    .runner-callout strong {
+      color: var(--orange);
+    }
+    .model-command {
+      margin: 0.85rem 0 0.75rem;
+      background: #0b1118;
+      border: 1px solid #263242;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .model-command-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.6rem;
+      padding: 0.42rem 0.55rem;
+      border-bottom: 1px solid #263242;
+      color: var(--text-muted);
+      font-size: 0.74rem;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .copy-command {
+      border: 1px solid #2b3a4a;
+      background: #121a24;
+      color: #9ed6ff;
+      border-radius: 6px;
+      padding: 0.18rem 0.5rem;
+      font-size: 0.72rem;
+      cursor: pointer;
+    }
+    .copy-command:hover {
+      border-color: var(--orange);
+      color: var(--orange);
+    }
+    .model-command pre {
+      margin: 0;
+      padding: 0.7rem;
+      overflow-x: auto;
+      color: #cfe8ff;
+      line-height: 1.45;
+      font-size: 0.72rem;
+      background: #090e14;
+    }
+  </style>
+
+  <div class="runner-callout">
+    <strong>Recommended runner track:</strong> this model page points to the latest hardened v8 command path for hands-on smoke tests. Version pages remain historical snapshots of each engine generation; the cards below show the current practical command to convert, compile, run, and optionally emit the IR visualizer for that family. Large cards such as Gemma4, Nemotron, GLM4, and vision models assume a high-memory CPU host.
+  </div>
+
+  <h2 style="color: var(--orange); margin-top: 2rem;">One Pipeline, Every Model</h2>
+  <p class="lead" style="margin-top: 0;">
+    Every supported family enters through the same deterministic compile path. The artifact (GGUF or BUMP) carries the numbers,
+    the template carries the structure, and lowering turns both into a concrete C runtime with a fixed memory plan.
+    Vision families add a second lane that produces an encoder prefix and bridges it into the decoder.
+    Audio assets can arrive as safetensors &rarr; BUMP, with distinct declared dataflows. Whisper uses encoder memory and decoder cross-attention; transducer ASR uses encoder, prediction and joiner components. TTS connects phoneme/text encoding, conditioning, duration expansion, prosody and waveform generation. These share compilation infrastructure, not one runtime topology.
+  </p>
+
+  <figure aria-labelledby="tts-flow-caption">
+    <svg viewBox="0 0 1120 230" role="img" aria-label="Kokoro dataflow: certified phoneme encoder; unfinished text encoder, duration and prosody, expansion joins and waveform generator. Voice conditioning feeds declared consumers. Oracle and X-Ray observe execution." style="width:100%;font-family:Inter,system-ui,sans-serif">
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="15" y="45" width="220" height="55" rx="6"/>
+        <rect x="285" y="45" width="230" height="55" rx="6" stroke-dasharray="6 4"/>
+        <rect x="550" y="80" width="245" height="65" rx="6" stroke-dasharray="6 4"/>
+        <rect x="840" y="80" width="260" height="65" rx="6" stroke-dasharray="6 4"/>
+        <rect x="285" y="145" width="230" height="50" rx="6" stroke-dasharray="6 4"/>
+        <path d="M235 72H280 M515 72H530V105H545 M515 170H530V125H545 M795 112H835"/>
+      </g>
+      <g fill="currentColor" text-anchor="middle" font-size="14">
+        <text x="125" y="65">Fixed phoneme IDs → encoder</text><text x="125" y="86">CERTIFIED: features</text>
+        <text x="400" y="65">Duration / prosody</text><text x="400" y="86">UNFINISHED</text>
+        <text x="400" y="165">Text encoder</text><text x="400" y="185">UNFINISHED</text>
+        <text x="672" y="103">Duration expansion / joins</text><text x="672" y="127">UNFINISHED</text>
+        <text x="970" y="103">Acoustic generator → waveform</text><text x="970" y="127">UNFINISHED</text>
+        <text x="560" y="22">One compilation pipeline; explicit tensor and state edges define the dataflow</text>
+        <text x="145" y="150">IDs also feed text encoder →</text>
+        <text x="560" y="219">Voice/style → declared consumers. Oracle + X-Ray observe execution outside the runtime path.</text>
+      </g>
+    </svg>
+    <figcaption id="tts-flow-caption">Kokoro status: solid box = certified component; dashed boxes = unfinished composition. Native text preparation is also unfinished. No generated speech is claimed.</figcaption>
+  </figure>
+
+  <div class="svg-expand">
+  <svg viewBox="0 0 1180 648" width="100%" role="img" tabindex="0" data-svg-title="One pipeline, every model — compile path"
+       aria-label="C-Kernel-Engine model compilation pipeline: GGUF and template lower to IR, memory plan, codegen and runtime, with a vision encoder lane bridging into the decoder and an audio encoder-decoder lane feeding cross-attention memory."
+       style="max-width: 1180px; margin: 0.5rem auto 1.75rem; display: block; font-family: 'Inter', system-ui, sans-serif;">
+    <defs>
+      <linearGradient id="mk-text" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#ffb400"/><stop offset="1" stop-color="#e5a200"/>
+      </linearGradient>
+      <linearGradient id="mk-vision" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#07adf8"/><stop offset="1" stop-color="#00bcd4"/>
+      </linearGradient>
+      <linearGradient id="mk-audio" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#f59e0b"/><stop offset="1" stop-color="#d97706"/>
+      </linearGradient>
+      <linearGradient id="mk-run" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#47b475"/><stop offset="1" stop-color="#2f8d59"/>
+      </linearGradient>
+      <marker id="mk-arrow" markerWidth="9" markerHeight="9" refX="6.5" refY="3" orient="auto">
+        <path d="M0,0 L7,3 L0,6 Z" fill="#8aa0b4"/>
+      </marker>
+      <marker id="mk-arrow-v" markerWidth="9" markerHeight="9" refX="6.5" refY="3" orient="auto">
+        <path d="M0,0 L7,3 L0,6 Z" fill="#07adf8"/>
+      </marker>
+      <marker id="mk-arrow-a" markerWidth="9" markerHeight="9" refX="6.5" refY="3" orient="auto">
+        <path d="M0,0 L7,3 L0,6 Z" fill="#f59e0b"/>
+      </marker>
+      <style>
+        .mk-stage{fill:#323232;stroke:#454545;stroke-width:1.4;rx:12;}
+        .mk-title{fill:#f5f5f5;font-size:18px;font-weight:700;}
+        .mk-sub{fill:#b0b0b0;font-size:12.5px;font-family:'JetBrains Mono',monospace;}
+        .mk-band{fill:#9aa7b4;font-size:13px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;}
+        .mk-chip{fill:#0f151c;stroke:#263242;stroke-width:1;rx:6;}
+        .mk-chip-t{fill:#9ed6ff;font-size:12px;font-family:'JetBrains Mono',monospace;}
+      </style>
+    </defs>
+
+    <!-- band labels -->
+    <text x="24" y="40" class="mk-band">Source of truth</text>
+    <text x="24" y="250" class="mk-band">Deterministic compile</text>
+    <text x="24" y="430" class="mk-band">Vision lane (multimodal families)</text>
+
+    <!-- Row 1: sources -->
+    <g>
+      <rect class="mk-stage" x="24"  y="58" width="250" height="92" rx="12"/>
+      <text x="44" y="92"  class="mk-title">GGUF artifact</text>
+      <text x="44" y="116" class="mk-sub">tensors · dtypes · shapes</text>
+      <text x="44" y="134" class="mk-sub">tokenizer · vision metadata</text>
+
+      <rect class="mk-stage" x="320" y="58" width="250" height="92" rx="12"/>
+      <text x="340" y="92"  class="mk-title">Template <tspan class="mk-sub">.json</tspan></text>
+      <text x="340" y="116" class="mk-sub">header / body / footer graph</text>
+      <text x="340" y="134" class="mk-sub">kernel ids · contracts</text>
+    </g>
+    <!-- supported template chips -->
+    <g>
+      <rect class="mk-chip" x="616" y="58"  width="120" height="26" rx="6"/><text x="676" y="76" text-anchor="middle" class="mk-chip-t">qwen2/3/3.5</text>
+      <rect class="mk-chip" x="746" y="58"  width="120" height="26" rx="6"/><text x="806" y="76" text-anchor="middle" class="mk-chip-t">gemma3/4</text>
+      <rect class="mk-chip" x="876" y="58"  width="100" height="26" rx="6"/><text x="926" y="76" text-anchor="middle" class="mk-chip-t">glm4</text>
+      <rect class="mk-chip" x="986" y="58"  width="120" height="26" rx="6"/><text x="1046" y="76" text-anchor="middle" class="mk-chip-t">nemotron_h</text>
+      <rect class="mk-chip" x="616" y="92"  width="100" height="26" rx="6"/><text x="666" y="110" text-anchor="middle" class="mk-chip-t">llama</text>
+      <rect class="mk-chip" x="726" y="92"  width="100" height="26" rx="6"/><text x="776" y="110" text-anchor="middle" class="mk-chip-t">qwen3vl</text>
+      <rect class="mk-chip" x="836" y="92"  width="100" height="26" rx="6"/><text x="886" y="110" text-anchor="middle" class="mk-chip-t">qwen38</text>
+      <rect class="mk-chip" x="946" y="92"  width="100" height="26" rx="6"/><text x="996" y="110" text-anchor="middle" class="mk-chip-t">kimi_vl</text>
+      <rect class="mk-chip" x="616" y="126" width="100" height="26" rx="6"/><text x="666" y="144" text-anchor="middle" class="mk-chip-t">cohere2</text>
+      <rect class="mk-chip" x="726" y="126" width="100" height="26" rx="6"/><text x="776" y="144" text-anchor="middle" class="mk-chip-t">laguna</text>
+      <rect class="mk-chip" x="836" y="126" width="130" height="26" rx="6"/><text x="901" y="144" text-anchor="middle" class="mk-chip-t">instella_moe</text>
+      <rect class="mk-chip" x="976" y="126" width="150" height="26" rx="6"/><text x="1051" y="144" text-anchor="middle" class="mk-chip-t" fill="#9ed6ff">gemma4_vision</text>
+      <rect class="mk-chip" x="616" y="160" width="110" height="26" rx="6"/><text x="671" y="178" text-anchor="middle" class="mk-chip-t" fill="#cbb6ff">siglip_vit</text>
+      <rect class="mk-chip" x="736" y="160" width="150" height="26" rx="6"/><text x="811" y="178" text-anchor="middle" class="mk-chip-t" fill="#ffd38a">audio_frontend</text>
+      <rect class="mk-chip" x="896" y="160" width="160" height="26" rx="6"/><text x="976" y="178" text-anchor="middle" class="mk-chip-t" fill="#ffd38a">audio_enc / audio_dec</text>
+      <text x="616" y="192" class="mk-sub" fill="#808080">16 text/vision templates + audio circuit trio → same lowering passes</text>
+    </g>
+
+    <!-- arrows sources -> compile -->
+    <path d="M149,150 L149,200" fill="none" stroke="#8aa0b4" stroke-width="1.6" marker-end="url(#mk-arrow)"/>
+    <path d="M445,150 L445,200" fill="none" stroke="#8aa0b4" stroke-width="1.6" marker-end="url(#mk-arrow)"/>
+
+    <!-- Row 2: compile pipeline -->
+    <g>
+      <rect class="mk-stage" x="24"   y="266" width="200" height="86" rx="12"/>
+      <text x="44" y="300" class="mk-title">IR lowering</text>
+      <text x="44" y="324" class="mk-sub">build_ir_v8.py</text>
+      <text x="44" y="342" class="mk-sub">template → kernel calls</text>
+
+      <rect class="mk-stage" x="264" y="266" width="200" height="86" rx="12"/>
+      <text x="284" y="300" class="mk-title">Memory plan</text>
+      <text x="284" y="324" class="mk-sub">bump offsets</text>
+      <text x="284" y="342" class="mk-sub">no malloc at runtime</text>
+
+      <rect class="mk-stage" x="504" y="266" width="200" height="86" rx="12"/>
+      <text x="524" y="300" class="mk-title">C codegen</text>
+      <text x="524" y="324" class="mk-sub">kernel dispatch</text>
+      <text x="524" y="342" class="mk-sub">SIMD tier select</text>
+
+      <rect x="744" y="266" width="220" height="86" rx="12" fill="url(#mk-run)" opacity="0.16" stroke="#47b475" stroke-width="1.6"/>
+      <text x="764" y="300" class="mk-title">Runtime</text>
+      <text x="764" y="324" class="mk-sub" fill="#a7e0bf">native C · deterministic</text>
+      <text x="764" y="342" class="mk-sub" fill="#a7e0bf">GEMM/GEMV · attention</text>
+    </g>
+    <path d="M224,309 L260,309" fill="none" stroke="#8aa0b4" stroke-width="1.6" marker-end="url(#mk-arrow)"/>
+    <path d="M464,309 L500,309" fill="none" stroke="#8aa0b4" stroke-width="1.6" marker-end="url(#mk-arrow)"/>
+    <path d="M704,309 L740,309" fill="none" stroke="#8aa0b4" stroke-width="1.6" marker-end="url(#mk-arrow)"/>
+
+    <!-- text decoder feeds runtime token stream -->
+    <rect class="mk-stage" x="994" y="266" width="162" height="86" rx="12"/>
+    <text x="1014" y="300" class="mk-title">Decoder</text>
+    <text x="1014" y="324" class="mk-sub">prefill + decode</text>
+    <text x="1014" y="342" class="mk-sub">token stream out</text>
+    <path d="M964,309 L990,309" fill="none" stroke="#47b475" stroke-width="1.8" marker-end="url(#mk-arrow)"/>
+
+    <!-- Row 3: vision lane -->
+    <g>
+      <rect x="24"  y="446" width="190" height="58" rx="12" fill="url(#mk-vision)" opacity="0.14" stroke="#07adf8" stroke-width="1.5"/>
+      <text x="44" y="472" class="mk-title" font-size="16">Image in</text>
+      <text x="44" y="492" class="mk-sub" fill="#9ed6ff">resize · normalize</text>
+
+      <rect x="244" y="446" width="210" height="58" rx="12" fill="url(#mk-vision)" opacity="0.14" stroke="#07adf8" stroke-width="1.5"/>
+      <text x="264" y="472" class="mk-title" font-size="16">Patch frontend</text>
+      <text x="264" y="492" class="mk-sub" fill="#9ed6ff">im2patch · pos · merge</text>
+
+      <rect x="484" y="446" width="210" height="58" rx="12" fill="url(#mk-vision)" opacity="0.14" stroke="#07adf8" stroke-width="1.5"/>
+      <text x="504" y="472" class="mk-title" font-size="16">ViT encoder</text>
+      <text x="504" y="492" class="mk-sub" fill="#9ed6ff">attn · MLP · deepstack</text>
+
+      <rect x="724" y="446" width="210" height="58" rx="12" fill="url(#mk-vision)" opacity="0.22" stroke="#00bcd4" stroke-width="1.8"/>
+      <text x="744" y="472" class="mk-title" font-size="16">Bridge prefix</text>
+      <text x="744" y="492" class="mk-sub" fill="#9ed6ff">projector rows → decoder</text>
+    </g>
+    <path d="M214,475 L240,475" fill="none" stroke="#07adf8" stroke-width="1.6" marker-end="url(#mk-arrow-v)"/>
+    <path d="M454,475 L480,475" fill="none" stroke="#07adf8" stroke-width="1.6" marker-end="url(#mk-arrow-v)"/>
+    <path d="M694,475 L720,475" fill="none" stroke="#07adf8" stroke-width="1.6" marker-end="url(#mk-arrow-v)"/>
+    <!-- bridge climbs into decoder -->
+    <path d="M934,460 C1010,440 1060,400 1070,354" fill="none" stroke="#00bcd4" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#mk-arrow-v)"/>
+    <text x="750" y="400" class="mk-sub" fill="#7fd8ec">prefix rows stitch in before text tokens</text>
+
+    <!-- Row 4: audio lane -->
+    <text x="24" y="556" class="mk-band">Audio lane (encoder&#8211;decoder families)</text>
+    <g>
+      <rect x="24"  y="572" width="190" height="58" rx="12" fill="url(#mk-audio)" opacity="0.14" stroke="#f59e0b" stroke-width="1.5"/>
+      <text x="44" y="598" class="mk-title" font-size="16">WAV in</text>
+      <text x="44" y="618" class="mk-sub" fill="#ffd38a">pcm16 &#183; resample 16 kHz</text>
+
+      <rect x="244" y="572" width="210" height="58" rx="12" fill="url(#mk-audio)" opacity="0.14" stroke="#f59e0b" stroke-width="1.5"/>
+      <text x="264" y="598" class="mk-title" font-size="16">Log-Mel frontend</text>
+      <text x="264" y="618" class="mk-sub" fill="#ffd38a">stft &#183; mel &#183; conv stem</text>
+
+      <rect x="484" y="572" width="210" height="58" rx="12" fill="url(#mk-audio)" opacity="0.14" stroke="#f59e0b" stroke-width="1.5"/>
+      <text x="504" y="598" class="mk-title" font-size="16">Audio encoder</text>
+      <text x="504" y="618" class="mk-sub" fill="#ffd38a">self-attn &#183; GELU MLP</text>
+
+      <rect x="724" y="572" width="210" height="58" rx="12" fill="url(#mk-audio)" opacity="0.22" stroke="#f59e0b" stroke-width="1.8"/>
+      <text x="744" y="598" class="mk-title" font-size="16">Cross-attn memory</text>
+      <text x="744" y="618" class="mk-sub" fill="#ffd38a">K/V once &#8594; decoder</text>
+    </g>
+    <path d="M214,601 L240,601" fill="none" stroke="#f59e0b" stroke-width="1.6" marker-end="url(#mk-arrow-a)"/>
+    <path d="M454,601 L480,601" fill="none" stroke="#f59e0b" stroke-width="1.6" marker-end="url(#mk-arrow-a)"/>
+    <path d="M694,601 L720,601" fill="none" stroke="#f59e0b" stroke-width="1.6" marker-end="url(#mk-arrow-a)"/>
+    <!-- cross-attention memory climbs into decoder -->
+    <path d="M934,586 C1020,566 1075,420 1075,354" fill="none" stroke="#f59e0b" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#mk-arrow-a)"/>
+    <text x="920" y="540" text-anchor="end" class="mk-sub" fill="#ffd38a">safetensors &#8594; BUMP &#183; encoder K/V read every decode step</text>
+  </svg>
+  <div class="svg-expand-hint">click / tap the diagram to expand</div>
+  </div>
+
+  <div class="matrix-section">
+    <h2 style="margin: 0; color: var(--orange);">Certification Summary</h2>
+    <p class="source-note" style="margin-top: 0.6rem;">
+      Evidence is not one bucket. Each family below is labeled with the strongest evidence class it has actually
+      earned — an eight-token replay agreement and a 4,096-token bit-exact trajectory are different claims, and the
+      dots on the cards use the same classes.
+    </p>
+    <p class="source-note">
+      None of these labels alone means production certification. CKE requires complete executed-graph and
+      deterministic decode evidence for <strong>full-model numerical certification</strong>, then separately gates
+      advertised context/media capacity, quality, ISA coverage, memory safety, repeatability, and performance.
+      See the <a href="v8-runbook.html#full-model-certification">v8 certification contract</a>, the
+      <a href="kernel-maps.html#model-family-ownership">model-family provider ownership rule</a>, and
+      <a href="xray.html">X-Ray workflow</a>.
+    </p>
+    <div class="status-legend">
+      <span class="sl-item"><span class="sl-dot st-traj"></span><span><strong>Trajectory exact</strong> — full token trajectory bit-exact against the oracle</span></span>
+      <span class="sl-item"><span class="sl-dot st-num"></span><span><strong>Numerical sampled</strong> — oracle agreement at sampled checkpoints (first-token / top-k / cosine / prefix replay)</span></span>
+      <span class="sl-item"><span class="sl-dot st-e2e"></span><span><strong>Coherent E2E</strong> — coherent end-to-end generation; smoke-level evidence</span></span>
+      <span class="sl-item"><span class="sl-dot st-contract"></span><span><strong>Contract-only</strong> — circuit and contract tests; no model-weight run claimed</span></span>
+      <span class="sl-item"><span class="sl-dot st-plan"></span><span><strong>Planner-only</strong> — memory-plan certification; runtime not claimed at that scale</span></span>
+    </div>
+    <div class="cert-table-wrap">
+      <table class="cert-table">
+        <thead>
+          <tr><th>Model</th><th>Runtime status</th><th>Strongest evidence</th><th>Max tested context</th><th>Oracle</th><th>Remaining gap</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="cert-model">Kokoro v1 / af_heart</td><td><span class="cert-status st-num">Encoder numerical parity</span></td><td>147 generated operations; twelve shared ALBERT invocations; FP32 phoneme features, not audio</td><td>Separate all-valid lengths 2, 8, 36, 64</td><td>Pinned PyTorch 2.8 captures</td><td>Duration/prosody, text features, native waveform generation and full speech remain NOT_TESTED. <a href="v8-tts-kokoro-bringup.html">Current coverage and commands</a></td></tr>
+          <tr><td class="cert-model">Qwen2 0.5B</td><td><span class="cert-status st-e2e">Coherent E2E</span></td><td>nightly regression smoke</td><td>1,024</td><td>v8 nightly regression</td><td>long-context and perf sweeps</td></tr>
+          <tr><td class="cert-model">Qwen3 0.6B</td><td><span class="cert-status st-e2e">Coherent E2E</span></td><td>nightly regression smoke</td><td>1,024</td><td>v8 nightly regression</td><td>long-context and perf sweeps</td></tr>
+          <tr><td class="cert-model">Qwen3.5 0.8B</td><td><span class="cert-status st-e2e">Coherent E2E</span></td><td>nightly regression smoke (hybrid DeltaNet)</td><td>1,034</td><td>v8 nightly regression</td><td>long-generation parity monitored</td></tr>
+          <tr><td class="cert-model">Qwen3.6 27B</td><td><span class="cert-status st-num">Numerical sampled</span></td><td>kernel-exact head-parallel DeltaNet prefill + Q4_K&times;Q8_K VNNI x16 providers</td><td>&mdash;</td><td>kernel parity gates</td><td>1K logit parity open; batched prefill opt-in</td></tr>
+          <tr><td class="cert-model">Qwen3.8 27B</td><td><span class="cert-status st-traj">Trajectory exact</span> <span class="cert-status st-plan">Planner-only</span></td><td>4,096-token trajectory bit-exact (4,000/4,000 vocab rows); 262K memory planner certified</td><td>4,096 runtime / 262,144 planner</td><td>llama.cpp</td><td>128K/262K runtime claims deferred; ~1.49&times; slower than llama.cpp at 8K</td></tr>
+          <tr><td class="cert-model">Qwen3-VL 8B</td><td><span class="cert-status st-num">Numerical sampled</span></td><td>BF16 and llama.cpp corpus certification lanes; promoted vision baseline</td><td>1,024 smoke</td><td>PyTorch + llama.cpp corpus</td><td>semantic vision parity ongoing</td></tr>
+          <tr><td class="cert-model">Gemma3 270M</td><td><span class="cert-status st-e2e">Coherent E2E</span></td><td>nightly regression Q5_K_M</td><td>1,024</td><td>v8 nightly regression</td><td>&mdash;</td></tr>
+          <tr><td class="cert-model">Gemma4 E4B</td><td><span class="cert-status st-num">Numerical sampled</span></td><td>Q4_K_M coherent smoke + BF16 safetensors PyTorch parity lane</td><td>2,048</td><td>PyTorch</td><td>semantic vision parity active</td></tr>
+          <tr><td class="cert-model">GLM4 9B</td><td><span class="cert-status st-e2e">Coherent E2E</span></td><td>GGUF Q4_K_M coherent generation; safetensors comparator lane</td><td>1,024</td><td>PyTorch comparator</td><td>long-trajectory sweeps</td></tr>
+          <tr><td class="cert-model">Nemotron Nano 9B v2</td><td><span class="cert-status st-e2e">Coherent E2E</span></td><td>Q4_K_M coherent smoke; Mamba2 state-shape contracts</td><td>1,024</td><td>PyTorch parity lane</td><td>long-trajectory sweeps</td></tr>
+          <tr><td class="cert-model">Kimi-VL A3B (text)</td><td><span class="cert-status st-num">Numerical sampled</span></td><td>first-token + top-20 ranking match, cosine 0.997696; bit-identical repeat runs</td><td>2,048</td><td>PyTorch</td><td>MoonViT vision bridge; internal BF16 drift near layer 7</td></tr>
+          <tr><td class="cert-model">Cohere2 Command R7B</td><td><span class="cert-status st-num">Numerical sampled</span></td><td>tokenizer-free replay matches llama.cpp for the first 8 greedy positions</td><td>2,048</td><td>llama.cpp</td><td>long-trajectory parity; performance sweeps</td></tr>
+          <tr><td class="cert-model">Cohere North Mini Code 30B-A3B</td><td><span class="cert-status st-e2e">Coherent E2E</span></td><td>two repeatable 131,072-token CKE capacity runs with identical first-logit and output-token hashes</td><td>131,072</td><td>CKE repeatability</td><td>matched full-model oracle parity; practical long-code quality</td></tr>
+          <tr><td class="cert-model">Cohere North Micro Vision 2.4B</td><td><span class="cert-status st-e2e">Coherent E2E</span></td><td>real-image encoder/bridge/decoder run; official PyTorch layer X-Ray remains follow-up work</td><td>real-image smoke</td><td>PyTorch required</td><td>complete encoder/bridge/decoder parity; private OCR task quality</td></tr>
+          <tr><td class="cert-model">Cohere Transcribe 2B</td><td><span class="cert-status st-e2e">Short native E2E</span></td><td>2,104-tensor mixed FP16/FP32 BUMP bundle; 48 encoder X-Ray boundaries; 32 generated token IDs exactly match CrispASR on the pinned 7.435-second fixture</td><td>7.435-second audio</td><td>CrispASR</td><td>long audio, timestamps, resampling, multilingual coverage, quantization, and performance</td></tr>
+          <tr><td class="cert-model">Parakeet TDT 0.6B v3</td><td><span class="cert-status st-traj">Trajectory exact</span></td><td>native FP32 BUMPWGT5 run: 50/50 token IDs, 50/50 durations, and 44/44 timestamps exact vs pinned Transformers; deterministic five-minute full-attention (WER 10.43%) and overlapping-window (WER 7.25%) repeats; bounded 2,542 s, 17-window completion</td><td>2,542 s audio</td><td>Transformers</td><td>multilingual, real-world resampling quality, long-audio WER reference, generated-circuit lowering, concurrent sessions, diarization</td></tr>
+          <tr><td class="cert-model">Cohere Command A+ 218B/25B-active</td><td><span class="cert-status st-e2e">Coherent E2E</span> <span class="cert-status st-num">Numerical sampled</span></td><td>675/675 required weights mapped; native packed NVFP4 leaf parity; coherent short text</td><td>126 prompt + 32 decode</td><td>compressed-tensors formula + pinned leaf oracle</td><td>full-model/long-context parity, vision, quality, and matched performance</td></tr>
+          <tr><td class="cert-model">Command A Vision / Aya Vision / Translate</td><td><span class="cert-status st-contract">Not implemented</span></td><td>official artifacts identified; no CKE real-weight trajectory claim</td><td>&mdash;</td><td>PyTorch required</td><td>circuit/provider gap audit and complete bring-up</td></tr>
+          <tr><td class="cert-model">Laguna-XS 2.1</td><td><span class="cert-status st-e2e">Coherent E2E</span></td><td>bit-exact embedding + layer-0 RMSNorm; router replay within one ULP</td><td>2,048</td><td>llama.cpp (diagnostic)</td><td>long-trajectory parity not claimed (near-tied MoE route flips)</td></tr>
+          <tr><td class="cert-model">Instella-MoE 16B-A3B</td><td><span class="cert-status st-num">Numerical sampled</span></td><td>full-logit cosine 0.99998 + top-1 match at a 32-token checkpoint</td><td>32-token checkpoint</td><td>PyTorch</td><td>quantized GGUF and long trajectories uncertified</td></tr>
+          <tr><td class="cert-model">Llama / Nanbeige 3B</td><td><span class="cert-status st-e2e">Coherent E2E</span></td><td>nightly regression smoke</td><td>1,024</td><td>v8 nightly regression</td><td>&mdash;</td></tr>
+          <tr><td class="cert-model">Whisper Tiny/Base/Small</td><td><span class="cert-status st-traj">Trajectory exact</span></td><td>JFK fixtures match Hugging Face token for token (all three sizes)</td><td>JFK sample; 33 s Base long-form</td><td>Hugging Face</td><td>broader corpus certification; hour-scale recordings</td></tr>
+          <tr><td class="cert-model">GPT-2</td><td><span class="cert-status st-e2e">Coherent E2E</span></td><td>GGUF baseline</td><td>&mdash;</td><td>v8 nightly regression</td><td>legacy lane</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <nav class="jump-nav" aria-label="Jump to model card">
+      <a href="#card-qwen2">qwen2</a>
+      <a href="#card-qwen3">qwen3</a>
+      <a href="#card-qwen35">qwen3.5</a>
+      <a href="#card-qwen36">qwen3.6</a>
+      <a href="#card-qwen38">qwen3.8</a>
+      <a href="#card-gemma3">gemma3</a>
+      <a href="#card-gemma4">gemma4</a>
+      <a href="#card-qwen3vl">qwen3-vl</a>
+      <a href="#card-gemma4v">gemma4-vision</a>
+      <a href="#card-siglip">siglip</a>
+      <a href="#card-glm4">glm4</a>
+      <a href="#card-cohere2">cohere2</a>
+      <a href="#card-laguna">laguna</a>
+      <a href="#card-instella">instella</a>
+      <a href="#card-kimi">kimi</a>
+      <a href="#card-nemotron">nemotron</a>
+      <a href="#card-nanbeige">llama/nanbeige</a>
+      <a href="#card-whisper">whisper</a>
+      <a href="#card-parakeet">parakeet</a>
+      <a href="#card-gpt2">gpt-2</a>
+    </nav>
+  </div>
+
+  <div class="matrix-hero">
+
+    <!-- Qwen2 -->
+    <div class="model-card mc-qwen2" id="card-qwen2">
+      <span class="model-badge">template: qwen2.json</span>
+      <div class="model-title">Qwen2</div>
+      <div class="model-arch">RMSNorm · RoPE split-half · SwiGLU · GQA<br>QKV bias from weights · BPE tokenizer</div>
+      <div class="model-pipeline">
+        <div class="mp-row"><span class="mp-dot st-e2e"></span><span class="mp-text">Quantized inference — GGUF, GEMM/GEMV dispatch</span></div>
+        <div class="mp-row"><span class="mp-dot training"></span><span class="mp-text">v7 training — IR backprop, AdamW, parity gates</span></div>
+      </div>
+      <details class="card-details"><summary>Commands &amp; runnable lanes</summary>
+      <div class="model-command">
+        <div class="model-command-head"><span>Latest hardened v8 smoke</span><button class="copy-command" type="button" data-copy-command="cmd-qwen2">Copy</button></div>
+        <pre id="cmd-qwen2"><code>version/v8/scripts/cks-v8-run run \
+  hf://Qwen/Qwen2-0.5B-Instruct-GGUF/qwen2-0_5b-instruct-q4_k_m.gguf \
+  --context-len 1024 --force-compile --force-convert --chat-template=auto \
+  --generate-visualizer</code></pre>
+      </div></details>
+      <div class="model-quant">
+        <span class="mq-chip preferred">Q4_K_M ★</span>
+        <span class="mq-chip">Q5_K</span>
+        <span class="mq-chip">Q6_K</span>
+        <span class="mq-chip">Q8_0</span>
+        <span class="mq-chip">FP32</span>
+      </div>
+    </div>
+
+    <!-- Qwen3 -->
+    <div class="model-card mc-qwen3" id="card-qwen3">
+      <span class="model-badge">template: qwen3.json</span>
+      <div class="model-title">Qwen3</div>
+      <div class="model-arch">RMSNorm · RoPE split-half · QK‑Norm · SwiGLU<br>No QKV bias · BPE tokenizer · learned QK‑Norm</div>
+      <div class="model-pipeline">
+        <div class="mp-row"><span class="mp-dot st-e2e"></span><span class="mp-text">Quantized inference — GGUF, GEMM/GEMV dispatch</span></div>
+        <div class="mp-row"><span class="mp-dot training"></span><span class="mp-text">v7 training — IR backprop, AdamW, parity gates</span></div>
+      </div>
+      <details class="card-details"><summary>Commands &amp; runnable lanes</summary>
+      <div class="model-command">
+        <div class="model-command-head"><span>Latest hardened v8 smoke</span><button class="copy-command" type="button" data-copy-command="cmd-qwen3">Copy</button></div>
+        <pre id="cmd-qwen3"><code>version/v8/scripts/cks-v8-run run \
+  hf://Qwen/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q8_0.gguf \
+  --context-len 1024 --force-compile --force-convert --chat-template=auto \
+  --generate-visualizer</code></pre>
+      </div></details>
+      <div class="model-quant">
+        <span class="mq-chip preferred">Q4_K_M ★</span>
+        <span class="mq-chip">Q5_K</span>
+        <span class="mq-chip">Q6_K</span>
+        <span class="mq-chip">Q8_0</span>
+        <span class="mq-chip">FP32</span>
+      </div>
+    </div>
+
+    <!-- Qwen3.5 -->
+    <div class="model-card mc-qwen35" id="card-qwen35">
+      <span class="model-badge">template: qwen35.json</span>
+      <div class="model-title">Qwen3.5</div>
+      <div class="model-arch">Hybrid recurrent + gated attention · RMSNorm · RoPE<br>QK‑Norm (full‑attn only) · SwiGLU · Gated DeltaNet · BPE tokenizer<br>Block pattern: 3×recurrent → 1×full_attention</div>
+      <div class="model-pipeline">
+        <div class="mp-row"><span class="mp-dot st-e2e"></span><span class="mp-text">Quantized inference — hybrid recurrent-attention decode, DeltaNet kernel parity</span></div>
+        <div class="mp-row"><span class="mp-dot training"></span><span class="mp-text">v7 training — IR backprop, DeltaNet backward kernels, AdamW, parity gates</span></div>
+      </div>
+      <div class="source-note">
+        Bring-up fix: preserved <code>&lt;think&gt;</code> / <code>&lt;/think&gt;</code> markers on the built-in C tokenizer path and moved visible vs. suppressed thinking into the exported chat contract, instead of relying on Python-tokenizer fallback.
+      </div>
+      <div class="model-tags">
+        <span class="tag learned">hybrid_recurrent_attention</span>
+        <span class="tag learned">gated_deltanet</span>
+        <span class="tag learned">0.8B dense compatible</span>
+      </div>
+      <details class="card-details"><summary>Commands &amp; runnable lanes</summary>
+      <div class="model-command">
+        <div class="model-command-head"><span>Latest hardened v8 smoke</span><button class="copy-command" type="button" data-copy-command="cmd-qwen35">Copy</button></div>
+        <pre id="cmd-qwen35"><code>version/v8/scripts/cks-v8-run run \
+  hf://unsloth/Qwen3.5-0.8B-GGUF/Qwen3.5-0.8B-Q4_K_M.gguf \
+  --context-len 1034 --force-compile --force-convert --chat-template=qwen35 \
+  --generate-visualizer</code></pre>
+      </div></details>
+      <div class="model-quant">
+        <span class="mq-chip preferred">Q4_K_M ★</span>
+        <span class="mq-chip">Q8_0</span>
+        <span class="mq-chip">FP32</span>
+      </div>
+    </div>
+
+    <!-- Qwen3.6 -->
+    <div class="model-card mc-qwen36" id="card-qwen36">
+      <span class="model-badge">qwen35-family hybrid circuit</span>
+      <div class="model-title">Qwen3.6 27B</div>
+      <div class="model-arch">Hybrid recurrent + gated attention · Gated DeltaNet<br>Q4_K_M quantized inference · optimized batched prefill (opt-in)</div>
+      <div class="model-pipeline">
+        <div class="mp-row"><span class="mp-dot st-num"></span><span class="mp-text">Exact head-parallel DeltaNet prefill — value heads partitioned across the threadpool once per prompt</span></div>
+        <div class="mp-row"><span class="mp-dot st-num"></span><span class="mp-text">Q4_K × Q8_K AVX-512 VNNI x16 prefill — AVX2 / reference fallback on other CPUs</span></div>
+        <div class="mp-row"><span class="mp-dot no"></span><span class="mp-text dim">Sequential prefill remains the default while long-context parity is unresolved</span></div>
+      </div>
+      <div class="source-note">
+        Prefill coverage (PR #277): the measured Qwen3.6-27B Q4_K_M projection shapes dispatch to the AVX-512 VNNI x16 provider with packed weights prepared at load time, reaching <code>11.20 tok/s</code> prompt rate (about 2.6x the previous CKE batched baseline) on an ICX AVX-512/VNNI host. 1K-context logit parity is not certified yet, so the lane stays behind <code>CK_V8_FORCE_BATCHED_PREFILL=1</code>. Operator steps: <a href="v8-runbook.html#qwen36-optimized-prefill">v8 runbook</a>; performance context and remaining targets: <a href="prefill-performance-roadmap.html">prefill performance roadmap</a>.
+      </div>
+      <div class="model-tags">
+        <span class="tag learned">exact_head_parallel_deltanet</span>
+        <span class="tag learned">q4k_q8k_vnni_x16_prefill</span>
+        <span class="tag fixed">opt-in until 1K parity</span>
+      </div>
+      <div class="model-quant">
+        <span class="mq-chip preferred">Q4_K_M ★</span>
+      </div>
+    </div>
+
+    <!-- Qwen3.8 -->
+    <div class="model-card mc-qwen38" id="card-qwen38">
+      <span class="model-badge">template: qwen38.json</span>
+      <div class="model-title">Qwen3.8 27B</div>
+      <div class="model-arch">Hybrid recurrent + gated attention · Gated DeltaNet (3×recurrent → 1×full)<br>Text M-RoPE split · QK‑Norm (full‑attn only) · SwiGLU · tied LM head · BPE / ChatML</div>
+      <div class="model-pipeline">
+        <div class="mp-row"><span class="mp-dot st-traj"></span><span class="mp-text">Q4_K_M 27B text runtime — 4,096-token trajectory bit-exact to llama.cpp (4,000/4,000 full-vocabulary rows)</span></div>
+        <div class="mp-row"><span class="mp-dot st-plan"></span><span class="mp-text">262,144-token context memory planner certified (capacity-aware nightly lane)</span></div>
+        <div class="mp-row"><span class="mp-dot st-num"></span><span class="mp-text">Six 131,072-token artifact runs completed at 32.37–32.71 tok/s prefill and 1.36–1.41 tok/s decode</span></div>
+        <div class="mp-row"><span class="mp-dot no"></span><span class="mp-text dim">128K bit-exact parity and 262K runtime execution remain separate open certification boundaries</span></div>
+      </div>
+      <div class="source-note">
+        Identity: upstream GGUFs advertise <code>general.architecture=qwen35</code>; the converter selects qwen38 via artifact metadata (basename / size label). Circuit carries validated contract selectors for q5_k, q6_k, q8_0 and BF16 recurrent dtypes. Evidence: PRs #387, #388, #390. <a href="qwen38-generated-artifacts.html">Inspect the generated 128K engineering artifacts.</a>
+      </div>
+      <details class="card-details"><summary>Commands &amp; runnable lanes</summary>
+      <div class="model-command">
+        <div class="model-command-head"><span>Qwen3.8 contract + certification lane</span><button class="copy-command" type="button" data-copy-command="cmd-qwen38">Copy</button></div>
+        <pre id="cmd-qwen38"><code>.venv/bin/python -m unittest tests.test_v8_qwen38_contract
+QWEN38_MODEL_DIR=/path/to/qwen38-27b QWEN38_GGUF=/path/to/qwen38.gguf \
+  make certify-qwen38-svg-parity</code></pre>
+      </div></details>
+      <div class="model-tags">
+        <span class="tag learned">hybrid_recurrent_attention</span>
+        <span class="tag learned">mrope_text_split</span>
+        <span class="tag fixed">262K planner certified</span>
+      </div>
+      <div class="model-quant">
+        <span class="mq-chip preferred">Q4_K_M ★</span>
+        <span class="mq-chip">Q5_K</span>
+        <span class="mq-chip">Q6_K</span>
+        <span class="mq-chip">Q8_0</span>
+        <span class="mq-chip">BF16 contracts</span>
+      </div>
+    </div>
+
+    <!-- Gemma3 -->
+    <div class="model-card mc-gemma3" id="card-gemma3">
+      <span class="model-badge">template: gemma3.json</span>
+      <div class="model-title">Gemma3</div>
+      <div class="model-arch">RMSNorm · RoPE split-half · QK‑Norm · GeGLU · Sliding Window<br>Post-norms · embed scale √dim · SentencePiece</div>
+      <div class="model-pipeline">
+        <div class="mp-row"><span class="mp-dot st-e2e"></span><span class="mp-text">Quantized inference — GGUF, sliding-window attn kernel, split-half RoPE parity restored</span></div>
+        <div class="mp-row"><span class="mp-dot training"></span><span class="mp-text">v7 training — IR backprop, AdamW, parity gates</span></div>
+      </div>
+      <div class="source-note">
+        Fix detail: Gemma was applying RoPE with the wrong dimension pairing. Gemma expects split-half RoPE, where the first half of Q/K is paired with the second half during the rotation step. The runtime could still choose the other common layout, so attention drifted from the reference path. The fix was to read exported <code>rope_layout</code> metadata and select the matching <code>rope_qk</code> kernel automatically. PR #463 went further: the circuit now pins llama.cpp's numerical schedule (<code>fp32_llama_regular</code>), and 256/256 complete-vocabulary rows match llama.cpp bit-exactly for both Q4_K_M and the tested UD-Q4_K_XL artifact &mdash; see the <a href="v8-numerical-contracts.html#gemma3-schedule-case-study">v8 Numerical Contracts Gemma3 case study</a> for the contract mechanism and its open caveats.
+      </div>
+      <div class="model-tags">
+        <span class="tag fixed">first-divergence @ rope_qk</span>
+        <span class="tag fixed">rope_layout contract honored</span>
+      </div>
+      <details class="card-details"><summary>Commands &amp; runnable lanes</summary>
+      <div class="model-command">
+        <div class="model-command-head"><span>Latest hardened v8 smoke</span><button class="copy-command" type="button" data-copy-command="cmd-gemma3">Copy</button></div>
+        <pre id="cmd-gemma3"><code>version/v8/scripts/cks-v8-run run \
+  hf://unsloth/gemma-3-270m-it-GGUF/gemma-3-270m-it-Q5_K_M.gguf \
+  --context-len 1024 --force-compile --force-convert --chat-template=auto \
+  --generate-visualizer</code></pre>
+      </div></details>
+      <div class="model-quant">
+        <span class="mq-chip preferred">Q8_0 ★</span>
+        <span class="mq-chip">Q4_K</span>
+        <span class="mq-chip">BF16</span>
+        <span class="mq-chip">FP32</span>
+      </div>
+    </div>
+
+
+    <!-- Qwen3-VL -->
+    <div class="model-card mc-qwen3vl" id="card-qwen3vl">
+      <span class="model-badge">template: qwen3_vl.json + mmproj</span>
+      <div class="model-title">Qwen3-VL 8B Instruct</div>
+      <div class="model-arch">Vision encoder bridge · multimodal token stitching · Qwen3 decoder<br>GGUF decoder + mmproj runtime · thinking-mode control</div>
+      <div class="model-pipeline">
+        <div class="mp-row"><span class="mp-dot st-e2e"></span><span class="mp-text">v8 multimodal inference — image preprocessing, bridge, mixed prompt prefill</span></div>
+        <div class="mp-row"><span class="mp-dot st-e2e"></span><span class="mp-text">Nightly vision smoke — promoted baseline before adding more vision families</span></div>
+      </div>
+      <div class="source-note">
+        Bring-up scope: Qwen3-VL is the current promoted multimodal baseline. It validates that the encoder bridge, image marker contract, and decoder mixed-prefill path work together before Gemma4 vision and later audio lanes are treated as production-ready.
+      </div>
+      <details class="card-details"><summary>Commands &amp; runnable lanes</summary>
+      <div class="model-command">
+        <div class="model-command-head"><span>Qwen3-VL vision smoke</span><button class="copy-command" type="button" data-copy-command="cmd-qwen3vl">Copy</button></div>
+        <pre id="cmd-qwen3vl"><code>version/v8/scripts/cks-v8-run run \
+  hf://Qwen/Qwen3-VL-8B-Instruct-GGUF/Qwen3VL-8B-Instruct-Q4_K_M.gguf \
+  --mmproj hf://Qwen/Qwen3-VL-8B-Instruct-GGUF/mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf \
+  --image-path version/v8/test_assets/v8_vision_doc_card_72.png \
+  --prompt 'Explain this image.' \
+  --context-len 1024 --force-compile --force-convert \
+  --thinking-mode suppressed</code></pre>
+      </div></details>
+      <div class="model-tags">
+        <span class="tag learned">multimodal_bridge</span>
+        <span class="tag learned">mixed_prefill</span>
+        <span class="tag fixed">vision nightly smoke</span>
+      </div>
+      <div class="model-quant">
+        <span class="mq-chip preferred">Q4_K_M decoder ★</span>
+        <span class="mq-chip">Q8_0 mmproj</span>
+        <span class="mq-chip">image bridge</span>
+      </div>
+    </div>
+
+    <!-- Whisper Tiny, Base, and Small -->
+    <div class="model-card mc-whisper" id="card-whisper">
+      <span class="model-badge">circuits: audio frontend + encoder + decoder</span>
+      <div class="model-title">Whisper Tiny / Base / Small</div>
+      <div class="model-arch">First encoder&#8211;decoder family &#183; generated frontend (7 ops &#8594; ck_model_run_audio_wav)<br>LayerNorm &#183; learned absolute position &#183; GELU (erf) &#183; dense bidirectional encoder</div>
+      <div class="model-pipeline">
+        <div class="mp-row"><span class="mp-dot st-traj"></span><span class="mp-text">v8 audio inference — WAV to transcript via cks-v8-run audio, cached cross-attn K/V (&asymp;79&times; decode)</span></div>
+        <div class="mp-row"><span class="mp-dot st-traj"></span><span class="mp-text">Artifact-gated E2E — Tiny, Base, and Small JFK fixtures match Hugging Face token for token</span></div>
+      </div>
+      <div class="source-note">
+        Bring-up scope: Whisper Tiny, Base, and Small FP32 — English text and timestamp decoding certified on the JFK fixture; Base also has a 33-second long-form parity fixture. PCM16 WAV input; longer recordings use sequential source windows but arbitrary hour-scale recordings are not yet corpus-certified. A single safetensors checkpoint builds a generated encoder + decoder run-directory pair.
+      </div>
+      <details class="card-details"><summary>Commands &amp; runnable lanes</summary>
+      <div class="model-command">
+        <div class="model-command-head"><span>Whisper Base end to end</span><button class="copy-command" type="button" data-copy-command="cmd-whisper">Copy</button></div>
+        <pre id="cmd-whisper"><code>version/v8/scripts/cks-v8-run audio hf://openai/whisper-base \
+  --wav /path/to/audio.wav --language en --task transcribe</code></pre>
+      </div></details>
+      <div class="model-tags">
+        <span class="tag learned">encoder_decoder</span>
+        <span class="tag learned">cross_attention</span>
+        <span class="tag fixed">artifact-gated e2e</span>
+      </div>
+      <div class="model-quant">
+        <span class="mq-chip preferred">FP32 &#9733;</span>
+        <span class="mq-chip">safetensors &#8594; BUMP</span>
+        <span class="mq-chip">enc + dec pair</span>
+      </div>
+    </div>
+
+    <!-- Parakeet TDT -->
+    <div class="model-card mc-parakeet" id="card-parakeet">
+      <span class="model-badge">circuit: parakeet_tdt.json</span>
+      <div class="model-title">Parakeet TDT 0.6B v3</div>
+      <div class="model-arch">FastConformer · Transformer-XL relative attention · convolution module<br>2-layer LSTM predictor · token-duration joint head · Metaspace BPE</div>
+      <div class="model-pipeline">
+        <div class="mp-row"><span class="mp-dot st-traj"></span><span class="mp-text">Native FP32 WAV-to-transcript: 50/50 token IDs, 50/50 durations, and 44/44 timestamps exact vs pinned Transformers on the 7.435 s fixture</span></div>
+        <div class="mp-row"><span class="mp-dot st-num"></span><span class="mp-text">Deterministic five-minute full-attention (WER 10.43%) and overlapping-window (WER 7.25%) repeats; bounded 2,542 s, 17-window completion at RTF 0.847</span></div>
+        <div class="mp-row"><span class="mp-dot no"></span><span class="mp-text dim">Multilingual speech, real-world resampling quality, long-audio WER references, streaming, concurrent sessions, generated-circuit lowering, and diarization are not tested</span></div>
+      </div>
+      <div class="source-note">
+        Five providers from the short bring-up (grouped Conv1D, relative position, relative attention, inference BatchNorm, stateful LSTM) plus native residual-add and argmax providers run under a Python driver over native kernels and BUMP weights; the shared audio front door (<code>cks-v8-run audio</code>) converts, builds, and runs the bounded long-audio policy. Read the <a href="v8-parakeet-tdt.html">Parakeet TDT native bring-up</a>.
+      </div>
+      <div class="model-tags"><span class="tag learned">trajectory exact</span><span class="tag learned">native E2E</span><span class="tag fixed">bounded long audio</span></div>
+      <div class="model-quant"><span class="mq-chip preferred">FP32 &#9733;</span><span class="mq-chip">safetensors &#8594; BUMP</span></div>
+    </div>
+
+    <!-- GLM4 -->
+    <div class="model-card mc-qwen" id="card-glm4">
+      <span class="model-badge">template: glm4.json</span>
+      <div class="model-title">GLM4</div>
+      <div class="model-arch">RMSNorm · partial RoPE · GQA · SwiGLU<br>BPE tokenizer · attention bias · GGUF + safetensors conversion lane</div>
+      <div class="model-pipeline">
+        <div class="mp-row"><span class="mp-dot st-e2e"></span><span class="mp-text">v8 template — GLM4 chat contract and partial-RoPE metadata</span></div>
+        <div class="mp-row"><span class="mp-dot st-num"></span><span class="mp-text">Conversion/parity harness — GGUF fixes, safetensors declarative map, PyTorch-vs-CK comparator</span></div>
+      </div>
+      <div class="source-note">
+        Bring-up scope: GLM4 now has the real GGUF runtime lane plus the safetensors/PyTorch parity lane. The key hardening was making partial pairwise RoPE and projection producer/consumer wiring explicit enough that Q4_K_M GGUF generation stays coherent instead of collapsing at the first token.
+      </div>
+      <div class="model-tags">
+        <span class="tag learned">declarative safetensors map</span>
+        <span class="tag learned">partial_rope contract</span>
+        <span class="tag fixed">synthetic conversion tested</span>
+      </div>
+      <details class="card-details"><summary>Commands &amp; runnable lanes</summary>
+      <div class="model-command">
+        <div class="model-command-head"><span>Latest hardened v8 smoke</span><button class="copy-command" type="button" data-copy-command="cmd-glm4">Copy</button></div>
+        <pre id="cmd-glm4"><code>version/v8/scripts/cks-v8-run run \
+  hf://unsloth/GLM-4-9B-0414-GGUF/GLM-4-9B-0414-Q4_K_M.gguf \
+  --context-len 1024 --force-compile --force-convert --chat-template=glm4 \
+  --prompt 'Give me a detailed example of C, Python and SQL code.' \
+  --max-tokens 256 --temperature 0.0 --generate-visualizer</code></pre>
+      </div></details>
+      <div class="model-quant">
+        <span class="mq-chip">BF16 safetensors</span>
+        <span class="mq-chip">GGUF</span>
+        <span class="mq-chip">Q4_K</span>
+        <span class="mq-chip">Q8_0</span>
+      </div>
+    </div>
+
+    <!-- Muse-Glimmer -->
+    <div class="model-card mc-cohere2" id="card-muse-glimmer">
+      <span class="model-badge">circuit: muse_glimmer_text</span>
+      <div class="model-title">Muse-Glimmer-30B Text</div>
+      <div class="model-arch">Dense GQA · 3:1 sliding/full attention · RoPE on sliding layers only<br>Centered RMSNorm · Q/K normalization · sigmoid attention gate · SwiGLU<br>Untied output head · scaled and tanh-softcapped logits</div>
+      <div class="model-pipeline">
+        <div class="mp-row"><span class="mp-dot st-e2e"></span><span class="mp-text">Complete BF16 checkpoint conversion and generated 52-layer prefill/decode graphs</span></div>
+        <div class="mp-row"><span class="mp-dot st-num"></span><span class="mp-text">Ryzen PyTorch eager parity — 384 / 384 finite logit rows bit exact across three 128-token trajectories</span></div>
+        <div class="mp-row"><span class="mp-dot no"></span><span class="mp-text dim">Window-boundary, long-context, allocation-instrumentation, quantization, and vision certification remain open</span></div>
+      </div>
+      <div class="source-note">
+        The selected candidate attention provider uses caller-owned but quadratic eager prefill scratch and a 1 GiB workspace gate. Read the <a href="v8-muse-glimmer.html">Muse-Glimmer text certification page</a> for the numerical X-ray, pinned evidence, exact support boundary, and reproduction commands.
+      </div>
+      <div class="model-tags">
+        <span class="tag learned">independent hidden/query/KV widths</span>
+        <span class="tag fixed">PyTorch BF16 bit exact</span>
+        <span class="tag fixed">planner-owned tensor scratch</span>
+      </div>
+      <div class="model-quant">
+        <span class="mq-chip preferred">BF16 &#9733;</span>
+        <span class="mq-chip">text candidate</span>
+        <span class="mq-chip">vision deferred</span>
+      </div>
+    </div>
+
+    <!-- Cohere2 Command R -->
+    <div class="model-card mc-cohere2" id="card-cohere2">
+      <span class="model-badge">template: cohere2.json</span>
+      <div class="model-title">Cohere2 Command R</div>
+      <div class="model-arch">Dense GQA · LayerNorm (shared pre-block norm, synthesized beta) · SwiGLU<br>Parallel attention+MLP residual · 3:1 sliding:full attention<br>Pairwise RoPE on sliding layers only · logit_scale footer · tied embeddings · BPE</div>
+      <div class="model-pipeline">
+        <div class="mp-row"><span class="mp-dot st-e2e"></span><span class="mp-text">GGUF discovery via model map — standard cks-v8-run path, no family branch</span></div>
+        <div class="mp-row"><span class="mp-dot st-num"></span><span class="mp-text">Command R7B Q4_K_M — tokenizer-free replay matches llama.cpp for the first 8 greedy positions</span></div>
+        <div class="mp-row"><span class="mp-dot no"></span><span class="mp-text dim">Long-trajectory parity and matched performance sweeps remain future certification work</span></div>
+      </div>
+      <div class="source-note">
+        Bring-up note (PR #401): lowering honors the model-declared <code>logit_scale</code> via a <code>final_logit_scale_f32</code> footer op, and RoPE applies only to sliding layers per the exported contract. Contract test: <code>tests.test_v8_cohere2_contract</code>. Provider-level story: <a href="v8-cohere-kernels.html">Cohere Kernel Story</a>.
+      </div>
+      <details class="card-details"><summary>Commands &amp; runnable lanes</summary>
+      <div class="model-command">
+        <div class="model-command-head"><span>Cohere2 smoke</span><button class="copy-command" type="button" data-copy-command="cmd-cohere2">Copy</button></div>
+        <pre id="cmd-cohere2"><code>version/v8/scripts/cks-v8-run run \
+  /path/to/command-r7b-q4_k_m.gguf \
+  --context-len 2048 --force-compile --force-convert --chat-template=auto \
+  --max-tokens 64 --temperature 0.0</code></pre>
+      </div></details>
+      <div class="model-tags">
+        <span class="tag learned">parallel_attn_mlp</span>
+        <span class="tag fixed">logit_scale contract</span>
+        <span class="tag fixed">rope sliding-layers only</span>
+      </div>
+      <div class="model-quant">
+        <span class="mq-chip preferred">Q4_K_M ★</span>
+        <span class="mq-chip">Q6_K</span>
+        <span class="mq-chip">GGUF</span>
+      </div>
+    </div>
+
+    <!-- Laguna -->
+    <div class="model-card mc-laguna" id="card-laguna">
+      <span class="model-badge">template: laguna.json</span>
+      <div class="model-title">Laguna-XS 2.1</div>
+      <div class="model-arch">Hybrid attention MoE · gated GQA (softplus per-head gate) · QK‑Norm<br>YaRN on global layers / full-rotary on sliding · sigmoid router + correction bias<br>Top‑8 routed + shared SwiGLU experts · RMSNorm · untied output.weight · BPE</div>
+      <div class="model-pipeline">
+        <div class="mp-row"><span class="mp-dot st-e2e"></span><span class="mp-text">Q4_K_M text runtime (PR #404) — mixed Q4/Q6 expert storage, map-owned routed/shared SwiGLU providers</span></div>
+        <div class="mp-row"><span class="mp-dot st-num"></span><span class="mp-text">Embedding and layer-0 RMSNorm bit-exact; identical-input router replay preserves selected experts within one ULP</span></div>
+        <div class="mp-row"><span class="mp-dot no"></span><span class="mp-text dim">Long-trajectory parity not claimed — near-tied MoE route flips vs llama.cpp</span></div>
+      </div>
+      <div class="source-note">
+        Bring-up note (PR #404): ~20 prefill / 14 decode tok/s on the Ryzen node (bring-up measurement, not a certified benchmark). Known oracle gap: the external llama.cpp Laguna loader omits GGUF YaRN <code>beta_fast=64</code> (defaults 32). Softplus gate formula is observed, not yet oracle-validated. Contract test: <code>tests.test_v8_laguna_contract</code>. Expert kernels: <a href="v8-moe-expert-kernels.html">MoE Expert Kernels</a>.
+      </div>
+      <details class="card-details"><summary>Commands &amp; runnable lanes</summary>
+      <div class="model-command">
+        <div class="model-command-head"><span>Laguna smoke</span><button class="copy-command" type="button" data-copy-command="cmd-laguna">Copy</button></div>
+        <pre id="cmd-laguna"><code>.venv/bin/python version/v8/scripts/ck_run_v8.py run \
+  /path/to/Laguna-XS-2.1-Q4_K_M.gguf \
+  --run /srv/cke/profiles/laguna-xs-2.1 \
+  --context-len 2048 --force-convert --force-compile \
+  --prompt 'Write a complete C program that prints the first ten Fibonacci numbers.' \
+  --chat-template auto --thinking-mode suppressed --max-tokens 512 --temperature 0.0</code></pre>
+      </div></details>
+      <div class="model-tags">
+        <span class="tag learned">gated_gqa softplus</span>
+        <span class="tag learned">yarn_global / rotary_sliding</span>
+        <span class="tag fixed">mixed Q4/Q6 experts</span>
+      </div>
+      <div class="model-quant">
+        <span class="mq-chip preferred">Q4_K_M ★</span>
+        <span class="mq-chip">Q6_K experts</span>
+        <span class="mq-chip">GGUF</span>
+      </div>
+    </div>
+
+    <!-- Instella -->
+    <div class="model-card mc-instella" id="card-instella">
+      <span class="model-badge">template: instella_moe.json (safetensors)</span>
+      <div class="model-title">Instella-MoE 16B-A3B</div>
+      <div class="model-arch">MoE + gated MLA · partial interleaved YaRN RoPE · RMSNorm · SwiGLU<br>Sigmoid group-limited top-k router + shared experts (64 experts/layer)<br>FarSkip two-stream residuals · BPE</div>
+      <div class="model-pipeline">
+        <div class="mp-row"><span class="mp-dot st-num"></span><span class="mp-text">BF16 safetensors runtime certified (PR #389) — coherent chat, top-1 matches PyTorch at the tested checkpoint</span></div>
+        <div class="mp-row"><span class="mp-dot st-num"></span><span class="mp-text">Full-logit cosine 0.99998 vs PyTorch at a 32-token X-Ray checkpoint (30 GiB real runtime)</span></div>
+        <div class="mp-row"><span class="mp-dot no"></span><span class="mp-text dim">Quantized GGUF and long trajectories not yet certified</span></div>
+      </div>
+      <div class="source-note">
+        Bring-up history: fail-closed MoE bring-up (#292), mechanical FarSkip circuit stitching (#294), nightly circuit contracts (#295), BF16 execution certification (#389). A high-memory Instella E2E lane remains follow-up work. Contract lane: <code>tests.test_v8_instella_moe_bringup</code> (runs in the nightly demo-readiness profile).
+      </div>
+      <details class="card-details"><summary>Commands &amp; runnable lanes</summary>
+      <div class="model-command">
+        <div class="model-command-head"><span>Instella contract lane</span><button class="copy-command" type="button" data-copy-command="cmd-instella">Copy</button></div>
+        <pre id="cmd-instella"><code>.venv/bin/python -m unittest tests.test_v8_instella_moe_bringup
+# nightly: registered as v8_instella_moe_circuit_contracts</code></pre>
+      </div></details>
+      <div class="model-tags">
+        <span class="tag learned">gated_mla</span>
+        <span class="tag learned">farskip_residuals</span>
+        <span class="tag fixed">BF16 certified</span>
+      </div>
+      <div class="model-quant">
+        <span class="mq-chip preferred">BF16 ★</span>
+        <span class="mq-chip">safetensors → BUMP</span>
+        <span class="mq-chip">MoE 64 experts</span>
+      </div>
+    </div>
+
+    <!-- Kimi / MLA -->
+    <div class="model-card mc-kimi" id="card-kimi">
+      <span class="model-badge">template: kimi_vl.json</span>
+      <div class="model-title">Kimi / MLA Text Decoder</div>
+      <div class="model-arch">Multi-Head Latent Attention + MoE · partial pairwise-concat RoPE · RMSNorm<br>SwiGLU dense + sigmoid group-limited top-k routed/shared experts · tiktoken · untied LM head</div>
+      <div class="model-pipeline">
+        <div class="mp-row"><span class="mp-dot st-e2e"></span><span class="mp-text">Text decoder runtime certified (PR #403) — Kimi-VL-A3B-Instruct BF16, coherent on AVX2 and AVX-512</span></div>
+        <div class="mp-row"><span class="mp-dot st-num"></span><span class="mp-text">Repeatable: three Ryzen runs bit-identical (32-token SHA-256); PyTorch first-token + top-20 match, full-logit cosine 0.9977</span></div>
+        <div class="mp-row"><span class="mp-dot no"></span><span class="mp-text dim">MoonViT vision bridge / multimodal path — outside the certified lane</span></div>
+      </div>
+      <div class="source-note">
+        Certification note (PRs #399, #403): tokenizer source assets + chat protocol (kimi_vl) are now staged by the runner; decode inserts <code>mla_kv_cache_store</code> and switches <code>mla_attention</code> to <code>deepseek_mla_attention_decode_f32</code>; prefill uses <code>mla_kv_cache_batch_store</code>. Internal BF16 drift becomes material near layer 7 — do not claim bit-exact internal parity.
+      </div>
+      <div class="model-tags">
+        <span class="tag fixed">explicit MLA decode cache</span>
+        <span class="tag fixed">BF16 kv_lora path</span>
+        <span class="tag learned">template contract tested</span>
+      </div>
+      <details class="card-details"><summary>Commands &amp; runnable lanes</summary>
+      <div class="model-command">
+        <div class="model-command-head"><span>Laptop-safe contract check</span><button class="copy-command" type="button" data-copy-command="cmd-kimi-mla">Copy</button></div>
+        <pre id="cmd-kimi-mla"><code>.venv/bin/python -m py_compile version/v8/scripts/build_ir_v8.py
+make build/libckernel_engine.so
+.venv/bin/python unittest/test_deepseek_reference_kernels.py
+.venv/bin/python -m unittest tests.test_v8_kimi_template</code></pre>
+      </div></details>
+      <details class="card-details"><summary>Commands &amp; runnable lanes</summary>
+      <div class="model-command">
+        <div class="model-command-head"><span>Kimi high-memory lane</span><button class="copy-command" type="button" data-copy-command="cmd-kimi-highmem">Copy</button></div>
+        <pre id="cmd-kimi-highmem"><code>V8_KIMI_MODEL=/path/to/Kimi-VL-A3B-Instruct make test-v8-kimi-highmem
+# requires ≥ 40 GiB RAM host; context 2048, 64 tokens</code></pre>
+      </div></details>
+      <div class="model-quant">
+        <span class="mq-chip">BF16</span>
+        <span class="mq-chip">FP32 reference</span>
+        <span class="mq-chip">MLA cache</span>
+        <span class="mq-chip">MoE</span>
+      </div>
+    </div>
+
+    <!-- Gemma4 -->
+    <div class="model-card mc-gemma4" id="card-gemma4">
+      <span class="model-badge">template: gemma4.json</span>
+      <div class="model-title">Gemma4 E4B IT</div>
+      <div class="model-arch">RMSNorm · split-half direct RoPE · QK‑Norm · GeGLU<br>Hybrid full/sliding attention · per-layer theta · SentencePiece</div>
+      <div class="model-pipeline">
+        <div class="mp-row"><span class="mp-dot st-e2e"></span><span class="mp-text">Quantized inference — GGUF Q4_K_M coherent long-answer smoke</span></div>
+        <div class="mp-row"><span class="mp-dot st-num"></span><span class="mp-text">BF16 safetensors → BUMP — PyTorch parity bring-up path</span></div>
+        <div class="mp-row"><span class="mp-dot st-e2e"></span><span class="mp-text">Vision bridge smoke — Gemma4 mmproj-F16 encoder → mixed decoder prefill</span></div>
+      </div>
+      <div class="source-note">
+        Bring-up fix: Gemma4 keeps the split-half RoPE channel layout, but it cannot use one global cached split-half contract. The template exports per-layer/direct RoPE metadata, and lowering selects <code>rope_forward_qk_split_direct_f32</code> from IR data rather than hard-coding a Gemma-only kernel.
+      </div>
+      <div class="model-tags">
+        <span class="tag fixed">rope_param_mode: per_layer_direct</span>
+        <span class="tag fixed">BF16 PyTorch parity lane</span>
+        <span class="tag learned">GGUF Q4_K_M smoke-tested</span>
+        <span class="tag learned">vision bridge smoke-tested</span>
+      </div>
+      <details class="card-details"><summary>Commands &amp; runnable lanes</summary>
+      <div class="model-command">
+        <div class="model-command-head"><span>Latest hardened v8 text smoke</span><button class="copy-command" type="button" data-copy-command="cmd-gemma4">Copy</button></div>
+        <pre id="cmd-gemma4"><code>version/v8/scripts/cks-v8-run run \
+  hf://unsloth/gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q4_K_M.gguf \
+  --context-len 2048 --force-compile --force-convert --chat-template=gemma4 \
+  --prompt 'Give me a detailed example of C code.' \
+  --max-tokens 256 --temperature 0.0 --generate-visualizer</code></pre>
+      </div></details>
+      <details class="card-details"><summary>Commands &amp; runnable lanes</summary>
+      <div class="model-command">
+        <div class="model-command-head"><span>Gemma4 vision bridge smoke</span><button class="copy-command" type="button" data-copy-command="cmd-gemma4-vision">Copy</button></div>
+        <pre id="cmd-gemma4-vision"><code>version/v8/scripts/cks-v8-run run \
+  hf://unsloth/gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q4_K_M.gguf \
+  --mmproj hf://unsloth/gemma-4-E4B-it-GGUF/mmproj-F16.gguf \
+  --image-path version/v8/test_assets/v8_vision_doc_card_72.ppm \
+  --prompt 'Explain this image in one short paragraph.' \
+  --context-len 1024 --chat-template=gemma4 \
+  --max-tokens 8 --temperature 0.0</code></pre>
+      </div></details>
+      <div class="model-quant">
+        <span class="mq-chip preferred">Q4_K_M ★</span>
+        <span class="mq-chip">BF16 safetensors</span>
+        <span class="mq-chip">Q4_K</span>
+        <span class="mq-chip">Q6_K</span>
+      </div>
+    </div>
+
+    <!-- Nemotron -->
+    <div class="model-card mc-llama" id="card-nemotron">
+      <span class="model-badge">template: nemotron_h.json</span>
+      <div class="model-title">Nemotron Nano 9B v2</div>
+      <div class="model-arch">Nemotron-H · Mamba2 recurrent blocks · sparse attention layers<br>ReLU2 MLP · Q5_0/Q4_K/Q8_0 GGUF · BPE tokenizer</div>
+      <div class="model-pipeline">
+        <div class="mp-row"><span class="mp-dot st-e2e"></span><span class="mp-text">Quantized inference — GGUF Q4_K_M coherent C-code smoke</span></div>
+        <div class="mp-row"><span class="mp-dot st-num"></span><span class="mp-text">Safetensors/PyTorch parity lane — Mamba2 stitching and state-shape guardrails</span></div>
+      </div>
+      <div class="source-note">
+        Bring-up fix: Nemotron-H uses Mamba2 state shaped as <code>[heads, head_dim, state_dim]</code>, not a square DeltaNet-style recurrent matrix. The template/lowering path now carries that contract explicitly, stores no-RoPE attention KV after <code>v_proj</code>, and generated BPE runtimes can encode raw prompts end-to-end by default.
+      </div>
+      <div class="model-tags">
+        <span class="tag fixed">Mamba2 state shape explicit</span>
+        <span class="tag fixed">native BPE encode default-on</span>
+        <span class="tag learned">GGUF Q4_K_M smoke-tested</span>
+      </div>
+      <details class="card-details"><summary>Commands &amp; runnable lanes</summary>
+      <div class="model-command">
+        <div class="model-command-head"><span>Latest hardened v8 smoke</span><button class="copy-command" type="button" data-copy-command="cmd-nemotron">Copy</button></div>
+        <pre id="cmd-nemotron"><code>version/v8/scripts/cks-v8-run run \
+  hf://bartowski/nvidia_NVIDIA-Nemotron-Nano-9B-v2-GGUF/nvidia_NVIDIA-Nemotron-Nano-9B-v2-Q4_K_M.gguf \
+  --context-len 1024 --force-compile --force-convert --chat-template=auto \
+  --prompt 'Give me a detailed example of C, Python and SQL code.' \
+  --max-tokens 256 --temperature 0.0 --generate-visualizer</code></pre>
+      </div></details>
+      <div class="model-quant">
+        <span class="mq-chip preferred">Q4_K_M ★</span>
+        <span class="mq-chip">Q5_0</span>
+        <span class="mq-chip">Q8_0</span>
+        <span class="mq-chip">BF16 safetensors</span>
+      </div>
+    </div>
+
+    <!-- Llama / Nanbeige -->
+    <div class="model-card mc-llama" id="card-nanbeige">
+      <span class="model-badge">template: llama.json</span>
+      <div class="model-title">Llama / Nanbeige</div>
+      <div class="model-arch">RMSNorm · RoPE pairwise · SwiGLU · GQA<br>Untied LM head supported · SentencePiece · ChatML markers via GGUF</div>
+      <div class="model-pipeline">
+        <div class="mp-row"><span class="mp-dot st-e2e"></span><span class="mp-text">Quantized inference — active GGUF bring-up lane on Nanbeige 4.1 3B</span></div>
+        <div class="mp-row"><span class="mp-dot no"></span><span class="mp-text dim">v7 training — not yet a documented preset; use template-audit + parity gates first</span></div>
+      </div>
+      <div class="source-note">
+        Current bring-up lane keeps SentencePiece + ChatML on the C-tokenizer path, preserves untied <code>output.weight</code>, and treats Nanbeige long coherent think traces as model behavior instead of a kernel/parity failure.
+      </div>
+      <div class="model-tags">
+        <span class="tag learned">untied output.weight</span>
+        <span class="tag learned">ChatML auto template</span>
+        <span class="tag fixed">template-audit first</span>
+      </div>
+      <details class="card-details"><summary>Commands &amp; runnable lanes</summary>
+      <div class="model-command">
+        <div class="model-command-head"><span>Latest hardened v8 smoke</span><button class="copy-command" type="button" data-copy-command="cmd-nanbeige">Copy</button></div>
+        <pre id="cmd-nanbeige"><code>version/v8/scripts/cks-v8-run run \
+  hf://mradermacher/Nanbeige4.1-3B-GGUF/Nanbeige4.1-3B.Q4_K_M.gguf \
+  --context-len 1024 --force-compile --force-convert --chat-template=auto \
+  --generate-visualizer</code></pre>
+      </div></details>
+      <div class="model-quant">
+        <span class="mq-chip">Q4_K_M</span>
+        <span class="mq-chip">Q8_0</span>
+        <span class="mq-chip">FP32</span>
+      </div>
+    </div>
+
+    <!-- GPT-2 -->
+    <div class="model-card mc-gpt2" id="card-gpt2">
+      <span class="model-badge">template: gpt2.json</span>
+      <div class="model-title">GPT‑2</div>
+      <div class="model-arch">LayerNorm · Learned PosEmb · GELU<br>QKV bias · tied embeddings · BPE tokenizer</div>
+      <div class="model-pipeline">
+        <div class="mp-row"><span class="mp-dot st-e2e"></span><span class="mp-text">Quantized inference — GGUF baseline</span></div>
+        <div class="mp-row"><span class="mp-dot no"></span><span class="mp-text dim">v7 training — not yet in scope</span></div>
+      </div>
+      <div class="model-quant">
+        <span class="mq-chip">Q4_0</span>
+        <span class="mq-chip">Q4_1</span>
+        <span class="mq-chip">Q5_0</span>
+        <span class="mq-chip">Q8_0</span>
+        <span class="mq-chip">FP32</span>
+      </div>
+    </div>
+
+    <!-- Gemma4 Vision -->
+    <div class="model-card mc-gemma4v" id="card-gemma4v">
+      <span class="model-badge">template: gemma4_vision.json</span>
+      <div class="model-title">Gemma4 Vision</div>
+      <div class="model-arch">SigLIP-style ViT encoder · XY position embeddings · average-pool merge<br>projector prep → Gemma4 decoder bridge · deterministic patch frontend</div>
+      <div class="model-pipeline">
+        <div class="mp-row"><span class="mp-dot st-e2e"></span><span class="mp-text">v8 multimodal inference — patch frontend, encoder graph, projector bridge</span></div>
+        <div class="mp-row"><span class="mp-dot no"></span><span class="mp-text dim">Bring-up lane — staged behind the promoted Qwen3-VL baseline</span></div>
+      </div>
+      <div class="source-note">
+        Vision lane scope: shares the same lowering + memory-planning stack as Qwen3-VL. Uses <code>position_embeddings_add_gemma4v_xy</code> and <code>spatial_average_pool_contiguous</code> for the Gemma4 merge path instead of Qwen3-VL's 2×2 spatial merge.
+      </div>
+      <div class="model-tags">
+        <span class="tag learned">gemma4v_xy_posemb</span>
+        <span class="tag learned">avgpool_merge</span>
+        <span class="tag learned">projector_bridge</span>
+      </div>
+      <div class="model-quant">
+        <span class="mq-chip preferred">Q4_K_M decoder ★</span>
+        <span class="mq-chip">Q8_0 mmproj</span>
+        <span class="mq-chip">FP32 encoder</span>
+        <span class="mq-chip">image bridge</span>
+      </div>
+    </div>
+
+    <!-- SigLIP ViT -->
+    <div class="model-card mc-siglip" id="card-siglip">
+      <span class="model-badge">template: siglip_vit.json</span>
+      <div class="model-title">SigLIP ViT (encoder)</div>
+      <div class="model-arch">Standalone vision tower · im2patch → patch embed · LayerNorm · full attention<br>learned position embeddings · GELU MLP · reusable encoder contract</div>
+      <div class="model-pipeline">
+        <div class="mp-row"><span class="mp-dot st-contract"></span><span class="mp-text">v8 encoder graph — patch frontend, transformer body, projector footer</span></div>
+        <div class="mp-row"><span class="mp-dot no"></span><span class="mp-text dim">Encoder-only — pairs with a decoder template via the bridge contract</span></div>
+      </div>
+      <div class="source-note">
+        Why it exists: SigLIP is the shared ViT backbone behind several vision-language families. Templating it on its own keeps the encoder reusable, so a new VLM can be brought up by swapping the decoder + projector instead of rewriting the vision tower.
+      </div>
+      <div class="model-tags">
+        <span class="tag learned">reusable_vit</span>
+        <span class="tag learned">im2patch</span>
+        <span class="tag learned">encoder_contract</span>
+      </div>
+      <div class="model-quant">
+        <span class="mq-chip">FP32</span>
+        <span class="mq-chip">BF16</span>
+        <span class="mq-chip">encoder prefix</span>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="matrix-section">
+    <h2 style="margin: 0; color: var(--orange);">Kernel Families by Model</h2>
+    <div class="matrix-scroll">
+    <div class="matrix-grid">
+      <div class="cell row-head">Model</div>
+      <div class="cell">Tokenizer</div>
+      <div class="cell">QKV Bias</div>
+      <div class="cell">QK‑Norm</div>
+      <div class="cell">RoPE / PosEmb</div>
+      <div class="cell">Attention</div>
+      <div class="cell">MLP</div>
+      <div class="cell">Post‑Norms</div>
+      <div class="cell">Logits</div>
+
+      <div class="cell row-head">GPT‑2</div>
+      <div class="cell ok">BPE</div>
+      <div class="cell ok">Yes</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">Learned</div>
+      <div class="cell ok">Causal</div>
+      <div class="cell ok">GELU</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">Tied</div>
+
+      <div class="cell row-head">Qwen2</div>
+      <div class="cell ok">BPE</div>
+      <div class="cell ok">From weights</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">RoPE split-half</div>
+      <div class="cell ok">Causal</div>
+      <div class="cell ok">SwiGLU</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">Tied</div>
+
+      <div class="cell row-head">Qwen3</div>
+      <div class="cell ok">BPE</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">Yes</div>
+      <div class="cell ok">RoPE split-half</div>
+      <div class="cell ok">Causal</div>
+      <div class="cell ok">SwiGLU</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">LM head</div>
+
+      <div class="cell row-head">Qwen3.5</div>
+      <div class="cell ok">BPE</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">Full‑attn only</div>
+      <div class="cell ok">RoPE</div>
+      <div class="cell ok">Hybrid DeltaNet + Gated</div>
+      <div class="cell ok">SwiGLU</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">Tied</div>
+
+      <div class="cell row-head">Qwen3-VL</div>
+      <div class="cell ok">BPE + image markers</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">Yes</div>
+      <div class="cell ok">RoPE + vision pos</div>
+      <div class="cell ok">Vision bridge + causal</div>
+      <div class="cell ok">SwiGLU</div>
+      <div class="cell ok">Bridge norms</div>
+      <div class="cell ok">LM head</div>
+
+      <div class="cell row-head">GLM4</div>
+      <div class="cell ok">BPE</div>
+      <div class="cell ok">Attention bias</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">Partial pairwise RoPE</div>
+      <div class="cell ok">Causal GQA</div>
+      <div class="cell ok">SwiGLU</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">LM head</div>
+
+      <div class="cell row-head">Gemma3</div>
+      <div class="cell ok">SentencePiece</div>
+      <div class="cell ok">From weights</div>
+      <div class="cell ok">Yes</div>
+      <div class="cell ok">RoPE</div>
+      <div class="cell ok">Sliding</div>
+      <div class="cell ok">GeGLU</div>
+      <div class="cell ok">Yes</div>
+      <div class="cell ok">Tied</div>
+
+      <div class="cell row-head">Gemma4 E4B</div>
+      <div class="cell ok">SentencePiece</div>
+      <div class="cell ok">From weights</div>
+      <div class="cell ok">Yes</div>
+      <div class="cell ok">Split-half direct</div>
+      <div class="cell ok">Full + sliding</div>
+      <div class="cell ok">GeGLU</div>
+      <div class="cell ok">Yes</div>
+      <div class="cell ok">Tied</div>
+
+      <div class="cell row-head">Nemotron-H</div>
+      <div class="cell ok">BPE</div>
+      <div class="cell ok">From weights</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">No-RoPE KV + sparse attn</div>
+      <div class="cell ok">Mamba2 + sparse attn</div>
+      <div class="cell ok">ReLU2</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">LM head</div>
+
+      <div class="cell row-head">Qwen3.8</div>
+      <div class="cell ok">BPE</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">Full‑attn only</div>
+      <div class="cell ok">M-RoPE text split</div>
+      <div class="cell ok">Hybrid DeltaNet + gated</div>
+      <div class="cell ok">SwiGLU</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">Tied</div>
+
+      <div class="cell row-head">Kimi (MLA)</div>
+      <div class="cell ok">tiktoken</div>
+      <div class="cell dim">No</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">Partial pairwise concat</div>
+      <div class="cell ok">MLA + MoE</div>
+      <div class="cell ok">SwiGLU + routed MoE</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">Untied</div>
+
+      <div class="cell row-head">Cohere2</div>
+      <div class="cell ok">BPE</div>
+      <div class="cell dim">No</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">Pairwise, sliding only</div>
+      <div class="cell ok">3:1 sliding + full GQA</div>
+      <div class="cell ok">SwiGLU (parallel)</div>
+      <div class="cell ok">LayerNorm shared</div>
+      <div class="cell ok">Tied + logit_scale</div>
+
+      <div class="cell row-head">Laguna</div>
+      <div class="cell ok">BPE</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">Yes</div>
+      <div class="cell ok">YaRN global / rotary sliding</div>
+      <div class="cell ok">Gated GQA (softplus)</div>
+      <div class="cell ok">SwiGLU MoE top‑8 + shared</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">Untied</div>
+
+      <div class="cell row-head">Instella</div>
+      <div class="cell ok">BPE</div>
+      <div class="cell dim">No</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">Partial interleaved YaRN</div>
+      <div class="cell ok">Gated MLA</div>
+      <div class="cell ok">SwiGLU MoE + shared</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">Untied</div>
+
+      <div class="cell row-head">Llama / Nanbeige</div>
+      <div class="cell ok">SentencePiece</div>
+      <div class="cell ok">From weights</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">RoPE pairwise</div>
+      <div class="cell ok">Causal GQA</div>
+      <div class="cell ok">SwiGLU</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">Untied head</div>
+
+      <div class="cell row-head">Whisper Tiny / Base / Small</div>
+      <div class="cell ok">BPE + task tokens</div>
+      <div class="cell ok">From weights</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">Learned absolute</div>
+      <div class="cell ok">Self + cross (enc&#8211;dec)</div>
+      <div class="cell ok">GELU (erf)</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">Tied</div>
+    </div>
+    </div>
+    <p class="source-note" style="margin-top: 0.75rem;">
+      Whisper Tiny, Base, and Small share this encoder&#8211;decoder row: the encoder runs full self-attention over 1500 audio frames,
+      the decoder adds the cross-attention lane (K/V from encoder memory, computed once) on top of causal self-attention.
+      Position is a learned absolute table on both sides &mdash; no RoPE anywhere. Kernel-level detail:
+      <a href="concepts.html#audio-frontend">Concepts &mdash; Audio Frontend &amp; Cross-Attention</a> and
+      <a href="v8-whisper-tiny.html">Whisper Audio End-to-End</a>.
+    </p>
+  </div>
+
+  <div class="matrix-section">
+    <h2 style="margin: 0; color: var(--orange);">IR + Quant Contracts</h2>
+    <p style="margin: 0.6rem 0 0; color: var(--text-secondary);">
+      Per-family contract flags below; for the per-tensor side, remember that a GGUF label is a recipe, not a format —
+      <a href="quant-formats.html#recipes-vs-formats">Quant Format Reference — Recipes vs Formats</a> shows a measured
+      per-tensor dtype census of a Q5_K_M artifact.
+    </p>
+    <div class="matrix-scroll">
+    <div class="matrix-grid">
+      <div class="cell row-head">Model</div>
+      <div class="cell">Embed Scale</div>
+      <div class="cell">Prefer Q8 Contract</div>
+      <div class="cell">Prefer FP32 Logits</div>
+      <div class="cell">Tokenizer I/O</div>
+      <div class="cell">Attention Kernel</div>
+      <div class="cell">MLP Kernel</div>
+      <div class="cell">Residual Save</div>
+      <div class="cell">LM Head Tie</div>
+
+      <div class="cell row-head">GPT‑2</div>
+      <div class="cell dim">No</div>
+      <div class="cell dim">No</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">BPE + vocab</div>
+      <div class="cell ok">attn</div>
+      <div class="cell ok">gelu</div>
+      <div class="cell ok">Yes</div>
+      <div class="cell ok">Yes</div>
+
+      <div class="cell row-head">Qwen2</div>
+      <div class="cell dim">No</div>
+      <div class="cell dim">No</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">BPE + vocab</div>
+      <div class="cell ok">attn</div>
+      <div class="cell ok">silu_mul</div>
+      <div class="cell ok">Yes</div>
+      <div class="cell ok">Yes</div>
+
+      <div class="cell row-head">Qwen3</div>
+      <div class="cell dim">No</div>
+      <div class="cell dim">No</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">BPE + vocab</div>
+      <div class="cell ok">attn + qk_norm</div>
+      <div class="cell ok">silu_mul</div>
+      <div class="cell ok">Yes</div>
+      <div class="cell dim">No</div>
+
+      <div class="cell row-head">Qwen3.5</div>
+      <div class="cell dim">No</div>
+      <div class="cell dim">No</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">BPE + vocab</div>
+      <div class="cell ok">hybrid_recurrent + gated_attn</div>
+      <div class="cell ok">silu_mul</div>
+      <div class="cell ok">Yes</div>
+      <div class="cell ok">Yes</div>
+
+      <div class="cell row-head">Qwen3-VL</div>
+      <div class="cell dim">No</div>
+      <div class="cell dim">No</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">BPE + image markers</div>
+      <div class="cell ok">vision_bridge + attn</div>
+      <div class="cell ok">silu_mul</div>
+      <div class="cell ok">Yes</div>
+      <div class="cell dim">No</div>
+
+      <div class="cell row-head">GLM4</div>
+      <div class="cell dim">No</div>
+      <div class="cell dim">No</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">BPE + vocab</div>
+      <div class="cell ok">attn + partial_rope</div>
+      <div class="cell ok">silu_mul</div>
+      <div class="cell ok">Yes</div>
+      <div class="cell dim">No</div>
+
+      <div class="cell row-head">Gemma3</div>
+      <div class="cell ok">sqrt(dim)</div>
+      <div class="cell ok">Yes</div>
+      <div class="cell ok">Yes</div>
+      <div class="cell ok">SentencePiece</div>
+      <div class="cell ok">attn_sliding</div>
+      <div class="cell ok">geglu</div>
+      <div class="cell ok">Yes</div>
+      <div class="cell ok">Yes</div>
+
+      <div class="cell row-head">Gemma4 E4B</div>
+      <div class="cell ok">embed + per-layer</div>
+      <div class="cell ok">Yes</div>
+      <div class="cell ok">Yes</div>
+      <div class="cell ok">SentencePiece</div>
+      <div class="cell ok">attn + attn_sliding</div>
+      <div class="cell ok">geglu</div>
+      <div class="cell ok">Yes</div>
+      <div class="cell ok">Yes</div>
+
+      <div class="cell row-head">Nemotron-H</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">Yes</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">BPE + vocab</div>
+      <div class="cell ok">mamba2 + sparse_attn</div>
+      <div class="cell ok">relu2</div>
+      <div class="cell ok">Yes</div>
+      <div class="cell dim">No</div>
+
+      <div class="cell row-head">Qwen3.8</div>
+      <div class="cell dim">No</div>
+      <div class="cell dim">No</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">BPE + vocab</div>
+      <div class="cell ok">hybrid_recurrent + gated_attn</div>
+      <div class="cell ok">silu_mul</div>
+      <div class="cell ok">Yes</div>
+      <div class="cell ok">Yes</div>
+
+      <div class="cell row-head">Kimi (MLA)</div>
+      <div class="cell dim">No</div>
+      <div class="cell dim">No</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">tiktoken + sidecar</div>
+      <div class="cell ok">deepseek_mla_attention</div>
+      <div class="cell ok">silu_mul + moe</div>
+      <div class="cell ok">Yes</div>
+      <div class="cell dim">No</div>
+
+      <div class="cell row-head">Cohere2</div>
+      <div class="cell dim">No</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">Yes (logit_scale)</div>
+      <div class="cell ok">BPE + vocab</div>
+      <div class="cell ok">attn + attn_sliding</div>
+      <div class="cell ok">silu_mul</div>
+      <div class="cell ok">Yes</div>
+      <div class="cell ok">Yes</div>
+
+      <div class="cell row-head">Laguna</div>
+      <div class="cell dim">No</div>
+      <div class="cell dim">No</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">BPE + vocab</div>
+      <div class="cell ok">attn + attn_gate_softplus</div>
+      <div class="cell ok">silu_mul + moe</div>
+      <div class="cell ok">Yes</div>
+      <div class="cell dim">No</div>
+
+      <div class="cell row-head">Instella</div>
+      <div class="cell dim">No</div>
+      <div class="cell dim">No</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">BPE + vocab</div>
+      <div class="cell ok">deepseek_mla_attention (gated)</div>
+      <div class="cell ok">silu_mul + moe</div>
+      <div class="cell ok">Yes</div>
+      <div class="cell dim">No</div>
+
+      <div class="cell row-head">Llama / Nanbeige</div>
+      <div class="cell dim">No</div>
+      <div class="cell dim">No</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">SentencePiece + ChatML</div>
+      <div class="cell ok">attn</div>
+      <div class="cell ok">silu_mul</div>
+      <div class="cell ok">Yes</div>
+      <div class="cell dim">No</div>
+    </div>
+    </div>
+  </div>
+
+  <div class="matrix-section">
+    <h2 style="margin: 0; color: var(--orange);">Supported Quant + DType Coverage</h2>
+    <p style="margin-top: 0.6rem; color: var(--text-secondary);">
+      Weight-only quantized GEMM/GEMV kernels with BF16/FP32 activations and Q8_* activation contracts.
+      Quantized kernels (Q4_K, Q5_K, Q6_K, Q8_0) are verified against <strong style="color: var(--text-primary);">both PyTorch and llama.cpp</strong> reference output — both references must agree before a kernel is considered validated.
+    </p>
+    <div class="quant-badges">
+      <span class="qchip">Q4_0</span>
+      <span class="qchip">Q4_1</span>
+      <span class="qchip">Q4_K</span>
+      <span class="qchip">Q5_0</span>
+      <span class="qchip">Q5_1</span>
+      <span class="qchip">Q5_K</span>
+      <span class="qchip">Q6_K</span>
+      <span class="qchip">Q8_0</span>
+      <span class="qchip">Q8_K</span>
+      <span class="qchip">BF16</span>
+      <span class="qchip">FP32</span>
+    </div>
+
+    <div class="kernel-list">
+      <div class="kernel-chip"><strong>GEMV:</strong> q4_k, q5_0, q5_1, q5_k, q6_k, q8_0, fp32</div>
+      <div class="kernel-chip"><strong>GEMM:</strong> q4_k, q5_0, q5_k, q6_k, q8_0, fp32</div>
+      <div class="kernel-chip"><strong>Activations:</strong> fp32, bf16, q8_0, q8_k</div>
+      <div class="kernel-chip"><strong>Fused:</strong> attention + outproj + MLP (prefill) variants</div>
+      <div class="kernel-chip"><strong>Recurrent:</strong> <code>src/kernels/deltanet_kernels.c</code> for FP32 Gated DeltaNet parity</div>
+    </div>
+  </div>
+
+  <div class="matrix-section">
+    <h2 style="margin: 0; color: var(--orange);">Hybrid Architecture Support</h2>
+    <div class="test-grid">
+      <div class="test-item">
+        <strong>Qwen3.5 / qwen3next — Full Template</strong><br>
+        Full <code>qwen35.json</code> template with hybrid block pattern: <code>3×recurrent → 1×full_attention</code>.
+        Recurrent blocks: <code>x → [q,k,v,z] + [beta,alpha] → conv(q/k/v) → DeltaNet state update S_t → RMSNorm(h) * SiLU(z) → outproj</code>.
+        Full-attention blocks: <code>q_gate_proj → split_q_gate → k/v_proj → qk_norm → rope → gated_attention → sigmoid_mul → outproj</code>.
+        Dedicated kernel parity in <code>src/kernels/deltanet_kernels.c</code> (forward + backward).
+        Compatible with <strong>Qwen3.5-0.8B</strong> dense variant.
+      </div>
+      <div class="test-item">
+        <strong>Gated attention</strong><br>
+        Treat it as a composed graph: causal attention + sigmoid gate multiply + output projection. Keep it stitched in CK unless profiling proves a fused epilogue is worth the extra maintenance.
+      </div>
+    </div>
+    <p class="source-note" style="margin-top: 0.75rem;">
+      Interpretation: DeltaNet earns a dedicated kernel because it mutates recurrent state; gated attention usually does not, because the gate is just an elementwise epilogue on top of otherwise standard attention.
+    </p>
+  </div>
+
+  <div class="matrix-section">
+    <h2 style="margin: 0; color: var(--orange);">Kernel Delta: What the New Families Required</h2>
+    <p style="margin-top: 0.6rem; color: var(--text-secondary);">
+      Each newly supported family forced the kernel registry to grow. This map shows the kernel families added or hardened per architecture — every entry is a named provider in <code>version/v8/kernel_maps</code> with a source file you can read.
+    </p>
+    <div class="svg-expand">
+    <svg viewBox="0 0 1180 560" width="100%" role="img" tabindex="0" data-svg-title="Kernel delta — what the new families required"
+         aria-label="Kernel delta map: six boxes listing kernel families added or hardened for the new model families — latent attention, recurrent SSM, gated and hybrid attention, MoE routing, normalization and residual, and logits footer — each with provider names, source files, and the model families that use them."
+         style="max-width: 1180px; margin: 0.75rem auto 0.25rem; display: block; font-family: 'Inter', system-ui, sans-serif;">
+      <style>
+        .kd-box{fill:#323232;stroke:#454545;stroke-width:1.4;rx:12;}
+        .kd-title{fill:#f5f5f5;font-size:16px;font-weight:700;}
+        .kd-sub{fill:#b0b0b0;font-size:12px;font-family:'JetBrains Mono',monospace;}
+        .kd-src{fill:#7fd8ec;font-size:11.5px;font-family:'JetBrains Mono',monospace;}
+        .kd-chip{fill:#0f151c;stroke:#263242;stroke-width:1;rx:6;}
+        .kd-chip-t{fill:#9ed6ff;font-size:11px;font-family:'JetBrains Mono',monospace;}
+      </style>
+
+      <!-- Row 1 -->
+      <g>
+        <rect class="kd-box" x="24" y="20" width="360" height="210" rx="12"/>
+        <rect x="24" y="20" width="4" height="210" rx="2" fill="#b48cff"/>
+        <text x="44" y="52" class="kd-title">Latent attention (MLA)</text>
+        <text x="44" y="80" class="kd-sub">mla_kv_cache_store</text>
+        <text x="44" y="98" class="kd-sub">mla_kv_cache_batch_store</text>
+        <text x="44" y="116" class="kd-sub">deepseek_mla_attention_f32 / _decode_f32</text>
+        <text x="44" y="140" class="kd-src">src/kernels/deepseek_kernels.c</text>
+        <rect class="kd-chip" x="44"  y="192" width="56" height="24" rx="6"/><text x="72"  y="208" text-anchor="middle" class="kd-chip-t">Kimi</text>
+        <rect class="kd-chip" x="110" y="192" width="76" height="24" rx="6"/><text x="148" y="208" text-anchor="middle" class="kd-chip-t">Instella</text>
+      </g>
+      <g>
+        <rect class="kd-box" x="410" y="20" width="360" height="210" rx="12"/>
+        <rect x="410" y="20" width="4" height="210" rx="2" fill="#1abc9c"/>
+        <text x="430" y="52" class="kd-title">Recurrent / SSM</text>
+        <text x="430" y="80" class="kd-sub">gated_deltanet_*</text>
+        <text x="430" y="98" class="kd-src">src/kernels/deltanet_kernels.c</text>
+        <text x="430" y="124" class="kd-sub">mamba2_*</text>
+        <text x="430" y="142" class="kd-src">src/kernels/mamba2_kernels.c</text>
+        <text x="430" y="168" class="kd-sub">recurrent_gate / norm / state</text>
+        <text x="430" y="186" class="kd-src">src/kernels/recurrent_*_kernels.c</text>
+        <rect class="kd-chip" x="430" y="192" width="76" height="24" rx="6"/><text x="468" y="208" text-anchor="middle" class="kd-chip-t">Qwen3.5</text>
+        <rect class="kd-chip" x="516" y="192" width="76" height="24" rx="6"/><text x="554" y="208" text-anchor="middle" class="kd-chip-t">Qwen3.8</text>
+        <rect class="kd-chip" x="602" y="192" width="96" height="24" rx="6"/><text x="650" y="208" text-anchor="middle" class="kd-chip-t">Nemotron-H</text>
+      </g>
+      <g>
+        <rect class="kd-box" x="796" y="20" width="360" height="210" rx="12"/>
+        <rect x="796" y="20" width="4" height="210" rx="2" fill="#26c6da"/>
+        <text x="816" y="52" class="kd-title">Gated &amp; hybrid attention</text>
+        <text x="816" y="80" class="kd-sub">attn_gate_softplus_mul_forward</text>
+        <text x="816" y="98" class="kd-src">src/kernels/hybrid_attention_kernels.c</text>
+        <text x="816" y="122" class="kd-sub">rope_forward_qk_split_direct_f32</text>
+        <text x="816" y="140" class="kd-src">src/kernels/rope_kernels.c</text>
+        <text x="816" y="164" class="kd-sub">sliding-window attention</text>
+        <text x="816" y="182" class="kd-src">src/kernels/attention_kernels_sliding.c</text>
+        <rect class="kd-chip" x="816" y="192" width="66" height="24" rx="6"/><text x="849" y="208" text-anchor="middle" class="kd-chip-t">Laguna</text>
+        <rect class="kd-chip" x="892" y="192" width="72" height="24" rx="6"/><text x="928" y="208" text-anchor="middle" class="kd-chip-t">Gemma4</text>
+        <rect class="kd-chip" x="974" y="192" width="70" height="24" rx="6"/><text x="1009" y="208" text-anchor="middle" class="kd-chip-t">Cohere2</text>
+        <rect class="kd-chip" x="1054" y="192" width="72" height="24" rx="6"/><text x="1090" y="208" text-anchor="middle" class="kd-chip-t">Gemma3</text>
+      </g>
+
+      <!-- Row 2 -->
+      <g>
+        <rect class="kd-box" x="24" y="260" width="360" height="210" rx="12"/>
+        <rect x="24" y="260" width="4" height="210" rx="2" fill="#ff7043"/>
+        <text x="44" y="292" class="kd-title">MoE routing</text>
+        <text x="44" y="320" class="kd-sub">nemotron_group_limited_topk_router_f32</text>
+        <text x="44" y="344" class="kd-sub">moe_relu2_expert_forward/backward_f32</text>
+        <text x="44" y="368" class="kd-sub">sigmoid top-k + correction-bias variants</text>
+        <rect class="kd-chip" x="44"  y="432" width="96" height="24" rx="6"/><text x="92"  y="448" text-anchor="middle" class="kd-chip-t">Nemotron-H</text>
+        <rect class="kd-chip" x="150" y="432" width="56" height="24" rx="6"/><text x="178" y="448" text-anchor="middle" class="kd-chip-t">Kimi</text>
+        <rect class="kd-chip" x="216" y="432" width="76" height="24" rx="6"/><text x="254" y="448" text-anchor="middle" class="kd-chip-t">Instella</text>
+        <rect class="kd-chip" x="302" y="432" width="66" height="24" rx="6"/><text x="335" y="448" text-anchor="middle" class="kd-chip-t">Laguna</text>
+      </g>
+      <g>
+        <rect class="kd-box" x="410" y="260" width="360" height="210" rx="12"/>
+        <rect x="410" y="260" width="4" height="210" rx="2" fill="#47b475"/>
+        <text x="430" y="292" class="kd-title">Normalization &amp; residual</text>
+        <text x="430" y="320" class="kd-sub">LayerNorm shared pre-block + synthesized beta</text>
+        <text x="430" y="344" class="kd-sub">FarSkip two-stream residual wiring</text>
+        <text x="430" y="368" class="kd-sub">per-layer embed</text>
+        <text x="430" y="386" class="kd-src">src/kernels/gemma4_per_layer_embed.c</text>
+        <rect class="kd-chip" x="430" y="432" width="70" height="24" rx="6"/><text x="465" y="448" text-anchor="middle" class="kd-chip-t">Cohere2</text>
+        <rect class="kd-chip" x="510" y="432" width="76" height="24" rx="6"/><text x="548" y="448" text-anchor="middle" class="kd-chip-t">Instella</text>
+        <rect class="kd-chip" x="596" y="432" width="72" height="24" rx="6"/><text x="632" y="448" text-anchor="middle" class="kd-chip-t">Gemma4</text>
+      </g>
+      <g>
+        <rect class="kd-box" x="796" y="260" width="360" height="210" rx="12"/>
+        <rect x="796" y="260" width="4" height="210" rx="2" fill="#ffb400"/>
+        <text x="816" y="292" class="kd-title">Logits &amp; footer</text>
+        <text x="816" y="320" class="kd-sub">final_logit_scale_f32</text>
+        <rect class="kd-chip" x="816" y="432" width="70" height="24" rx="6"/><text x="851" y="448" text-anchor="middle" class="kd-chip-t">Cohere2</text>
+      </g>
+
+      <text x="24" y="520" class="kd-sub" fill="#808080">Each chip marks a model family whose circuit selects that kernel family at lowering time.</text>
+    </svg>
+    <div class="svg-expand-hint">click / tap the diagram to expand</div>
+    </div>
+    <p class="source-note" style="margin-top: 0.5rem;">
+      Counts and provider status live in <code>version/v8/kernel_maps/KERNEL_REGISTRY.json</code> (308 provider maps); the audit baseline is <code>version/v8/contracts/kernel_interface_migration_baseline.json</code>.
+      For the math behind each kernel family see <a href="kernel-architecture.html">v8 Kernel Architecture</a>; for what each new model variant changed see <a href="architecture-variants.html">Architecture Variants</a>.
+      Provider-level deep dives: <a href="v8-moe-expert-kernels.html">MoE Expert Kernels</a> covers the Laguna
+      mixed-quant routed/shared experts and the Qwen3.5-MoE bucketed prefill; <a href="v8-cohere-kernels.html">Cohere
+      Kernel Story</a> covers the Cohere2 reuse bindings and the <code>final_logit_scale_f32</code> footer.
+    </p>
+  </div>
+
+  <div class="matrix-section">
+    <h2 style="margin: 0; color: var(--orange);">Why Build C Kernel Engine?</h2>
+    <div class="why-grid">
+      <div class="why-card">
+        <strong>What this teaches</strong><br>
+        This stack forces us to understand the invariants that actually matter:
+        memory layout, kernel contracts, numerical stability, and graph scheduling.
+        It turns the model into something we can inspect — dump activations, trace
+        tensor ranges, validate gradients later — without guessing what’s happening
+        inside a framework. That clarity is the foundation for training on CPU.
+      </div>
+      <div class="why-figure">
+        <div class="img-container svg-viewer" data-title="The Ocean of Stability — Surface Hype vs. Bedrock Engineering">
+          <img src="assets/infra-ocean-stability.svg" alt="Ocean depth metaphor: surface chaos (models, agents, APIs, best practices changing weekly) vs stable bedrock (kernels, memory hierarchy, linear algebra, physics)">
+        </div>
+        <div class="source-note">Click to open full‑size SVG</div>
+      </div>
+    </div>
+    <div class="source-note">
+      Sources: calculus history (17th century), matrix theory formalization (19th century),
+      AI as a field (1956), backpropagation popularization (1986).
+    </div>
+  </div>
+
+  <div class="matrix-section">
+    <h2 style="margin: 0; color: var(--orange);">Current GGUF Test Corpus</h2>
+    <div class="test-grid">
+      <div class="test-item">gpt2 (baseline)</div>
+      <div class="test-item">Qwen--Qwen2-0.5B-Instruct-GGUF</div>
+      <div class="test-item">Qwen--Qwen3-0.6B-GGUF</div>
+      <div class="test-item">unsloth--gemma-3-270m-it-GGUF</div>
+      <div class="test-item">unsloth--gemma-4-E4B-it-GGUF / local Q4_K_M BUMP</div>
+      <div class="test-item">mradermacher--Nanbeige4.1-3B-GGUF</div>
+      <div class="test-item">Qwen--Qwen3.5-0.8B-GGUF</div>
+      <div class="test-item">Qwen--Qwen3-VL-8B-Instruct-GGUF + mmproj</div>
+      <div class="test-item">bartowski--nvidia_NVIDIA-Nemotron-Nano-9B-v2-GGUF / Q4_K_M</div>
+      <div class="test-item">unsloth--GLM-4-9B-0414-GGUF / Q4_K_M</div>
+    </div>
+    <p class="source-note" style="margin-top: 0.75rem;">
+      Audio lane: <code>openai/whisper-tiny</code> and <code>openai/whisper-base</code> safetensors &rarr; BUMP as generated encoder + decoder runtime pairs,
+      validated through opt-in transcript and PyTorch parity gates rather than the GGUF corpus above.
+    </p>
+    <p class="source-note" style="margin-top: 0.75rem;">
+      Bring-up note: if a Llama-family/Nanbeige first reply starts with <code>&lt;think&gt;</code> or echoes
+      <code>&lt;|im_start|&gt;assistant</code>, the runtime is using the wrong chat wrapper or stop policy.
+      Preserve GGUF-exported ChatML markers and keep <code>output.weight</code> untied. For Gemma, if first-token parity collapses after a clean <code>qk_norm</code> stage, check the exported <code>rope_layout</code> before suspecting tokenizer or stop-token bugs.
+    </p>
+  </div>
+
+  <div class="matrix-section">
+    <h2 style="margin: 0; color: var(--orange);">Recent Bring-up Fixes</h2>
+    <div class="test-grid">
+      <div class="test-item">
+        <strong>Gemma 3:</strong> the bug was not in tokenization. We were applying RoPE with the wrong pairing style for Q/K. Gemma expects split-half RoPE, but the runtime could still use the other layout. Fix: read exported <code>rope_layout</code> and choose the matching RoPE kernel automatically.
+      </div>
+      <div class="test-item">
+        <strong>Gemma 4:</strong> the BF16 safetensors lane proved the circuit against PyTorch first, then the GGUF lane reused the same generic split-direct RoPE op. A 1024-token Q4_K_M C-code prompt now stays coherent; remaining work is performance and tighter quantized parity, not basic stitching.
+      </div>
+      <div class="test-item">
+        <strong>Qwen3.5:</strong> hybrid recurrent-attention decode and Gated DeltaNet parity are now on the normal C-tokenizer route. <code>&lt;think&gt;</code> markers are preserved as special tokens, and visible vs. suppressed thinking is now a generic chat-contract mode instead of ad hoc runtime logic.
+      </div>
+      <div class="test-item">
+        <strong>Llama / Nanbeige:</strong> SentencePiece + ChatML bring-up stabilized with untied <code>output.weight</code> preserved. Nanbeige remains an active inference lane; long coherent think traces are treated as model style, not as evidence of kernel breakage.
+      </div>
+      <div class="test-item">
+        <strong>Nemotron Nano 9B v2:</strong> the first real failure was stitching, not tokenizer or final head: Mamba2 state shape and no-RoPE KV placement had to be explicit in IR. Native BPE encode is now default-on so <code>ck_run_v8.py</code> raw prompts work end-to-end; token-id-only fallback remains available with <code>CK_DISABLE_FULL_BPE_TOKENIZER=1</code>.
+      </div>
+      <div class="test-item">
+        <strong>GLM4:</strong> v8 now has a template, GLM4 GGUF metadata fixes, declarative safetensors mapping, PyTorch-vs-CK parity harnesses, and a coherent Q4_K_M GGUF runtime smoke. The important fix was separating semantic stream sources in the template from physical quantized activation buffers in the kernel ABI.
+      </div>
+      <div class="test-item">
+        <strong>Qwen3-VL / Gemma4 vision:</strong> Qwen3-VL remains the promoted vision baseline. Gemma4 vision now has a matching CLIP/mmproj conversion path, a Gemma4 image marker contract, and a confirmed encoder-prefix-to-decoder mixed-prefill smoke; semantic parity and speed remain active work.
+      </div>
+      <div class="test-item">
+        <strong>#399/#403 — Kimi text decoder runtime certified:</strong> tokenizer sidecar staging, kimi_vl chat protocol, BF16 KV-LoRA decompression binding; MoonViT vision bridge still outside the certified lane.
+      </div>
+      <div class="test-item">
+        <strong>#401 — Cohere2 Command R:</strong> LayerNorm shared pre-block norm, parallel attention+MLP residual, sliding-only RoPE, model-declared logit_scale footer; 8-token llama.cpp replay agreement on Q4_K_M.
+      </div>
+      <div class="test-item">
+        <strong>#404 — Laguna-XS 2.1 quantized text runtime:</strong> gated GQA softplus gate, YaRN-global/full-rotary-sliding RoPE split, mixed Q4/Q6 MoE expert storage.
+      </div>
+    </div>
+  </div>
+
+  <div class="matrix-section">
+    <h2 style="margin: 0; color: var(--orange);">Validation Commands (v7 inference matrix)</h2>
+    <p style="margin-top: 0.6rem; color: var(--text-secondary);">
+      These commands are the current inference readiness gates for Qwen2, Qwen3, Qwen3.5, Gemma3, and the active Nanbeige bring-up lane.
+    </p>
+    <pre style="margin-top: 0.8rem;"><code>python3 version/v7/scripts/validate_model_matrix_v7.py
+python3 version/v7/scripts/validate_parity_matrix_v7.py
+python3 version/v7/scripts/validate_long_decode_stability_v7.py
+
+# Nanbeige-specific stitched call-IR regression
+python3 version/v7/scripts/test_kv_cache_batch_copy_call_ir_v7.py \
+  --run-dir ~/.cache/ck-engine-v7/models/mradermacher--Nanbeige4.1-3B-GGUF
+</code></pre>
+    <p class="source-note" style="margin-top: 0.6rem;">
+      Matrix validators honor cached GGUFs by default; add <code>--allow-download</code> when you want them to fetch missing models.
+    </p>
+  </div>
+
+  <div class="roadmap">
+    <strong>Growth path:</strong> inference coverage now spans Qwen2/Qwen3/Qwen3.5/Qwen3.6/Qwen3.8/Qwen3-VL/Gemma3/Gemma4 text, Gemma4 vision bridge smoke support, Nemotron-H, GLM4, Kimi (MLA text decoder), Cohere2, Laguna, and Instella, plus the Llama/Nanbeige bring-up lane.
+    Qwen3.5 adds hybrid recurrent-attention coverage with Gated DeltaNet kernels (forward + backward), compatible with the 0.8B dense variant.
+    Gemma now runs on the correct split-half RoPE parity path, Gemma4 adds per-layer direct RoPE plus a safetensors-to-BUMP parity lane, Nemotron-H adds Mamba2 recurrent state coverage, GLM4 adds partial-RoPE/BPE conversion contracts, and Nanbeige has a documented SentencePiece/ChatML bring-up lane on the C tokenizer.
+    v7 still targets full training expansion: backward kernels, optimizer state, gradient reduction, and IR‑driven training schedules.
+    This page will keep evolving into a single matrix that shows inference + training coverage per model family.
+  </div>
+
+  <div class="source-note">
+    References:
+    <a href="https://www.britannica.com/science/calculus-mathematics" target="_blank" rel="noopener">Britannica — Calculus</a>,
+    <a href="https://mathshistory.st-andrews.ac.uk/HistTopics/Matrices_and_determinants/" target="_blank" rel="noopener">MacTutor — Matrices and determinants</a>,
+    <a href="https://www.dartmouth.edu/ai50/" target="_blank" rel="noopener">Dartmouth AI 1956</a>,
+    <a href="https://www.nature.com/articles/323533a0" target="_blank" rel="noopener">Nature 1986 — Backpropagation</a>
+  </div>
+
+
+  <div id="mk-svg-overlay" role="dialog" aria-modal="true" aria-label="Expanded diagram">
+    <div class="mk-ov-bar">
+      <span class="mk-ov-title" id="mk-ov-title">Diagram</span>
+      <span>
+        <button type="button" id="mk-ov-out" aria-label="Zoom out">&minus;</button>
+        <button type="button" id="mk-ov-in" aria-label="Zoom in">+</button>
+        <button type="button" id="mk-ov-close" aria-label="Close">&times;</button>
+      </span>
+    </div>
+    <div class="mk-ov-stage" id="mk-ov-stage"><img id="mk-ov-img" alt=""></div>
+  </div>
+
+  <script>
+    (function() {
+      var overlay = document.getElementById('mk-svg-overlay');
+      var stage = document.getElementById('mk-ov-stage');
+      var img = document.getElementById('mk-ov-img');
+      var title = document.getElementById('mk-ov-title');
+      var scale = 1;
+      function applyScale() {
+        var base = Math.max(stage.clientWidth - 32, 280);
+        img.style.width = Math.round(base * scale) + 'px';
+      }
+      function open(svg) {
+        var xml = new XMLSerializer().serializeToString(svg);
+        img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(xml);
+        img.alt = svg.getAttribute('aria-label') || 'diagram';
+        title.textContent = svg.getAttribute('data-svg-title') || 'Diagram';
+        scale = 1;
+        overlay.style.display = 'block';
+        document.body.style.overflow = 'hidden';
+        img.onload = applyScale;
+        applyScale();
+        document.getElementById('mk-ov-close').focus();
+      }
+      function close() {
+        overlay.style.display = 'none';
+        document.body.style.overflow = '';
+      }
+      document.querySelectorAll('.svg-expand svg[data-svg-title]').forEach(function(svg) {
+        svg.addEventListener('click', function() { open(svg); });
+        svg.addEventListener('keydown', function(e) {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(svg); }
+        });
+      });
+      document.getElementById('mk-ov-in').addEventListener('click', function() { scale = Math.min(4, scale + 0.25); applyScale(); });
+      document.getElementById('mk-ov-out').addEventListener('click', function() { scale = Math.max(0.4, scale - 0.25); applyScale(); });
+      document.getElementById('mk-ov-close').addEventListener('click', close);
+      overlay.addEventListener('click', function(e) { if (e.target === stage || e.target === overlay) close(); });
+      document.addEventListener('keydown', function(e) { if (e.key === 'Escape') close(); });
+    })();
+  </script>
+
+  <script>
+    document.addEventListener('click', async function(event) {
+      const button = event.target.closest('[data-copy-command]');
+      if (!button) return;
+      const command = document.getElementById(button.getAttribute('data-copy-command'));
+      const text = command ? command.textContent.trim() : '';
+      if (!text) return;
+      const oldText = button.textContent;
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch (err) {
+        const area = document.createElement('textarea');
+        area.value = text;
+        area.setAttribute('readonly', '');
+        area.style.position = 'absolute';
+        area.style.left = '-9999px';
+        document.body.appendChild(area);
+        area.select();
+        document.execCommand('copy');
+        document.body.removeChild(area);
+      }
+      button.textContent = 'Copied';
+      setTimeout(function() { button.textContent = oldText; }, 1200);
+    });
+  </script>
+</div>
+    </main>
+
+    <!-- SVG Viewer Overlay (shared across all pages) -->
+    <style>
+    .svg-viewer { cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
+    .svg-viewer:hover { transform: scale(1.01); box-shadow: 0 8px 32px rgba(255, 180, 0, 0.3); }
+    #svg-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.95); z-index: 999999; }
+    #svg-overlay .toolbar { position: fixed; top: 0; left: 0; right: 0; padding: 10px 20px; background: rgba(0,0,0,0.9); display: flex; justify-content: space-between; align-items: center; z-index: 1000000; border-bottom: 1px solid #333; }
+    #svg-overlay .toolbar .title { color: #ccc; font-size: 14px; }
+    #svg-overlay .toolbar .controls { display: flex; gap: 8px; align-items: center; }
+    #svg-overlay .toolbar button { background: #333; color: #ffb400; border: 1px solid #555; padding: 8px 14px; cursor: pointer; border-radius: 4px; font-size: 14px; }
+    #svg-overlay .toolbar button:hover { background: #444; border-color: #ffb400; }
+    #svg-overlay .toolbar .close-btn { font-size: 20px; padding: 4px 12px; }
+    #svg-overlay .toolbar .zoom-display { color: #888; font-size: 12px; min-width: 45px; text-align: center; }
+    #svg-overlay .toolbar .separator { color: #444; }
+    #svg-overlay .image-container { display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 60px 20px 20px; cursor: grab; }
+    #svg-overlay .image-container:active { cursor: grabbing; }
+    #svg-overlay .image-container img { max-width: 95%; max-height: 90vh; transform-origin: center center; }
+    #svg-overlay .nav-btn { position: fixed; top: 50%; transform: translateY(-50%); background: rgba(0,0,0,0.7); color: #ffb400; border: 1px solid #555; font-size: 30px; padding: 20px 15px; cursor: pointer; z-index: 1000000; border-radius: 4px; }
+    #svg-overlay .nav-btn:hover { background: rgba(255,180,0,0.2); border-color: #ffb400; }
+    #svg-overlay .nav-prev { left: 10px; }
+    #svg-overlay .nav-next { right: 10px; }
+    #svg-overlay .hint { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); color: #666; font-size: 12px; background: rgba(0,0,0,0.8); padding: 8px 20px; border-radius: 20px; }
+    </style>
+
+    <div id="svg-overlay">
+        <div class="toolbar">
+            <span class="title" id="svg-title">Image</span>
+            <div class="controls">
+                <button onclick="svgViewer.zoomOut()" title="Zoom Out (-)">-</button>
+                <span class="zoom-display" id="zoom-display">100%</span>
+                <button onclick="svgViewer.zoomIn()" title="Zoom In (+)">+</button>
+                <span class="separator">|</span>
+                <button onclick="svgViewer.fitWidth()" title="Fit Width (W)">Width</button>
+                <button onclick="svgViewer.fitHeight()" title="Fit Height (H)">Height</button>
+                <button onclick="svgViewer.resetZoom()" title="Reset (0)">Reset</button>
+                <span class="separator">|</span>
+                <button class="close-btn" onclick="svgViewer.close()" title="Close (ESC)">&times;</button>
+            </div>
+        </div>
+        <button class="nav-btn nav-prev" onclick="svgViewer.prev()" title="Previous">&larr;</button>
+        <button class="nav-btn nav-next" onclick="svgViewer.next()" title="Next">&rarr;</button>
+        <div class="image-container" id="svg-container">
+            <img id="svg-image" src="" alt="">
+        </div>
+        <div class="hint">Scroll to zoom | Drag to pan | W/H to fit | 0 to reset | ESC to close</div>
+    </div>
+
+    <script>
+    var svgViewer = (function() {
+        var overlay, img, titleEl, container;
+        var images = [];
+        var currentIndex = 0;
+        var scale = 1, panX = 0, panY = 0;
+        var isDragging = false, dragStartX, dragStartY, panStartX, panStartY;
+
+        function init() {
+            overlay = document.getElementById('svg-overlay');
+            img = document.getElementById('svg-image');
+            titleEl = document.getElementById('svg-title');
+            container = document.getElementById('svg-container');
+            if (!overlay || !img) return;
+
+            document.querySelectorAll('.svg-viewer').forEach(function(viewer, index) {
+                var viewerImg = viewer.querySelector('img');
+                if (viewerImg) {
+                    images.push({ src: viewerImg.src, title: viewer.getAttribute('data-title') || viewerImg.alt || 'Diagram' });
+                    viewer.onclick = function(e) { e.preventDefault(); open(index); };
+                }
+            });
+
+            container.addEventListener('wheel', function(e) {
+                e.preventDefault();
+                scale = Math.max(0.5, Math.min(10, scale + (e.deltaY > 0 ? -0.2 : 0.2)));
+                updateTransform();
+            });
+
+            container.addEventListener('mousedown', function(e) { isDragging = true; dragStartX = e.clientX; dragStartY = e.clientY; panStartX = panX; panStartY = panY; });
+            document.addEventListener('mousemove', function(e) { if (!isDragging) return; panX = panStartX + (e.clientX - dragStartX); panY = panStartY + (e.clientY - dragStartY); updateTransform(); });
+            document.addEventListener('mouseup', function() { isDragging = false; });
+
+            document.addEventListener('keydown', function(e) {
+                if (overlay.style.display !== 'block') return;
+                if (e.key === 'Escape') close();
+                if (e.key === 'ArrowLeft') prev();
+                if (e.key === 'ArrowRight') next();
+                if (e.key === '+' || e.key === '=') zoomIn();
+                if (e.key === '-') zoomOut();
+                if (e.key === '0') resetZoom();
+                if (e.key === 'w' || e.key === 'W') fitWidth();
+                if (e.key === 'h' || e.key === 'H') fitHeight();
+            });
+
+            overlay.addEventListener('click', function(e) { if (e.target === overlay || e.target === container) close(); });
+        }
+
+        function updateTransform() {
+            img.style.transform = 'translate(' + panX + 'px, ' + panY + 'px) scale(' + scale + ')';
+            var zd = document.getElementById('zoom-display');
+            if (zd) zd.textContent = Math.round(scale * 100) + '%';
+        }
+
+        function open(index) {
+            if (!images[index]) return;
+            currentIndex = index; scale = 1; panX = 0; panY = 0;
+            img.src = images[index].src;
+            titleEl.textContent = images[index].title + ' (' + (index + 1) + '/' + images.length + ')';
+            updateTransform();
+            overlay.style.display = 'block';
+            document.body.style.overflow = 'hidden';
+        }
+
+        function close() { overlay.style.display = 'none'; document.body.style.overflow = ''; }
+        function prev() { open((currentIndex - 1 + images.length) % images.length); }
+        function next() { open((currentIndex + 1) % images.length); }
+        function zoomIn() { scale = Math.min(10, scale + 0.25); updateTransform(); }
+        function zoomOut() { scale = Math.max(0.5, scale - 0.25); updateTransform(); }
+        function resetZoom() { scale = 1; panX = 0; panY = 0; updateTransform(); }
+
+        function fitWidth() {
+            if (!img.naturalWidth || !img.complete) { img.onload = fitWidth; return; }
+            scale = Math.max(0.1, Math.min(10, (window.innerWidth - 150) / img.naturalWidth));
+            panX = 0; panY = 0; updateTransform();
+        }
+
+        function fitHeight() {
+            if (!img.naturalHeight || !img.complete) { img.onload = fitHeight; return; }
+            scale = Math.max(0.1, Math.min(10, (window.innerHeight - 120) / img.naturalHeight));
+            panX = 0; panY = 0; updateTransform();
+        }
+
+        if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', init); } else { init(); }
+
+        return { open: open, close: close, prev: prev, next: next, zoomIn: zoomIn, zoomOut: zoomOut, resetZoom: resetZoom, fitWidth: fitWidth, fitHeight: fitHeight };
+    })();
+
+    // Mobile navigation
+    (function() {
+        var navToggle = document.querySelector('.nav-toggle');
+        var siteNav = document.querySelector('.site-nav');
+        var dropdowns = document.querySelectorAll('.nav-dropdown');
+
+        if (navToggle && siteNav) {
+            navToggle.addEventListener('click', function() {
+                navToggle.classList.toggle('active');
+                siteNav.classList.toggle('open');
+                navToggle.setAttribute('aria-expanded', siteNav.classList.contains('open'));
+            });
+
+            // Close menu when clicking a non-dropdown link
+            siteNav.querySelectorAll('a:not(.nav-dropdown-menu a)').forEach(function(link) {
+                link.addEventListener('click', function() {
+                    if (window.innerWidth <= 768) {
+                        navToggle.classList.remove('active');
+                        siteNav.classList.remove('open');
+                    }
+                });
+            });
+        }
+
+        // Handle dropdowns on mobile
+        dropdowns.forEach(function(dropdown) {
+            var trigger = dropdown.querySelector('.nav-trigger');
+            if (trigger) {
+                trigger.addEventListener('click', function(e) {
+                    if (window.innerWidth <= 768) {
+                        e.preventDefault();
+                        // Close other dropdowns
+                        dropdowns.forEach(function(d) {
+                            if (d !== dropdown) d.classList.remove('open');
+                        });
+                        dropdown.classList.toggle('open');
+                    }
+                });
+            }
+        });
+
+        // Close dropdowns when clicking outside on mobile
+        document.addEventListener('click', function(e) {
+            if (window.innerWidth <= 768 && !e.target.closest('.nav-dropdown')) {
+                dropdowns.forEach(function(d) { d.classList.remove('open'); });
+            }
+        });
+    })();
+
+    // Site search keyboard shortcuts: "/" or Ctrl+K / Cmd+K focuses the header search box.
+    (function() {
+        var searchInput = document.getElementById('site-search-input');
+        if (!searchInput) return;
+        document.addEventListener('keydown', function(e) {
+            var target = e.target;
+            var tag = (target.tagName || '').toLowerCase();
+            var typing = tag === 'input' || tag === 'textarea' || tag === 'select' || target.isContentEditable;
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+                e.preventDefault();
+                searchInput.focus();
+                searchInput.select();
+            } else if (e.key === '/' && !typing) {
+                e.preventDefault();
+                searchInput.focus();
+            }
+        });
+    })();
+    </script>
+
+    <!-- MathJax for LaTeX equations across docs pages -->
+    <script>
+    window.MathJax = {
+        tex: {
+            inlineMath: [['\\(', '\\)'], ['$', '$']],
+            displayMath: [['\\[', '\\]'], ['$$', '$$']],
+            processEscapes: true,
+            processEnvironments: true
+        },
+        options: {
+            skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
+        },
+        svg: {
+            fontCache: 'global'
+        }
+    };
+    </script>
+    <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+
+    <footer style="background: #2a2a2a; border-top: 1px solid #454545; color: #b0b0b0; padding: 3rem 2rem; margin-top: auto;">
+        <div style="max-width: 1200px; margin: 0 auto; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 2rem;">
+            <div>
+                <h4 style="color: #ffb400; margin-bottom: 0.75rem; font-size: 1rem;">C-Kernel-Engine</h4>
+                <p style="color: #707070; font-size: 0.875rem; margin: 0;">High-performance ML kernels with full PyTorch parity.</p>
+            </div>
+            <div>
+                <h4 style="color: #ffb400; margin-bottom: 0.75rem; font-size: 1rem;">Resources</h4>
+                <ul style="list-style: none; padding: 0; margin: 0;">
+                    <li style="margin-bottom: 0.5rem;"><a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine" style="color: #909090; text-decoration: none; font-size: 0.875rem;">GitHub</a></li>
+                    <li style="margin-bottom: 0.5rem;"><a href="contributing.html" style="color: #909090; text-decoration: none; font-size: 0.875rem;">Contributor Path</a></li>
+                    <li style="margin-bottom: 0.5rem;"><a href="architecture.html" style="color: #909090; text-decoration: none; font-size: 0.875rem;">Architecture</a></li>
+                    <li style="margin-bottom: 0.5rem;"><a href="api.html" style="color: #909090; text-decoration: none; font-size: 0.875rem;">API Reference</a></li>
+                </ul>
+            </div>
+            <div>
+                <h4 style="color: #ffb400; margin-bottom: 0.75rem; font-size: 1rem;">Related</h4>
+                <ul style="list-style: none; padding: 0; margin: 0;">
+                    <li style="margin-bottom: 0.5rem;"><a href="https://www.shivasnotes.com/" style="color: #909090; text-decoration: none; font-size: 0.875rem;">ShivasNotes</a></li>
+                    <li style="margin-bottom: 0.5rem;"><a href="https://www.shivasnotes.com/work-with-us" style="color: #909090; text-decoration: none; font-size: 0.875rem;">Work With Us</a></li>
+                    <li style="margin-bottom: 0.5rem;"><a href="https://antshiv.com/" style="color: #909090; text-decoration: none; font-size: 0.875rem;">antshiv.com</a></li>
+                </ul>
+            </div>
+            <div style="text-align: right;">
+                <p style="color: #606060; font-size: 0.75rem; margin: 0;">Static docs · C-first execution</p>
+                <p style="color: #606060; font-size: 0.75rem; margin: 0.5rem 0 0 0;">2026-10-21</p>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>
