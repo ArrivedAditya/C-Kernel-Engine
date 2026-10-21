@@ -222,6 +222,8 @@ def _bridge_command(
         str(args.top_k),
         "--max-tokens",
         "0",
+        "--reserve-generation-tokens",
+        str(getattr(args, "max_new_tokens", 16)),
         "--temperature",
         "0",
         "--no-stream-output",

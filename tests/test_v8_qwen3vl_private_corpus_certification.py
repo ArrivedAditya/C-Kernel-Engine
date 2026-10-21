@@ -515,6 +515,7 @@ class Qwen3VLCorpusCertificationTests(unittest.TestCase):
             chat_template="auto",
             image_max_tokens=1024,
             context_len=4096,
+            max_new_tokens=64,
             top_k=16,
             gemm_schedule="auto",
         )
@@ -528,6 +529,8 @@ class Qwen3VLCorpusCertificationTests(unittest.TestCase):
         self.assertIn("--encoder-runtime encoder-runtime", rendered)
         self.assertNotIn("--encoder-gguf", command)
         self.assertIn("--chat-template auto", rendered)
+        self.assertIn("--max-tokens 0", rendered)
+        self.assertIn("--reserve-generation-tokens 64", rendered)
 
     def test_bridge_command_uses_requested_chat_template(self) -> None:
         args = SimpleNamespace(

@@ -4331,6 +4331,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--image-max-tokens", type=int, default=None, help="Maximum merged visual tokens for smart-resized Qwen3-VL images")
     ap.add_argument("--synthetic-prefix-tokens", type=int, default=0, help="Use zero prefix embeddings when a real encoder bridge is unavailable")
     ap.add_argument("--decoder-context-len", type=int, default=None, help="Minimum decoder context length; reserves prompt, visual prefix, and requested generation budget")
+    ap.add_argument("--reserve-generation-tokens", type=int, default=0,
+                    help="Reserve continuation capacity without generating tokens in this invocation")
     ap.add_argument(
         "--decoder-context-cap",
         type=int,
@@ -4373,6 +4375,8 @@ def main(argv: list[str] | None = None) -> int:
         help="Optional vision encoder activation override(s) in op=dtype form, e.g. out_proj=q8",
     )
     args = ap.parse_args(argv)
+    if args.reserve_generation_tokens < 0:
+        ap.error("--reserve-generation-tokens must be nonnegative")
     if args.decoder_context_cap is not None and args.decoder_context_cap <= 0:
         ap.error("--decoder-context-cap must be positive")
     prebuilt_decoder_contract = (
@@ -4572,7 +4576,7 @@ def main(argv: list[str] | None = None) -> int:
         prompt_token_count=total_text_prompt_tokens,
         prefix_tokens=planned_prefix_tokens,
         requested=args.decoder_context_len,
-        slack_tokens=max(16, int(args.max_tokens or 0)),
+        slack_tokens=max(16, int(args.max_tokens or 0), args.reserve_generation_tokens),
         maximum_context=decoder_context_cap,
     )
     preflight_decoder_runtime: dict[str, Any] | None = None
@@ -4612,7 +4616,7 @@ def main(argv: list[str] | None = None) -> int:
         prompt_token_count=total_text_prompt_tokens,
         prefix_tokens=decoder_prefix_budget,
         requested=args.decoder_context_len,
-        slack_tokens=max(16, int(args.max_tokens or 0)),
+        slack_tokens=max(16, int(args.max_tokens or 0), args.reserve_generation_tokens),
         maximum_context=decoder_context_cap,
     )
     decoder_source_label = (
@@ -4838,6 +4842,7 @@ def main(argv: list[str] | None = None) -> int:
         "decoder_context_len": int(decoder_context_len),
         "decoder_context_budget": {
             "requested_minimum": args.decoder_context_len,
+            "reserved_generation_tokens": args.reserve_generation_tokens,
             "model_limit": model_context_limit,
             "compiled_runtime_limit": compiled_runtime_limit,
             "deployment_cap": args.decoder_context_cap,
