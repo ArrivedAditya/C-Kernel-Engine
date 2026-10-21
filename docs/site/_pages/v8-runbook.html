@@ -1804,6 +1804,14 @@ version/v8/scripts/ck_serve_v8.py "$RUN_DIR" --run "$RUN_DIR" \
         messages or tool results cannot choose the initial parser state. Tool-bearing streams
         expose reasoning while withholding tool calls until validation. Over-limit calls are
         rejected together; the server never silently executes a retained subset.</p>
+    <p>The Responses API's <code>usage.output_tokens_details.reasoning_tokens</code> is
+        currently an estimate: the server divides visible reasoning text length by four and
+        rounds down. It is not an exact count of generated reasoning token IDs and should not
+        be used for billing or context admission. <code>reasoning.effort=none</code> selects
+        the server's suppressed reasoning mode; actual model behavior remains artifact-specific.
+        Other accepted effort labels do not select different compute budgets.
+        Accepted <code>service_tier</code> values are echoed in the response but do not change
+        native scheduling priority or model speed.</p>
     <p>Typed images, files, audio and video are rejected before rendering or native execution
         in this text-only session ABI, including media returned by tools. Publisher image-marker
         rendering tests are render-only evidence. Plain paths remain text. Enabling vision requires

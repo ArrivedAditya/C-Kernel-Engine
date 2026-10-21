@@ -700,25 +700,29 @@ class SessionV8:
 
         emitted: list[str] = []
         visible_len = 0
+        buffered = ""
         callback_stopped = False
         last_token_id = -1
 
         @_TOKEN_CALLBACK
         def callback(_user_data, token_id, text_bytes, text_len, _sequence_index):
-            nonlocal callback_stopped, last_token_id, visible_len
+            nonlocal buffered, callback_stopped, last_token_id, visible_len
             last_token_id = int(token_id)
             text = ctypes.string_at(text_bytes, text_len).decode("utf-8", "replace")
             emitted.append(text)
-            joined = "".join(emitted)
-            truncated = truncate_stop_markers(joined, stop_markers) if stop_markers else joined
-            hit = len(truncated) < len(joined)
+            # Retain only a possible stop-marker prefix between callbacks.
+            # Joining every emitted token here made long streams quadratic.
+            buffered += text
+            truncated = truncate_stop_markers(buffered, stop_markers) if stop_markers else buffered
+            hit = len(truncated) < len(buffered)
             if hit:
-                delta = truncated[visible_len:]
+                delta = truncated
+                buffered = ""
             else:
-                hold = _longest_marker_prefix_len(joined, stop_markers) if stop_markers else 0
-                hold = min(hold, len(joined) - visible_len)
-                target = len(joined) - hold
-                delta = joined[visible_len:target] if target > visible_len else ""
+                hold = _longest_marker_prefix_len(buffered, stop_markers) if stop_markers else 0
+                target = len(buffered) - hold
+                delta = buffered[:target]
+                buffered = buffered[target:]
             rc = 0
             if delta:
                 try:

@@ -755,7 +755,7 @@ def test_request_accepts_tools_with_chat_templates():
 # --- Split-boundary stop-marker regression --------------------------------
 
 
-def test_stop_marker_split_boundary_streaming_no_leak():
+def test_stop_marker_split_boundary_streaming_no_leak(monkeypatch):
     """Regression for SessionV8.generate split-boundary leak.
 
     Marker END split as ("hello EN", "D rest") must not leak "EN" into
@@ -834,6 +834,30 @@ def test_stop_marker_split_boundary_streaming_no_leak():
         stop_on_text=["END"],
     )
     assert "".join(deltas3) == "hello EN"
+
+    # A long stream must scan only the bounded suffix that could start a
+    # marker; rejoining/scanning the complete output per token is quadratic.
+    import server.session_v8 as session_v8
+
+    seen_lengths: list[int] = []
+    original_truncate = session_v8.truncate_stop_markers
+
+    def record_truncate(text, markers):
+        seen_lengths.append(len(text))
+        return original_truncate(text, markers)
+
+    monkeypatch.setattr(session_v8, "truncate_stop_markers", record_truncate)
+    s4 = SessionV8.__new__(SessionV8)
+    s4.lib = MockLib(["a"] * 1024 + ["EN", "D rest"])
+    s4.session = ctypes.c_void_p(1)
+    deltas4: list[str] = []
+    s4.generate(
+        None, "hi", max_tokens=1026, temperature=0.7, top_p=1.0,
+        on_token=lambda tid, txt: deltas4.append(txt) or 0, stop_on_text=["END"],
+    )
+    assert "".join(deltas4) == "a" * 1024
+    assert len(seen_lengths) == 1027  # one call per token plus one final check
+    assert max(seen_lengths[:-1]) <= len("END") + len(" rest")
 
 
 def test_cancel_stale_does_not_cancel_active():
