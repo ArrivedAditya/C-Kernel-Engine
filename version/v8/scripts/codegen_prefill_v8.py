@@ -1403,6 +1403,15 @@ def emit_prefill_op(
         )
         _emit_head_major_last(_hidden_arg("q"), "qk_norm_q", _hidden_arg("num_heads") or "NUM_HEADS", _hidden_arg("aligned_head_dim", "head_dim") or "HEAD_DIM")
         _emit_head_major_last(_hidden_arg("k"), "qk_norm_k", _hidden_arg("num_kv_heads") or "NUM_KV_HEADS", _hidden_arg("aligned_head_dim", "head_dim") or "HEAD_DIM")
+    elif op_type == "v_norm":
+        _emit_hidden_full(
+            _hidden_arg("output", "out", "y"), "v_norm",
+            _hidden_mul(
+                _hidden_arg("num_kv_heads") or "NUM_KV_HEADS",
+                _hidden_arg("num_tokens", "rows") or "num_tokens",
+                _hidden_arg("aligned_head_dim", "head_dim") or "HEAD_DIM",
+            ),
+        )
     elif op_type in ("q_norm", "k_norm"):
         tensor_name = "q" if op_type == "q_norm" else "k"
         label = "qk_norm_q" if op_type == "q_norm" else "qk_norm_k"
