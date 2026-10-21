@@ -187,7 +187,7 @@ def resolved_templates(run_dir: Path, doc: dict[str, Any]) -> tuple[str, dict[st
 
 
 def resolved_renderer_tokens(
-    run_dir: Path, doc: dict[str, Any], *, decode_ids=None,
+    run_dir: Path, doc: dict[str, Any], *, decode_ids=None, lookup_token=None,
 ) -> dict[str, str]:
     """Read publisher Jinja token variables only from verified bundle assets.
 
@@ -252,7 +252,16 @@ def resolved_renderer_tokens(
             token_id = special.get(f"{name}_token_id")
             if isinstance(token_id, int) and not isinstance(token_id, bool):
                 value = by_id.get(token_id)
-                if decode_ids is not None:
+                if value is not None and lookup_token is not None:
+                    try:
+                        loaded_id = lookup_token(value)
+                    except Exception as exc:
+                        raise ValueError(
+                            f"loaded tokenizer cannot look up verified {name} token"
+                        ) from exc
+                    if loaded_id != token_id:
+                        raise ValueError(f"loaded tokenizer disagrees with bundled {name} token")
+                elif decode_ids is not None:
                     try:
                         loaded_value = decode_ids([token_id])
                     except Exception as exc:
@@ -428,6 +437,32 @@ def _loaded_model_token_decoder(run_dir: Path):
         return bytes(buf.raw[:out_len]).decode("utf-8", errors="replace")
 
     return decode_ids
+
+
+def _loaded_model_token_lookup(run_dir: Path):
+    """Look up raw token spelling in the already-loaded model tokenizer.
+
+    Display decoding can intentionally suppress BOS, EOS and PAD, so it cannot
+    verify their publisher spellings. The model's exact vocabulary lookup can.
+    """
+    if not hasattr(os, "RTLD_NOLOAD"):
+        return None
+    for name in ("libmodel.so", "ck-kernel-inference.so", "ck-kernel-decode.so"):
+        try:
+            lib = ctypes.CDLL(
+                str(Path(run_dir).resolve() / name),
+                mode=os.RTLD_NOLOAD | os.RTLD_NOW,
+            )
+        except OSError:
+            continue
+        try:
+            lookup = lib.ck_model_lookup_token
+        except AttributeError:
+            continue
+        lookup.argtypes = [ctypes.c_char_p]
+        lookup.restype = ctypes.c_int32
+        return lambda value: lookup(value.encode("utf-8"))
+    return None
 
 
 def runtime_renderer_tokens(run_dir: Path, *, decode_ids=None) -> dict[str, str] | None:

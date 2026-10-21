@@ -3527,7 +3527,7 @@ def create_live_app_from_run_dir(
     from .serving_bundle import (
         load_resolved_serving, loaded_serving_identity, resolved_renderer_tokens,
         runtime_auto_bos_token, runtime_renderer_tokens, verify_loaded_libraries,
-        _loaded_model_token_decoder,
+        _loaded_model_token_decoder, _loaded_model_token_lookup,
     )
 
     run_dir = Path(run_dir).expanduser().resolve()
@@ -3568,6 +3568,7 @@ def create_live_app_from_run_dir(
             renderer_tokens = resolved_renderer_tokens(
                 run_dir, resolved_serving,
                 decode_ids=_loaded_model_token_decoder(run_dir),
+                lookup_token=_loaded_model_token_lookup(run_dir),
             )
         else:
             renderer_tokens = runtime_renderer_tokens(run_dir) if chat_template else None
