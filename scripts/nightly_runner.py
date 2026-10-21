@@ -1394,6 +1394,12 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_xray_operation_bundle.py",
         timeout_sec=120,
     ),
+    "v8_hidden_export_extents": TestSuite(
+        "Generated Hidden Export Extents",
+        "parity",
+        ROOT / "tests" / "test_v8_codegen_hidden_exports.py",
+        timeout_sec=120,
+    ),
     "v8_instella_mla_bf16_phases": TestSuite(
         "Instella MLA BF16 Arithmetic",
         "inference",

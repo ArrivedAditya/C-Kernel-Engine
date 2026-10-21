@@ -2016,6 +2016,15 @@ def emit_op(
         )
         _emit_hidden_export(_hidden_arg("q"), "rope_q", q_count)
         _emit_hidden_export(_hidden_arg("k"), "rope_k", k_count)
+    elif op_name == "v_norm":
+        _emit_hidden_export(
+            _hidden_arg("output", "out", "y"), "v_norm",
+            _mul_expr(
+                _hidden_arg("num_kv_heads", "num_heads"),
+                _hidden_arg("num_tokens", "tokens", "rows"),
+                _hidden_arg("aligned_head_dim", "head_dim"),
+            ),
+        )
     elif op_name in ("rope_q", "rope_k"):
         tensor_name = "q" if op_name == "rope_q" else "k"
         heads_name = "num_heads" if op_name == "rope_q" else "num_kv_heads"
@@ -2229,10 +2238,10 @@ def emit_op(
             _emit_hidden_export(out_expr, "attn_norm", count_expr)
             _emit_hidden_export_last_row(out_expr, "attn_norm", "EMBED_DIM")
         elif op_instance_idx == 0:
-            _emit_hidden_export(out_expr, "block_rmsnorm", "EMBED_DIM")
+            _emit_hidden_export(out_expr, "block_rmsnorm", count_expr)
             _emit_hidden_export_last_row(out_expr, "block_rmsnorm", "EMBED_DIM")
         elif op_instance_idx == 1:
-            _emit_hidden_export(out_expr, "ffn_norm", "EMBED_DIM")
+            _emit_hidden_export(out_expr, "ffn_norm", count_expr)
             _emit_hidden_export_last_row(out_expr, "ffn_norm", "EMBED_DIM")
         else:
             _emit_hidden_export(out_expr, "rmsnorm", "EMBED_DIM")
