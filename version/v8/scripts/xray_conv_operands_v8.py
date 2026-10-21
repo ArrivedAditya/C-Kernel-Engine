@@ -119,6 +119,17 @@ def load_oracle_capture(directory: Path, capture_id: int) -> tuple[dict, dict]:
         patches.shape[1:] != (oh, ow, image.shape[1] * kh * kw) or
         result.shape != (math.prod(patches.shape[:3]), weights.shape[0])):
         raise BundleError("oracle convolution operands have inconsistent geometry")
+    padded = np.pad(image, ((0, 0), (0, 0), (ph, ph), (pw, pw)))
+    expected = np.empty_like(patches)
+    for channel in range(image.shape[1]):
+        for ky in range(kh):
+            for kx in range(kw):
+                reduction = (channel * kh + ky) * kw + kx
+                expected[..., reduction] = padded[:, channel,
+                    ky * dh:ky * dh + oh * sh:sh,
+                    kx * dw:kx * dw + ow * sw:sw]
+    if not np.array_equal(expected.view(np.uint16), patches.view(np.uint16)):
+        raise BundleError("captured image and im2col disagree; source storage may have been reused")
     provenance["conv_im2col"]["convolution"] = geometry
     return tensors, provenance
 

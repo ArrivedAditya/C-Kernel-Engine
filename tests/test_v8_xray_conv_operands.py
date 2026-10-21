@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import struct
 import subprocess
 import sys
 import tempfile
@@ -150,6 +151,16 @@ class ConvOperandTests(unittest.TestCase):
         completed = subprocess.run(command, capture_output=True, text=True)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(json.loads(report_path.read_text())["evidence_scope"], "packet_numerics_only")
+        image_raw = capture / "conv_1_conv_image.raw"
+        original_image = image_raw.read_bytes()
+        modified_image = bytearray(original_image)
+        modified_image[:4] = struct.pack("<f", -123.0)
+        image_raw.write_bytes(modified_image)
+        try:
+            with self.assertRaisesRegex(BundleError, "captured image and im2col disagree"):
+                load_oracle_capture(capture, 1)
+        finally:
+            image_raw.write_bytes(original_image)
         identity = {
             "selected_capture_id": 1, "processed_width": 5, "processed_height": 3,
             "loaded_mtmd_path": str(self.runtime), "loaded_mtmd_sha256": sha256(self.runtime),
