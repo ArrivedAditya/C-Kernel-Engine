@@ -60,30 +60,51 @@ static int count_ids(const char *csv, unsigned *count) {
 }
 
 int main(int argc, char **argv) {
-    if (argc != 5) {
-        fprintf(stderr, "usage: %s bundle-dir output.wav seed phoneme-ids-csv\n",
-                argv[0]);
+    const int session = argc == 3 && strcmp(argv[2], "--session") == 0;
+    if (argc != 5 && !session) {
+        fprintf(stderr, "usage: %s bundle-dir output.wav seed phoneme-ids-csv\n"
+                        "       %s bundle-dir --session (runtime bundle only)\n",
+                argv[0], argv[0]);
         return 2;
     }
+#ifndef CK_TTS_RUNTIME_BUNDLE
+    if (session) {
+        fprintf(stderr, "persistent session requires a runtime-length bundle\n");
+        return 2;
+    }
+#endif
     struct stat existing_output;
-    if (lstat(argv[2], &existing_output) == 0 || errno != ENOENT) {
+    if (!session && (lstat(argv[2], &existing_output) == 0 || errno != ENOENT)) {
         fprintf(stderr, "output path already exists or cannot be inspected\n");
         return 6;
     }
     unsigned count = 0;
-    if (!count_ids(argv[4], &count)) {
+    if (!session && !count_ids(argv[4], &count)) {
         fprintf(stderr, "invalid phoneme IDs\n");
         return 2;
     }
     const ck_tts_bucket *selected = NULL;
-    for (size_t i = 0; i < sizeof(ck_tts_buckets) / sizeof(ck_tts_buckets[0]); ++i)
-        if (ck_tts_buckets[i].count == count) selected = &ck_tts_buckets[i];
+    const size_t bucket_count = sizeof(ck_tts_buckets) / sizeof(ck_tts_buckets[0]);
+    for (size_t i = 0; i < bucket_count; ++i)
+        if (session || ck_tts_buckets[i].count == count)
+            selected = &ck_tts_buckets[i];
     if (!selected) {
         fprintf(stderr, "unsupported phoneme count %u; supported:", count);
         for (size_t i = 0; i < sizeof(ck_tts_buckets) / sizeof(ck_tts_buckets[0]); ++i)
             fprintf(stderr, " %u", ck_tts_buckets[i].count);
         fputc('\n', stderr);
         return 2;
+    }
+    if (session) {
+        /* Runtime bundles must bind every supported length to one host,
+         * library and package before a shared worker can be trusted. */
+        for (size_t i = 0; i < bucket_count; ++i)
+            if (strcmp(selected->host_sha256, ck_tts_buckets[i].host_sha256) ||
+                strcmp(selected->library_sha256, ck_tts_buckets[i].library_sha256) ||
+                strcmp(selected->package_sha256, ck_tts_buckets[i].package_sha256)) {
+                fprintf(stderr, "runtime bundle has inconsistent artifacts\n");
+                return 4;
+            }
     }
     char host[4096], library[4096], package[4096], voice[4096];
     int voice_length = snprintf(voice, sizeof(voice), "%s/af_heart.ckvoice", argv[1]);
@@ -104,8 +125,13 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Kokoro bundle artifact identity mismatch\n");
         return 4;
     }
-    char *const child[] = {host, package, argv[2], argv[3], argv[4], voice, NULL};
-    execv(host, child);
+    if (session) {
+        char *const child[] = {host, package, "--session", voice, NULL};
+        execv(host, child);
+    } else {
+        char *const child[] = {host, package, argv[2], argv[3], argv[4], voice, NULL};
+        execv(host, child);
+    }
     perror("native Kokoro host execution failed");
     return 5;
 }

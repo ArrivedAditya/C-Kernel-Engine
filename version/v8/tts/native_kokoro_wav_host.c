@@ -209,6 +209,123 @@ static int write_wav(const char *path, const float *samples, size_t count) {
     return okay;
 }
 
+typedef struct {
+    uint8_t *arena;
+    size_t arena_bytes;
+    uint64_t waveform_offset, waveform_capacity;
+    uint64_t gaussian_offset, gaussian_capacity;
+    uint64_t ids_offset, ids_count;
+    uint64_t predictor_offset, decoder_offset, request_length_offset;
+    int runtime_request, native_noise, request;
+} loaded_package;
+
+static int synthesize(loaded_package *package, const char *output,
+                      const char *seed_text, const char *ids_text,
+                      const char *voice_path, size_t *written_samples) {
+    struct stat existing;
+    if (lstat(output, &existing) == 0 || errno != ENOENT) return 10;
+    uint64_t seed = 0;
+    if (seed_text) {
+        char *end = NULL;
+        errno = 0;
+        const unsigned long long parsed = strtoull(seed_text, &end, 0);
+        if (errno || !end || end == seed_text || *end || seed_text[0] == '-')
+            return 2;
+        seed = (uint64_t)parsed;
+    }
+    if (package->request) {
+        int32_t ids[64];
+        float voice[256];
+        size_t valid_count = (size_t)package->ids_count;
+        if (!ids_text || !voice_path || !(package->runtime_request ?
+                parse_runtime_phoneme_ids(ids_text, ids, &valid_count) :
+                parse_phoneme_ids(ids_text, ids, valid_count)) ||
+                !read_voice_row(voice_path, valid_count - 3u, voice)) return 4;
+        memcpy(package->arena + (size_t)package->ids_offset, ids,
+               (size_t)package->ids_count * 4u);
+        if (package->runtime_request) {
+            const int32_t length = (int32_t)valid_count;
+            memcpy(package->arena + (size_t)package->request_length_offset,
+                   &length, 4);
+        }
+        memcpy(package->arena + (size_t)package->decoder_offset, voice, 128u * 4u);
+        memcpy(package->arena + (size_t)package->predictor_offset,
+               voice + 128, 128u * 4u);
+    }
+    if (package->native_noise && audio_noise_counter_gaussian_f32(
+            (float *)(package->arena + (size_t)package->gaussian_offset),
+            (size_t)package->gaussian_capacity,
+            (size_t)package->gaussian_capacity, seed, 0) != CK_AUDIO_EXTENT_OK)
+        return 6;
+    int32_t lengths[9] = {-1, -1, -1, -1, -1, -1, -1, -1, -1};
+    const int status = CK_TTS_GENERATED_ENTRY(package->arena, package->arena_bytes,
+        &lengths[0], &lengths[1], &lengths[2], &lengths[3],
+        &lengths[4], &lengths[5], &lengths[6]
+#ifdef CK_TTS_RUNTIME_WAVEFORM
+        , &lengths[7], &lengths[8]
+#endif
+        );
+#ifdef CK_TTS_RUNTIME_WAVEFORM
+    const int sample_index = 5, frame_index = 6;
+#else
+    const int sample_index = 3, frame_index = 4;
+#endif
+    if (status || lengths[sample_index] <= 0 ||
+        (uint64_t)lengths[sample_index] > package->waveform_capacity ||
+        lengths[frame_index] <= 1 ||
+        (int64_t)(lengths[frame_index] - 1) * 5 != lengths[sample_index])
+        return 7;
+    const float *waveform = (const float *)(package->arena +
+                                            (size_t)package->waveform_offset);
+    if (!write_wav(output, waveform, (size_t)lengths[sample_index])) return 8;
+    if (written_samples) *written_samples = (size_t)lengths[sample_index];
+    return 0;
+}
+
+/* The supervisor can keep this process alive across ordinary chunks. A STOP
+ * kills the worker process; a replacement starts a fresh one. Each command
+ * has its own seed, IDs, voice row, lengths and output publication. */
+static int serve(loaded_package *package, const char *voice_path) {
+    if (!package->runtime_request) return 2;
+    puts("READY\tloads=1");
+    fflush(stdout);
+    char line[1024];
+    while (fgets(line, sizeof(line), stdin)) {
+        const size_t size = strlen(line);
+        if (!size || line[size - 1] != '\n') {
+            int character;
+            while ((character = fgetc(stdin)) != '\n' && character != EOF) {}
+            puts("ERROR\toversized command");
+            fflush(stdout);
+            continue;
+        }
+        line[size - 1] = 0;
+        if (!strcmp(line, "QUIT")) return 0;
+        if (strncmp(line, "RUN\t", 4)) {
+            puts("ERROR\tunknown command");
+            fflush(stdout);
+            continue;
+        }
+        char *output = line + 4;
+        char *seed = strchr(output, '\t');
+        if (seed) *seed++ = 0;
+        char *ids = seed ? strchr(seed, '\t') : NULL;
+        if (ids) *ids++ = 0;
+        if (!seed || !ids || !*output || !*seed || !*ids) {
+            puts("ERROR\tinvalid request");
+            fflush(stdout);
+            continue;
+        }
+        size_t samples = 0;
+        const int result = synthesize(package, output, seed, ids, voice_path,
+                                      &samples);
+        if (result) printf("ERROR\t%d\n", result);
+        else printf("WAV_READY\t%zu\t%s\n", samples, output);
+        fflush(stdout);
+    }
+    return ferror(stdin) ? 4 : 0;
+}
+
 int main(int argc, char **argv) {
 #ifdef CK_TTS_EXPECTED_LIBRARY_SHA256
     if (!verify_loaded_library()) {
@@ -216,24 +333,13 @@ int main(int argc, char **argv) {
         return 9;
     }
 #endif
-    if (argc != 3 && argc != 4 && argc != 6) {
+    const int session_mode = argc == 4 && !strcmp(argv[2], "--session");
+    if (!session_mode && argc != 3 && argc != 4 && argc != 6) {
         fprintf(stderr, "usage: %s prepared-arena.cktts output.wav "
-            "[seed [phoneme-ids-csv voice-bank.ckvoice]]\n", argv[0]);
+            "[seed [phoneme-ids-csv voice-bank.ckvoice]]\n"
+            "       %s prepared-arena.cktts --session voice-bank.ckvoice\n",
+            argv[0], argv[0]);
         return 2;
-    }
-    struct stat existing_output;
-    if (lstat(argv[2], &existing_output) == 0 || errno != ENOENT) {
-        fprintf(stderr, "output path already exists or cannot be inspected\n");
-        return 10;
-    }
-    uint64_t seed = 0;
-    if (argc >= 4) {
-        char *end = NULL;
-        errno = 0;
-        const unsigned long long parsed = strtoull(argv[3], &end, 0);
-        if (errno || !end || end == argv[3] || *end || argv[3][0] == '-')
-            return 2;
-        seed = (uint64_t)parsed;
     }
     FILE *input = fopen(argv[1], "rb");
     if (!input) return 3;
@@ -254,7 +360,8 @@ int main(int argc, char **argv) {
     const int request = runtime_request || memcmp(magic, "CKTTS003", 8) == 0;
     const int native_noise = request || memcmp(magic, "CKTTS002", 8) == 0;
     if ((!native_noise && memcmp(magic, "CKTTS001", 8) != 0) ||
-        (request ? argc != 6 : native_noise ? argc != 4 : argc != 3) ||
+        (session_mode ? !runtime_request :
+         request ? argc != 6 : native_noise ? argc != 4 : argc != 3) ||
         !read_u64(input, &bytes64) || !read_u64(input, &waveform_offset) ||
         !read_u64(input, &waveform_capacity) ||
         (native_noise && (!read_u64(input, &gaussian_offset) ||
@@ -307,16 +414,6 @@ int main(int argc, char **argv) {
                      waveform_capacity * 4))) {
         fclose(input); return 4;
     }
-    int32_t request_ids[64];
-    float request_voice[256];
-    size_t valid_count = (size_t)ids_count;
-    if (request && (!(runtime_request ?
-                    parse_runtime_phoneme_ids(argv[4], request_ids, &valid_count) :
-                    parse_phoneme_ids(argv[4], request_ids, valid_count)) ||
-                    !read_voice_row(argv[5], valid_count - 3u,
-                                    request_voice))) {
-        fclose(input); return 4;
-    }
     const size_t arena_bytes = (size_t)bytes64;
     const size_t padded = (arena_bytes + 63u) & ~(size_t)63u;
     uint8_t *arena = aligned_alloc(64, padded);
@@ -332,46 +429,30 @@ int main(int argc, char **argv) {
     if (fgetc(input) != EOF) okay = 0;
     fclose(input);
     if (!okay) { free(arena); return 6; }
-    if (request) {
-        memcpy(arena + (size_t)ids_offset, request_ids,
-               (size_t)ids_count * 4u);
-        if (runtime_request) {
-            const int32_t length = (int32_t)valid_count;
-            memcpy(arena + (size_t)request_length_offset, &length, 4);
-        }
-        memcpy(arena + (size_t)decoder_offset, request_voice, 128u * 4u);
-        memcpy(arena + (size_t)predictor_offset, request_voice + 128,
-               128u * 4u);
+    loaded_package package = {
+        .arena = arena, .arena_bytes = arena_bytes,
+        .waveform_offset = waveform_offset,
+        .waveform_capacity = waveform_capacity,
+        .gaussian_offset = gaussian_offset,
+        .gaussian_capacity = gaussian_capacity,
+        .ids_offset = ids_offset, .ids_count = ids_count,
+        .predictor_offset = predictor_offset,
+        .decoder_offset = decoder_offset,
+        .request_length_offset = request_length_offset,
+        .runtime_request = runtime_request,
+        .native_noise = native_noise, .request = request,
+    };
+    if (session_mode) {
+        const int result = serve(&package, argv[3]);
+        free(arena);
+        return result;
     }
-    if (native_noise && audio_noise_counter_gaussian_f32(
-            (float *)(arena + (size_t)gaussian_offset),
-            (size_t)gaussian_capacity, (size_t)gaussian_capacity,
-            seed, 0) != CK_AUDIO_EXTENT_OK) {
-        free(arena); return 6;
-    }
-    int32_t lengths[9] = {-1, -1, -1, -1, -1, -1, -1, -1, -1};
-    const int status = CK_TTS_GENERATED_ENTRY(arena, arena_bytes,
-        &lengths[0], &lengths[1], &lengths[2], &lengths[3],
-        &lengths[4], &lengths[5], &lengths[6]
-#ifdef CK_TTS_RUNTIME_WAVEFORM
-        , &lengths[7], &lengths[8]
-#endif
-        );
-#ifdef CK_TTS_RUNTIME_WAVEFORM
-    const int sample_index = 5, frame_index = 6;
-#else
-    const int sample_index = 3, frame_index = 4;
-#endif
-    if (status || lengths[sample_index] <= 0 ||
-        (uint64_t)lengths[sample_index] > waveform_capacity ||
-        lengths[frame_index] <= 1 ||
-        (int64_t)(lengths[frame_index] - 1) * 5 != lengths[sample_index]) {
-        free(arena); return 7;
-    }
-    const float *waveform = (const float *)(arena + (size_t)waveform_offset);
-    okay = write_wav(argv[2], waveform, (size_t)lengths[sample_index]);
+    size_t samples = 0;
+    const int result = synthesize(&package, argv[2],
+                                  argc >= 4 ? argv[3] : NULL,
+                                  argc == 6 ? argv[4] : NULL,
+                                  argc == 6 ? argv[5] : NULL, &samples);
     free(arena);
-    if (!okay) return 8;
-    printf("wrote %d samples at 24000 Hz\n", lengths[sample_index]);
-    return 0;
+    if (!result) printf("wrote %zu samples at 24000 Hz\n", samples);
+    return result;
 }
