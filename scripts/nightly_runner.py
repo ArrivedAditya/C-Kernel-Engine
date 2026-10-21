@@ -689,6 +689,7 @@ TEST_SUITES = {
     "gemm": TestSuite("GEMM", "kernels", UNITTEST_DIR / "test_gemm.py"),
     "gemm_variants": TestSuite("GEMM Variants", "kernels", UNITTEST_DIR / "test_gemm_variants.py"),
     "gemm_microkernel": TestSuite("GEMM Microkernel", "kernels", UNITTEST_DIR / "test_gemm_microkernel.py"),
+    "add_bf16": TestSuite("BF16 Add Stored-Value Oracle", "kernels", UNITTEST_DIR / "test_add.py"),
     "gemm_fused": TestSuite("GEMM Fused", "kernels", UNITTEST_DIR / "test_gemm_fused.py"),
     "relu": TestSuite("ReLU", "kernels", UNITTEST_DIR / "test_relu.py"),
     "gelu": TestSuite("GELU", "kernels", UNITTEST_DIR / "test_gelu.py"),
