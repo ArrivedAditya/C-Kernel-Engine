@@ -1,0 +1,196 @@
+{
+  "schema": "cke.issue833.gemma_odd_chunk_matrix.v1",
+  "status": "DIAGNOSTIC_INCOMPLETE_NOT_CERTIFIED",
+  "source_revision": "d17c9e6d0097a7bd03a74b8cf7fd2b77072ad985",
+  "host": "dgx-hb10 aarch64",
+  "omp_threads": 4,
+  "token_ids": "9707 + position % 17",
+  "chunk_length": 127,
+  "artifacts": {
+    "full": {
+      "model_sha256": "4b9de23024ddeacbb9300010504ccea7dcafb1e1bfdc7e942fc72e7bfa6e15a9",
+      "engine_sha256": "947a3303943cc473076078e0a5700cf2556b5e8a163daade9411c2de14268aa8"
+    },
+    "chunk127": {
+      "model_sha256": "0e7cabf0703a7965ed898196f529fab8d0429d500b1cfec07884211ae17286e4",
+      "engine_sha256": "947a3303943cc473076078e0a5700cf2556b5e8a163daade9411c2de14268aa8"
+    },
+    "gguf_sha256": "0d29b1a23a4cb1f14fda28c9e63563fa4bbefb6f34db4f7e873bb72edd932b00",
+    "weights_manifest_sha256": "9ae45ee1a8416fc33c17a2fcbd8e63e3d0e4b087e252aff07fe30ad1ac7bf623"
+  },
+  "cases": [
+    {
+      "length": 126,
+      "prefill": {
+        "max_abs": 0.0,
+        "cosine": 1.0,
+        "top_equal": true,
+        "top_full": 9714,
+        "top_chunk": 9714,
+        "kv_exact_layers": 18,
+        "total_kv_layers": 18
+      },
+      "continuation": {
+        "max_abs": 0.0,
+        "cosine": 1.0,
+        "top_equal": true,
+        "top_full": 9715,
+        "top_chunk": 9715,
+        "kv_exact_layers": 18,
+        "total_kv_layers": 18
+      }
+    },
+    {
+      "length": 127,
+      "prefill": {
+        "max_abs": 0.0,
+        "cosine": 1.0000000000000002,
+        "top_equal": true,
+        "top_full": 9715,
+        "top_chunk": 9715,
+        "kv_exact_layers": 18,
+        "total_kv_layers": 18
+      },
+      "continuation": {
+        "max_abs": 0.0,
+        "cosine": 1.0,
+        "top_equal": true,
+        "top_full": 9716,
+        "top_chunk": 9716,
+        "kv_exact_layers": 18,
+        "total_kv_layers": 18
+      }
+    },
+    {
+      "length": 128,
+      "prefill": {
+        "max_abs": 1.7036056518554688,
+        "cosine": 0.9999389232096173,
+        "top_equal": true,
+        "top_full": 9716,
+        "top_chunk": 9716,
+        "kv_exact_layers": 9,
+        "total_kv_layers": 18
+      },
+      "continuation": {
+        "max_abs": 2.52288818359375,
+        "cosine": 0.9999515773308744,
+        "top_equal": true,
+        "top_full": 9717,
+        "top_chunk": 9717,
+        "kv_exact_layers": 9,
+        "total_kv_layers": 18
+      }
+    },
+    {
+      "length": 129,
+      "prefill": {
+        "max_abs": 1.7760276794433594,
+        "cosine": 0.999954134273554,
+        "top_equal": true,
+        "top_full": 9717,
+        "top_chunk": 9717,
+        "kv_exact_layers": 4,
+        "total_kv_layers": 18
+      },
+      "continuation": {
+        "max_abs": 2.8609161376953125,
+        "cosine": 0.9999007278923682,
+        "top_equal": true,
+        "top_full": 9718,
+        "top_chunk": 9718,
+        "kv_exact_layers": 4,
+        "total_kv_layers": 18
+      }
+    },
+    {
+      "length": 254,
+      "prefill": {
+        "max_abs": 3.3953475952148438,
+        "cosine": 0.9993986488653671,
+        "top_equal": true,
+        "top_full": 9723,
+        "top_chunk": 9723,
+        "kv_exact_layers": 1,
+        "total_kv_layers": 18
+      },
+      "continuation": {
+        "max_abs": 4.435968399047852,
+        "cosine": 0.9975644753116295,
+        "top_equal": true,
+        "top_full": 9707,
+        "top_chunk": 9707,
+        "kv_exact_layers": 1,
+        "total_kv_layers": 18
+      }
+    },
+    {
+      "length": 255,
+      "prefill": {
+        "max_abs": 4.293800354003906,
+        "cosine": 0.997799183882538,
+        "top_equal": true,
+        "top_full": 9707,
+        "top_chunk": 9707,
+        "kv_exact_layers": 1,
+        "total_kv_layers": 18
+      },
+      "continuation": {
+        "max_abs": 3.9035911560058594,
+        "cosine": 0.9997491516482939,
+        "top_equal": true,
+        "top_full": 1156,
+        "top_chunk": 1156,
+        "kv_exact_layers": 1,
+        "total_kv_layers": 18
+      }
+    },
+    {
+      "length": 256,
+      "prefill": {
+        "max_abs": 2.892277717590332,
+        "cosine": 0.9998073763068123,
+        "top_equal": true,
+        "top_full": 1156,
+        "top_chunk": 1156,
+        "kv_exact_layers": 1,
+        "total_kv_layers": 18
+      },
+      "continuation": {
+        "max_abs": 4.233701705932617,
+        "cosine": 0.9995276390076794,
+        "top_equal": true,
+        "top_full": 9709,
+        "top_chunk": 9709,
+        "kv_exact_layers": 1,
+        "total_kv_layers": 18
+      }
+    },
+    {
+      "length": 429,
+      "prefill": {
+        "max_abs": 3.2425365447998047,
+        "cosine": 0.9998731680487775,
+        "top_equal": true,
+        "top_full": 9711,
+        "top_chunk": 9711,
+        "kv_exact_layers": 1,
+        "total_kv_layers": 18
+      },
+      "continuation": {
+        "max_abs": 3.9118995666503906,
+        "cosine": 0.9996370123997116,
+        "top_equal": true,
+        "top_full": 9712,
+        "top_chunk": 9712,
+        "kv_exact_layers": 1,
+        "total_kv_layers": 18
+      }
+    }
+  ],
+  "limitations": [
+    "Synthetic tokens differ from the unretained exact inputs of the original issue.",
+    "Full prefill and decode continuation use different valid reduction phases; top-token agreement alone does not certify numerical parity.",
+    "Only one continuation token was tested at each length."
+  ]
+}

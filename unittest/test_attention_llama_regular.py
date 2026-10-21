@@ -193,8 +193,107 @@ def test_parallel_prefill_is_bit_exact_with_multiple_kv_heads() -> None:
         lib.ck_set_num_threads(0)
 
 
+def test_prefill_decode_boundary_uses_prior_kv_with_phase_numerics() -> None:
+    """A chunk continuation must read old KV; phase reductions need not be bit-equal."""
+    lib = load_lib("libckernel_engine.so")
+    prefill = lib.attention_forward_causal_head_major_gqa_llama_regular_strided_sliding_workspace
+    decode = lib.attention_forward_decode_head_major_gqa_llama_regular_sliding_workspace
+    prefill.restype = decode.restype = None
+    lib.ck_set_num_threads(1)
+
+    rng = np.random.default_rng(833)
+    heads, tokens, dim = 2, 129, 256
+    q = rng.normal(0.0, 0.1, (heads, tokens, dim)).astype(np.float32)
+    k = rng.normal(0.0, 0.1, (1, tokens, dim)).astype(np.float32)
+    v = rng.normal(0.0, 1.0, (1, tokens, dim)).astype(np.float32)
+    # Make the oldest row material to the last output. A current-chunk-only
+    # attention read or an off-by-one window must fail the oracle comparison.
+    v[0, 0, 0] = 32.0
+    scores = np.zeros((2, 256), dtype=np.float32)
+    scaled = np.zeros_like(scores)
+    columns = np.zeros((1, dim, 256), dtype=np.float32)
+    batched = np.zeros_like(q)
+    single = np.zeros((heads, dim), dtype=np.float32)
+
+    prefill(
+        _ptr(q), _ptr(k), _ptr(v), _ptr(batched),
+        heads, 1, tokens, dim, dim, tokens, 0,
+        _ptr(scores), scores.nbytes,
+        _ptr(columns), columns.nbytes,
+        _ptr(scaled), scaled.nbytes,
+    )
+    # The decode path sees exactly the same last Q and all 129 K/V rows.
+    last_q = np.ascontiguousarray(q[:, -1, :])
+    decode(
+        _ptr(last_q), _ptr(k), _ptr(v), _ptr(single),
+        heads, 1, tokens, tokens, dim, dim, 0,
+        _ptr(scores), scores.nbytes,
+        _ptr(columns), columns.nbytes,
+        _ptr(scaled), scaled.nbytes,
+    )
+
+    # Independent arithmetic reference: convert the operands and normalized
+    # probabilities at the FP16 boundaries declared by both provider maps,
+    # then accumulate in float64. It does not copy either C reduction schedule.
+    q16 = last_q.astype(np.float16).astype(np.float64)
+    k16 = k[0].astype(np.float16).astype(np.float64)
+    v16 = v[0].astype(np.float16).astype(np.float64)
+    logits = (q16 @ k16.T) / math.sqrt(dim)
+    probabilities = np.exp(logits - np.max(logits, axis=1, keepdims=True))
+    probabilities /= np.sum(probabilities, axis=1, keepdims=True)
+    reference = probabilities.astype(np.float16).astype(np.float64) @ v16
+    # Bound the declared FP32 reductions and FP16 probability storage rather
+    # than requiring identical prefill/decode reduction orders. The conservative
+    # envelope is still far below the old row's 0.25 output contribution.
+    u32 = np.finfo(np.float32).eps / 2
+    u16 = np.finfo(np.float16).eps / 2
+    gamma_scores = dim * u32 / (1 - dim * u32)
+    gamma_values = 256 * u32 / (1 - 256 * u32)
+    max_score_error = gamma_scores * np.max(
+        (np.abs(q16) @ np.abs(k16).T) / math.sqrt(dim)
+    )
+    weighted_values = np.max(np.sum(
+        np.abs(probabilities[:, :, None] * v16[None, :, :]), axis=1
+    ))
+    arithmetic_bound = (
+        2 * max_score_error * np.max(np.abs(v16))
+        + (u16 + gamma_values) * weighted_values
+    )
+    np.testing.assert_allclose(batched[:, -1, :], reference, rtol=0, atol=arithmetic_bound)
+    np.testing.assert_allclose(single, reference, rtol=0, atol=arithmetic_bound)
+    truncated_probabilities = probabilities[:, 1:] / np.sum(
+        probabilities[:, 1:], axis=1, keepdims=True
+    )
+    missing_history = truncated_probabilities.astype(np.float16).astype(np.float64) @ v16[1:]
+    assert np.max(np.abs(reference - missing_history)) > 0.2
+    assert np.max(np.abs(single - missing_history)) > 0.2
+
+    corrupted_v = v.copy()
+    corrupted_v[0, 0, 0] = 0.0
+    wrong_owner = np.zeros_like(single)
+    decode(
+        _ptr(last_q), _ptr(k), _ptr(corrupted_v), _ptr(wrong_owner),
+        heads, 1, tokens, tokens, dim, dim, 0,
+        _ptr(scores), scores.nbytes,
+        _ptr(columns), columns.nbytes,
+        _ptr(scaled), scaled.nbytes,
+    )
+    assert np.max(np.abs(wrong_owner - reference)) > 0.2
+    wrong_position = np.zeros_like(single)
+    decode(
+        _ptr(last_q), _ptr(k), _ptr(v), _ptr(wrong_position),
+        heads, 1, tokens - 1, tokens, dim, dim, 0,
+        _ptr(scores), scores.nbytes,
+        _ptr(columns), columns.nbytes,
+        _ptr(scaled), scaled.nbytes,
+    )
+    assert np.max(np.abs(wrong_position - reference)) > 0.01
+    lib.ck_set_num_threads(0)
+
+
 if __name__ == "__main__":
     test_prefill_uses_declared_scratch_capacity_with_compact_kv_stride()
     test_global_attention_does_not_inherit_512_token_window()
     test_parallel_prefill_is_bit_exact_with_multiple_kv_heads()
+    test_prefill_decode_boundary_uses_prior_kv_with_phase_numerics()
     print("llama regular attention contracts: PASS")

@@ -1,0 +1,23 @@
+{
+  "schema": "cke.issue833.gemma_phase_replay.v1",
+  "status": "DIAGNOSTIC_INCOMPLETE_NOT_CERTIFIED",
+  "source_revision": "d17c9e6d0097a7bd03a74b8cf7fd2b77072ad985",
+  "host": "dgx-hb10 aarch64",
+  "fixture_archive_sha256": "3d235378b323beb6f68e92a99f39a24472c2290c8c84d71ad2d9bf41206f35aa",
+  "engine_sha256": "947a3303943cc473076078e0a5700cf2556b5e8a163daade9411c2de14268aa8",
+  "q_sha256": "ee86062c84283c228d6cbd9bb6aa6dcf12366e6d1e140f0c3b70ace4ac142eed",
+  "kv_sha256": "c6b69ed54d53bdddb62a8b02631c24ed062c80400b8c3f289e297519079755e6",
+  "captured_phase_delta_max_abs": 2.288818359375e-05,
+  "replay_full_vs_capture_max_abs": 0.0,
+  "replay_decode_vs_capture_max_abs": 3.814697265625e-06,
+  "replay_phase_delta_max_abs": 2.288818359375e-05,
+  "oracle_full_max_abs": 2.0422041416168213e-05,
+  "oracle_decode_max_abs": 4.805624485015869e-06,
+  "qkv_identical_for_both_calls": true,
+  "limitations": [
+    "The first Gemma boundary is explained locally; full-model logit differences are not covered by a declared whole-model tolerance.",
+    "The exact input IDs from the original Spark failure were not retained.",
+    "The replay uses a pinned older generated artifact; the code regression and later current-main model build are separate evidence.",
+    "Library hashes describe selected artifact files; this diagnostic did not independently verify their loaded backing mappings."
+  ]
+}
