@@ -1157,6 +1157,11 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_kokoro_generated_source_stft_conv.py",
         timeout_sec=300,
     ),
+    "tts_kokoro_source_impact_diagnostic": TestSuite(
+        "Kokoro Source Impact and Oracle Reproduction Diagnostic", "inference",
+        ROOT / "tests" / "test_v8_kokoro_source_impact_diagnostic.py",
+        timeout_sec=300,
+    ),
     "tts_kokoro_source_residual_prefix": TestSuite(
         "Kokoro Generated First Source Residual Prefix", "inference",
         ROOT / "tests" / "test_v8_kokoro_source_residual_prefix.py",

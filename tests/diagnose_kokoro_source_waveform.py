@@ -11,8 +11,6 @@ import json
 from pathlib import Path
 
 import numpy as np
-import torch
-from kokoro import KModel
 
 from tests.test_v8_kokoro_generated_source_stft_conv import (
     KokoroGeneratedSourceStftConvTest as Fixture,
@@ -42,7 +40,22 @@ def metrics(reference, actual):
         'actual': float(actual[index])}
 
 
+def baseline_reproduction(reference, actual):
+    """Report every retained-reference checkpoint before deciding the verdict."""
+    checks = {name: metrics(reference[name].reshape(-1),
+                            actual[name].reshape(-1))
+              for name in ('f0', 'source', 'first_source_conv', 'waveform')}
+    mismatch = any(case['max_abs'] != 0 for case in checks.values())
+    return {'case': 'pinned_full_model_reproduction',
+            'kind': 'oracle_reproducibility',
+            'status': 'fail' if mismatch else 'pass',
+            'sample_count': int(actual['waveform'].size),
+            'checkpoints': checks}
+
+
 def main():
+    import torch
+    from kokoro import KModel
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--model-dir', required=True, type=Path)
     parser.add_argument('--capture-dir', required=True, type=Path)
@@ -196,13 +209,16 @@ def main():
 
         baseline = run()
         fixture_wav = np.load(capture_root / capture_manifest['tensors']['waveform_f32']['file'])
-        np.testing.assert_array_equal(fixture_wav.reshape(-1), baseline['audio'].reshape(-1))
-        np.testing.assert_array_equal(f0_reference, baseline['f0_input'])
-        np.testing.assert_array_equal(source_reference, baseline['source'].reshape(-1))
-        np.testing.assert_array_equal(baseline_conv, baseline['first_source_conv'][0])
-        print(json.dumps({'baseline_vs_pinned_waveform': metrics(
-            fixture_wav.reshape(-1), baseline['audio'].reshape(-1)),
-            'sample_count': int(baseline['audio'].size)}))
+        baseline_report = baseline_reproduction({
+            'f0': f0_reference, 'source': source_reference,
+            'first_source_conv': baseline_conv, 'waveform': fixture_wav}, {
+            'f0': baseline['f0_input'], 'source': baseline['source'],
+            'first_source_conv': baseline['first_source_conv'],
+            'waveform': baseline['audio']})
+        baseline_mismatch = baseline_report['status'] == 'fail'
+        print(json.dumps(baseline_report), flush=True)
+        # The interventions below compare with this live baseline. Retained
+        # captures remain separate reference evidence when dispatch differs.
         f0_substitution = run(f0_override=f0_generated)
         print(json.dumps({'case': 'generated_f0_into_pinned_full_model',
             'kind': 'diagnostic_substitution',
@@ -258,6 +274,9 @@ def main():
                 candidate_outputs['generated_source_cke_stft']['audio'].reshape(-1))}))
     finally:
         Fixture.tearDownClass()
+    if baseline_mismatch:
+        raise RuntimeError('pinned full-model baseline differs; all independent '
+                           'interventions were reported before failure')
 
 
 if __name__ == '__main__':
