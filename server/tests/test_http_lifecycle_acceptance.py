@@ -79,6 +79,66 @@ class _Response:
             raise RuntimeError(f"HTTP {self.status_code}")
 
 
+def test_recovery_replay_keeps_rejection_and_followup_distinct(monkeypatch):
+    calls = []
+
+    def fake_request(_method, path, *, payload, timeout):
+        calls.append((path, payload))
+        if path == "/responses":
+            if payload["input"] == "too long":
+                return _Response(400, {"error": {"code": "context_length_exceeded"}})
+            return _Response(200, {"status": "completed", "output_text": "hello",
+                                   "usage": {"output_tokens": 1}})
+        if payload["messages"][0]["content"] == "too long":
+            return _Response(400, {"error": {"code": "context_length_exceeded"}})
+        return _Response(200, {"choices": [{"finish_reason": "stop",
+                                            "message": {"content": "hello"}}],
+                               "usage": {"completion_tokens": 1}})
+
+    monkeypatch.setattr(probe, "MODEL", "fixture-model")
+    monkeypatch.setattr(probe, "request", fake_request)
+    cases = []
+    probe.run_recovery_replay("too long", cases)
+    assert len(calls) == len(cases) == 14
+    assert [row["phase"] for row in cases[:7]] == (["before"] * 3 + ["reject"]
+                                                  + ["after"] * 3)
+    assert all(row["output_sha256"] == cases[0]["output_sha256"]
+               for row in cases if row["phase"] != "reject")
+    assert all(payload["temperature"] == 0 and payload["top_p"] == 1
+               for _, payload in calls)
+
+
+def test_recovery_replay_rejects_divergent_later_followup(monkeypatch):
+    ordinary_calls = 0
+
+    def fake_request(_method, path, *, payload, timeout):
+        nonlocal ordinary_calls
+        if payload["input"] == "too long":
+            return _Response(400, {"error": {"code": "context_length_exceeded"}})
+        ordinary_calls += 1
+        return _Response(200, {"status": "completed",
+                               "output_text": "changed" if ordinary_calls == 6 else "hello",
+                               "usage": {"output_tokens": 1}})
+
+    monkeypatch.setattr(probe, "MODEL", "fixture-model")
+    monkeypatch.setattr(probe, "request", fake_request)
+    cases = []
+    with pytest.raises(RuntimeError, match="deterministic replay diverged"):
+        probe.run_recovery_replay("too long", cases)
+    assert cases[-1]["label"] == "responses-after-3"
+
+
+def test_recovery_replay_rejects_oversized_generation(monkeypatch):
+    def fake_request(_method, path, *, payload, timeout):
+        return _Response(200, {"status": "completed", "output_text": "hello",
+                               "usage": {"output_tokens": 1}})
+
+    monkeypatch.setattr(probe, "MODEL", "fixture-model")
+    monkeypatch.setattr(probe, "request", fake_request)
+    with pytest.raises(RuntimeError, match="oversized prompt not rejected"):
+        probe.run_recovery_replay("too long", [])
+
+
 class _Thread:
     def join(self, **_kwargs):
         pass

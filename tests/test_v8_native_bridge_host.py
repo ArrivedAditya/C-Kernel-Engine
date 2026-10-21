@@ -314,7 +314,15 @@ def _build_tiny_decoder_runtime(
         assert source.count(needle) == 1
         source = source.replace(
             needle,
-            needle + "        if (getenv(\"CK_TEST_FAIL_AFTER_PREFILL_TOKEN\")) return -1;\n",
+            needle + "        if (getenv(\"CK_TEST_FAIL_AFTER_PREFILL_TOKEN\")) {\n"
+            "            ((uint8_t *)g_model->kv_cache)[0] = 0x5a;\n"
+            "            return -1;\n"
+            "        }\n",
+        )
+        source += (
+            "\nCK_EXPORT int ck_test_kv_first_byte(void) {\n"
+            "    return g_model && g_model->kv_cache ? ((uint8_t *)g_model->kv_cache)[0] : -1;\n"
+            "}\n"
         )
         c_path.write_text(source, encoding="utf-8")
 
@@ -1843,6 +1851,26 @@ class V8NativeBridgeHostTests(unittest.TestCase):
                 self.assertGreaterEqual(generation.prefill_time_ms, 0.0)
                 self.assertEqual(streamed, [(0, b"<|pad|>", 0)])
 
+                model_lib = ctypes.CDLL(str(so_path))
+                model_lib.ck_model_get_active_tokens.restype = ctypes.c_int
+                model_lib.ck_model_get_vocab_size.restype = ctypes.c_int
+                model_lib.ck_model_get_logits.restype = ctypes.POINTER(ctypes.c_float)
+                model_lib.ck_model_debug_export_kv.argtypes = [ctypes.c_char_p, ctypes.c_int]
+                model_lib.ck_model_debug_export_kv.restype = ctypes.c_int
+                model_lib.ck_test_kv_first_byte.restype = ctypes.c_int
+
+                def state_snapshot(label: str) -> tuple[int, bytes, bytes]:
+                    kv_path = Path(tmpdir) / f"{label}.kv"
+                    self.assertEqual(model_lib.ck_model_debug_export_kv(str(kv_path).encode(), 0), 0)
+                    logits = ctypes.string_at(
+                        model_lib.ck_model_get_logits(),
+                        model_lib.ck_model_get_vocab_size() * ctypes.sizeof(ctypes.c_float),
+                    )
+                    return (model_lib.ck_model_get_active_tokens(), kv_path.read_bytes(), logits)
+
+                baseline_state = state_snapshot("baseline")
+                self.assertGreater(baseline_state[0], 0)
+
                 # Independent requests reset generated state by default while
                 # retaining the loaded model and tokenizer.
                 streamed.clear()
@@ -1861,8 +1889,7 @@ class V8NativeBridgeHostTests(unittest.TestCase):
                 )
                 self.assertEqual(second.prompt_tokens, generation.prompt_tokens)
                 self.assertEqual(streamed, [(0, b"<|pad|>", 0)])
-                model_lib = ctypes.CDLL(str(so_path))
-                model_lib.ck_model_get_active_tokens.restype = ctypes.c_int
+                self.assertEqual(state_snapshot("second"), baseline_state)
                 with mock.patch.dict("os.environ", {"CK_TEST_FAIL_AFTER_PREFILL_TOKEN": "1"}):
                     failed = GenerateResult(
                         struct_size=ctypes.sizeof(GenerateResult), abi_version=1
@@ -1875,10 +1902,14 @@ class V8NativeBridgeHostTests(unittest.TestCase):
                         -7,  # a generated forward failed after advancing state
                     )
                 self.assertEqual(
+                    model_lib.ck_test_kv_first_byte(), 0,
+                    "failed generation must clear the injected KV write",
+                )
+                self.assertEqual(
                     model_lib.ck_model_get_active_tokens(), 0,
                     "failed generation must discard partially written model state",
                 )
-                for _ in range(3):
+                for index in range(3):
                     streamed.clear()
                     recovered = GenerateResult(
                         struct_size=ctypes.sizeof(GenerateResult), abi_version=1
@@ -1889,6 +1920,7 @@ class V8NativeBridgeHostTests(unittest.TestCase):
                     ), 0)
                     self.assertEqual(streamed, [(0, b"<|pad|>", 0)])
                     self.assertEqual(recovered.prompt_tokens, generation.prompt_tokens)
+                    self.assertEqual(state_snapshot(f"recovered-{index}"), baseline_state)
                 self.assertEqual(session_lib.ck_session_v8_reset(session), 0)
             finally:
                 session_lib.ck_session_v8_close(session)

@@ -432,6 +432,69 @@ def run_budget_boundary(identity: dict, cases: list[dict]) -> None:
     row["followup"] = followup("context-boundary-followup")
 
 
+def run_recovery_replay(oversized_prompt: str, cases: list[dict]) -> None:
+    """Compare repeated deterministic output before and after admission rejection.
+
+    This proves HTTP admission isolation, not recovery from a native failure
+    after generated model state has been mutated.
+    """
+    if not oversized_prompt or len(oversized_prompt.encode("utf-8")) > 8_000_000:
+        raise ValueError("oversized prompt must contain 1 to 8,000,000 UTF-8 bytes")
+    settings = {"temperature": 0, "top_p": 1}
+    prompt = "Hello"
+    for route in ("responses", "chat-completions"):
+        def send(input_text: str) -> httpx.Response:
+            if route == "responses":
+                return request("POST", "/responses", payload={
+                    "model": MODEL, "input": input_text, "max_output_tokens": 16,
+                    **settings,
+                }, timeout=120.0)
+            return request("POST", "/chat/completions", payload={
+                "model": MODEL,
+                "messages": [{"role": "user", "content": input_text}],
+                "max_tokens": 16, **settings,
+            }, timeout=120.0)
+
+        baseline = None
+        for phase in ("before", "reject", "after"):
+            for index in range(3 if phase != "reject" else 1):
+                response = send(oversized_prompt if phase == "reject" else prompt)
+                row = {"label": f"{route}-{phase}-{index + 1}",
+                       "route": route, "phase": phase, "http_status": response.status_code}
+                cases.append(row)
+                try:
+                    body = response.json()
+                except ValueError as exc:
+                    raise RuntimeError(f"{row['label']}: invalid JSON response") from exc
+                if phase == "reject":
+                    row["error_code"] = (body.get("error") or {}).get("code")
+                    if response.status_code != 400 or row["error_code"] != "context_length_exceeded":
+                        raise RuntimeError(f"{row['label']}: oversized prompt not rejected: {row}")
+                    continue
+                if response.status_code != 200:
+                    row["error_code"] = (body.get("error") or {}).get("code")
+                    raise RuntimeError(f"{row['label']}: normal request failed: {row}")
+                if route == "responses":
+                    result = (body.get("status"), body.get("output_text"),
+                              (body.get("usage") or {}).get("output_tokens"))
+                else:
+                    choices = body.get("choices") or []
+                    choice = choices[0] if len(choices) == 1 else {}
+                    result = (choice.get("finish_reason"),
+                              (choice.get("message") or {}).get("content"),
+                              (body.get("usage") or {}).get("completion_tokens"))
+                if (result[0] not in {"completed", "incomplete", "stop", "length"}
+                        or not isinstance(result[1], str) or not result[1]
+                        or type(result[2]) is not int or result[2] <= 0):
+                    raise RuntimeError(f"{row['label']}: invalid result: {result!r}")
+                row.update(terminal=result[0], output_sha256=hashlib.sha256(
+                    result[1].encode("utf-8")).hexdigest(), output_tokens=result[2])
+                if baseline is None:
+                    baseline = result
+                elif result != baseline:
+                    raise RuntimeError(f"{row['label']}: deterministic replay diverged")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--endpoint", required=True, help="Local HTTP base URL ending in /v1")
@@ -440,8 +503,10 @@ def main() -> int:
     parser.add_argument("--expected-session-library-sha256", required=True)
     parser.add_argument("--output", type=Path, required=True, help="New JSON report path")
     parser.add_argument("--prefill-lines", type=int, default=1500)
-    parser.add_argument("--suite", choices=("lifecycle", "plain-chat", "budget-boundary"),
+    parser.add_argument("--suite", choices=("lifecycle", "plain-chat", "budget-boundary", "recovery-replay"),
                         default="lifecycle")
+    parser.add_argument("--oversized-prompt-file", type=Path,
+                        help="UTF-8 prompt known to exceed token context for recovery-replay")
     parser.add_argument("--expected-reply", default="hello",
                         help="Exact one-word reply for the plain-chat suite")
     args = parser.parse_args()
@@ -452,6 +517,15 @@ def main() -> int:
         parser.error("prefill-lines must be positive")
     if not re.fullmatch(r"[A-Za-z]{1,32}", args.expected_reply):
         parser.error("expected-reply must be one ASCII word of at most 32 letters")
+    if args.suite == "recovery-replay" and args.oversized_prompt_file is None:
+        parser.error("recovery-replay requires --oversized-prompt-file")
+    oversized_prompt = None
+    if args.oversized_prompt_file is not None:
+        if args.oversized_prompt_file.stat().st_size > 8_000_000:
+            parser.error("oversized prompt exceeds 8,000,000 bytes")
+        oversized_prompt = args.oversized_prompt_file.read_text(encoding="utf-8")
+        if not oversized_prompt:
+            parser.error("oversized prompt file is empty")
     for label, digest in (
         ("expected-serving-identity", args.expected_serving_identity),
         ("expected-session-library-sha256", args.expected_session_library_sha256),
@@ -476,6 +550,12 @@ def main() -> int:
         "started_at_unix": time.time(),
         "script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "suite": args.suite,
+        "oversized_prompt_sha256": (hashlib.sha256(oversized_prompt.encode("utf-8")).hexdigest()
+                                     if oversized_prompt is not None else None),
+        "replay_settings": ({"ordinary_prompt_sha256": hashlib.sha256(b"Hello").hexdigest(),
+                             "temperature": 0, "top_p": 1, "max_output_tokens": 16,
+                             "requests_per_side_per_route": 3}
+                            if args.suite == "recovery-replay" else None),
         "prefill_lines": PREFILL_LINES,
         "identity_before": None,
         "identity_after": None, "cases": [], "status": "fail",
@@ -492,6 +572,8 @@ def main() -> int:
             run_plain_chat(args.expected_reply, report["identity_before"], report["cases"])
         elif args.suite == "budget-boundary":
             run_budget_boundary(report["identity_before"], report["cases"])
+        elif args.suite == "recovery-replay":
+            run_recovery_replay(oversized_prompt, report["cases"])
         else:
             long_prompt = "Test data follows.\n" + "alpha beta gamma delta\n" * PREFILL_LINES
             report["cases"].append(run_cancel(
