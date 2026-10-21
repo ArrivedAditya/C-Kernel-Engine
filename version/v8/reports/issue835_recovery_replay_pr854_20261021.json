@@ -1,0 +1,219 @@
+{
+  "schema": "cke.http_lifecycle_acceptance.v1",
+  "endpoint": "http://127.0.0.1:19787/v1",
+  "model": "gemma3",
+  "expected_serving_identity": "4f016694583f2b801edabebb6daf4396caa3a9a0b2c5333b2c2a2fcd70b7c669",
+  "expected_session_library_sha256": "9cd12cfe5aec98034a1de16b6eb2d7c592eff6bea29d07f2d697202b0013ad42",
+  "started_at_unix": 1792552628.1918604,
+  "script_sha256": "e8ad375c4c5fa0715b893e11e245eceb3da122b53d836a344f2d2791d6df8483",
+  "suite": "recovery-replay",
+  "oversized_prompt_sha256": "9d4d992accdd08f94d0db644dd738bdc153e5fef1f07af16c0068a2ff33ede3e",
+  "replay_settings": {
+    "ordinary_prompt_sha256": "185f8db32271fe25f561a6fc938b2e264306ec304eda518007d1764826381969",
+    "temperature": 0,
+    "top_p": 1,
+    "max_output_tokens": 16,
+    "requests_per_side_per_route": 3
+  },
+  "prefill_lines": 1500,
+  "identity_before": {
+    "schema": "cke.loaded_serving_identity.v1",
+    "model": "gemma3",
+    "serving_identity": "4f016694583f2b801edabebb6daf4396caa3a9a0b2c5333b2c2a2fcd70b7c669",
+    "profile_id": "publisher-chat-v1",
+    "variant": "publisher",
+    "output_protocol": "none",
+    "context_capacity": 1024,
+    "assets_sha256": {
+      ".ck_codegen_bundle.json": "0ec6c1661820a353968a9dfdc228f932b27832931925f7e4ff30fb136e014e47",
+      ".ck_ir_bundle.json": "212a8648de940ea6a722af601737d2716bc04878abf5565c2fd6e166bbe747c4",
+      ".ck_runtime_bundle.json": "67f239146c4c4f2eaf81be16d7a505de8273e6436dfdce16fce2737025b92746",
+      "chat": "af95fbef33b76a50e5f463ff9766f85ce84f5849d915c4bd6c1619d852ac3231",
+      "circuit": "ecb29b8d20ea7c542b3e5e7ba6cb086fd7088152dd39bc83daf0ae69b06253ae",
+      "config.json": "cb8125e7964d3b18c83fc8d0251c4ecda8ee7314acaa899265ef81fc4772815e",
+      "layout_decode.json": "4fe7f97875c65e6a665f69ed9456cfee96a456cd1f090a6d189a0fb834f63cb9",
+      "libckernel_engine.so": "947a3303943cc473076078e0a5700cf2556b5e8a163daade9411c2de14268aa8",
+      "libckernel_tokenizer.so": "3be3720a52cd0d43ff48da987207f09cb046a1d74e593b92f6584e84ad072ee5",
+      "libmodel.so": "4b9de23024ddeacbb9300010504ccea7dcafb1e1bfdc7e942fc72e7bfa6e15a9",
+      "profile": "200fc72933f240c3cd58f936e5d793c87020828561fd0a8669bb8bbc520eb092",
+      "tools": "af95fbef33b76a50e5f463ff9766f85ce84f5849d915c4bd6c1619d852ac3231",
+      "weights.bump": "13575507e1f21e4ee201c565758f6c8b3987cde3b588c307d01e888898ee73ba",
+      "weights_manifest.json": "9ae45ee1a8416fc33c17a2fcbd8e63e3d0e4b087e252aff07fe30ad1ac7bf623",
+      "weights_manifest.map": "65733ddcd0f2a25e7119da44fe249dd30fe0b929590c5013e2f69a265cd3732f"
+    },
+    "session_library_sha256": "9cd12cfe5aec98034a1de16b6eb2d7c592eff6bea29d07f2d697202b0013ad42",
+    "server_instance_id": "6336c332d2394119bc86a3fb9e4b5ea4",
+    "effective_serving": {
+      "schema": "cke.effective_serving.v1",
+      "configured_mode": "templated",
+      "output_protocol": "none",
+      "active_context_limit": 1024,
+      "default_max_output_tokens": 512,
+      "stop_on_text": [],
+      "stop_at_eos": false
+    }
+  },
+  "identity_after": {
+    "schema": "cke.loaded_serving_identity.v1",
+    "model": "gemma3",
+    "serving_identity": "4f016694583f2b801edabebb6daf4396caa3a9a0b2c5333b2c2a2fcd70b7c669",
+    "profile_id": "publisher-chat-v1",
+    "variant": "publisher",
+    "output_protocol": "none",
+    "context_capacity": 1024,
+    "assets_sha256": {
+      ".ck_codegen_bundle.json": "0ec6c1661820a353968a9dfdc228f932b27832931925f7e4ff30fb136e014e47",
+      ".ck_ir_bundle.json": "212a8648de940ea6a722af601737d2716bc04878abf5565c2fd6e166bbe747c4",
+      ".ck_runtime_bundle.json": "67f239146c4c4f2eaf81be16d7a505de8273e6436dfdce16fce2737025b92746",
+      "chat": "af95fbef33b76a50e5f463ff9766f85ce84f5849d915c4bd6c1619d852ac3231",
+      "circuit": "ecb29b8d20ea7c542b3e5e7ba6cb086fd7088152dd39bc83daf0ae69b06253ae",
+      "config.json": "cb8125e7964d3b18c83fc8d0251c4ecda8ee7314acaa899265ef81fc4772815e",
+      "layout_decode.json": "4fe7f97875c65e6a665f69ed9456cfee96a456cd1f090a6d189a0fb834f63cb9",
+      "libckernel_engine.so": "947a3303943cc473076078e0a5700cf2556b5e8a163daade9411c2de14268aa8",
+      "libckernel_tokenizer.so": "3be3720a52cd0d43ff48da987207f09cb046a1d74e593b92f6584e84ad072ee5",
+      "libmodel.so": "4b9de23024ddeacbb9300010504ccea7dcafb1e1bfdc7e942fc72e7bfa6e15a9",
+      "profile": "200fc72933f240c3cd58f936e5d793c87020828561fd0a8669bb8bbc520eb092",
+      "tools": "af95fbef33b76a50e5f463ff9766f85ce84f5849d915c4bd6c1619d852ac3231",
+      "weights.bump": "13575507e1f21e4ee201c565758f6c8b3987cde3b588c307d01e888898ee73ba",
+      "weights_manifest.json": "9ae45ee1a8416fc33c17a2fcbd8e63e3d0e4b087e252aff07fe30ad1ac7bf623",
+      "weights_manifest.map": "65733ddcd0f2a25e7119da44fe249dd30fe0b929590c5013e2f69a265cd3732f"
+    },
+    "session_library_sha256": "9cd12cfe5aec98034a1de16b6eb2d7c592eff6bea29d07f2d697202b0013ad42",
+    "server_instance_id": "6336c332d2394119bc86a3fb9e4b5ea4",
+    "effective_serving": {
+      "schema": "cke.effective_serving.v1",
+      "configured_mode": "templated",
+      "output_protocol": "none",
+      "active_context_limit": 1024,
+      "default_max_output_tokens": 512,
+      "stop_on_text": [],
+      "stop_at_eos": false
+    }
+  },
+  "cases": [
+    {
+      "label": "responses-before-1",
+      "route": "responses",
+      "phase": "before",
+      "http_status": 200,
+      "terminal": "completed",
+      "output_sha256": "b0a88b7f04e245f8b0c63d8deb16ff66324998affa15e35098892b064e02ac53",
+      "output_tokens": 10
+    },
+    {
+      "label": "responses-before-2",
+      "route": "responses",
+      "phase": "before",
+      "http_status": 200,
+      "terminal": "completed",
+      "output_sha256": "b0a88b7f04e245f8b0c63d8deb16ff66324998affa15e35098892b064e02ac53",
+      "output_tokens": 10
+    },
+    {
+      "label": "responses-before-3",
+      "route": "responses",
+      "phase": "before",
+      "http_status": 200,
+      "terminal": "completed",
+      "output_sha256": "b0a88b7f04e245f8b0c63d8deb16ff66324998affa15e35098892b064e02ac53",
+      "output_tokens": 10
+    },
+    {
+      "label": "responses-reject-1",
+      "route": "responses",
+      "phase": "reject",
+      "http_status": 400,
+      "error_code": "context_length_exceeded"
+    },
+    {
+      "label": "responses-after-1",
+      "route": "responses",
+      "phase": "after",
+      "http_status": 200,
+      "terminal": "completed",
+      "output_sha256": "b0a88b7f04e245f8b0c63d8deb16ff66324998affa15e35098892b064e02ac53",
+      "output_tokens": 10
+    },
+    {
+      "label": "responses-after-2",
+      "route": "responses",
+      "phase": "after",
+      "http_status": 200,
+      "terminal": "completed",
+      "output_sha256": "b0a88b7f04e245f8b0c63d8deb16ff66324998affa15e35098892b064e02ac53",
+      "output_tokens": 10
+    },
+    {
+      "label": "responses-after-3",
+      "route": "responses",
+      "phase": "after",
+      "http_status": 200,
+      "terminal": "completed",
+      "output_sha256": "b0a88b7f04e245f8b0c63d8deb16ff66324998affa15e35098892b064e02ac53",
+      "output_tokens": 10
+    },
+    {
+      "label": "chat-completions-before-1",
+      "route": "chat-completions",
+      "phase": "before",
+      "http_status": 200,
+      "terminal": "stop",
+      "output_sha256": "b0a88b7f04e245f8b0c63d8deb16ff66324998affa15e35098892b064e02ac53",
+      "output_tokens": 10
+    },
+    {
+      "label": "chat-completions-before-2",
+      "route": "chat-completions",
+      "phase": "before",
+      "http_status": 200,
+      "terminal": "stop",
+      "output_sha256": "b0a88b7f04e245f8b0c63d8deb16ff66324998affa15e35098892b064e02ac53",
+      "output_tokens": 10
+    },
+    {
+      "label": "chat-completions-before-3",
+      "route": "chat-completions",
+      "phase": "before",
+      "http_status": 200,
+      "terminal": "stop",
+      "output_sha256": "b0a88b7f04e245f8b0c63d8deb16ff66324998affa15e35098892b064e02ac53",
+      "output_tokens": 10
+    },
+    {
+      "label": "chat-completions-reject-1",
+      "route": "chat-completions",
+      "phase": "reject",
+      "http_status": 400,
+      "error_code": "context_length_exceeded"
+    },
+    {
+      "label": "chat-completions-after-1",
+      "route": "chat-completions",
+      "phase": "after",
+      "http_status": 200,
+      "terminal": "stop",
+      "output_sha256": "b0a88b7f04e245f8b0c63d8deb16ff66324998affa15e35098892b064e02ac53",
+      "output_tokens": 10
+    },
+    {
+      "label": "chat-completions-after-2",
+      "route": "chat-completions",
+      "phase": "after",
+      "http_status": 200,
+      "terminal": "stop",
+      "output_sha256": "b0a88b7f04e245f8b0c63d8deb16ff66324998affa15e35098892b064e02ac53",
+      "output_tokens": 10
+    },
+    {
+      "label": "chat-completions-after-3",
+      "route": "chat-completions",
+      "phase": "after",
+      "http_status": 200,
+      "terminal": "stop",
+      "output_sha256": "b0a88b7f04e245f8b0c63d8deb16ff66324998affa15e35098892b064e02ac53",
+      "output_tokens": 10
+    }
+  ],
+  "status": "pass",
+  "elapsed_seconds": 24.135
+}
