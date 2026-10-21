@@ -17,6 +17,7 @@
 #include <limits>
 #include <sstream>
 #include <string>
+#include <system_error>
 #include <unordered_set>
 #include <vector>
 
@@ -43,7 +44,14 @@ static_assert(sizeof(CKDumpFileHeader) == 128, "CKDumpFileHeader must be 128 byt
 struct DumpState {
     FILE *file = nullptr;
     FILE *meta_file = nullptr;
+    std::filesystem::path directory;
     bool dump_all = false;
+    bool capture_conv_operands = false;
+    bool invalid_conv_capture = false;
+    int conv_index = 0;
+    int conv_seen = 0;
+    int conv_layout_seen = 0;
+    const ggml_tensor *selected_conv_result = nullptr;
     bool has_exact_layer = false;
     int32_t exact_layer = -1;
     std::unordered_set<std::string> names;
@@ -216,8 +224,121 @@ static void write_meta_record(FILE *file, const std::string &op_name, int32_t la
     std::fflush(file);
 }
 
+static const ggml_tensor *unwrap_conv_view(const ggml_tensor *tensor) {
+    for (int depth = 0; tensor && depth < 6; ++depth) {
+        if (tensor->op == GGML_OP_IM2COL) {
+            return tensor;
+        }
+        if (tensor->op != GGML_OP_RESHAPE && tensor->op != GGML_OP_VIEW &&
+            tensor->op != GGML_OP_CONT && tensor->op != GGML_OP_PERMUTE) {
+            return nullptr;
+        }
+        tensor = tensor->src[0];
+    }
+    return nullptr;
+}
+
+static bool follows_layout_edge(const ggml_tensor *tensor, const ggml_tensor *source, int depth = 0) {
+    if (tensor == source) {
+        return true;
+    }
+    if (!tensor || depth >= 8 || (tensor->op != GGML_OP_RESHAPE &&
+        tensor->op != GGML_OP_VIEW && tensor->op != GGML_OP_CONT &&
+        tensor->op != GGML_OP_PERMUTE && tensor->op != GGML_OP_TRANSPOSE)) {
+        return false;
+    }
+    return follows_layout_edge(tensor->src[0], source, depth + 1);
+}
+
+static void dump_conv_operand(DumpState *state, const ggml_tensor *tensor,
+                              const char *role, const char *edge, int capture_id) {
+    if (!state || !state->meta_file) {
+        return;
+    }
+    const char *status = "unavailable";
+    std::string raw_name;
+    if (tensor && tensor->buffer && !ggml_is_quantized(tensor->type)) {
+        const size_t nbytes = ggml_nbytes(tensor);
+        if (nbytes > 0 && nbytes <= ((size_t) 256 << 20)) {
+            std::vector<uint8_t> raw(nbytes);
+            ggml_backend_tensor_get(tensor, raw.data(), 0, nbytes);
+            raw_name = "conv_" + std::to_string(capture_id) + "_" + role + ".raw";
+            const auto raw_path = state->directory / raw_name;
+            if (FILE *file = std::fopen(raw_path.c_str(), "wb")) {
+                const bool written = std::fwrite(raw.data(), 1, nbytes, file) == nbytes;
+                std::fclose(file);
+                if (written) {
+                    std::error_code error;
+                    std::filesystem::permissions(raw_path, std::filesystem::perms::owner_read |
+                        std::filesystem::perms::owner_write, std::filesystem::perm_options::replace, error);
+                    if (!error) {
+                        const auto flat = flatten_tensor(tensor, raw.data());
+                        write_ckdump_record(state->file, role, -1, flat);
+                        status = "observed";
+                    }
+                }
+            }
+        }
+    }
+    std::fprintf(state->meta_file,
+        "{\"capture_id\":%d,\"role\":\"%s\",\"source_edge\":\"%s\","
+        "\"status\":\"%s\",\"raw_file\":\"%s\",\"op\":\"%s\","
+        "\"type\":%d,\"ne\":[%lld,%lld,%lld,%lld],\"nb\":[%zu,%zu,%zu,%zu]",
+        capture_id, role, edge, status, raw_name.c_str(),
+        tensor ? ggml_op_name(tensor->op) : "missing",
+        tensor ? (int) tensor->type : -1,
+        tensor ? (long long) tensor->ne[0] : 0, tensor ? (long long) tensor->ne[1] : 0,
+        tensor ? (long long) tensor->ne[2] : 0, tensor ? (long long) tensor->ne[3] : 0,
+        tensor ? (size_t) tensor->nb[0] : 0, tensor ? (size_t) tensor->nb[1] : 0,
+        tensor ? (size_t) tensor->nb[2] : 0, tensor ? (size_t) tensor->nb[3] : 0);
+    if (tensor && tensor->op == GGML_OP_IM2COL && tensor->src[0]) {
+        int32_t geometry[7]{};
+        std::memcpy(geometry, tensor->op_params, sizeof(geometry));
+        std::fprintf(state->meta_file,
+            ",\"convolution\":{\"kernel\":[%lld,%lld],\"stride\":[%d,%d],"
+            "\"padding\":[%d,%d],\"dilation\":[%d,%d],\"groups\":1,\"is_2d\":%d}",
+            (long long) tensor->src[0]->ne[0], (long long) tensor->src[0]->ne[1],
+            geometry[0], geometry[1], geometry[2], geometry[3],
+            geometry[4], geometry[5], geometry[6]);
+    }
+    std::fputs("}\n", state->meta_file);
+    std::fflush(state->meta_file);
+}
+
 static bool ck_mtmd_dump_eval_callback(struct ggml_tensor *t, bool ask, void *user_data) {
     auto *state = static_cast<DumpState *>(user_data);
+    if (state && state->capture_conv_operands && state->selected_conv_result &&
+        t && t->op == GGML_OP_CONT && state->conv_layout_seen < 2 &&
+        follows_layout_edge(t->src[0], state->selected_conv_result)) {
+        if (ask) {
+            return true;
+        }
+        const std::string role = "conv_layout_" + std::to_string(state->conv_layout_seen++);
+        dump_conv_operand(state, t, role.c_str(), "layout_descendant_of_mul_mat", state->conv_index);
+        return true;
+    }
+    if (state && state->capture_conv_operands && t && t->op == GGML_OP_MUL_MAT) {
+        const ggml_tensor *im2col = unwrap_conv_view(t->src[0]);
+        int32_t is_2d = 0;
+        if (im2col) {
+            is_2d = im2col->op_params[6];
+        }
+        if (im2col && is_2d == 1 && im2col->src[1]) {
+            if (ask) {
+                return true;
+            }
+            const int index = state->conv_seen;
+            if (index == state->conv_index) {
+                dump_conv_operand(state, im2col->src[1], "conv_image", "im2col.src[1]", index);
+                dump_conv_operand(state, im2col, "conv_im2col", "mul_mat.src[0].im2col", index);
+                dump_conv_operand(state, t->src[1], "conv_weight", "mul_mat.src[1]", index);
+                dump_conv_operand(state, t, "conv_result", "mul_mat.output", index);
+                state->selected_conv_result = t;
+            }
+            ++state->conv_seen;
+            return true;
+        }
+    }
     std::string base_name;
     int32_t layer_id = -1;
     if (!should_dump_tensor(state, t, base_name, layer_id)) {
@@ -255,14 +376,41 @@ static void dump_state_init(DumpState &state) {
     }
 
     std::filesystem::create_directories(dir_env);
+    state.directory = dir_env;
     std::filesystem::path dump_path = std::filesystem::path(dir_env) / "dump.bin";
     state.file = std::fopen(dump_path.c_str(), "wb");
     if (!state.file) {
         return;
     }
-    if (meta_dump_enabled()) {
+    const char *conv_env = std::getenv("CK_LLAMA_PARITY_CONV_INDEX");
+    if (conv_env && conv_env[0]) {
+        char *end = nullptr;
+        const long requested = std::strtol(conv_env, &end, 10);
+        if (end && *end == '\0' && requested >= 0 && requested <= 1000000) {
+            state.capture_conv_operands = true;
+            state.conv_index = (int) requested;
+        } else {
+            state.invalid_conv_capture = true;
+        }
+    }
+    if (meta_dump_enabled() || state.capture_conv_operands) {
         std::filesystem::path meta_path = std::filesystem::path(dir_env) / "meta.jsonl";
         state.meta_file = std::fopen(meta_path.c_str(), "wb");
+    }
+    if (state.capture_conv_operands) {
+        std::error_code error;
+        std::filesystem::permissions(state.directory, std::filesystem::perms::owner_all,
+                                     std::filesystem::perm_options::replace, error);
+        if (state.file) {
+            std::filesystem::permissions(dump_path, std::filesystem::perms::owner_read |
+                std::filesystem::perms::owner_write, std::filesystem::perm_options::replace, error);
+        }
+        if (state.meta_file) {
+            std::filesystem::permissions(state.directory / "meta.jsonl",
+                std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
+                std::filesystem::perm_options::replace, error);
+        }
+        state.invalid_conv_capture = error || !state.file || !state.meta_file;
     }
 
     const char *layer_env = std::getenv("CK_LLAMA_PARITY_LAYER");
@@ -311,6 +459,11 @@ static void dump_state_close(DumpState &state) {
     state.exact_layer = -1;
     state.names.clear();
     state.dump_all = false;
+    state.capture_conv_operands = false;
+    state.invalid_conv_capture = false;
+    state.conv_seen = 0;
+    state.conv_layout_seen = 0;
+    state.selected_conv_result = nullptr;
 }
 
 static clip_ctx *unwrap_ctx(void *handle_ptr) {
@@ -331,6 +484,11 @@ void *ck_mtmd_clip_init(
     int warmup) {
     auto *handle = new CKMtmdClipHandle();
     dump_state_init(handle->dump);
+    if (handle->dump.invalid_conv_capture) {
+        dump_state_close(handle->dump);
+        delete handle;
+        return nullptr;
+    }
 
     clip_context_params params{};
     params.use_gpu = use_gpu != 0;
