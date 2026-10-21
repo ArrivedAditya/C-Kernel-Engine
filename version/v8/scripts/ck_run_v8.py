@@ -1615,6 +1615,60 @@ def _selected_kernel_build_args(output_dir: Path) -> list[str]:
     return _onednn_make_args() if "-DUSE_ONEDNN" in compile_flags else []
 
 
+def _arm_engine_make_args(machine: str, compiler: str) -> list[str]:
+    """Carry an intentional ARM ISA profile across ordinary run/serve builds.
+
+    The Makefile's flag stamp records the effective flags used for the current
+    engine. It supplies a requested profile, not proof of loaded library bytes;
+    step_compile still rebuilds and hashes the libraries in its runtime bundle.
+    Explicit environment settings always take precedence over the stamp.
+    """
+    if not _is_arm_machine(machine):
+        return []
+
+    arch_explicit = "CK_ARM_ARCH" in os.environ
+    native_explicit = "CK_ARM_NATIVE" in os.environ
+    arch = os.environ.get("CK_ARM_ARCH", "").strip() if arch_explicit else ""
+    native = os.environ.get("CK_ARM_NATIVE", "0").strip() if native_explicit else "0"
+    if native not in {"0", "1"}:
+        raise RuntimeError("CK_ARM_NATIVE must be 0 or 1")
+    if not arch_explicit and not native_explicit:
+        stamp = BUILD_DIR / ".ck_build_flags"
+        engine = BUILD_DIR / "libckernel_engine.so"
+        if engine.is_file():
+            if not stamp.is_file() or stamp.stat().st_mtime_ns > engine.stat().st_mtime_ns:
+                raise RuntimeError(
+                    "existing ARM engine has no valid build flag stamp; set "
+                    "CK_ARM_ARCH or CK_ARM_NATIVE=0/1 to select a rebuild profile"
+                )
+            lines = stamp.read_text(encoding="utf-8").splitlines()
+            cflags = next((line[7:] for line in lines if line.startswith("CFLAGS=")), "")
+            if not cflags:
+                raise RuntimeError("existing ARM engine build flag stamp has no CFLAGS")
+            marches = [flag[7:] for flag in shlex.split(cflags) if flag.startswith("-march=")]
+            if len(marches) > 1:
+                raise RuntimeError("existing ARM engine flag stamp has ambiguous -march settings")
+            if marches:
+                if marches[0] == "native":
+                    native = "1"
+                else:
+                    arch = marches[0]
+
+    if arch:
+        if any(not (ch.isalnum() or ch in "_.+-") for ch in arch):
+            raise RuntimeError("CK_ARM_ARCH contains invalid characters")
+        probe = subprocess.run(
+            [compiler, f"-march={arch}", "-x", "c", "-fsyntax-only", "-"],
+            input="int ck_isa_probe(void) { return 0; }\n",
+            text=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+            check=False,
+        )
+        if probe.returncode:
+            raise RuntimeError(f"compiler {compiler} does not support requested CK_ARM_ARCH={arch}")
+        return [f"CK_ARM_ARCH={arch}"]
+    return ["CK_ARM_NATIVE=1"] if native == "1" else []
+
+
 def step_compile(
     model_c_path: Path,
     output_dir: Path,
@@ -1640,6 +1694,7 @@ def step_compile(
     extra_cflags = (os.environ.get("CK_V8_EXTRA_CFLAGS", "") or os.environ.get("CK_V7_EXTRA_CFLAGS", "")).strip()
     extra_ldflags = (os.environ.get("CK_V8_EXTRA_LDFLAGS", "") or os.environ.get("CK_V7_EXTRA_LDFLAGS", "")).strip()
     kernel_build_args = _selected_kernel_build_args(output_dir)
+    arm_engine_args = _arm_engine_make_args(machine, compiler)
     compile_inputs = {
         "schema": RUNTIME_BUNDLE_SCHEMA,
         "model_source": _file_identity(model_c_path),
@@ -1651,6 +1706,7 @@ def step_compile(
         "extra_cflags": extra_cflags,
         "extra_ldflags": extra_ldflags,
         "kernel_build_args": kernel_build_args,
+        "arm_engine_args": arm_engine_args,
         "engine_sources": _tree_identity(
             [
                 PROJECT_ROOT / "Makefile",
@@ -1704,6 +1760,7 @@ def step_compile(
         "--no-print-directory",
         f"CC={compiler}",
         *kernel_build_args,
+        *arm_engine_args,
     ]
     run_cmd([*make_cmd, *targets], cwd=PROJECT_ROOT)
 

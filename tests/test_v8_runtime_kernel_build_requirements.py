@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 from pathlib import Path
 from unittest import mock
@@ -10,6 +11,57 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "version" / "v8" / "scripts"))
 
 import ck_run_v8  # noqa: E402
+
+
+def test_arm_engine_profile_inherits_compiled_flag_stamp(tmp_path, monkeypatch):
+    build = tmp_path / "build"
+    build.mkdir()
+    (build / ".ck_build_flags").write_text(
+        "CC=gcc\nCFLAGS=-O3 -fPIC -march=armv9-a+sve2+dotprod+i8mm+bf16 -Iinclude\nLDFLAGS=\n"
+    )
+    (build / "libckernel_engine.so").write_bytes(b"built-engine")
+    os.utime(build / "libckernel_engine.so", None)
+    monkeypatch.setattr(ck_run_v8, "BUILD_DIR", build)
+    with mock.patch.dict(os.environ, {}, clear=True), \
+         mock.patch.object(ck_run_v8.subprocess, "run") as probe:
+        probe.return_value.returncode = 0
+        assert ck_run_v8._arm_engine_make_args("aarch64", "gcc") == [
+            "CK_ARM_ARCH=armv9-a+sve2+dotprod+i8mm+bf16"
+        ]
+        assert "-march=armv9-a+sve2+dotprod+i8mm+bf16" in probe.call_args.args[0]
+
+
+def test_arm_engine_profile_explicit_baseline_overrides_stamp(tmp_path, monkeypatch):
+    build = tmp_path / "build"
+    build.mkdir()
+    (build / ".ck_build_flags").write_text("CFLAGS=-march=armv9-a+sve2\n")
+    (build / "libckernel_engine.so").write_bytes(b"built-engine")
+    monkeypatch.setattr(ck_run_v8, "BUILD_DIR", build)
+    with mock.patch.dict(os.environ, {"CK_ARM_NATIVE": "0"}, clear=True):
+        assert ck_run_v8._arm_engine_make_args("aarch64", "gcc") == []
+
+
+def test_arm_engine_profile_rejects_unattributed_existing_library(tmp_path, monkeypatch):
+    build = tmp_path / "build"
+    build.mkdir()
+    (build / "libckernel_engine.so").write_bytes(b"unknown-engine")
+    monkeypatch.setattr(ck_run_v8, "BUILD_DIR", build)
+    with mock.patch.dict(os.environ, {}, clear=True):
+        with pytest.raises(RuntimeError, match="no valid build flag stamp"):
+            ck_run_v8._arm_engine_make_args("aarch64", "gcc")
+
+
+def test_arm_engine_profile_rejects_unsupported_target():
+    with mock.patch.dict(os.environ, {"CK_ARM_ARCH": "invalid-target"}, clear=True), \
+         mock.patch.object(ck_run_v8.subprocess, "run") as probe:
+        probe.return_value.returncode = 1
+        with pytest.raises(RuntimeError, match="does not support requested CK_ARM_ARCH"):
+            ck_run_v8._arm_engine_make_args("aarch64", "gcc")
+
+
+def test_arm_engine_profile_never_inherits_arm_flags_on_x86():
+    with mock.patch.dict(os.environ, {"CK_ARM_ARCH": "armv9-a+sve2"}, clear=True):
+        assert ck_run_v8._arm_engine_make_args("x86_64", "gcc") == []
 
 
 def _write_call(

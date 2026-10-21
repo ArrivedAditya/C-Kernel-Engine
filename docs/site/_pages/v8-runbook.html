@@ -1876,6 +1876,14 @@ version/v8/scripts/ck_serve_v8.py "$RUN_DIR" --run "$RUN_DIR" \
         the tested 0.8B artifact, not every Qwen3.5 variant.</p>
 
     <h3 style="margin-top: 0;">Qwen Code Interactive And Overnight Profiles</h3>
+    <p>On ARM, an explicit <code>CK_ARM_ARCH</code> used to build the engine is
+        retained by ordinary <code>cks-v8-run run</code> and <code>serve</code>
+        invocations in the same build tree. The runner checks compiler support,
+        rebuilds with that profile, and records it with the bundled library
+        hashes. Set a new <code>CK_ARM_ARCH</code> to change the target, or set
+        <code>CK_ARM_NATIVE=0</code> explicitly to request baseline ARM. If an
+        existing engine has no valid build-flag record, choose a profile
+        explicitly before rebuilding; do not infer its ISA from its filename.</p>
     <p>
         A cached Qwen Code 0.24.6 <code>read_file</code> task passed through the Responses server
         using the circuit-resolved publisher Jinja bundle. The earlier 0.21.5 pilot used the
