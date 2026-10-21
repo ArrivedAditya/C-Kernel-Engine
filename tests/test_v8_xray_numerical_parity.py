@@ -266,10 +266,14 @@ class XRayNumericalParityTests(unittest.TestCase):
             xray._load_tensor(bad)
 
     def test_generated_duration_graph_matches_independent_oracle_capture(self):
-        from tests.test_v8_checked_call_codegen import _fixture, codegen
+        fixture_module = load_module(
+            "test_v8_checked_call_codegen",
+            ROOT / "tests" / "test_v8_checked_call_codegen.py",
+        )
 
         source = self.root / "generated.c"
-        source.write_text(codegen.emit_checked_calls(_fixture(), ROOT))
+        source.write_text(fixture_module.codegen.emit_checked_calls(
+            fixture_module._fixture(), ROOT))
         library = self.root / "generated.so"
         subprocess.run([
             "cc", "-std=c11", "-shared", "-fPIC", str(source),

@@ -198,7 +198,10 @@ def test_prefill_decode_boundary_uses_prior_kv_with_phase_numerics() -> None:
     lib = load_lib("libckernel_engine.so")
     prefill = lib.attention_forward_causal_head_major_gqa_llama_regular_strided_sliding_workspace
     decode = lib.attention_forward_decode_head_major_gqa_llama_regular_sliding_workspace
-    prefill.restype = decode.restype = None
+    continuation = (
+        lib.attention_forward_decode_head_major_gqa_llama_regular_sliding_prefill_phase_workspace
+    )
+    prefill.restype = decode.restype = continuation.restype = None
     lib.ck_set_num_threads(1)
 
     rng = np.random.default_rng(833)
@@ -231,6 +234,14 @@ def test_prefill_decode_boundary_uses_prior_kv_with_phase_numerics() -> None:
         _ptr(columns), columns.nbytes,
         _ptr(scaled), scaled.nbytes,
     )
+    phase_matched = np.zeros_like(single)
+    continuation(
+        _ptr(last_q), _ptr(k), _ptr(v), _ptr(phase_matched),
+        heads, 1, tokens, tokens, dim, dim, 0,
+        _ptr(scores), scores.nbytes,
+        _ptr(columns), columns.nbytes,
+        _ptr(scaled), scaled.nbytes,
+    )
 
     # Independent arithmetic reference: convert the operands and normalized
     # probabilities at the FP16 boundaries declared by both provider maps,
@@ -258,6 +269,12 @@ def test_prefill_decode_boundary_uses_prior_kv_with_phase_numerics() -> None:
     arithmetic_bound = (
         2 * max_score_error * np.max(np.abs(v16))
         + (u16 + gamma_values) * weighted_values
+    )
+    # Both paths use the prefill reduction contract; minor FP32 operation
+    # scheduling differences on a supported ISA remain within its FP32 bound.
+    np.testing.assert_allclose(
+        phase_matched, batched[:, -1, :], rtol=0,
+        atol=2 * gamma_values * weighted_values,
     )
     np.testing.assert_allclose(batched[:, -1, :], reference, rtol=0, atol=arithmetic_bound)
     np.testing.assert_allclose(single, reference, rtol=0, atol=arithmetic_bound)

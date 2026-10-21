@@ -5972,7 +5972,7 @@ static void ck_attention_llama_regular_impl(
     float *scores, size_t scores_bytes,
     float *value_columns, size_t value_columns_bytes,
     float *scaled_scores, size_t scaled_scores_bytes,
-    int batched_prefill)
+    int batched_prefill, int prefill_phase_arithmetic)
 {
     if (!q || !k || !v || !output || !scores || !value_columns || !scaled_scores ||
         num_heads <= 0 || num_kv_heads <= 0 || query_tokens <= 0 || live_tokens <= 0 ||
@@ -6018,7 +6018,7 @@ static void ck_attention_llama_regular_impl(
                 key_head, value_columns,
                 output + ((size_t)head * query_tokens + query) * aligned_head_dim,
                 scores, scaled_scores, live_tokens, padded, position,
-                head_dim, aligned_head_dim, sliding_window, batched_prefill);
+                head_dim, aligned_head_dim, sliding_window, prefill_phase_arithmetic);
             if (debug_layer_id >= 0 &&
                 ck_attention_vec_dump_should_emit(debug_layer_id, head, query)) {
                 ck_attention_vec_dump_selected_query(
@@ -6116,7 +6116,7 @@ void attention_forward_causal_head_major_gqa_llama_regular_strided_sliding_works
             q, k, v, output, num_heads, num_kv_heads, num_tokens, num_tokens,
             head_dim, aligned_head_dim, kv_stride_tokens, sliding_window,
             scores, scores_bytes, value_columns, value_columns_bytes,
-            scaled_scores, scaled_scores_bytes, 1);
+            scaled_scores, scaled_scores_bytes, 1, 1);
         return;
     }
 
@@ -6126,7 +6126,7 @@ void attention_forward_causal_head_major_gqa_llama_regular_strided_sliding_works
             head_dim, aligned_head_dim, kv_stride_tokens, sliding_window,
             scores, (size_t)padded * sizeof(float),
             value_columns, (size_t)head_dim * (size_t)padded * sizeof(float),
-            scaled_scores, (size_t)padded * sizeof(float), 1);
+            scaled_scores, (size_t)padded * sizeof(float), 1, 1);
         return;
     }
 
@@ -6194,7 +6194,26 @@ void attention_forward_decode_head_major_gqa_llama_regular_sliding_workspace(
         q, k, v, output, num_heads, num_kv_heads, 1, live_tokens,
         head_dim, aligned_head_dim, kv_stride_tokens, sliding_window,
         scores, scores_bytes, value_columns, value_columns_bytes,
-        scaled_scores, scaled_scores_bytes, 0);
+        scaled_scores, scaled_scores_bytes, 0, 0);
+}
+
+/* Decode-shaped continuation of a prefill chunk. Positions and cache reads
+ * remain decode-local, while score and probability/value reductions retain
+ * the selected batched-prefill arithmetic contract. Ordinary decode retains
+ * its own matvec reduction order. */
+void attention_forward_decode_head_major_gqa_llama_regular_sliding_prefill_phase_workspace(
+    const float *q, const float *k, const float *v, float *output,
+    int num_heads, int num_kv_heads, int live_tokens, int kv_stride_tokens,
+    int head_dim, int aligned_head_dim, int sliding_window,
+    float *scores, size_t scores_bytes,
+    float *value_columns, size_t value_columns_bytes,
+    float *scaled_scores, size_t scaled_scores_bytes)
+{
+    ck_attention_llama_regular_impl(
+        q, k, v, output, num_heads, num_kv_heads, 1, live_tokens,
+        head_dim, aligned_head_dim, kv_stride_tokens, sliding_window,
+        scores, scores_bytes, value_columns, value_columns_bytes,
+        scaled_scores, scaled_scores_bytes, 0, 1);
 }
 
 /**
@@ -6249,6 +6268,38 @@ void attention_forward_decode_head_major_gqa_flash(const float *q_token,
                                1,
                                aligned_head_dim,
                                scale);
+    }
+}
+
+/* A history-aware single query with the same online reduction used by the
+ * selected causal prefill kernel. This is only used while continuing a
+ * current-chunk-only prefill; ordinary decode keeps its existing contract. */
+void attention_forward_decode_head_major_gqa_flash_prefill_phase(
+    const float *q_token, const float *k_cache, const float *v_cache,
+    float *out_token, int num_heads, int num_kv_heads, int kv_tokens,
+    int cache_capacity, int head_dim, int aligned_head_dim)
+{
+    if (!q_token || !k_cache || !v_cache || !out_token ||
+        num_heads <= 0 || num_kv_heads <= 0 || kv_tokens <= 0 ||
+        cache_capacity <= 0 || kv_tokens > cache_capacity ||
+        head_dim <= 0 || aligned_head_dim < head_dim) {
+        return;
+    }
+    if ((size_t)cache_capacity > SIZE_MAX / (size_t)aligned_head_dim ||
+        (size_t)num_kv_heads > SIZE_MAX /
+            ((size_t)cache_capacity * (size_t)aligned_head_dim)) {
+        return;
+    }
+    const float scale = 1.0f / sqrtf((float)head_dim);
+    const size_t head_stride = (size_t)cache_capacity * (size_t)aligned_head_dim;
+    for (int h = 0; h < num_heads; ++h) {
+        const int kv_head = (int)((long long)h * num_kv_heads / num_heads);
+        ck_attention_flash_query_auto(
+            q_token + (size_t)h * aligned_head_dim,
+            k_cache + (size_t)kv_head * head_stride,
+            v_cache + (size_t)kv_head * head_stride,
+            kv_tokens, head_dim, aligned_head_dim, scale,
+            out_token + (size_t)h * aligned_head_dim);
     }
 }
 

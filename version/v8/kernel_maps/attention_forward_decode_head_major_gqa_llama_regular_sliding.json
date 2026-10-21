@@ -12,6 +12,10 @@
   "physical_contract_version": 1,
   "variant": "decode_llama_regular_fp32_sliding",
   "mode": "decode",
+  "prefill_continuation": {
+    "function": "attention_forward_decode_head_major_gqa_llama_regular_sliding_prefill_phase_workspace",
+    "reduction_order": "llama_regular_padded_256"
+  },
   "contract_schema_version": 1,
   "provides": {
     "execution.phase": ["decode"],

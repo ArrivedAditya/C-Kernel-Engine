@@ -10,6 +10,13 @@
   "variant": "causal_flash_fp32",
   "mode": "prefill",
   "prefill_history_scope": "current_chunk",
+  "operation_interface": "attention.causal_gqa.fp32.head_major_output.v1",
+  "numerical_capabilities": {
+    "input_dtype": "fp32",
+    "accumulation_dtype": "fp32",
+    "reduction_order": "fp32_online_causal_query",
+    "output_dtype": "fp32"
+  },
   "contract_schema_version": 1,
   "provides": {
     "execution.phase": ["prefill"],
@@ -41,16 +48,15 @@
     "output": "fp32"
   },
   "inputs": [
-    {"name": "q", "dtype": "fp32", "shape": ["H", "T", "D"], "desc": "Query tensor [heads, tokens, head_dim]"}
+    {"name": "q", "dtype": "fp32", "shape": ["H", "T", "D"], "layout": "head_major_contiguous", "placement": "local", "access": "read", "storage_class": "scratch", "consumption": "required", "desc": "Query tensor [heads, tokens, head_dim]"},
+    {"name": "k", "dtype": "fp32", "shape": ["KV", "S", "D"], "layout": "head_major_strided", "placement": "local", "access": "read", "storage_class": "state", "consumption": "required", "desc": "Key tensor [kv_heads, seq_len, head_dim], strided layout (KV cache)"},
+    {"name": "v", "dtype": "fp32", "shape": ["KV", "S", "D"], "layout": "head_major_strided", "placement": "local", "access": "read", "storage_class": "state", "consumption": "required", "desc": "Value tensor [kv_heads, seq_len, head_dim], strided layout (KV cache)"}
   ],
   "weights": [],
   "activations": [],
-  "runtime_buffers": [
-    {"name": "k", "dtype": "fp32", "shape": ["KV", "S", "D"], "desc": "Key tensor [kv_heads, seq_len, head_dim], strided layout (KV cache)"},
-    {"name": "v", "dtype": "fp32", "shape": ["KV", "S", "D"], "desc": "Value tensor [kv_heads, seq_len, head_dim], strided layout (KV cache)"}
-  ],
+  "runtime_buffers": [],
   "outputs": [
-    {"name": "out", "dtype": "fp32", "shape": ["H", "T", "D"], "desc": "Attention output [heads, tokens, head_dim]"}
+    {"name": "out", "dtype": "fp32", "shape": ["H", "T", "D"], "layout": "head_major_contiguous", "placement": "local", "access": "write", "storage_class": "activation", "consumption": "required", "desc": "Attention output [heads, tokens, head_dim]"}
   ],
   "scratch": [
     {"name": "qkv_scratch", "dtype": "fp32", "size_bytes": "H * T * D * 4", "desc": "QKV tiles for flash attention"},
@@ -109,22 +115,26 @@
       {
         "name": "q",
         "source": "scratch:q_scratch",
-        "cast": "float*"
+        "cast": "float*",
+        "ports": ["input:q"]
       },
       {
         "name": "k",
         "source": "scratch:k_scratch",
-        "cast": "float*"
+        "cast": "float*",
+        "ports": ["input:k"]
       },
       {
         "name": "v",
         "source": "scratch:v_scratch",
-        "cast": "float*"
+        "cast": "float*",
+        "ports": ["input:v"]
       },
       {
         "name": "output",
         "source": "output:out",
-        "cast": "float*"
+        "cast": "float*",
+        "ports": ["output:out"]
       },
       {
         "name": "num_heads",

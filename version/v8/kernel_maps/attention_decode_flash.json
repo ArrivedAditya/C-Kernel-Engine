@@ -3,6 +3,16 @@
   "op": "attention",
   "variant": "decode_head_major_gqa_flash",
   "mode": "decode",
+  "selection": {
+    "status": "production",
+    "priority": 200,
+    "equivalence_group": "attention.fp32_online_causal_strided.v1",
+    "phases": ["decode"]
+  },
+  "prefill_continuation": {
+    "function": "attention_forward_decode_head_major_gqa_flash_prefill_phase",
+    "reduction_order": "fp32_online_causal_query"
+  },
   "contract_schema_version": 1,
   "provides": {
     "execution.phase": ["decode"],

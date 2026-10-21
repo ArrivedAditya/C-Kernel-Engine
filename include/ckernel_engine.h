@@ -2203,6 +2203,10 @@ void attention_forward_decode_head_major_gqa_flash(const float *q_token,
                                                   int cache_capacity,
                                                    int head_dim,
                                                    int aligned_head_dim);
+void attention_forward_decode_head_major_gqa_flash_prefill_phase(
+    const float *q_token, const float *k_cache, const float *v_cache,
+    float *out_token, int num_heads, int num_kv_heads, int kv_tokens,
+    int cache_capacity, int head_dim, int aligned_head_dim);
 void attention_forward_decode_head_major_gqa_muse_eager_bf16_storage(
     const float *q_token, const float *k_cache, const float *v_cache,
     float *out_token, int num_heads, int num_kv_heads, int kv_tokens,
@@ -2603,6 +2607,13 @@ void attention_forward_causal_head_major_gqa_llama_regular_strided_sliding_works
     float *value_columns, size_t value_columns_bytes,
     float *scaled_scores, size_t scaled_scores_bytes);
 void attention_forward_decode_head_major_gqa_llama_regular_sliding_workspace(
+    const float *q, const float *k, const float *v, float *output,
+    int num_heads, int num_kv_heads, int live_tokens, int kv_stride_tokens,
+    int head_dim, int aligned_head_dim, int sliding_window,
+    float *scores, size_t scores_bytes,
+    float *value_columns, size_t value_columns_bytes,
+    float *scaled_scores, size_t scaled_scores_bytes);
+void attention_forward_decode_head_major_gqa_llama_regular_sliding_prefill_phase_workspace(
     const float *q, const float *k, const float *v, float *output,
     int num_heads, int num_kv_heads, int live_tokens, int kv_stride_tokens,
     int head_dim, int aligned_head_dim, int sliding_window,

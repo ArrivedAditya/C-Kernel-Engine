@@ -1821,6 +1821,14 @@ def emit_prefill_function(ops: List[Dict], config: Dict, profile: bool = False, 
     requires_decode_continuation = (
         "current_chunk" in history_scopes or unknown_attention_history
     )
+    continuation_entry = config.get("prefill_continuation_entry")
+    if continuation_entry not in (None, "ck_decode_prefill_continuation"):
+        raise RuntimeError("unrecognized prefill continuation entry")
+    if continuation_entry and not requires_decode_continuation:
+        raise RuntimeError(
+            "prefill continuation entry requires an attention history fallback"
+        )
+    continuation_entry = continuation_entry or "ck_decode"
     context_capacity = int(config.get("context_length", config.get("context_len", 0)) or 0)
     prefill_chunk_length = int(config.get("prefill_chunk_length", context_capacity) or context_capacity)
     if context_capacity <= 0 or prefill_chunk_length <= 0:
@@ -2055,7 +2063,8 @@ static void ck_prefill_range(CKModel *model, const int32_t *tokens, int num_toke
         lines.append("                    return;")
         lines.append("                }")
         lines.append("                g_ck_skip_decode_logits = consumed + i + 1 < num_tokens;")
-        lines.append("                ck_decode(model, tokens[consumed + i]);")
+        lines.append(
+            f"                {continuation_entry}(model, tokens[consumed + i]);")
         lines.append("            }")
         lines.append("            g_ck_skip_decode_logits = 0;")
     else:
