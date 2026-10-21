@@ -1087,6 +1087,10 @@ TEST_SUITES = {
         "Kokoro Pinned Text Conversion and Bounded Chunk Planning", "inference",
         ROOT / "tests" / "test_v8_kokoro_accessibility_text_plan.py",
     ),
+    "tts_kokoro_whole_text_wav": TestSuite(
+        "Kokoro Whole-Text Persistent Worker and WAV Publication", "inference",
+        ROOT / "tests" / "test_v8_kokoro_whole_text_wav.py",
+    ),
     "tts_kokoro_whisper_roundtrip": TestSuite(
         "Generated Kokoro to Whisper Known-Text Round Trip", "inference",
         ROOT / "tests" / "test_v8_kokoro_whisper_roundtrip.py",

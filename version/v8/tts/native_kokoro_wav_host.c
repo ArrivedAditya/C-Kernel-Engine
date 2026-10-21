@@ -175,6 +175,32 @@ static int write_u32(FILE *stream, uint32_t value) {
         write_u16(stream, (uint16_t)(value >> 16));
 }
 
+static int write_wav_header(FILE *stream, size_t count) {
+    if (count > (UINT32_MAX - 36u) / 2u) return 0;
+    const uint32_t payload = (uint32_t)(count * 2u);
+    return fwrite("RIFF", 1, 4, stream) == 4 &&
+        write_u32(stream, payload + 36u) &&
+        fwrite("WAVEfmt ", 1, 8, stream) == 8 &&
+        write_u32(stream, 16) && write_u16(stream, 1) &&
+        write_u16(stream, 1) && write_u32(stream, 24000) &&
+        write_u32(stream, 48000) && write_u16(stream, 2) &&
+        write_u16(stream, 16) &&
+        fwrite("data", 1, 4, stream) == 4 && write_u32(stream, payload);
+}
+
+static int append_pcm(FILE *stream, const float *samples, size_t count) {
+    int okay = 1;
+    for (size_t i = 0; okay && i < count; ++i) {
+        if (!isfinite(samples[i])) { okay = 0; break; }
+        float value = samples[i];
+        if (value > 1.0f) value = 1.0f;
+        if (value < -1.0f) value = -1.0f;
+        const int32_t scaled = (int32_t)lrintf(value * 32767.0f);
+        okay = write_u16(stream, (uint16_t)(int16_t)scaled);
+    }
+    return okay;
+}
+
 static int write_wav(const char *path, const float *samples, size_t count) {
     if (count > (UINT32_MAX - 36u) / 2u) return 0;
     /* O_EXCL also rejects a symlink or hard link to an existing bundle asset.
@@ -187,23 +213,8 @@ static int write_wav(const char *path, const float *samples, size_t count) {
         remove(path);
         return 0;
     }
-    const uint32_t payload = (uint32_t)(count * 2u);
-    int okay = fwrite("RIFF", 1, 4, stream) == 4 &&
-        write_u32(stream, payload + 36u) &&
-        fwrite("WAVEfmt ", 1, 8, stream) == 8 &&
-        write_u32(stream, 16) && write_u16(stream, 1) &&
-        write_u16(stream, 1) && write_u32(stream, 24000) &&
-        write_u32(stream, 48000) && write_u16(stream, 2) &&
-        write_u16(stream, 16) &&
-        fwrite("data", 1, 4, stream) == 4 && write_u32(stream, payload);
-    for (size_t i = 0; okay && i < count; ++i) {
-        if (!isfinite(samples[i])) { okay = 0; break; }
-        float value = samples[i];
-        if (value > 1.0f) value = 1.0f;
-        if (value < -1.0f) value = -1.0f;
-        const int32_t scaled = (int32_t)lrintf(value * 32767.0f);
-        okay = write_u16(stream, (uint16_t)(int16_t)scaled);
-    }
+    int okay = write_wav_header(stream, count) &&
+               append_pcm(stream, samples, count);
     if (fclose(stream) != 0) okay = 0;
     if (!okay) remove(path);
     return okay;
@@ -221,9 +232,10 @@ typedef struct {
 
 static int synthesize(loaded_package *package, const char *output,
                       const char *seed_text, const char *ids_text,
-                      const char *voice_path, size_t *written_samples) {
+                      const char *voice_path, FILE *aggregate,
+                      size_t *written_samples) {
     struct stat existing;
-    if (lstat(output, &existing) == 0 || errno != ENOENT) return 10;
+    if (!aggregate && (lstat(output, &existing) == 0 || errno != ENOENT)) return 10;
     uint64_t seed = 0;
     if (seed_text) {
         char *end = NULL;
@@ -277,9 +289,67 @@ static int synthesize(loaded_package *package, const char *output,
         return 7;
     const float *waveform = (const float *)(package->arena +
                                             (size_t)package->waveform_offset);
-    if (!write_wav(output, waveform, (size_t)lengths[sample_index])) return 8;
+    if (aggregate ? !append_pcm(aggregate, waveform,
+                               (size_t)lengths[sample_index]) :
+                    !write_wav(output, waveform,
+                               (size_t)lengths[sample_index])) return 8;
     if (written_samples) *written_samples = (size_t)lengths[sample_index];
     return 0;
+}
+
+typedef struct {
+    FILE *stream;
+    char *temporary;
+    char *output;
+    size_t samples, chunks;
+} wav_sequence;
+
+static void abort_sequence(wav_sequence *sequence) {
+    if (sequence->stream) fclose(sequence->stream);
+    if (sequence->temporary) unlink(sequence->temporary);
+    free(sequence->temporary);
+    free(sequence->output);
+    memset(sequence, 0, sizeof(*sequence));
+}
+
+static int begin_sequence(wav_sequence *sequence, const char *output) {
+    struct stat existing;
+    if (sequence->stream || !*output || strchr(output, '\t') ||
+        lstat(output, &existing) == 0 || errno != ENOENT) return 0;
+    const size_t length = strlen(output);
+    if (length > SIZE_MAX - 16u) return 0;
+    sequence->output = strdup(output);
+    sequence->temporary = malloc(length + 16u);
+    if (!sequence->output || !sequence->temporary) goto failed;
+    snprintf(sequence->temporary, length + 16u, "%s.partial.XXXXXX", output);
+    const int descriptor = mkstemp(sequence->temporary);
+    if (descriptor < 0) goto failed;
+    sequence->stream = fdopen(descriptor, "wb+");
+    if (!sequence->stream) { close(descriptor); goto failed; }
+    if (!write_wav_header(sequence->stream, 0)) goto failed;
+    return 1;
+failed:
+    abort_sequence(sequence);
+    return 0;
+}
+
+static int finish_sequence(wav_sequence *sequence) {
+    if (!sequence->stream || !sequence->chunks ||
+        sequence->samples > (UINT32_MAX - 36u) / 2u ||
+        fseek(sequence->stream, 0, SEEK_SET) != 0 ||
+        !write_wav_header(sequence->stream, sequence->samples) ||
+        fflush(sequence->stream) != 0) {
+        abort_sequence(sequence);
+        return 0;
+    }
+    const int closed = fclose(sequence->stream);
+    sequence->stream = NULL;
+    if (closed != 0) { abort_sequence(sequence); return 0; }
+    const int okay = link(sequence->temporary, sequence->output) == 0;
+    if (okay) printf("WAV_READY\t%zu\t%s\n", sequence->samples,
+                     sequence->output);
+    abort_sequence(sequence);
+    return okay;
 }
 
 /* The supervisor can keep this process alive across ordinary chunks. A STOP
@@ -290,39 +360,72 @@ static int serve(loaded_package *package, const char *voice_path) {
     puts("READY\tloads=1");
     fflush(stdout);
     char line[1024];
+    wav_sequence sequence = {0};
     while (fgets(line, sizeof(line), stdin)) {
         const size_t size = strlen(line);
         if (!size || line[size - 1] != '\n') {
             int character;
             while ((character = fgetc(stdin)) != '\n' && character != EOF) {}
+            abort_sequence(&sequence);
             puts("ERROR\toversized command");
             fflush(stdout);
             continue;
         }
         line[size - 1] = 0;
-        if (!strcmp(line, "QUIT")) return 0;
-        if (strncmp(line, "RUN\t", 4)) {
+        if (!strcmp(line, "QUIT")) { abort_sequence(&sequence); return 0; }
+        if (!strncmp(line, "BEGIN\t", 6)) {
+            if (!begin_sequence(&sequence, line + 6)) puts("ERROR\tbegin");
+            else puts("BEGUN");
+            fflush(stdout);
+            continue;
+        }
+        if (!strcmp(line, "END")) {
+            if (!finish_sequence(&sequence)) puts("ERROR\tend");
+            fflush(stdout);
+            continue;
+        }
+        const int append = !strncmp(line, "APPEND\t", 7);
+        if (!append && strncmp(line, "RUN\t", 4)) {
             puts("ERROR\tunknown command");
             fflush(stdout);
             continue;
         }
-        char *output = line + 4;
-        char *seed = strchr(output, '\t');
-        if (seed) *seed++ = 0;
+        if (!append && sequence.stream) {
+            puts("ERROR\tsequence active");
+            fflush(stdout);
+            continue;
+        }
+        char *output = append ? NULL : line + 4;
+        char *seed = append ? line + 7 : strchr(output, '\t');
+        if (!append && seed) *seed++ = 0;
         char *ids = seed ? strchr(seed, '\t') : NULL;
         if (ids) *ids++ = 0;
-        if (!seed || !ids || !*output || !*seed || !*ids) {
+        if (!seed || !ids || (!append && !*output) || !*seed || !*ids ||
+            (append && (!sequence.stream || sequence.chunks >= 64))) {
+            if (append) abort_sequence(&sequence);
             puts("ERROR\tinvalid request");
             fflush(stdout);
             continue;
         }
         size_t samples = 0;
         const int result = synthesize(package, output, seed, ids, voice_path,
-                                      &samples);
-        if (result) printf("ERROR\t%d\n", result);
-        else printf("WAV_READY\t%zu\t%s\n", samples, output);
+                                      append ? sequence.stream : NULL, &samples);
+        if (result) {
+            if (append) abort_sequence(&sequence);
+            printf("ERROR\t%d\n", result);
+        } else if (append) {
+            if (samples > (UINT32_MAX - 36u) / 2u - sequence.samples) {
+                abort_sequence(&sequence);
+                puts("ERROR\taggregate capacity");
+            } else {
+                sequence.samples += samples;
+                ++sequence.chunks;
+                printf("CHUNK_READY\t%zu\t%zu\n", samples, sequence.samples);
+            }
+        } else printf("WAV_READY\t%zu\t%s\n", samples, output);
         fflush(stdout);
     }
+    abort_sequence(&sequence);
     return ferror(stdin) ? 4 : 0;
 }
 
@@ -451,7 +554,7 @@ int main(int argc, char **argv) {
     const int result = synthesize(&package, argv[2],
                                   argc >= 4 ? argv[3] : NULL,
                                   argc == 6 ? argv[4] : NULL,
-                                  argc == 6 ? argv[5] : NULL, &samples);
+                                  argc == 6 ? argv[5] : NULL, NULL, &samples);
     free(arena);
     if (!result) printf("wrote %zu samples at 24000 Hz\n", samples);
     return result;
