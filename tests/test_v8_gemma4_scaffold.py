@@ -34,9 +34,28 @@ from build_ir_v8 import (  # type: ignore
     find_kernel,
     load_kernel_registry,
 )
+from run_multimodal_bridge_v8 import _resolve_bridge_execution_policy  # type: ignore
 
 
 class Gemma3RopeMetadataTests(unittest.TestCase):
+    def test_gemma4_bridge_uses_persistent_cache_after_mixed_prefill(self):
+        bridge = _load_builtin_template_doc("gemma4")["contract"]["multimodal_bridge"]
+        self.assertEqual(bridge["cache_policy"], "persistent_decoder_kv")
+        self.assertEqual(
+            _resolve_bridge_execution_policy(bridge),
+            ("decode-staged", "incremental-decode"),
+        )
+        self.assertEqual(
+            _resolve_bridge_execution_policy({}),
+            ("prefill", "mixed-replay"),
+        )
+        with self.assertRaisesRegex(ValueError, "requires the decode-staged runtime"):
+            _resolve_bridge_execution_policy(bridge, "prefill", "incremental-decode")
+        with self.assertRaisesRegex(ValueError, "requires the decode-staged runtime"):
+            _resolve_bridge_execution_policy({}, "prefill", "incremental-decode")
+        with self.assertRaisesRegex(ValueError, "requires incremental decode"):
+            _resolve_bridge_execution_policy(bridge, "decode-staged", "mixed-replay")
+
     def test_gemma4_vision_decode_policy_depends_on_text_width(self):
         for width in (1536, 2560):
             self.assertEqual(gemma4_vision_prefix_decode_policy(width), "causal_mixed_prefix")

@@ -1379,6 +1379,26 @@ def _bridge_generation_mode_from_policy(contract: dict[str, Any] | None, fallbac
     return fallback
 
 
+def _resolve_bridge_execution_policy(
+    contract: dict[str, Any] | None,
+    runtime_override: str | None = None,
+    generation_override: str | None = None,
+) -> tuple[str, str]:
+    runtime = str(runtime_override or _bridge_runtime_from_policy(contract)).strip().lower().replace("_", "-")
+    generation = str(generation_override or _bridge_generation_mode_from_policy(contract)).strip().lower().replace("_", "-")
+    if runtime in {"decode", "staged"}:
+        runtime = "decode-staged"
+    if runtime not in {"prefill", "decode-staged"}:
+        raise ValueError(f"unsupported bridge runtime {runtime!r}")
+    if generation not in {"mixed-replay", "incremental-decode"}:
+        raise ValueError(f"unsupported bridge generation mode {generation!r}")
+    if generation == "incremental-decode" and runtime != "decode-staged":
+        raise ValueError("incremental decode requires the decode-staged runtime")
+    if runtime == "decode-staged" and generation != "incremental-decode":
+        raise ValueError("decode-staged runtime requires incremental decode")
+    return runtime, generation
+
+
 def _resolve_decoder_bridge_contract(
     decoder_gguf: Path,
     *,
@@ -4481,10 +4501,10 @@ def main(argv: list[str] | None = None) -> int:
                 args.decoder_gguf.resolve(),
                 chat_template_mode=chat_template_mode,
             )
-    resolved_bridge_runtime = str(args.bridge_runtime or _bridge_runtime_from_policy(bridge_contract, fallback="prefill"))
-    resolved_bridge_generation_mode = str(
-        args.bridge_generation_mode
-        or _bridge_generation_mode_from_policy(bridge_contract, fallback="mixed-replay")
+    resolved_bridge_runtime, resolved_bridge_generation_mode = _resolve_bridge_execution_policy(
+        bridge_contract,
+        args.bridge_runtime,
+        args.bridge_generation_mode,
     )
     include_image_chunks = bool(has_encoder or int(args.synthetic_prefix_tokens) > 0)
     prompt_segments = _format_multimodal_prompt_segments(

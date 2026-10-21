@@ -172,7 +172,7 @@ def main() -> int:
     result = {
         "status": "pass" if passed else "fail",
         "lane": "independent_mtmd_encoder_prefix",
-        "input_provenance": "independently_decoded_and_preprocessed_from_same_p6",
+        "input_provenance": "independently_decoded_and_preprocessed_from_same_image",
         "metrics": metrics,
         "thresholds": {"max_rmse": args.max_rmse, "max_abs": args.max_abs},
         "decoder_prefix_exports": {
@@ -206,7 +206,7 @@ def main() -> int:
         },
         "limitations": [
             "CKE library identity is bridge-reported; loaded-library attestation is not established",
-            "P6 input and CKE Python preprocessing do not certify native image-file deployment",
+            "CKE Python image preprocessing does not certify native image-file deployment",
             "Prefix parity does not certify decoder logits or image-task quality",
         ],
     }

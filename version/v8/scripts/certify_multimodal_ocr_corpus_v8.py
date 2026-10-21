@@ -243,6 +243,13 @@ def _runtime_identity(path: Path, role: str) -> dict[str, Any]:
     }
 
 
+def _gguf_identity(path: Path) -> dict[str, str]:
+    path = path.resolve()
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    return {"path": str(path), "sha256": _sha256_file(path)}
+
+
 def _verify_bridge_execution(
     report: dict[str, Any], sample: dict[str, Any], config: dict[str, Any]
 ) -> dict[str, Any]:
@@ -260,22 +267,48 @@ def _verify_bridge_execution(
             or prefix_tokens <= 0 or encoder.get("prefix_tokens") != prefix_tokens):
         raise ValueError("encoder prefix token count is missing or inconsistent")
     libraries: dict[str, str] = {}
+    library_paths: dict[str, str] = {}
+    engine_hashes: dict[str, str] = {}
+    engine_paths: dict[str, str] = {}
+    mode = config.get("source_mode", "prebuilt")
     for role in ("encoder", "decoder"):
-        expected = config[f"{role}_runtime"]
         observed = report.get(f"{role}_runtime")
-        if not isinstance(observed, dict) or observed.get("source") != "prebuilt":
-            raise ValueError(f"OCR requires the declared prebuilt {role} runtime")
-        if Path(str(observed.get("workdir") or "")).resolve() != Path(expected["path"]):
-            raise ValueError(f"{role} runtime directory differs from the pinned runtime")
-        library = expected["model_library"]
-        if Path(str(observed.get("so_path") or "")).resolve() != Path(library["path"]):
-            raise ValueError(f"{role} model library differs from the pinned runtime")
-        if _sha256_file(Path(library["path"])) != library["sha256"]:
-            raise ValueError(f"{role} model library changed during OCR execution")
-        engine = expected["engine_library"]
-        if _sha256_file(Path(engine["path"])) != engine["sha256"]:
-            raise ValueError(f"{role} engine library changed during OCR execution")
-        libraries[role] = library["sha256"]
+        if not isinstance(observed, dict) or observed.get("source") != mode:
+            raise ValueError(f"OCR requires the declared {mode} {role} source")
+        if mode == "prebuilt":
+            expected = config[f"{role}_runtime"]
+            if Path(str(observed.get("workdir") or "")).resolve() != Path(expected["path"]):
+                raise ValueError(f"{role} runtime directory differs from the pinned runtime")
+            library = expected["model_library"]
+            model_path = Path(library["path"])
+            if Path(str(observed.get("so_path") or "")).resolve() != model_path:
+                raise ValueError(f"{role} model library differs from the pinned runtime")
+            if _sha256_file(model_path) != library["sha256"]:
+                raise ValueError(f"{role} model library changed during OCR execution")
+            engine = expected["engine_library"]
+            if _sha256_file(Path(engine["path"])) != engine["sha256"]:
+                raise ValueError(f"{role} engine library changed during OCR execution")
+            libraries[role] = library["sha256"]
+            engine_path = Path(engine["path"])
+        else:
+            source = config[f"{role}_gguf"]
+            if Path(str(observed.get("gguf") or "")).resolve() != Path(source["path"]):
+                raise ValueError(f"{role} GGUF differs from the pinned source")
+            if _sha256_file(Path(source["path"])) != source["sha256"]:
+                raise ValueError(f"{role} GGUF changed during OCR execution")
+            runtime_dir = Path(config["gguf_runtime_dir"]) / role
+            if Path(str(observed.get("workdir") or "")).resolve() != runtime_dir:
+                raise ValueError(f"{role} generated runtime directory differs from the selected workspace")
+            model_path = Path(str(observed.get("so_path") or "")).resolve()
+            if model_path.parent != runtime_dir or not model_path.is_file():
+                raise ValueError(f"{role} generated model library is missing or outside the workspace")
+            engine_path = runtime_dir / "libckernel_engine.so"
+            if not engine_path.is_file():
+                raise ValueError(f"{role} generated engine library is missing")
+            libraries[role] = _sha256_file(model_path)
+        library_paths[role] = str(model_path)
+        engine_paths[role] = str(engine_path)
+        engine_hashes[role] = _sha256_file(engine_path)
     # The bridge reports selected paths; these hashes do not prove which engine ELF was loaded.
     return {
         "evidence_kind": "bridge_reported_paths_and_artifact_hashes",
@@ -283,6 +316,10 @@ def _verify_bridge_execution(
         "prefix_source": "encoder",
         "prefix_tokens": prefix_tokens,
         "model_library_sha256": libraries,
+        "model_library_paths": library_paths,
+        "engine_library_paths": engine_paths,
+        "engine_library_sha256": engine_hashes,
+        "source_mode": mode,
     }
 
 
@@ -307,17 +344,16 @@ def _bridge_command(
     case_dir: Path,
     prompt: str,
 ) -> list[str]:
+    gguf_mode = bool(getattr(args, "decoder_gguf", None))
     command = [
         sys.executable,
         str(BRIDGE),
-        "--decoder-runtime",
-        str(args.decoder_runtime),
-        "--encoder-runtime",
-        str(args.encoder_runtime),
-        "--composition-circuit",
-        args.composition_circuit,
+        "--decoder-gguf" if gguf_mode else "--decoder-runtime",
+        str(args.decoder_gguf if gguf_mode else args.decoder_runtime),
+        "--encoder-gguf" if gguf_mode else "--encoder-runtime",
+        str(args.encoder_gguf if gguf_mode else args.encoder_runtime),
         "--workdir",
-        str(case_dir / "runtime"),
+        str(args.output_dir.resolve() / "gguf_runtime" if gguf_mode else case_dir / "runtime"),
         "--image-path",
         str(sample["image"]),
         "--prompt",
@@ -340,6 +376,8 @@ def _bridge_command(
         "--generation-progress-every",
         str(args.generation_progress_every),
     ]
+    if args.composition_circuit:
+        command.extend(["--composition-circuit", args.composition_circuit])
     if args.adapt_encoder_geometry:
         command.extend(
             [
@@ -402,6 +440,7 @@ def _load_resumed(
     if not isinstance(evidence, dict):
         return None
     hashes = evidence.get("model_library_sha256")
+    mode = config.get("source_mode", "prebuilt")
     prefix_tokens = evidence.get("prefix_tokens")
     generated_text = value.get("generated_text")
     tokens = value.get("generated_token_ids")
@@ -423,18 +462,43 @@ def _load_resumed(
         and isinstance(wall_sec, (int, float)) and not isinstance(wall_sec, bool)
         and math.isfinite(wall_sec) and wall_sec >= 0
     )
+    if mode == "prebuilt":
+        current_artifacts = (
+            isinstance(hashes, dict)
+            and all(hashes.get(role) == config[f"{role}_runtime"]["model_library"]["sha256"]
+                    for role in ("encoder", "decoder"))
+        )
+    else:
+        paths = evidence.get("model_library_paths")
+        engine_paths = evidence.get("engine_library_paths")
+        engine_hashes = evidence.get("engine_library_sha256")
+        current_artifacts = all(isinstance(value, dict) for value in
+                                (hashes, paths, engine_paths, engine_hashes))
+        for role in ("encoder", "decoder"):
+            source = config[f"{role}_gguf"]
+            source_path = Path(source["path"])
+            if not source_path.is_file() or _sha256_file(source_path) != source["sha256"]:
+                current_artifacts = False
+                continue
+            library = Path(str(paths.get(role) or "")).resolve() if isinstance(paths, dict) else None
+            if (library is None or library.parent != Path(config["gguf_runtime_dir"]) / role
+                    or not library.is_file() or _sha256_file(library) != (hashes or {}).get(role)):
+                current_artifacts = False
+            engine = Path(str(engine_paths.get(role) or "")).resolve() if isinstance(engine_paths, dict) else None
+            if (engine is None or engine != Path(config["gguf_runtime_dir"]) / role / "libckernel_engine.so"
+                    or not engine.is_file() or _sha256_file(engine) != (engine_hashes or {}).get(role)):
+                current_artifacts = False
     if (value.get("case_config") != expected or value.get("status") != "complete"
             or value.get("image_index") != expected["image_index"]
             or value.get("image_sha256") != expected["image_sha256"]
             or value.get("truth_sha256") != expected["truth_sha256"]
             or evidence.get("evidence_kind") != "bridge_reported_paths_and_artifact_hashes"
+            or evidence.get("source_mode", "prebuilt") != mode
             or evidence.get("loaded_engine_verified") is not False
             or evidence.get("prefix_source") != "encoder"
             or not valid_output
             or not isinstance(prefix_tokens, int) or isinstance(prefix_tokens, bool)
-            or prefix_tokens <= 0 or not isinstance(hashes, dict)
-            or any(hashes.get(role) != config[f"{role}_runtime"]["model_library"]["sha256"]
-                   for role in ("encoder", "decoder"))):
+            or prefix_tokens <= 0 or not current_artifacts):
         return None
     return value
 
@@ -495,9 +559,13 @@ def _aggregate(rows: list[dict[str, Any]], requested: int) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, required=True)
-    parser.add_argument("--decoder-runtime", type=Path, required=True)
-    parser.add_argument("--encoder-runtime", type=Path, required=True)
-    parser.add_argument("--composition-circuit", required=True)
+    decoder_source = parser.add_mutually_exclusive_group(required=True)
+    decoder_source.add_argument("--decoder-runtime", type=Path)
+    decoder_source.add_argument("--decoder-gguf", type=Path)
+    encoder_source = parser.add_mutually_exclusive_group(required=True)
+    encoder_source.add_argument("--encoder-runtime", type=Path)
+    encoder_source.add_argument("--encoder-gguf", type=Path)
+    parser.add_argument("--composition-circuit")
     parser.add_argument("--adapter-id", required=True)
     parser.add_argument("--model-label", required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -526,6 +594,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.context_len <= 0 or args.max_new_tokens <= 0:
         parser.error("context and generation limits must be positive")
+    if bool(args.decoder_gguf) != bool(args.encoder_gguf):
+        parser.error("decoder and encoder sources must both be GGUF or both be prebuilt")
+    if args.decoder_runtime and not args.composition_circuit:
+        parser.error("prebuilt source mode requires a composition circuit")
     samples = _load_samples(args.manifest)
     selected = [row for row in samples if row["index"] >= args.start_index]
     if args.limit is not None:
@@ -552,8 +624,12 @@ def main(argv: list[str] | None = None) -> int:
         "adapter_id": args.adapter_id,
         "model_label": args.model_label,
         "manifest_sha256": _sha256_file(args.manifest.resolve()),
-        "decoder_runtime": _runtime_identity(args.decoder_runtime, "decoder"),
-        "encoder_runtime": _runtime_identity(args.encoder_runtime, "encoder"),
+        "source_mode": "gguf" if args.decoder_gguf else "prebuilt",
+        "decoder_runtime": _runtime_identity(args.decoder_runtime, "decoder") if args.decoder_runtime else None,
+        "encoder_runtime": _runtime_identity(args.encoder_runtime, "encoder") if args.encoder_runtime else None,
+        "decoder_gguf": _gguf_identity(args.decoder_gguf) if args.decoder_gguf else None,
+        "encoder_gguf": _gguf_identity(args.encoder_gguf) if args.encoder_gguf else None,
+        "gguf_runtime_dir": str(output_dir / "gguf_runtime") if args.decoder_gguf else None,
         "composition_circuit": args.composition_circuit,
         "chat_template": args.chat_template,
         "thinking_mode": args.thinking_mode,
@@ -596,10 +672,11 @@ def main(argv: list[str] | None = None) -> int:
             print(shlex.join(_bridge_command(args, sample, case_dir, prompt)))
             continue
         try:
-            bridge_path = case_dir / "runtime" / "bridge_report.json"
+            bridge_path = (output_dir / "gguf_runtime" if args.decoder_gguf else case_dir / "runtime") / "bridge_report.json"
             bridge_path.unlink(missing_ok=True)
             wall_sec = _run(_bridge_command(args, sample, case_dir, prompt), case_dir / "bridge.log", env)
             report = json.loads(bridge_path.read_text(encoding="utf-8"))
+            _write_json(case_dir / "bridge_report.json", report)
             execution_evidence = _verify_bridge_execution(report, sample, config)
             generated_text = str(report.get("generated_text", ""))
             generated_tokens = [int(value) for value in report.get("generated_token_ids") or []]
