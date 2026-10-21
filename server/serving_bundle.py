@@ -186,7 +186,9 @@ def resolved_templates(run_dir: Path, doc: dict[str, Any]) -> tuple[str, dict[st
     return chat, {"tool_use": tools}, {"message_role_map": doc.get("message_role_map", {})}
 
 
-def resolved_renderer_tokens(run_dir: Path, doc: dict[str, Any]) -> dict[str, str]:
+def resolved_renderer_tokens(
+    run_dir: Path, doc: dict[str, Any], *, decode_ids=None,
+) -> dict[str, str]:
     """Read publisher Jinja token variables only from verified bundle assets.
 
     The caller must first validate ``doc`` with ``load_resolved_serving``. A
@@ -221,13 +223,14 @@ def resolved_renderer_tokens(run_dir: Path, doc: dict[str, Any]) -> dict[str, st
             bind(key, value)
 
     # A GGUF conversion can retain special-token IDs in its verified manifest
-    # without an HF tokenizer_config.json. Resolve their text only when the
-    # exact ID is present in the bundled tokenizer.json added-token table.
+    # without HF token metadata. Prefer the verified tokenizer.json table;
+    # otherwise decode the verified IDs with the already-loaded model tokenizer.
     manifest_asset = doc["assets"].get("weights_manifest.json")
     tokenizer_asset = doc["assets"].get("tokenizer.json")
-    if manifest_asset is not None and tokenizer_asset is not None:
+    if manifest_asset is not None:
         manifest = json.loads(bundle_path(Path(run_dir), manifest_asset["path"]).read_bytes())
-        tokenizer = json.loads(bundle_path(Path(run_dir), tokenizer_asset["path"]).read_bytes())
+        tokenizer = (json.loads(bundle_path(Path(run_dir), tokenizer_asset["path"]).read_bytes())
+                     if tokenizer_asset is not None else {})
         if not isinstance(manifest, dict) or not isinstance(tokenizer, dict):
             raise ValueError("invalid bundled GGUF token metadata")
         special = manifest.get("special_tokens", {})
@@ -249,6 +252,16 @@ def resolved_renderer_tokens(run_dir: Path, doc: dict[str, Any]) -> dict[str, st
             token_id = special.get(f"{name}_token_id")
             if isinstance(token_id, int) and not isinstance(token_id, bool):
                 value = by_id.get(token_id)
+                if decode_ids is not None:
+                    try:
+                        loaded_value = decode_ids([token_id])
+                    except Exception as exc:
+                        raise ValueError(
+                            f"loaded tokenizer cannot decode verified {name} token ID {token_id}"
+                        ) from exc
+                    if value is not None and value != loaded_value:
+                        raise ValueError(f"loaded tokenizer disagrees with bundled {name} token")
+                    value = loaded_value
                 if value is not None:
                     bind(f"{name}_token", value)
     return variables

@@ -432,17 +432,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.no_chat_template and not args.allow_raw_prompt:
         raise ValueError("--no-chat-template requires explicit --allow-raw-prompt")
     override: str | None = None
-    build_template_arg: str | None = None
     if args.chat_template_file is not None:
         override_path = Path(args.chat_template_file).expanduser()
         try:
             override = override_path.read_bytes().decode("utf-8")
         except (OSError, UnicodeError) as exc:
             raise ValueError(f"cannot read --chat-template-file {override_path}: {exc}") from exc
-        build_template_arg = str(override_path)
     elif args.chat_template_inline is not None:
         override = args.chat_template_inline
-        build_template_arg = override
     if override is not None and not override.strip():
         raise ValueError("serving template override is empty")
 
@@ -458,7 +455,7 @@ def main(argv: list[str] | None = None) -> int:
             args.force_compile,
             args.force_download,
             args.logits_layout,
-            build_template_arg,
+            None,
             args.no_chat_template,
             args.allow_raw_prompt,
             args.python_tokenizer,
@@ -500,11 +497,6 @@ def main(argv: list[str] | None = None) -> int:
 
     from server.serving_bundle import load_resolved_serving, resolved_templates
     resolved_serving = load_resolved_serving(run_dir)
-    if resolved_serving is not None:
-        from server.serving_bundle import resolved_renderer_tokens
-        renderer_tokens = resolved_renderer_tokens(run_dir, resolved_serving)
-    else:
-        renderer_tokens = None
     if args.no_chat_template:
         chat_template, chat_templates, chat_contract = None, None, None
         log("Using explicitly requested untemplated raw-prompt serving", C_GRAY)
@@ -562,18 +554,14 @@ def main(argv: list[str] | None = None) -> int:
         run_dir,
         context_length=runtime_context_length,
     )
-    if renderer_tokens is None and chat_template:
-        # No verified serving bundle: resolve publisher token variables (e.g.
-        # bos_token for GGUF-native templates) from the runtime's own embedded
-        # tokenizer instead of leaving them undefined.
-        from server.serving_bundle import runtime_renderer_tokens
-        renderer_tokens = runtime_renderer_tokens(run_dir)
-    from server.serving_bundle import runtime_auto_bos_token
-    auto_bos_token_text = runtime_auto_bos_token(run_dir)
+    from server.serving_bundle import (
+        _loaded_model_token_decoder, resolved_renderer_tokens,
+        runtime_auto_bos_token, runtime_renderer_tokens,
+    )
     loaded_identity = None
-    if resolved_serving is not None:
-        from server.serving_bundle import loaded_serving_identity, verify_loaded_libraries, verify_runtime_dependencies
-        try:
+    try:
+        if resolved_serving is not None:
+            from server.serving_bundle import loaded_serving_identity, verify_loaded_libraries, verify_runtime_dependencies
             verify_loaded_libraries(resolved_serving)
             verify_runtime_dependencies(resolved_serving)
             loaded_identity = loaded_serving_identity(
@@ -581,9 +569,16 @@ def main(argv: list[str] | None = None) -> int:
                 model=args.model_name,
                 session_library=session.lib,
             )
-        except Exception:
-            session.close()
-            raise
+            renderer_tokens = resolved_renderer_tokens(
+                run_dir, resolved_serving,
+                decode_ids=_loaded_model_token_decoder(run_dir),
+            )
+        else:
+            renderer_tokens = runtime_renderer_tokens(run_dir) if chat_template else None
+        auto_bos_token_text = runtime_auto_bos_token(run_dir)
+    except Exception:
+        session.close()
+        raise
 
     log("Typed media disabled: this native serving path is text-only", C_GRAY)
 

@@ -266,6 +266,31 @@ def test_template_override_is_explicit_and_suppresses_tool_variants(tmp_path, mo
     assert captured["allow_untemplated"] is True
 
 
+@pytest.mark.parametrize("option,value", [
+    ("--chat-template-file", "file"),
+    ("--chat-template-inline", "{{ messages[0].content }}"),
+])
+def test_serving_template_override_is_not_forwarded_as_runner_enum(
+    tmp_path, monkeypatch, option, value,
+):
+    override = tmp_path / "override.jinja"
+    override.write_text("{{ messages[0].content }}")
+    seen = {}
+
+    def fake_build(*args, **kwargs):
+        seen["chat_template"] = args[7]
+        raise RuntimeError("build stopped after argument inspection")
+
+    monkeypatch.setattr(ck_serve_v8, "_ensure_native_session_lib", lambda: None)
+    monkeypatch.setattr(ck_serve_v8, "_resolve_run_dir", lambda *_: tmp_path)
+    monkeypatch.setattr(ck_serve_v8, "_build_runtime", fake_build)
+    if value == "file":
+        value = str(override)
+    with pytest.raises(RuntimeError, match="argument inspection"):
+        main([str(tmp_path), option, value, "--no-viz"])
+    assert seen["chat_template"] is None
+
+
 def test_build_runtime_constructs_ck_run_pipeline_command(monkeypatch):
     commands: list[list[str]] = []
 

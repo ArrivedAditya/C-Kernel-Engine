@@ -3522,12 +3522,12 @@ def create_live_app_from_run_dir(
     from .serving_bundle import (
         load_resolved_serving, loaded_serving_identity, resolved_renderer_tokens,
         runtime_auto_bos_token, runtime_renderer_tokens, verify_loaded_libraries,
+        _loaded_model_token_decoder,
     )
 
     run_dir = Path(run_dir).expanduser().resolve()
     chat_template, chat_templates, contract = load_manifest_templates(run_dir)
     resolved = load_resolved_serving(run_dir)
-    renderer_tokens = resolved_renderer_tokens(run_dir, resolved) if resolved is not None else None
     if resolved is not None:
         kwargs["stop_on_text"] = list(dict.fromkeys([
             *resolved.get("stop_text", []), *kwargs.get("stop_on_text", ()),
@@ -3550,12 +3550,6 @@ def create_live_app_from_run_dir(
     session, capacity, _ = open_live_session(
         run_dir, context_length=context_length, num_threads=num_threads
     )
-    if renderer_tokens is None and chat_template:
-        # No verified serving bundle: resolve publisher token variables (e.g.
-        # bos_token for GGUF-native templates) from the runtime's own embedded
-        # tokenizer instead of leaving them undefined.
-        renderer_tokens = runtime_renderer_tokens(run_dir)
-    auto_bos_token_text = runtime_auto_bos_token(run_dir)
     try:
         resolved_serving = load_resolved_serving(run_dir)
         loaded_identity = None
@@ -3566,6 +3560,13 @@ def create_live_app_from_run_dir(
                 model=model,
                 session_library=session.lib,
             )
+            renderer_tokens = resolved_renderer_tokens(
+                run_dir, resolved_serving,
+                decode_ids=_loaded_model_token_decoder(run_dir),
+            )
+        else:
+            renderer_tokens = runtime_renderer_tokens(run_dir) if chat_template else None
+        auto_bos_token_text = runtime_auto_bos_token(run_dir)
     except Exception:
         session.close()
         raise
