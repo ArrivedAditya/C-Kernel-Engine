@@ -452,6 +452,9 @@ def test_gguf_manifest_ids_bind_publisher_token_text_from_verified_assets(setup)
     resolved = resolve(setup)
     tokens = resolved_renderer_tokens(run, load_resolved_serving(run))
     assert tokens == {"bos_token": "<bos>", "eos_token": "<turn|>"}
+    with pytest.raises(ValueError, match="loaded tokenizer disagrees"):
+        resolved_renderer_tokens(run, load_resolved_serving(run),
+                                 decode_ids=lambda ids: "<wrong>")
     chat, variants, _ = load_manifest_templates(run)
     assert _render_with_chat_templates(chat, variants, [{"role": "user", "content": "Hello"}],
                                        None, renderer_tokens=tokens) == "<bos>Hello<turn|>"
@@ -462,6 +465,59 @@ def test_gguf_manifest_ids_bind_publisher_token_text_from_verified_assets(setup)
         load_resolved_serving(run)
     assert resolved["assets"]["tokenizer.json"]["sha256"] != hashlib.sha256(
         (run / "tokenizer.json").read_bytes()).hexdigest()
+
+
+def test_gguf_manifest_ids_without_tokenizer_json_use_loaded_decoder(setup, monkeypatch):
+    import server.live as live
+    import server.serving_bundle as bundle
+
+    run = setup[0]
+    manifest_path = run / "weights_manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["special_tokens"] = {
+        "bos_token_id": 2, "eos_token_id": 106, "add_bos_token": True,
+    }
+    manifest_path.write_text(json.dumps(manifest))
+    ir_stamp = run / ".ck_ir_bundle.json"
+    stamp = json.loads(ir_stamp.read_text())
+    stamp["inputs"]["manifest"] = {
+        "path": str(manifest_path), "size": manifest_path.stat().st_size,
+        "sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+    }
+    ir_stamp.write_text(json.dumps(stamp))
+    (run / "chat_template.jinja").write_text(
+        "{{ bos_token }}{% for message in messages %}{{ message.content }}{% endfor %}"
+    )
+    resolve(setup)
+    doc = load_resolved_serving(run)
+    assert "tokenizer.json" not in doc["assets"]
+    decoder = lambda ids: {2: "<bos>", 106: "<end_of_turn>"}[ids[0]]
+    assert resolved_renderer_tokens(run, doc, decode_ids=decoder) == {
+        "bos_token": "<bos>", "eos_token": "<end_of_turn>",
+    }
+
+    session = RecordingSession(["ok"])
+    session.lib = _session_library(run / "libck_session_v8.so")
+    monkeypatch.setattr(live, "open_live_session", lambda *_args, **_kwargs: (session, 128, {}))
+    monkeypatch.setattr(bundle, "verify_loaded_libraries", lambda *_args: None)
+    monkeypatch.setattr(bundle, "_loaded_model_token_decoder", lambda *_args: decoder)
+    client = TestClient(live.create_live_app_from_run_dir(run, model="gemma-test"))
+    response = client.post("/v1/responses", json={
+        "model": "gemma-test", "input": "hello", "max_output_tokens": 1,
+    })
+    assert response.status_code == 200, response.text
+    assert session.prompts == ["hello"]  # Auto-added BOS is not duplicated.
+
+    closed = []
+    session.close = lambda: closed.append(True)
+    def fail_decode(_ids):
+        raise ValueError("decoder failed")
+
+    monkeypatch.setattr(bundle, "_loaded_model_token_decoder", lambda *_args: fail_decode)
+    with pytest.raises(ValueError, match="loaded tokenizer cannot decode"):
+        live.create_live_app_from_run_dir(run, model="gemma-test")
+    assert closed == [True]
+    assert session.prompts == ["hello"]  # No generation after failed startup.
 
 
 def test_gguf_manifest_token_text_conflict_fails_closed(setup):
