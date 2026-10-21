@@ -4,6 +4,16 @@
 #include <cassert>
 #include <fstream>
 
+static bool assert_early_operand_capture(ggml_tensor *tensor, bool ask, void *opaque) {
+    auto *state = static_cast<DumpState *>(opaque);
+    if (ask && tensor->op == GGML_OP_MUL_MAT && state->conv_seen == state->conv_index &&
+        unwrap_conv_view(tensor->src[0])) {
+        assert(std::filesystem::exists(state->directory / "conv_1_conv_image.raw"));
+        assert(std::filesystem::exists(state->directory / "conv_1_conv_im2col.raw"));
+    }
+    return ck_mtmd_dump_eval_callback(tensor, ask, opaque);
+}
+
 int main(int argc, char **argv) {
     assert(argc == 2);
     ggml_init_params params{32 * 1024 * 1024, nullptr, true};
@@ -55,7 +65,7 @@ int main(int argc, char **argv) {
     std::vector<float> baseline;
     for (int pass = 0; pass < 2; ++pass) {
         if (pass == 1) {
-            ggml_backend_sched_set_eval_callback(sched, ck_mtmd_dump_eval_callback, &state);
+            ggml_backend_sched_set_eval_callback(sched, assert_early_operand_capture, &state);
         }
         assert(ggml_backend_sched_graph_compute(sched, graph) == GGML_STATUS_SUCCESS);
         std::vector<float> result(ggml_nelements(outputs[1]));

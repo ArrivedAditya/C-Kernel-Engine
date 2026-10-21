@@ -50,7 +50,9 @@ struct DumpState {
     bool invalid_conv_capture = false;
     int conv_index = 0;
     int conv_seen = 0;
+    int im2col_seen = 0;
     int conv_layout_seen = 0;
+    const ggml_tensor *selected_im2col = nullptr;
     const ggml_tensor *selected_conv_result = nullptr;
     bool has_exact_layer = false;
     int32_t exact_layer = -1;
@@ -307,6 +309,20 @@ static void dump_conv_operand(DumpState *state, const ggml_tensor *tensor,
 
 static bool ck_mtmd_dump_eval_callback(struct ggml_tensor *t, bool ask, void *user_data) {
     auto *state = static_cast<DumpState *>(user_data);
+    if (state && state->capture_conv_operands && t && t->op == GGML_OP_IM2COL &&
+        t->op_params[6] == 1 && t->src[1]) {
+        if (ask) {
+            return true;
+        }
+        const int index = state->im2col_seen++;
+        if (index == state->conv_index) {
+            // The source image may share storage with a later matmul output.
+            dump_conv_operand(state, t->src[1], "conv_image", "im2col.src[1]", index);
+            dump_conv_operand(state, t, "conv_im2col", "mul_mat.src[0].im2col", index);
+            state->selected_im2col = t;
+        }
+        return true;
+    }
     if (state && state->capture_conv_operands && state->selected_conv_result &&
         t && t->op == GGML_OP_CONT && state->conv_layout_seen < 2 &&
         follows_layout_edge(t->src[0], state->selected_conv_result)) {
@@ -329,11 +345,13 @@ static bool ck_mtmd_dump_eval_callback(struct ggml_tensor *t, bool ask, void *us
             }
             const int index = state->conv_seen;
             if (index == state->conv_index) {
-                dump_conv_operand(state, im2col->src[1], "conv_image", "im2col.src[1]", index);
-                dump_conv_operand(state, im2col, "conv_im2col", "mul_mat.src[0].im2col", index);
-                dump_conv_operand(state, t->src[1], "conv_weight", "mul_mat.src[1]", index);
-                dump_conv_operand(state, t, "conv_result", "mul_mat.output", index);
-                state->selected_conv_result = t;
+                if (im2col != state->selected_im2col) {
+                    state->invalid_conv_capture = true;
+                } else {
+                    dump_conv_operand(state, t->src[1], "conv_weight", "mul_mat.src[1]", index);
+                    dump_conv_operand(state, t, "conv_result", "mul_mat.output", index);
+                    state->selected_conv_result = t;
+                }
             }
             ++state->conv_seen;
             return true;
@@ -462,7 +480,9 @@ static void dump_state_close(DumpState &state) {
     state.capture_conv_operands = false;
     state.invalid_conv_capture = false;
     state.conv_seen = 0;
+    state.im2col_seen = 0;
     state.conv_layout_seen = 0;
+    state.selected_im2col = nullptr;
     state.selected_conv_result = nullptr;
 }
 
