@@ -423,23 +423,53 @@ def test_forward_2d_bf16(T=32, D=896, aligned_D=896):
 
 
 def test_bf16_rounding_boundaries():
-    """Finite tie-to-even values must be visible in stored output and in-place."""
-    a = np.array([1.0, 1.0078125, -1.0, -1.0078125], dtype=np.float32)
-    b = np.array([1 / 256, 1 / 256, -1 / 256, -1 / 256], dtype=np.float32)
-    a_bits = float_to_bf16(a)
-    b_bits = float_to_bf16(b)
-    expected = float_to_bf16(a + b)
-    assert np.array_equal(expected, np.array([0x3F80, 0x3F82, 0xBF80, 0xBF82], dtype=np.uint16))
+    """Finite ties must round correctly in scalar, SIMD, and SIMD-tail stores."""
+    base_a = np.array([1.0, 1.0078125, -1.0, -1.0078125], dtype=np.float32)
+    base_b = np.array([1 / 256, 1 / 256, -1 / 256, -1 / 256], dtype=np.float32)
+    base_expected = np.array([0x3F80, 0x3F82, 0xBF80, 0xBF82], dtype=np.uint16)
+    passed = True
+    for n in (4, 16, 17, 32, 33, 65):
+        a = np.tile(base_a, (n + 3) // 4)[:n]
+        b = np.tile(base_b, (n + 3) // 4)[:n]
+        a_bits = float_to_bf16(a)
+        b_bits = float_to_bf16(b)
+        expected = np.tile(base_expected, (n + 3) // 4)[:n]
+        assert np.array_equal(float_to_bf16(a + b), expected)
 
-    output = np.full(4, 0xDEAD, dtype=np.uint16)
-    lib.add_forward_bf16(numpy_to_ptr_u16(a_bits), numpy_to_ptr_u16(b_bits),
-                         numpy_to_ptr_u16(output), ctypes.c_size_t(4))
-    inplace = a_bits.copy()
-    lib.add_inplace_bf16(numpy_to_ptr_u16(inplace), numpy_to_ptr_u16(b_bits),
-                         ctypes.c_size_t(4))
-    passed = np.array_equal(output, expected) and np.array_equal(inplace, expected)
+        output = np.full(n, 0xDEAD, dtype=np.uint16)
+        lib.add_forward_bf16(numpy_to_ptr_u16(a_bits), numpy_to_ptr_u16(b_bits),
+                             numpy_to_ptr_u16(output), ctypes.c_size_t(n))
+        inplace = a_bits.copy()
+        lib.add_inplace_bf16(numpy_to_ptr_u16(inplace), numpy_to_ptr_u16(b_bits),
+                             ctypes.c_size_t(n))
+        passed &= np.array_equal(output, expected) and np.array_equal(inplace, expected)
     print(f"  BF16 tie-to-even stored output: {'PASS' if passed else 'FAIL'}")
     return passed
+
+
+def test_bf16_backward_copy_bounds():
+    """Copy only n elements, including at AVX-512 vector/tail boundaries."""
+    guard = 8
+    for n in (0, 1, 31, 32, 33, 63, 64, 65, 96):
+        source = np.full(guard + n + 32, 0xA55A, dtype=np.uint16)
+        source[guard:guard + n] = (np.arange(n, dtype=np.uint16) * 37 + 1)
+        before_source = source.copy()
+        outputs = [np.full_like(source, 0xDEAD) for _ in range(2)]
+        lib.add_backward_bf16(
+            numpy_to_ptr_u16(source[guard:]),
+            numpy_to_ptr_u16(outputs[0][guard:]),
+            numpy_to_ptr_u16(outputs[1][guard:]),
+            ctypes.c_size_t(n),
+        )
+        if not np.array_equal(source, before_source):
+            return False
+        for output in outputs:
+            if not (np.all(output[:guard] == 0xDEAD)
+                    and np.array_equal(output[guard:guard + n], source[guard:guard + n])
+                    and np.all(output[guard + n:] == 0xDEAD)):
+                return False
+    print("  BF16 backward vector/tail bounds: PASS")
+    return True
 
 
 def test_bf16_edge_shapes_and_negative_controls():
@@ -533,6 +563,7 @@ def main():
     results.append(("add_forward_2d_bf16_padded", test_forward_2d_bf16(T=4, D=37, aligned_D=48)))
     results.append(("add_forward_2d_bf16_small", test_forward_2d_bf16(T=1, D=1, aligned_D=4)))
     results.append(("bf16_rounding_boundaries", test_bf16_rounding_boundaries()))
+    results.append(("bf16_backward_copy_bounds", test_bf16_backward_copy_bounds()))
     results.append(("bf16_edge_shapes_and_controls", test_bf16_edge_shapes_and_negative_controls()))
     results.append(("add_forward_f32", test_forward_f32()))
 
