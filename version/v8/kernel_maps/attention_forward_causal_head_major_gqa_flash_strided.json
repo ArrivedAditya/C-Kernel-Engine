@@ -9,6 +9,7 @@
   },
   "variant": "causal_flash_fp32",
   "mode": "prefill",
+  "prefill_history_scope": "current_chunk",
   "contract_schema_version": 1,
   "provides": {
     "execution.phase": ["prefill"],

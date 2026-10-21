@@ -1,0 +1,53 @@
+{
+  "schema": "cke.chunked_prefill_diagnostic.v1",
+  "issue": 833,
+  "status": "PARTIAL_DIAGNOSTIC_NOT_NUMERICAL_CERTIFICATION",
+  "runner": "dgx-hb10 aarch64",
+  "source": {
+    "base_commit": "04723c8e9ba54f5de180dd3c6cbefcd1c79d0d1d",
+    "note": "Isolated scratch tree also had pending #843/#844/#845/#846 patches. Exact built-library hashes below bind these comparisons; rebuild from final PR head for certification."
+  },
+  "method": {
+    "context_length": 1024,
+    "full_prefill_chunk_length": 1024,
+    "bounded_prefill_chunk_length": 128,
+    "token_ids": "9707 + (position % 17), positions zero-based",
+    "positions_checked": [128, 129, 257, 429],
+    "comparison": "complete finite float32 vocabulary logits after fresh ck_model_embed_tokens"
+  },
+  "models": [
+    {
+      "name": "Qwen2 0.5B Instruct Q4_K_M",
+      "gguf_sha256": "f0a42bb979ca62b5e61f3bf924ab4b6a40aa091825ee7dcb4039949980ab81a8",
+      "full_library_sha256": "e1ed1e73acb6d7829d7e90e13f42c7fe9aef61d76b6c2c5168b036252097ab64",
+      "chunked_library_sha256": "10f3c6c592c8a9b85238ef195938a773ddd04467dc8f063a8cb77b4c31faf862",
+      "comparisons": [
+        {"tokens": 128, "equal": true, "max_abs": 0.0, "cosine": 1.0, "top_full": 9716, "top_chunked": 9716},
+        {"tokens": 129, "equal": true, "max_abs": 0.0, "cosine": 0.9999998807907104, "top_full": 9717, "top_chunked": 9717},
+        {"tokens": 257, "equal": false, "max_abs": 0.5120334625244141, "cosine": 0.9997945427894592, "top_full": 9709, "top_chunked": 9709},
+        {"tokens": 429, "equal": false, "max_abs": 0.48931121826171875, "cosine": 0.9996923804283142, "top_full": 9711, "top_chunked": 9711,
+         "full_logits_sha256": "c44e35b6f7ea546155a0eee8bc4b1c6f36bfcf7504d2fe644f3fffe22cfeb518",
+         "chunked_logits_sha256": "3ec7439b9306bcc350b71e5afec66008e7f7ecdfd039d73dc85e327c8e3ada4a"}
+      ]
+    },
+    {
+      "name": "Gemma3 270M Instruct Q5_K_M",
+      "gguf_sha256": "0d29b1a23a4cb1f14fda28c9e63563fa4bbefb6f34db4f7e873bb72edd932b00",
+      "full_library_sha256": "958ca938c4a87f61b0f7e43225859edbb92426c392218de70d87c797cc14a3d0",
+      "chunked_library_sha256": "8a719eb7c31e746d27b3aea013dbe7c7d8ac4b848c6b678ee3a903904bafd120",
+      "comparisons": [
+        {"tokens": 128, "equal": true, "max_abs": 0.0, "cosine": 1.0, "top_full": 9716, "top_chunked": 9716},
+        {"tokens": 129, "equal": false, "max_abs": 2.585735321044922, "cosine": 0.9999488592147827, "top_full": 9717, "top_chunked": 9717},
+        {"tokens": 257, "equal": false, "max_abs": 4.628807067871094, "cosine": 0.9994734525680542, "top_full": 9709, "top_chunked": 9709},
+        {"tokens": 429, "equal": false, "max_abs": 2.833759307861328, "cosine": 0.9998836517333984, "top_full": 9711, "top_chunked": 9711,
+         "full_logits_sha256": "c82a5330d9278e705f6a50443c3a3f754aba4f75882c4a597c4e0801fa4a926c",
+         "chunked_logits_sha256": "71db0bcba5eb6e0e119c369167ff17c2b128e6b7bdf8a246d8555d3a13f2f69a"}
+      ]
+    }
+  ],
+  "limitations": [
+    "Diagnostic synthetic token sequences differ from the original report's prompts.",
+    "Full prefill and decode replay use distinct arithmetic contracts and are not bit-identical on these artifacts.",
+    "No full-trajectory, task-quality, or throughput certification is inferred."
+  ]
+}

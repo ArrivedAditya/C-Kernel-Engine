@@ -12,6 +12,7 @@
   "physical_contract_version": 1,
   "variant": "causal_llama_regular_fp32_sliding",
   "mode": "prefill",
+  "prefill_history_scope": "current_chunk",
   "contract_schema_version": 1,
   "provides": {
     "execution.phase": ["prefill"],

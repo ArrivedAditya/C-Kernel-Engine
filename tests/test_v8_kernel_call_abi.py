@@ -173,6 +173,18 @@ class V8KernelCallABITests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "unsupported prefill_history_scope"):
                 build_ir_v8.load_kernel_call_abis(Path(temp), legacy_bindings={})
 
+    def test_dense_prefill_attention_maps_declare_chunk_local_history(self) -> None:
+        """These providers read only current-row K/V, so later chunks need KV replay."""
+        call_abis = build_ir_v8.load_kernel_call_abis()
+        for kernel_id in (
+            "attention_forward_causal_head_major_gqa_flash_strided",
+            "attention_forward_causal_head_major_gqa_llama_regular_strided_sliding",
+        ):
+            with self.subTest(kernel=kernel_id):
+                provider = load_json(MAPS / f"{kernel_id}.json")
+                self.assertEqual(provider["prefill_history_scope"], "current_chunk")
+                self.assertEqual(call_abis[kernel_id]["prefill_history_scope"], "current_chunk")
+
     def test_quantized_prefill_weight_preparation_is_map_owned_and_registered(self) -> None:
         preparations = build_ir_v8.load_kernel_weight_preparations()
         self.assertEqual(
