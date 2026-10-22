@@ -16697,6 +16697,10 @@ def load_kernel_call_abis(
                 prefill_continuation.get("reduction_order")
                 if isinstance(prefill_continuation, dict) else None
             )
+            tail_alternative = (
+                prefill_continuation.get("tail_function")
+                if isinstance(prefill_continuation, dict) else None
+            )
             attention_alternative = (
                 doc.get("mode") == "decode" and
                 str(doc.get("op", "")).startswith("attention")
@@ -16716,6 +16720,15 @@ def load_kernel_call_abis(
                 raise RuntimeError(
                     f"HARD CALL ABI FAULT: kernel {kernel_id!r} in {path.name} "
                     "has an invalid prefill_continuation contract."
+                )
+            if tail_alternative is not None and (
+                    not projection_alternative or
+                    not isinstance(tail_alternative, str) or
+                    re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", tail_alternative) is None or
+                    tail_alternative == alternative):
+                raise RuntimeError(
+                    f"HARD CALL ABI FAULT: kernel {kernel_id!r} in {path.name} "
+                    "has an invalid prefill tail contract."
                 )
         legacy_keys = [key for key in {kernel_id, function} if key and key in legacy]
         if legacy_keys:

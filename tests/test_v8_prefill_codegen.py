@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import importlib.util
+import ctypes
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -41,6 +43,36 @@ chunked_compare = _load_module(
 
 
 class TestV8PrefillCodegen(unittest.TestCase):
+    def test_loaded_library_identity_rejects_replaced_backing(self):
+        if not Path("/proc/self/maps").exists():
+            self.skipTest("Linux process mappings required")
+        system = ctypes.CDLL("libm.so.6")
+        address = ctypes.cast(system.cos, ctypes.c_void_p).value
+        system_path = None
+        for row in Path("/proc/self/maps").read_text().splitlines():
+            fields = row.split(maxsplit=5)
+            if len(fields) == 6 and fields[5].startswith("/"):
+                lo, hi = (int(part, 16) for part in fields[0].split("-", 1))
+                if lo <= address < hi:
+                    system_path = Path(fields[5])
+                    break
+        self.assertIsNotNone(system_path)
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "libmodel.so"
+            shutil.copy2(system_path, target)
+            loaded = ctypes.CDLL(str(target))
+            actual = chunked_compare._loaded_symbol_digest(
+                loaded, "cos", target,
+                Path("/proc/self/maps").read_text())
+            self.assertEqual(actual, chunked_compare._sha256(target))
+            replacement = target.with_suffix(".replacement")
+            shutil.copy2(system_path, replacement)
+            os.replace(replacement, target)
+            with self.assertRaisesRegex(RuntimeError, "path mismatch|backing changed"):
+                chunked_compare._loaded_symbol_digest(
+                    loaded, "cos", target,
+                    Path("/proc/self/maps").read_text())
+
     def test_chunked_comparison_detects_logit_and_kv_corruption(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -136,6 +168,7 @@ class TestV8PrefillCodegen(unittest.TestCase):
             "function": "ordinary_gemv",
             "prefill_continuation": {
                 "function": "prefill_order_gemv",
+                "tail_function": "prefill_tail_gemv",
                 "prefill_kernel_id": "gemm_q4k",
                 "reduction_order": "packed_superblock.v1",
             },
@@ -157,6 +190,19 @@ class TestV8PrefillCodegen(unittest.TestCase):
                          ["prefill_attention", "prefill_order_gemv"])
         self.assertEqual([arg["name"] for arg in selected[1]["args"]],
                          ["y", "W", "x_q8", "bias", "M", "K"])
+        tail = codegen_v8._prefill_phase_decode_ops(
+            decode, prefill, tail_reduction=True)
+        self.assertEqual([op["function"] for op in tail],
+                         ["prefill_attention", "prefill_tail_gemv"])
+        self.assertEqual([arg["name"] for arg in tail[1]["args"]],
+                         ["y", "W", "x_q8", "bias", "M", "K"])
+        with self.assertRaisesRegex(RuntimeError, "no declared tail provider"):
+            codegen_v8._prefill_phase_decode_ops(
+                [decode_attention, {**decode_projection,
+                                    "prefill_continuation": {
+                                        k: v for k, v in decode_projection["prefill_continuation"].items()
+                                        if k != "tail_function"}}],
+                prefill, tail_reduction=True)
         selected[1]["resolved_execution"] = {
             "numerical_contract": "q4_k_x_q8_k",
             "implementation": {
@@ -219,6 +265,13 @@ class TestV8PrefillCodegen(unittest.TestCase):
                       emitted)
         self.assertIn("chunk -= chunk % 4;", emitted)
         self.assertIn("consumed += chunk;", emitted)
+        with_tail = codegen_prefill_v8.emit_prefill_function(
+            [op], {"context_length": 32, "prefill_chunk_length": 7,
+                   "prefill_initial_chunk_alignment": 4, "embed_dim": 4,
+                   "prefill_continuation_entry": "ck_decode_prefill_continuation",
+                   "prefill_tail_continuation_entry": "ck_decode_prefill_tail_continuation"})
+        self.assertIn("((start_pos + num_tokens) / 4) * 4", with_tail)
+        self.assertIn("ck_decode_prefill_tail_continuation(model", with_tail)
         with self.assertRaisesRegex(RuntimeError, "row group"):
             codegen_prefill_v8.emit_prefill_function(
                 [op], {"context_length": 32, "prefill_chunk_length": 3,

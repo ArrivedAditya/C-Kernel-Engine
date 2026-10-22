@@ -1822,6 +1822,8 @@ def _uses_generated_batched_prefill(
 def _prefill_phase_decode_ops(
     decode_ops: list[Dict[str, Any]],
     prefill_ops: list[Dict[str, Any]],
+    *,
+    tail_reduction: bool = False,
 ) -> list[Dict[str, Any]] | None:
     """Derive a complete decode step with map-declared prefill arithmetic.
 
@@ -1932,7 +1934,14 @@ def _prefill_phase_decode_ops(
                 raise RuntimeError(
                     f"prefill continuation projection layout mismatch at {key(op)!r}"
                 )
-            replacement["function"] = alternate["function"]
+            if tail_reduction:
+                tail_function = alternate.get("tail_function")
+                if not tail_function:
+                    raise RuntimeError(
+                        f"prefill continuation has no declared tail provider at {key(op)!r}")
+                replacement["function"] = tail_function
+            else:
+                replacement["function"] = alternate["function"]
             replacement["args"] = [*op["args"][:3], copy.deepcopy(bias),
                                    *op["args"][3:]]
         transformed.append(replacement)
@@ -2748,6 +2757,7 @@ def main(argv: list[str] | None = None) -> int:
             ir_obj.get("operations", []), prefill_obj.get("operations", []))
         if prefill_obj is not None else None
     )
+    prefill_tail_ops = None
     if prefill_continuation_ops is not None:
         prefill_obj = copy.deepcopy(prefill_obj)
         prefill_obj.setdefault("config", {})[
@@ -2756,8 +2766,13 @@ def main(argv: list[str] | None = None) -> int:
                       for op in prefill_obj.get("operations", [])
                       if op.get("prefill_row_group")]
         if row_groups:
+            prefill_tail_ops = _prefill_phase_decode_ops(
+                ir_obj.get("operations", []), prefill_obj.get("operations", []),
+                tail_reduction=True)
             prefill_obj["config"]["prefill_initial_chunk_alignment"] = (
                 math.lcm(*row_groups))
+            prefill_obj["config"]["prefill_tail_continuation_entry"] = (
+                "ck_decode_prefill_tail_continuation")
 
     init_call_obj = None
     init_path = args.init if args.init is not None else args.ir.parent / "init_call.json"
@@ -2835,6 +2850,8 @@ def main(argv: list[str] | None = None) -> int:
             dump=emit_parity_dumps,
             strict_contracts=args.strict_contracts,
             prefill_continuation_ops=prefill_continuation_ops,
+            prefill_tail_ops=prefill_tail_ops if prefill_obj is not None and
+                prefill_obj["config"].get("prefill_tail_continuation_entry") else None,
         )
         sequential_mixed_bridge_emitted = False
         if prefill_code:

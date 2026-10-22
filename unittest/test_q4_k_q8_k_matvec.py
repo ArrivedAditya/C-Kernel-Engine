@@ -125,8 +125,7 @@ def run_case(lib, m_out: int, k: int, tol: float, tol_fp32: float,
         ctypes.c_int(k_used),
     )
 
-    # Continuation uses one row but must have the four-row prefill reduction.
-    # Repeating the same quantized row keeps operand conversion identical.
+    # A complete four-row group uses the packed prefill reduction.
     y_continuation = np.zeros(m_out, dtype=np.float32)
     lib.gemv_q4_k_q8_k_prefill_order_parallel_dispatch(
         y_continuation.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
@@ -197,6 +196,57 @@ def run_case(lib, m_out: int, k: int, tol: float, tol_fp32: float,
         max_diff=float(np.max(np.abs(y_continuation - y_prefill[3]))),
         tolerance=0.0,
     ))
+    # Use distinct activations and both complete groups and residual rows.
+    # This catches a continuation that always uses the packed reduction even
+    # when the ordinary provider sends the last 1-3 rows through GEMV order.
+    row_counts = [*range(1, 10)] + ([16, 17] if m_out >= 512 else [])
+    varied_rows = []
+    for row in range(max(row_counts)):
+        values = np.ascontiguousarray(np.roll(x, row * 17) + row * 0.013,
+                                      dtype=np.float32)
+        quantized = ctypes.create_string_buffer(q8_blocks * BLOCK_Q8_K_SIZE)
+        lib.quantize_row_q8_k(
+            values.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+            ctypes.cast(quantized, ctypes.c_void_p), ctypes.c_int(k_used))
+        varied_rows.append(quantized.raw)
+    for rows in row_counts:
+        inputs = ctypes.create_string_buffer(b"".join(varied_rows[:rows]))
+        packed = rows - rows % 4
+        for use_bias in (False, True):
+            selected_bias = np.linspace(-0.2, 0.3, m_out, dtype=np.float32) if use_bias else None
+            bias_pointer = (selected_bias.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+                            if selected_bias is not None else None)
+            expected = np.zeros((rows, m_out), dtype=np.float32)
+            lib.gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch(
+                ctypes.cast(inputs, ctypes.c_void_p), w_ptr, bias_pointer,
+                expected.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+                ctypes.c_int(rows), ctypes.c_int(m_out), ctypes.c_int(k_used))
+            actual = np.zeros_like(expected)
+            for row in range(rows):
+                row_bytes = varied_rows[row]
+                row_input = ctypes.create_string_buffer(row_bytes)
+                fn = (lib.gemv_q4_k_q8_k_prefill_order_parallel_dispatch
+                      if row < packed else
+                      lib.gemv_q4_k_q8_k_prefill_tail_parallel_dispatch)
+                fn(actual[row].ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+                   w_ptr, ctypes.cast(row_input, ctypes.c_void_p), bias_pointer,
+                   ctypes.c_int(m_out), ctypes.c_int(k_used))
+            acc_report.add_result(TestResult(
+                name=f"varied prefill rows={rows} bias={use_bias} (K={k_used})",
+                passed=np.array_equal(actual, expected),
+                max_diff=float(np.max(np.abs(actual - expected))), tolerance=0.0))
+            if rows == 5 and not use_bias and k_used >= 1024:
+                wrong = np.zeros(m_out, dtype=np.float32)
+                tail_input = ctypes.create_string_buffer(varied_rows[4])
+                lib.gemv_q4_k_q8_k_prefill_order_parallel_dispatch(
+                    wrong.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+                    w_ptr, ctypes.cast(tail_input, ctypes.c_void_p), None,
+                    ctypes.c_int(m_out), ctypes.c_int(k_used))
+                acc_report.add_result(TestResult(
+                    name=f"wrong packed reduction detected at tail (K={k_used})",
+                    passed=not np.array_equal(wrong, expected[4]),
+                    max_diff=float(np.max(np.abs(wrong - expected[4]))),
+                    tolerance=0.0))
     bias = np.linspace(-0.2, 0.3, m_out, dtype=np.float32)
     bias_ptr = bias.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
     y_with_bias = np.zeros(m_out, dtype=np.float32)
@@ -333,6 +383,11 @@ def main() -> int:
         ctypes.c_int, ctypes.c_int,
     ]
     lib.gemv_q4_k_q8_k_prefill_order_parallel_dispatch.restype = None
+    lib.gemv_q4_k_q8_k_prefill_tail_parallel_dispatch.argtypes = [
+        ctypes.POINTER(ctypes.c_float), ctypes.c_void_p, ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_float), ctypes.c_int, ctypes.c_int,
+    ]
+    lib.gemv_q4_k_q8_k_prefill_tail_parallel_dispatch.restype = None
     lib.gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch.argtypes = [
         ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_float),
         ctypes.POINTER(ctypes.c_float), ctypes.c_int, ctypes.c_int, ctypes.c_int,
@@ -364,6 +419,7 @@ def main() -> int:
         status |= run_case(lib, m_out, k, tol, tol_fp32, warmup, iterations)
     # Padded case for models with K not divisible by QK_K (e.g., 896 -> 1024).
     status |= run_case(lib, 16, 896, tol, tol_fp32, warmup, iterations, pad_to_block=True)
+    status |= run_case(lib, 896, 1024, tol, tol_fp32, 1, 1)
 
     return status
 

@@ -3814,6 +3814,15 @@ void gemv_q4_k_q8_k_prefill_order_parallel_dispatch(
         x_q8, packed_x8, bias, y, 1, N, K);
 }
 
+/* Preserve the selected prefill provider's residual-row arithmetic, including
+ * its ISA-specific repacked GEMV route and optional bias. */
+void gemv_q4_k_q8_k_prefill_tail_parallel_dispatch(
+    float *y, const void *W, const void *x_q8, const float *bias, int N, int K)
+{
+    gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch(
+        x_q8, W, bias, y, 1, N, K);
+}
+
 void gemm_nt_q6_k_q8_k_parallel_dispatch(
     const void *A, const void *B, const float *bias, float *C,
     int M, int N, int K)
