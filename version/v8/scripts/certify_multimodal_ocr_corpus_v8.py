@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -26,6 +27,13 @@ DEFAULT_PROMPT = (
     "field names exactly. Use an empty string for a blank field and selected or unselected "
     "for checkboxes. Return JSON only, without Markdown. Fields: {fields}"
 )
+EXECUTION_SOURCE_ROOTS = (
+    "version/v8/scripts", "version/v8/circuits", "version/v8/kernel_maps",
+    "version/v8/model_maps", "version/v8/contracts", "version/v8/parity_profiles",
+    "version/v8/serving_profiles", "version/v8/schemas", "version/v8/src",
+    "version/v7/ckernel_engine", "src", "include",
+)
+EXECUTION_SOURCE_SUFFIXES = {".py", ".json", ".c", ".h", ".sh", ".map"}
 
 
 def _sha256_bytes(value: bytes) -> str:
@@ -44,6 +52,51 @@ def _sha256_json(value: Any) -> str:
     return _sha256_bytes(
         json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
     )
+
+
+def _execution_generation_identity(root: Path = ROOT) -> dict[str, Any]:
+    digest = hashlib.sha256()
+    count = 0
+    for directory in EXECUTION_SOURCE_ROOTS:
+        source_root = root / directory
+        if not source_root.is_dir():
+            raise FileNotFoundError(f"execution source directory is missing: {source_root}")
+        for path in sorted(source_root.rglob("*")):
+            if not path.is_file() or path.suffix not in EXECUTION_SOURCE_SUFFIXES:
+                continue
+            relative = path.relative_to(root).as_posix()
+            digest.update(relative.encode("utf-8") + b"\0")
+            digest.update(bytes.fromhex(_sha256_file(path)))
+            count += 1
+    if not count:
+        raise ValueError("execution source inventory is empty")
+    for relative in ("Makefile", "version/v8/Makefile"):
+        path = root / relative
+        if path.is_file():
+            digest.update(relative.encode("utf-8") + b"\0")
+            digest.update(bytes.fromhex(_sha256_file(path)))
+            count += 1
+    compiler_name = (os.environ.get("CK_V8_COMPILER") or os.environ.get("CK_V7_COMPILER") or "gcc").strip()
+    compiler_path = shutil.which(compiler_name)
+    if not compiler_path:
+        raise FileNotFoundError(f"requested C compiler is missing: {compiler_name}")
+    compiler_version = subprocess.run(
+        [compiler_path, "--version"], capture_output=True, text=True, check=True,
+    ).stdout.splitlines()[0]
+    build_contract = {
+        "compiler_path": str(Path(compiler_path).resolve()),
+        "compiler_sha256": _sha256_file(Path(compiler_path).resolve()),
+        "compiler_version": compiler_version,
+        "openmp": True,
+        "cflags": os.environ.get("CFLAGS", ""),
+        "ldflags": os.environ.get("LDFLAGS", ""),
+    }
+    return {
+        "source_sha256": digest.hexdigest(),
+        "source_files": count,
+        "engine_build_fingerprint": _sha256_json(build_contract),
+        "engine_build_contract": build_contract,
+    }
 
 
 def _write_json(path: Path, value: Any) -> None:
@@ -323,6 +376,31 @@ def _verify_bridge_execution(
     }
 
 
+def _snapshot_generated_libraries(case_dir: Path, evidence: dict[str, Any]) -> None:
+    snapshot_dir = case_dir / "runtime_artifacts"
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    snapshot_dir.chmod(0o700)
+    snapshots: dict[str, dict[str, dict[str, str]]] = {}
+    for role in ("encoder", "decoder"):
+        snapshots[role] = {}
+        for kind, paths_key, hashes_key in (
+            ("model", "model_library_paths", "model_library_sha256"),
+            ("engine", "engine_library_paths", "engine_library_sha256"),
+        ):
+            source = Path(evidence[paths_key][role])
+            expected_hash = evidence[hashes_key][role]
+            target = snapshot_dir / f"{role}_{kind}.so"
+            temporary = snapshot_dir / f"{role}_{kind}.so.tmp"
+            shutil.copyfile(source, temporary)
+            temporary.chmod(0o600)
+            if _sha256_file(temporary) != expected_hash:
+                temporary.unlink(missing_ok=True)
+                raise ValueError(f"{role} {kind} library changed before evidence capture")
+            os.replace(temporary, target)
+            snapshots[role][kind] = {"path": str(target.resolve()), "sha256": expected_hash}
+    evidence["library_snapshots"] = snapshots
+
+
 def _build_prompt(
     template: str,
     truth: dict[str, Any],
@@ -472,8 +550,9 @@ def _load_resumed(
         paths = evidence.get("model_library_paths")
         engine_paths = evidence.get("engine_library_paths")
         engine_hashes = evidence.get("engine_library_sha256")
+        snapshots = evidence.get("library_snapshots")
         current_artifacts = all(isinstance(value, dict) for value in
-                                (hashes, paths, engine_paths, engine_hashes))
+                                (hashes, paths, engine_paths, engine_hashes, snapshots))
         for role in ("encoder", "decoder"):
             source = config[f"{role}_gguf"]
             source_path = Path(source["path"])
@@ -482,12 +561,23 @@ def _load_resumed(
                 continue
             library = Path(str(paths.get(role) or "")).resolve() if isinstance(paths, dict) else None
             if (library is None or library.parent != Path(config["gguf_runtime_dir"]) / role
-                    or not library.is_file() or _sha256_file(library) != (hashes or {}).get(role)):
+                    or not isinstance((hashes or {}).get(role), str)):
                 current_artifacts = False
             engine = Path(str(engine_paths.get(role) or "")).resolve() if isinstance(engine_paths, dict) else None
             if (engine is None or engine != Path(config["gguf_runtime_dir"]) / role / "libckernel_engine.so"
-                    or not engine.is_file() or _sha256_file(engine) != (engine_hashes or {}).get(role)):
+                    or not isinstance((engine_hashes or {}).get(role), str)):
                 current_artifacts = False
+            role_snapshots = snapshots.get(role) if isinstance(snapshots, dict) else None
+            for kind, expected_hash in (
+                ("model", (hashes or {}).get(role)),
+                ("engine", (engine_hashes or {}).get(role)),
+            ):
+                item = role_snapshots.get(kind) if isinstance(role_snapshots, dict) else None
+                target = path.parent / "runtime_artifacts" / f"{role}_{kind}.so"
+                if (not isinstance(item, dict) or item.get("path") != str(target.resolve())
+                        or item.get("sha256") != expected_hash or not target.is_file()
+                        or _sha256_file(target) != expected_hash):
+                    current_artifacts = False
     if (value.get("case_config") != expected or value.get("status") != "complete"
             or value.get("image_index") != expected["image_index"]
             or value.get("image_sha256") != expected["image_sha256"]
@@ -637,7 +727,9 @@ def main(argv: list[str] | None = None) -> int:
         "max_new_tokens": args.max_new_tokens,
         "prompt_template_sha256": _sha256_bytes(args.prompt_template.encode("utf-8")),
         "threads": args.threads,
+        "thread_env_contract": "CK_NUM_THREADS+OMP_NUM_THREADS" if args.threads > 0 else "runtime_auto",
         "adapt_encoder_geometry": bool(args.adapt_encoder_geometry),
+        "execution_generation": _execution_generation_identity(),
         "oracle": {
             "id": args.oracle_id,
             "status": args.oracle_status,
@@ -650,7 +742,8 @@ def main(argv: list[str] | None = None) -> int:
 
     env = os.environ.copy()
     if args.threads > 0:
-        env["CK_THREADS"] = str(args.threads)
+        env["CK_NUM_THREADS"] = str(args.threads)
+        env["OMP_NUM_THREADS"] = str(args.threads)
     rows: list[dict[str, Any]] = []
     stop_after_failure = False
     for completed, sample in enumerate(selected, start=1):
@@ -678,6 +771,8 @@ def main(argv: list[str] | None = None) -> int:
             report = json.loads(bridge_path.read_text(encoding="utf-8"))
             _write_json(case_dir / "bridge_report.json", report)
             execution_evidence = _verify_bridge_execution(report, sample, config)
+            if config["source_mode"] == "gguf":
+                _snapshot_generated_libraries(case_dir, execution_evidence)
             generated_text = str(report.get("generated_text", ""))
             generated_tokens = [int(value) for value in report.get("generated_token_ids") or []]
             parsed = _extract_json_object(generated_text)

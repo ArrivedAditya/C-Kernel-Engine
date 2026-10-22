@@ -1100,6 +1100,12 @@ def _generate_chat_contract_c_api(
         raise ValueError(f"unsupported chat_contract.system_prompt_mode: {system_mode}")
     system_separator = str(chat_contract.get("system_prompt_separator") or "\n\n")
     default_system = str(chat_contract.get("default_system_prompt") or "")
+    system_content_prefix = ""
+    system_prefix_by_mode = chat_contract.get("system_prompt_prefix_by_thinking_mode")
+    if thinking_default and isinstance(system_prefix_by_mode, dict):
+        override = system_prefix_by_mode.get(thinking_default)
+        if isinstance(override, str):
+            system_content_prefix = override
     inject_default_system = bool(chat_contract.get("inject_default_system_prompt"))
     render_empty_system_turn = bool(chat_contract.get("render_empty_system_turn"))
     bos_prefix = str(chat_contract.get("force_bos_text_if_tokenizer_add_bos_false") or "")
@@ -1144,14 +1150,17 @@ CK_EXPORT int ck_model_format_chat(const char *system_text,
     if (output && output_capacity > 0) output[0] = '\\0';
     position = ck_model_chat_append(output, output_capacity, position, {lit(bos_prefix)});
     position = ck_model_chat_append(output, output_capacity, position, {lit(conversation_prefix)});
-    if ((system_value[0] || {1 if render_empty_system_turn else 0}) &&
+    if ((system_value[0] || {1 if system_content_prefix or render_empty_system_turn else 0}) &&
         !strcmp({lit(system_mode)}, "dedicated_turn")) {{
         position = ck_model_chat_append(output, output_capacity, position, {lit(system_prefix)});
+        position = ck_model_chat_append(output, output_capacity, position, {lit(system_content_prefix)});
         position = ck_model_chat_append(output, output_capacity, position, system_value);
         position = ck_model_chat_append(output, output_capacity, position, {lit(system_suffix)});
     }}
     position = ck_model_chat_append(output, output_capacity, position, {lit(user_prefix)});
-    if (system_value[0] && !strcmp({lit(system_mode)}, "prepend_first_user")) {{
+    if ((system_value[0] || {1 if system_content_prefix else 0}) &&
+        !strcmp({lit(system_mode)}, "prepend_first_user")) {{
+        position = ck_model_chat_append(output, output_capacity, position, {lit(system_content_prefix)});
         position = ck_model_chat_append(output, output_capacity, position, system_value);
         if (user_value[0]) {{
             position = ck_model_chat_append(output, output_capacity, position, {lit(system_separator)});

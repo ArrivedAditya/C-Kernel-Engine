@@ -1509,6 +1509,7 @@ def _compose_compatible_auto_chat_contracts(
         "last_user_prefix",
         "last_user_prefix_suppression_markers",
         "thinking_mode_default",
+        "system_prompt_prefix_by_thinking_mode",
         "assistant_generation_prefix_by_thinking_mode",
         "last_user_prefix_by_thinking_mode",
     )
@@ -1610,6 +1611,15 @@ def _format_prompt_with_chat_contract(
     system_prompt_mode = str(contract.get("system_prompt_mode") or "disabled").strip().lower()
     system_prompt_separator = str(contract.get("system_prompt_separator") or "\n\n")
     default_system_prompt = str(contract.get("default_system_prompt") or "")
+    requested_mode = str(thinking_mode or "auto").strip().lower()
+    default_mode = str(contract.get("thinking_mode_default") or "").strip().lower()
+    resolved_mode = default_mode if requested_mode in {"", "auto"} else requested_mode
+    system_prefix_by_mode = contract.get("system_prompt_prefix_by_thinking_mode")
+    system_prefix = ""
+    if isinstance(system_prefix_by_mode, dict):
+        override = system_prefix_by_mode.get(resolved_mode)
+        if isinstance(override, str):
+            system_prefix = override
     inject_default_system_prompt = bool(contract.get("inject_default_system_prompt"))
     render_empty_system_turn = bool(contract.get("render_empty_system_turn"))
     bos_prefix = str(contract.get("force_bos_text_if_tokenizer_add_bos_false") or "")
@@ -1629,6 +1639,7 @@ def _format_prompt_with_chat_contract(
     system_text = str(system_prompt or "")
     if not system_text and inject_default_system_prompt:
         system_text = default_system_prompt
+    system_text = f"{system_prefix}{system_text}"
 
     if system_text and system_prompt_mode == "prepend_first_user":
         user_text = f"{system_text}{system_prompt_separator}{user_text}" if user_text else system_text
