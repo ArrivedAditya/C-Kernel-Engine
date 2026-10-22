@@ -1,6 +1,6 @@
 {
   "id": "linear_rows_checked_no_bias_f32",
-  "op": "linear_rows_checked",
+  "op": "linear_rows_checked_no_bias",
   "operation_interface": "linear.row_major.checked.zero_bias.fp32.v1",
   "variant": "strided_row_major_scalar_fp64_accumulation_zero_bias",
   "selection": {
@@ -126,7 +126,7 @@
   },
   "numerical_capabilities": [
     {
-      "contract_id": "linear_rows_checked_f32_scalar_fp64_accumulation",
+      "contract_id": "linear_rows_checked_no_bias_f32_scalar_fp64_accumulation",
       "status": "validated",
       "phases": [
         "prefill"

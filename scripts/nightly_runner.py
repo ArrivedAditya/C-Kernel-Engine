@@ -753,6 +753,11 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_qwen3_tts_first_block.py",
         timeout_sec=180,
     ),
+    "tts_transformer_rows_checked": TestSuite(
+        "TTS Checked Transformer Rows and RoPE Boundaries", "kernels",
+        ROOT / "tests" / "test_v8_transformer_rows_checked.py",
+        timeout_sec=180,
+    ),
     "tts_runtime_extent": TestSuite(
         "TTS Runtime Extent Kernels and Compiler Contract", "kernels",
         ROOT / "tests" / "test_v8_runtime_extent_kernel.py",

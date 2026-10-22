@@ -1957,6 +1957,10 @@ OP_DATAFLOW = {
         "inputs": {"input": "external:features"},
         "outputs": {"output": {"slot": "normalized_features", "dtype": "fp32"}},
     },
+    "linear_rows_checked_no_bias": {
+        "inputs": {"input": "external:features"},
+        "outputs": {"output": {"slot": "projected_features", "dtype": "fp32"}},
+    },
     "token_head_layout_checked": {
         "inputs": {"input": "external:features"},
         "outputs": {"output": {"slot": "converted_features", "dtype": "fp32"}},
@@ -4824,6 +4828,7 @@ TEMPLATE_TO_KERNEL_OP = {
     "leaky_relu_strided_checked": "leaky_relu_strided_checked",
     "silu_strided_checked": "silu_strided_checked",
     "rmsnorm_rows_checked": "rmsnorm_rows_checked",
+    "linear_rows_checked_no_bias": "linear_rows_checked_no_bias",
     "token_head_layout_checked": "token_head_layout_checked",
     "add_rows_checked": "add_rows_checked",
     "silu_mul_rows_checked": "silu_mul_rows_checked",

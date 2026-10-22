@@ -233,7 +233,7 @@
           },
           {
             "id": "q_proj",
-            "op": "linear_rows_checked",
+            "op": "linear_rows_checked_no_bias",
             "kernel": "linear_rows_checked_no_bias_f32",
             "returns_status": true,
             "graph_slots": {
@@ -266,7 +266,7 @@
           },
           {
             "id": "k_proj",
-            "op": "linear_rows_checked",
+            "op": "linear_rows_checked_no_bias",
             "kernel": "linear_rows_checked_no_bias_f32",
             "returns_status": true,
             "graph_slots": {
@@ -299,7 +299,7 @@
           },
           {
             "id": "v_proj",
-            "op": "linear_rows_checked",
+            "op": "linear_rows_checked_no_bias",
             "kernel": "linear_rows_checked_no_bias_f32",
             "returns_status": true,
             "graph_slots": {
@@ -564,7 +564,7 @@
           },
           {
             "id": "attention_proj",
-            "op": "linear_rows_checked",
+            "op": "linear_rows_checked_no_bias",
             "kernel": "linear_rows_checked_no_bias_f32",
             "returns_status": true,
             "graph_slots": {
@@ -652,7 +652,7 @@
           },
           {
             "id": "gate_proj",
-            "op": "linear_rows_checked",
+            "op": "linear_rows_checked_no_bias",
             "kernel": "linear_rows_checked_no_bias_f32",
             "returns_status": true,
             "graph_slots": {
@@ -685,7 +685,7 @@
           },
           {
             "id": "up_proj",
-            "op": "linear_rows_checked",
+            "op": "linear_rows_checked_no_bias",
             "kernel": "linear_rows_checked_no_bias_f32",
             "returns_status": true,
             "graph_slots": {
@@ -742,7 +742,7 @@
           },
           {
             "id": "down_proj",
-            "op": "linear_rows_checked",
+            "op": "linear_rows_checked_no_bias",
             "kernel": "linear_rows_checked_no_bias_f32",
             "returns_status": true,
             "graph_slots": {

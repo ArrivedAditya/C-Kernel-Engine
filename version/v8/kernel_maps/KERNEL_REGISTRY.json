@@ -102,7 +102,8 @@
         "layout_convert": 2,
         "layout_transform": 1,
         "leaky_relu_strided_checked": 1,
-        "linear_rows_checked": 2,
+        "linear_rows_checked": 1,
+        "linear_rows_checked_no_bias": 1,
         "logits_store_indexed": 1,
         "mamba_conv1d_state_update": 1,
         "mamba_dt_softplus": 1,
@@ -50140,7 +50141,7 @@
     },
     {
       "id": "linear_rows_checked_no_bias_f32",
-      "op": "linear_rows_checked",
+      "op": "linear_rows_checked_no_bias",
       "operation_interface": "linear.row_major.checked.zero_bias.fp32.v1",
       "variant": "strided_row_major_scalar_fp64_accumulation_zero_bias",
       "selection": {
@@ -50266,7 +50267,7 @@
       },
       "numerical_capabilities": [
         {
-          "contract_id": "linear_rows_checked_f32_scalar_fp64_accumulation",
+          "contract_id": "linear_rows_checked_no_bias_f32_scalar_fp64_accumulation",
           "status": "validated",
           "phases": [
             "prefill"

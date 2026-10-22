@@ -3035,7 +3035,7 @@
       "chat_scope_reason": "no independent text-decoder serving path declared",
       "circuit": "qwen3_tts_first_block_bounded",
       "circuit_path": "version/v8/circuits/qwen3_tts_first_block_bounded.json",
-      "circuit_sha256": "47cf28e11997d82ea6b4a087c1cc19e8c28cccf2f72866a395bff23ae0264600",
+      "circuit_sha256": "ea7d96860cc6952838fa51f338756287bcaa4a2ee6a281a7787b0cbfd5b881b9",
       "evidence": {
         "cancellation_recovery": "not_assessed",
         "exact_token_ids": "not_assessed",

@@ -123,9 +123,9 @@ int rope_qk_bounded_checked_f32(float *q, size_t q_elements,
                                 size_t tokens, size_t head_dim,
                                 size_t pos_offset, float freq_base)
 {
-    if (!heads || !kv_heads || !tokens || !head_dim ||
+    if (!heads || !kv_heads || !tokens || head_dim < 2 || (head_dim & 1) ||
         heads > INT_MAX || kv_heads > INT_MAX || tokens > INT_MAX ||
-        head_dim > INT_MAX || pos_offset > INT_MAX ||
+        head_dim > INT_MAX || pos_offset > (size_t)INT_MAX - (tokens - 1) ||
         heads > SIZE_MAX / tokens || kv_heads > SIZE_MAX / tokens ||
         heads * tokens > SIZE_MAX / head_dim ||
         kv_heads * tokens > SIZE_MAX / head_dim)
@@ -136,6 +136,19 @@ int rope_qk_bounded_checked_f32(float *q, size_t q_elements,
     if (!isfinite(freq_base) || freq_base <= 0 ||
         !ck_checked_region(q, nq) || !ck_checked_region(k, nk) ||
         ck_checked_overlap(q, nq, k, nk)) return -1;
+    /* The unchecked provider evaluates pos_offset + token as signed int and
+     * computes theta with powf before writing in place. Prove every angle is
+     * representable first so an invalid frequency cannot partially rotate Q/K.
+     */
+    const float theta_scale = powf(freq_base, -2.0f / (float)head_dim);
+    const float last_position = (float)(pos_offset + tokens - 1);
+    if (!isfinite(theta_scale) || theta_scale <= 0.0f) return -3;
+    for (size_t index = 0; index < head_dim / 2; ++index) {
+        const float factor = powf(theta_scale, (float)index);
+        const float angle = last_position * factor;
+        if (!isfinite(factor) || !isfinite(angle) ||
+            !isfinite(cosf(angle)) || !isfinite(sinf(angle))) return -3;
+    }
     for (size_t i = 0; i < nq; ++i)
         if (!isfinite(q[i]) || fabsf(q[i]) > FLT_MAX / 4) return -3;
     for (size_t i = 0; i < nk; ++i)

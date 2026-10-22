@@ -49,7 +49,7 @@ def norm(name, source, output, width, rows, weight):
 
 
 def linear(name, source, output, rows, input_width, output_width, weight):
-    return operation(name, "linear_rows_checked",
+    return operation(name, "linear_rows_checked_no_bias",
                      "linear_rows_checked_no_bias_f32",
                      {"input": source}, {"output": output},
                      weights={"weight": f"{PREFIX}.{weight}"},
