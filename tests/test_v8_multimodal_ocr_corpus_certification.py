@@ -95,7 +95,7 @@ class MultimodalOcrCorpusCertificationTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "changed during OCR execution"):
                 MODULE._verify_bridge_execution(report, sample, config)
 
-    def test_gguf_resume_rejects_changed_generated_library(self) -> None:
+    def test_gguf_resume_checks_immutable_library_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             workspace = root / "runtime"
@@ -121,6 +121,7 @@ class MultimodalOcrCorpusCertificationTest(unittest.TestCase):
                 evidence["model_library_sha256"][role] = MODULE._sha256_file(model)
                 evidence["engine_library_paths"][role] = str(engine)
                 evidence["engine_library_sha256"][role] = MODULE._sha256_file(engine)
+            MODULE._snapshot_generated_libraries(root, evidence)
             expected = {"image_index": 1, "image_sha256": "image", "truth_sha256": "truth"}
             truth = {"name": "Ada"}
             output = '{"name":"Ada"}'
@@ -138,9 +139,11 @@ class MultimodalOcrCorpusCertificationTest(unittest.TestCase):
             path.write_text(json.dumps(row), encoding="utf-8")
             self.assertIsNotNone(MODULE._load_resumed(path, expected, config, truth))
             (workspace / "decoder" / "libdecoder.so").write_bytes(b"changed")
+            self.assertIsNotNone(MODULE._load_resumed(path, expected, config, truth))
+            (root / "runtime_artifacts" / "decoder_model.so").write_bytes(b"changed")
             self.assertIsNone(MODULE._load_resumed(path, expected, config, truth))
 
-    def test_gguf_mode_runs_fresh_report_and_invalidates_changed_runtime(self) -> None:
+    def test_gguf_mode_snapshots_libraries_across_runtime_rebuilds(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             image = root / "image.jpg"
@@ -199,7 +202,12 @@ class MultimodalOcrCorpusCertificationTest(unittest.TestCase):
                 self.assertEqual(MODULE.main(args), 0)
                 self.assertEqual(MODULE.main(args), 0)
                 self.assertEqual(len(calls), 1)
+                snapshot = output / "image01" / "runtime_artifacts" / "decoder_model.so"
+                self.assertEqual(snapshot.read_bytes(), b"decoder")
                 (runtime / "decoder" / "libdecoder.so").write_bytes(b"changed")
+                self.assertEqual(MODULE.main(args), 0)
+                self.assertEqual(len(calls), 1)
+                snapshot.write_bytes(b"stale")
                 self.assertEqual(MODULE.main(args), 0)
                 self.assertEqual(len(calls), 2)
             summary = json.loads((output / "summary.json").read_text(encoding="utf-8"))
