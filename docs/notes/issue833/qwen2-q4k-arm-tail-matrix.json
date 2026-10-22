@@ -1,0 +1,94 @@
+{
+  "schema": "cke.issue833.qwen2_tail_matrix.v1",
+  "cases": [
+    {
+      "prompt_tokens": 125,
+      "exact": true,
+      "same_engine_build": true,
+      "comparisons": [
+        {
+          "label": "prefill",
+          "position": 125,
+          "logits_exact": true,
+          "max_logit_abs": 0.0,
+          "logit_cosine": 1.0,
+          "top_tokens": [
+            51435,
+            51435
+          ],
+          "kv_exact_layers": 24,
+          "kv_mismatch_layers": [],
+          "kv_layers": 24
+        }
+      ]
+    },
+    {
+      "prompt_tokens": 126,
+      "exact": true,
+      "same_engine_build": true,
+      "comparisons": [
+        {
+          "label": "prefill",
+          "position": 126,
+          "logits_exact": true,
+          "max_logit_abs": 0.0,
+          "logit_cosine": 1.0,
+          "top_tokens": [
+            7375,
+            7375
+          ],
+          "kv_exact_layers": 24,
+          "kv_mismatch_layers": [],
+          "kv_layers": 24
+        }
+      ]
+    },
+    {
+      "prompt_tokens": 127,
+      "exact": true,
+      "same_engine_build": true,
+      "comparisons": [
+        {
+          "label": "prefill",
+          "position": 127,
+          "logits_exact": true,
+          "max_logit_abs": 0.0,
+          "logit_cosine": 0.9999999999999999,
+          "top_tokens": [
+            13,
+            13
+          ],
+          "kv_exact_layers": 24,
+          "kv_mismatch_layers": [],
+          "kv_layers": 24
+        }
+      ]
+    },
+    {
+      "prompt_tokens": 128,
+      "exact": true,
+      "same_engine_build": true,
+      "comparisons": [
+        {
+          "label": "prefill",
+          "position": 128,
+          "logits_exact": true,
+          "max_logit_abs": 0.0,
+          "logit_cosine": 1.0,
+          "top_tokens": [
+            356,
+            356
+          ],
+          "kv_exact_layers": 24,
+          "kv_mismatch_layers": [],
+          "kv_layers": 24
+        }
+      ]
+    }
+  ],
+  "weight_sha256": "3cea4b85c53f1f23ab6abb0fe6b1668629e338b6ec6fb2078261aa9cd229358d",
+  "engine_sha256": "b68f483a90c3e2d21c8af9e596e935fe42a5fefa095cb32c455aabbd6aae4899",
+  "source_token_fixture": "tests/fixtures/issue833/qwen2-natural-429.json",
+  "source_token_sha256": "38595eb60673e62b1cbc98ba116cf5c9ea7ba64da6afe49614a9cea09cde2e23",
+  "token_selection": "first prompt_tokens IDs of source_token_fixture"
+}

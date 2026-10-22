@@ -12,6 +12,7 @@ minimal safe defaults and then delegate to the local v8 emitter copy.
 import argparse
 import copy
 import json
+import math
 import re
 import sys
 import tempfile
@@ -1821,11 +1822,14 @@ def _uses_generated_batched_prefill(
 def _prefill_phase_decode_ops(
     decode_ops: list[Dict[str, Any]],
     prefill_ops: list[Dict[str, Any]],
+    *,
+    tail_reduction: bool = False,
 ) -> list[Dict[str, Any]] | None:
     """Derive a complete decode step with map-declared prefill arithmetic.
 
-    Only the selected attention function may change. A missing or mismatched
-    declaration leaves the existing history-safe decode fallback in place.
+    Selected attention and row-projection functions may change when their
+    maps prove the prefill arithmetic. Missing declarations retain the
+    history-safe ordinary decode fallback.
     """
     def key(op: Dict[str, Any]) -> tuple[int, str, int]:
         return (int(op.get("layer", -1)), str(op.get("op", "")),
@@ -1866,6 +1870,80 @@ def _prefill_phase_decode_ops(
                     f"selected prefill provider at {key(op)!r}"
                 )
             replacement["function"] = alternate["function"]
+        elif (alternate := op.get("prefill_continuation")) is not None:
+            sources = [candidate for candidate in prefill_ops
+                       if key(candidate) == key(op)]
+            if len(sources) != 1 or not isinstance(alternate, dict):
+                raise RuntimeError(
+                    f"prefill continuation projection has no unique source at {key(op)!r}"
+                )
+            source = sources[0]
+            source_abi = source.get("call_abi") or {}
+            if (source_abi.get("kernel_id") != alternate.get("prefill_kernel_id") or
+                    source.get("prefill_row_reduction") !=
+                    alternate.get("reduction_order")):
+                raise RuntimeError(
+                    f"prefill continuation projection provider mismatch at {key(op)!r}"
+                )
+
+            def argument_expr(operation: Dict[str, Any], name: str) -> str | None:
+                return next((str(arg.get("expr")) for arg in operation.get("args", [])
+                             if arg.get("name") == name), None)
+
+            def weight_refs(operation: Dict[str, Any]) -> set[str]:
+                return {str(arg["weight_ref"]) for arg in operation.get("args", [])
+                        if arg.get("weight_ref") and
+                        arg.get("source") == "weight:_first_weight"}
+
+            def activation_base(operation: Dict[str, Any], name: str) -> str | None:
+                argument = next((arg for arg in operation.get("args", [])
+                                 if arg.get("name") == name), None)
+                if not isinstance(argument, dict):
+                    return None
+                expression = str(argument.get("expr") or "")
+                if not re.fullmatch(
+                        r"\([^()]+\)\(model->bump \+ [A-Z][A-Z0-9_]*\)",
+                        expression):
+                    return None
+                return str(argument.get("buffer_ref") or "") or None
+
+            bias = next((arg for arg in source.get("args", [])
+                         if arg.get("name") == "bias"), None)
+            bias_expr = str(bias.get("expr") or "") if isinstance(bias, dict) else ""
+            if bias is None or bias_expr in {"NULL", "(float*)NULL", "(const float*)NULL"}:
+                bias = {"name": "bias", "expr": "NULL", "source": "literal"}
+            elif (not isinstance(bias, dict) or
+                  bias.get("source") != "weight_f:_bias" or
+                  not bias.get("weight_ref") or
+                  not re.fullmatch(
+                      r"\([^()]+\)\(model->bump \+ W_[A-Z0-9_]+\)",
+                      bias_expr)):
+                raise RuntimeError(
+                    f"prefill continuation projection bias binding mismatch at {key(op)!r}"
+                )
+
+            if (not weight_refs(op) or weight_refs(op) != weight_refs(source) or
+                    [arg.get("name") for arg in op.get("args", [])] !=
+                    ["y", "W", "x_q8", "M", "K"] or
+                    argument_expr(op, "M") != argument_expr(source, "N") or
+                    argument_expr(op, "K") != argument_expr(source, "K") or
+                    not activation_base(op, "x_q8") or
+                    activation_base(op, "x_q8") != activation_base(source, "A") or
+                    not activation_base(op, "y") or
+                    activation_base(op, "y") != activation_base(source, "C")):
+                raise RuntimeError(
+                    f"prefill continuation projection layout mismatch at {key(op)!r}"
+                )
+            if tail_reduction:
+                tail_function = alternate.get("tail_function")
+                if not tail_function:
+                    raise RuntimeError(
+                        f"prefill continuation has no declared tail provider at {key(op)!r}")
+                replacement["function"] = tail_function
+            else:
+                replacement["function"] = alternate["function"]
+            replacement["args"] = [*op["args"][:3], copy.deepcopy(bias),
+                                   *op["args"][3:]]
         transformed.append(replacement)
     return transformed
 
@@ -2679,10 +2757,22 @@ def main(argv: list[str] | None = None) -> int:
             ir_obj.get("operations", []), prefill_obj.get("operations", []))
         if prefill_obj is not None else None
     )
+    prefill_tail_ops = None
     if prefill_continuation_ops is not None:
         prefill_obj = copy.deepcopy(prefill_obj)
         prefill_obj.setdefault("config", {})[
             "prefill_continuation_entry"] = "ck_decode_prefill_continuation"
+        row_groups = [int(op["prefill_row_group"])
+                      for op in prefill_obj.get("operations", [])
+                      if op.get("prefill_row_group")]
+        if row_groups:
+            prefill_tail_ops = _prefill_phase_decode_ops(
+                ir_obj.get("operations", []), prefill_obj.get("operations", []),
+                tail_reduction=True)
+            prefill_obj["config"]["prefill_initial_chunk_alignment"] = (
+                math.lcm(*row_groups))
+            prefill_obj["config"]["prefill_tail_continuation_entry"] = (
+                "ck_decode_prefill_tail_continuation")
 
     init_call_obj = None
     init_path = args.init if args.init is not None else args.ir.parent / "init_call.json"
@@ -2760,6 +2850,8 @@ def main(argv: list[str] | None = None) -> int:
             dump=emit_parity_dumps,
             strict_contracts=args.strict_contracts,
             prefill_continuation_ops=prefill_continuation_ops,
+            prefill_tail_ops=prefill_tail_ops if prefill_obj is not None and
+                prefill_obj["config"].get("prefill_tail_continuation_entry") else None,
         )
         sequential_mixed_bridge_emitted = False
         if prefill_code:

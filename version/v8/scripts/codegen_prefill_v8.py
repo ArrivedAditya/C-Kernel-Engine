@@ -1829,6 +1829,11 @@ def emit_prefill_function(ops: List[Dict], config: Dict, profile: bool = False, 
             "prefill continuation entry requires an attention history fallback"
         )
     continuation_entry = continuation_entry or "ck_decode"
+    tail_entry = config.get("prefill_tail_continuation_entry")
+    if tail_entry not in (None, "ck_decode_prefill_tail_continuation"):
+        raise RuntimeError("unrecognized prefill tail continuation entry")
+    if tail_entry and continuation_entry != "ck_decode_prefill_continuation":
+        raise RuntimeError("prefill tail requires a checked continuation entry")
     context_capacity = int(config.get("context_length", config.get("context_len", 0)) or 0)
     prefill_chunk_length = int(config.get("prefill_chunk_length", context_capacity) or context_capacity)
     if context_capacity <= 0 or prefill_chunk_length <= 0:
@@ -1836,6 +1841,11 @@ def emit_prefill_function(ops: List[Dict], config: Dict, profile: bool = False, 
             "prefill codegen requires positive context_length and prefill_chunk_length"
         )
     prefill_chunk_length = min(prefill_chunk_length, context_capacity)
+    initial_chunk_alignment = int(config.get("prefill_initial_chunk_alignment", 1) or 1)
+    if initial_chunk_alignment < 1 or prefill_chunk_length < initial_chunk_alignment:
+        raise RuntimeError(
+            "prefill chunk capacity cannot satisfy selected provider row group"
+        )
     scale_embeddings_sqrt_dim = bool(config.get("scale_embeddings_sqrt_dim", False))
     outproj_policy = str(config.get("out_proj_input_policy") or "").strip().lower()
     debug_outproj_default = 1 if outproj_policy in {"fp32", "fp32_input", "force_fp32"} else 0
@@ -2052,6 +2062,10 @@ static void ck_prefill_range(CKModel *model, const int32_t *tokens, int num_toke
     lines.append("    while (consumed < num_tokens) {")
     lines.append("        if (ck_model_cancel_requested()) return;")
     lines.append(f"        int chunk = num_tokens - consumed > {prefill_chunk_length} ? {prefill_chunk_length} : num_tokens - consumed;")
+    if initial_chunk_alignment > 1:
+        lines.append("        if (consumed == 0 && start_pos == 0 && num_tokens > chunk) {")
+        lines.append(f"            chunk -= chunk % {initial_chunk_alignment};")
+        lines.append("        }")
     if requires_decode_continuation:
         lines.append("        if (consumed > 0 || start_pos > 0) {")
         lines.append("            /* This prefill provider is not proven to read prior KV.")
@@ -2063,8 +2077,15 @@ static void ck_prefill_range(CKModel *model, const int32_t *tokens, int num_toke
         lines.append("                    return;")
         lines.append("                }")
         lines.append("                g_ck_skip_decode_logits = consumed + i + 1 < num_tokens;")
-        lines.append(
-            f"                {continuation_entry}(model, tokens[consumed + i]);")
+        if tail_entry:
+            lines.append(f"                if (start_pos + consumed + i >= "
+                         f"((start_pos + num_tokens) / {initial_chunk_alignment}) * {initial_chunk_alignment})")
+            lines.append(f"                    {tail_entry}(model, tokens[consumed + i]);")
+            lines.append("                else")
+            lines.append(f"                    {continuation_entry}(model, tokens[consumed + i]);")
+        else:
+            lines.append(
+                f"                {continuation_entry}(model, tokens[consumed + i]);")
         lines.append("            }")
         lines.append("            g_ck_skip_decode_logits = 0;")
     else:

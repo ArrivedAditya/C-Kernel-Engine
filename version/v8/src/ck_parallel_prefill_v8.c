@@ -3797,6 +3797,32 @@ void gemv_q4_k_q8_k_repacked_parallel_dispatch(
             pool, x_q8, packed_x8, NULL, y, N, K, 0);
 }
 
+/* A prefill continuation has one query row but must retain the full-prefill
+ * packed-meta superblock reduction. The ordinary decode GEMV deliberately
+ * keeps its own reduction contract. The map selects this entry only when the
+ * prefill projection is the matching Q4_K x Q8_K provider. */
+void gemv_q4_k_q8_k_prefill_order_parallel_dispatch(
+    float *y, const void *W, const void *x_q8, const float *bias, int N, int K)
+{
+    if (!y || !W || !x_q8 || N <= 0 || K <= 0 || (K % QK_K) != 0) return;
+    void *packed_x8 = ck_get_q4k_packed_meta_x8_cached(W, N, K);
+    if (!packed_x8) {
+        fprintf(stderr, "Q4_K prefill continuation: weight packing failed\n");
+        abort();
+    }
+    gemm_nt_q4_k_packed_meta_x8_q8_k_superblock_order(
+        x_q8, packed_x8, bias, y, 1, N, K);
+}
+
+/* Preserve the selected prefill provider's residual-row arithmetic, including
+ * its ISA-specific repacked GEMV route and optional bias. */
+void gemv_q4_k_q8_k_prefill_tail_parallel_dispatch(
+    float *y, const void *W, const void *x_q8, const float *bias, int N, int K)
+{
+    gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch(
+        x_q8, W, bias, y, 1, N, K);
+}
+
 void gemm_nt_q6_k_q8_k_parallel_dispatch(
     const void *A, const void *B, const float *bias, float *C,
     int M, int N, int K)

@@ -1081,6 +1081,7 @@ def emit_op(
         y_expr = arg_expr_by_name.get("y")
         w_expr = arg_expr_by_name.get("w")
         x_expr = arg_expr_by_name.get("x_q8")
+        bias_expr = arg_expr_by_name.get("bias")
         m_expr = arg_expr_by_name.get("m")
         k_expr = arg_expr_by_name.get("k")
         fp32_function = linear_emission["fp32_activation_function"]
@@ -1113,6 +1114,8 @@ def emit_op(
             lines.append(f"            {y_expr},")
             lines.append(f"            {w_expr},")
             lines.append(f"            {x_expr},")
+            if bias_expr:
+                lines.append(f"            {bias_expr},")
             lines.append(f"            {m_expr},")
             lines.append(f"            {k_expr}")
             lines.append("        );")
@@ -1264,6 +1267,7 @@ def emit_op(
         y_expr = arg_expr_by_name.get("y")
         w_expr = arg_expr_by_name.get("w")
         x_expr = arg_expr_by_name.get("x_q8")
+        bias_expr = arg_expr_by_name.get("bias")
         m_expr = arg_expr_by_name.get("m")
         k_expr = arg_expr_by_name.get("k")
         fp32_function = linear_emission["fp32_activation_function"]
@@ -1288,6 +1292,8 @@ def emit_op(
             lines.append(f"            {y_expr},")
             lines.append(f"            {w_expr},")
             lines.append(f"            {x_expr},")
+            if bias_expr:
+                lines.append(f"            {bias_expr},")
             lines.append(f"            {m_expr},")
             lines.append(f"            {k_expr}")
             lines.append("        );")
@@ -1352,6 +1358,7 @@ def emit_op(
         y_expr = arg_expr_by_name.get("y")
         w_expr = arg_expr_by_name.get("w")
         x_expr = arg_expr_by_name.get("x_q8")
+        bias_expr = arg_expr_by_name.get("bias")
         m_expr = arg_expr_by_name.get("m")
         k_expr = arg_expr_by_name.get("k")
         fp32_function = linear_emission["fp32_activation_function"]
@@ -1380,6 +1387,8 @@ def emit_op(
             lines.append(f"            {y_expr},")
             lines.append(f"            {w_expr},")
             lines.append(f"            {x_expr},")
+            if bias_expr:
+                lines.append(f"            {bias_expr},")
             lines.append(f"            {m_expr},")
             lines.append(f"            {k_expr}")
             lines.append("        );")
@@ -1451,6 +1460,7 @@ def emit_op(
         y_expr = arg_expr_by_name.get("y")
         w_expr = arg_expr_by_name.get("w")
         x_expr = arg_expr_by_name.get("x_q8")
+        bias_expr = arg_expr_by_name.get("bias")
         m_expr = arg_expr_by_name.get("m")
         k_expr = arg_expr_by_name.get("k")
         fp32_function = linear_emission["fp32_activation_function"]
@@ -1479,6 +1489,8 @@ def emit_op(
             lines.append(f"            {y_expr},")
             lines.append(f"            {w_expr},")
             lines.append(f"            {x_expr},")
+            if bias_expr:
+                lines.append(f"            {bias_expr},")
             lines.append(f"            {m_expr},")
             lines.append(f"            {k_expr}")
             lines.append("        );")
@@ -4130,6 +4142,7 @@ def generate(
     minimum_total_size: int = 0,
     layout_override: Optional[Dict] = None,
     prefill_continuation_ops: Optional[List[Dict]] = None,
+    prefill_tail_ops: Optional[List[Dict]] = None,
 ) -> str:
     """Generate complete C code.
 
@@ -4445,6 +4458,15 @@ static void _ck_profile_dump(void) {
                 function_name="ck_decode_prefill_continuation",
             )
         )
+    if prefill_tail_ops is not None:
+        if len(prefill_tail_ops) != len(ops):
+            raise RuntimeError("prefill tail must preserve the complete decode operation sequence")
+        parts.append(emit_decode_function(
+            prefill_tail_ops, token_offset, token_base, config=config,
+            debug=debug, profile=profile, dump=dump,
+            scale_embeddings_sqrt_dim=scale_embeddings_sqrt_dim,
+            function_name="ck_decode_prefill_tail_continuation",
+        ))
 
     if logits_stride == 0:
         from batch_decode_contract_v8 import resolve_two_row_batch_contract

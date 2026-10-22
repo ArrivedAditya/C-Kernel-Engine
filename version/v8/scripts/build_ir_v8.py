@@ -16674,6 +16674,24 @@ def load_kernel_call_abis(
                 f"unsupported prefill_history_scope={prefill_history_scope!r}."
             )
         prefill_continuation = doc.get("prefill_continuation")
+        prefill_row_reduction = doc.get("prefill_row_reduction")
+        prefill_row_group = doc.get("prefill_row_group")
+        if prefill_row_reduction is not None and (
+                doc.get("op") != "gemm" or
+                not isinstance(prefill_row_reduction, str) or
+                not prefill_row_reduction.strip()):
+            raise RuntimeError(
+                f"HARD CALL ABI FAULT: kernel {kernel_id!r} in {path.name} "
+                "has an invalid prefill_row_reduction contract."
+            )
+        if prefill_row_group is not None and (
+                prefill_row_reduction is None or
+                type(prefill_row_group) is not int or
+                prefill_row_group < 1):
+            raise RuntimeError(
+                f"HARD CALL ABI FAULT: kernel {kernel_id!r} in {path.name} "
+                "has an invalid prefill_row_group contract."
+            )
         numerical_capabilities = doc.get("numerical_capabilities")
         numerical_reduction_order = (
             numerical_capabilities.get("reduction_order")
@@ -16688,8 +16706,22 @@ def load_kernel_call_abis(
                 prefill_continuation.get("reduction_order")
                 if isinstance(prefill_continuation, dict) else None
             )
-            if (doc.get("mode") != "decode" or
-                    not str(doc.get("op", "")).startswith("attention") or
+            tail_alternative = (
+                prefill_continuation.get("tail_function")
+                if isinstance(prefill_continuation, dict) else None
+            )
+            attention_alternative = (
+                doc.get("mode") == "decode" and
+                str(doc.get("op", "")).startswith("attention")
+            )
+            projection_alternative = (
+                doc.get("op") == "gemv" and
+                isinstance(prefill_continuation, dict) and
+                isinstance(prefill_continuation.get("prefill_kernel_id"), str) and
+                re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*",
+                             prefill_continuation["prefill_kernel_id"]) is not None
+            )
+            if (not (attention_alternative or projection_alternative) or
                     not isinstance(alternative, str) or
                     re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", alternative) is None or
                     alternative == function or
@@ -16697,6 +16729,15 @@ def load_kernel_call_abis(
                 raise RuntimeError(
                     f"HARD CALL ABI FAULT: kernel {kernel_id!r} in {path.name} "
                     "has an invalid prefill_continuation contract."
+                )
+            if tail_alternative is not None and (
+                    not projection_alternative or
+                    not isinstance(tail_alternative, str) or
+                    re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", tail_alternative) is None or
+                    tail_alternative == alternative):
+                raise RuntimeError(
+                    f"HARD CALL ABI FAULT: kernel {kernel_id!r} in {path.name} "
+                    "has an invalid prefill tail contract."
                 )
         legacy_keys = [key for key in {kernel_id, function} if key and key in legacy]
         if legacy_keys:
@@ -16712,6 +16753,10 @@ def load_kernel_call_abis(
             **({"prefill_history_scope": prefill_history_scope} if prefill_history_scope else {}),
             **({"prefill_continuation": copy.deepcopy(prefill_continuation)}
                if prefill_continuation else {}),
+            **({"prefill_row_reduction": prefill_row_reduction}
+               if prefill_row_reduction else {}),
+            **({"prefill_row_group": prefill_row_group}
+               if prefill_row_group else {}),
             **({"numerical_reduction_order": numerical_reduction_order}
                if isinstance(numerical_reduction_order, str) and numerical_reduction_order else {}),
         }
@@ -17549,6 +17594,12 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
         if call_abi_entry and call_abi_entry.get("prefill_continuation"):
             call_op["prefill_continuation"] = copy.deepcopy(
                 call_abi_entry["prefill_continuation"])
+        if call_abi_entry and call_abi_entry.get("prefill_row_reduction"):
+            call_op["prefill_row_reduction"] = (
+                call_abi_entry["prefill_row_reduction"])
+        if call_abi_entry and call_abi_entry.get("prefill_row_group"):
+            call_op["prefill_row_group"] = (
+                call_abi_entry["prefill_row_group"])
         if call_abi_entry and call_abi_entry.get("numerical_reduction_order"):
             call_op["numerical_reduction_order"] = (
                 call_abi_entry["numerical_reduction_order"])

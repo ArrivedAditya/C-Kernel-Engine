@@ -1,0 +1,88 @@
+{
+  "schema": "cke.chunked_prefill_comparison.v1",
+  "prompt_tokens": 429,
+  "continuation_tokens": 3,
+  "token_sha256": "38595eb60673e62b1cbc98ba116cf5c9ea7ba64da6afe49614a9cea09cde2e23",
+  "identities": {
+    "full": {
+      "weights.bump": "3cea4b85c53f1f23ab6abb0fe6b1668629e338b6ec6fb2078261aa9cd229358d",
+      "weights_manifest.json": "b15697ca123ddc06a4a160332f302f46fa5716a41b77b4dd33d0f0ab8a57e500",
+      "weights_manifest.map": "5a601fbb633c534b2846d34f039bfc761b8deee9c91f458fc9df306b695735bb",
+      "config.json": "95a1ca3d5118259789539676807c5943b6ae3af3c742ed4f0c2603904fe3cec0",
+      "model_v8.c": "807f17007c0503c1f561752932628f3560536647b36ec6dd7d6c37e644ca129b",
+      "libmodel.so": "99adcce31303cb5d68a5cd5e1cf0e0f212c1715c9460df612beaa9252652c85e",
+      "libckernel_engine.so": "fc66054e36f7b5d66cfe62fc297175d07e07a56a43735e2c5280e51393173dcd",
+      "libckernel_tokenizer.so": "3be3720a52cd0d43ff48da987207f09cb046a1d74e593b92f6584e84ad072ee5"
+    },
+    "chunked": {
+      "weights.bump": "3cea4b85c53f1f23ab6abb0fe6b1668629e338b6ec6fb2078261aa9cd229358d",
+      "weights_manifest.json": "b15697ca123ddc06a4a160332f302f46fa5716a41b77b4dd33d0f0ab8a57e500",
+      "weights_manifest.map": "5a601fbb633c534b2846d34f039bfc761b8deee9c91f458fc9df306b695735bb",
+      "config.json": "95a1ca3d5118259789539676807c5943b6ae3af3c742ed4f0c2603904fe3cec0",
+      "model_v8.c": "9bc3743f8b575942f14990746d67ea30d225c9e3cc3db662a4d886b37b2a5081",
+      "libmodel.so": "c15bcb3fcbb357dd09355ff6f00cafec285ec2784d3cbfda350dbcb7a3db7db8",
+      "libckernel_engine.so": "fc66054e36f7b5d66cfe62fc297175d07e07a56a43735e2c5280e51393173dcd",
+      "libckernel_tokenizer.so": "3be3720a52cd0d43ff48da987207f09cb046a1d74e593b92f6584e84ad072ee5"
+    }
+  },
+  "execution": {
+    "machine": "aarch64",
+    "omp_num_threads": null,
+    "strict_parity": null
+  },
+  "comparisons": [
+    {
+      "label": "prefill",
+      "position": 429,
+      "logits_exact": true,
+      "max_logit_abs": 0.0,
+      "logit_cosine": 0.9999999999999999,
+      "top_tokens": [
+        15278,
+        15278
+      ],
+      "kv_exact_layers": 24,
+      "kv_layers": 24
+    },
+    {
+      "label": "decode-001",
+      "position": 430,
+      "logits_exact": true,
+      "max_logit_abs": 0.0,
+      "logit_cosine": 1.0000000000000002,
+      "top_tokens": [
+        11,
+        11
+      ],
+      "kv_exact_layers": 24,
+      "kv_layers": 24
+    },
+    {
+      "label": "decode-002",
+      "position": 431,
+      "logits_exact": true,
+      "max_logit_abs": 0.0,
+      "logit_cosine": 0.9999999999999999,
+      "top_tokens": [
+        11,
+        11
+      ],
+      "kv_exact_layers": 24,
+      "kv_layers": 24
+    },
+    {
+      "label": "decode-003",
+      "position": 432,
+      "logits_exact": true,
+      "max_logit_abs": 0.0,
+      "logit_cosine": 1.0,
+      "top_tokens": [
+        448,
+        448
+      ],
+      "kv_exact_layers": 24,
+      "kv_layers": 24
+    }
+  ],
+  "exact": true
+}

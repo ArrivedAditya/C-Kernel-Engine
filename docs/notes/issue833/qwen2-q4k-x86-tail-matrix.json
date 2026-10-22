@@ -1,0 +1,274 @@
+{
+  "schema": "cke.issue833.qwen2_tail_matrix.v1",
+  "weight_sha256": "3cea4b85c53f1f23ab6abb0fe6b1668629e338b6ec6fb2078261aa9cd229358d",
+  "engine_sha256": "a3ee1f2bc9feaac39e0f959ad9561c7b53daa10a26c4c4dfe63813686d9573e1",
+  "cases": [
+    {
+      "prompt_tokens": 125,
+      "split_at": null,
+      "exact": true,
+      "same_engine_build": true,
+      "comparisons": [
+        {
+          "label": "prefill",
+          "position": 125,
+          "logits_exact": true,
+          "max_logit_abs": 0.0,
+          "logit_cosine": 1.0,
+          "top_tokens": [
+            51435,
+            51435
+          ],
+          "kv_exact_layers": 24,
+          "kv_mismatch_layers": [],
+          "kv_layers": 24
+        }
+      ]
+    },
+    {
+      "prompt_tokens": 125,
+      "split_at": 120,
+      "exact": true,
+      "same_engine_build": true,
+      "comparisons": [
+        {
+          "label": "prefill",
+          "position": 125,
+          "logits_exact": true,
+          "max_logit_abs": 0.0,
+          "logit_cosine": 1.0,
+          "top_tokens": [
+            51435,
+            51435
+          ],
+          "kv_exact_layers": 24,
+          "kv_mismatch_layers": [],
+          "kv_layers": 24
+        }
+      ]
+    },
+    {
+      "prompt_tokens": 126,
+      "split_at": null,
+      "exact": true,
+      "same_engine_build": true,
+      "comparisons": [
+        {
+          "label": "prefill",
+          "position": 126,
+          "logits_exact": true,
+          "max_logit_abs": 0.0,
+          "logit_cosine": 0.9999999999999998,
+          "top_tokens": [
+            7375,
+            7375
+          ],
+          "kv_exact_layers": 24,
+          "kv_mismatch_layers": [],
+          "kv_layers": 24
+        }
+      ]
+    },
+    {
+      "prompt_tokens": 126,
+      "split_at": 120,
+      "exact": true,
+      "same_engine_build": true,
+      "comparisons": [
+        {
+          "label": "prefill",
+          "position": 126,
+          "logits_exact": true,
+          "max_logit_abs": 0.0,
+          "logit_cosine": 0.9999999999999998,
+          "top_tokens": [
+            7375,
+            7375
+          ],
+          "kv_exact_layers": 24,
+          "kv_mismatch_layers": [],
+          "kv_layers": 24
+        }
+      ]
+    },
+    {
+      "prompt_tokens": 127,
+      "split_at": null,
+      "exact": true,
+      "same_engine_build": true,
+      "comparisons": [
+        {
+          "label": "prefill",
+          "position": 127,
+          "logits_exact": true,
+          "max_logit_abs": 0.0,
+          "logit_cosine": 1.0,
+          "top_tokens": [
+            13,
+            13
+          ],
+          "kv_exact_layers": 24,
+          "kv_mismatch_layers": [],
+          "kv_layers": 24
+        }
+      ]
+    },
+    {
+      "prompt_tokens": 127,
+      "split_at": 120,
+      "exact": true,
+      "same_engine_build": true,
+      "comparisons": [
+        {
+          "label": "prefill",
+          "position": 127,
+          "logits_exact": true,
+          "max_logit_abs": 0.0,
+          "logit_cosine": 1.0,
+          "top_tokens": [
+            13,
+            13
+          ],
+          "kv_exact_layers": 24,
+          "kv_mismatch_layers": [],
+          "kv_layers": 24
+        }
+      ]
+    },
+    {
+      "prompt_tokens": 128,
+      "split_at": null,
+      "exact": true,
+      "same_engine_build": true,
+      "comparisons": [
+        {
+          "label": "prefill",
+          "position": 128,
+          "logits_exact": true,
+          "max_logit_abs": 0.0,
+          "logit_cosine": 0.9999999999999999,
+          "top_tokens": [
+            356,
+            356
+          ],
+          "kv_exact_layers": 24,
+          "kv_mismatch_layers": [],
+          "kv_layers": 24
+        }
+      ]
+    },
+    {
+      "prompt_tokens": 128,
+      "split_at": 120,
+      "exact": true,
+      "same_engine_build": true,
+      "comparisons": [
+        {
+          "label": "prefill",
+          "position": 128,
+          "logits_exact": true,
+          "max_logit_abs": 0.0,
+          "logit_cosine": 0.9999999999999999,
+          "top_tokens": [
+            356,
+            356
+          ],
+          "kv_exact_layers": 24,
+          "kv_mismatch_layers": [],
+          "kv_layers": 24
+        }
+      ]
+    },
+    {
+      "prompt_tokens": 129,
+      "split_at": null,
+      "exact": true,
+      "same_engine_build": true,
+      "comparisons": [
+        {
+          "label": "prefill",
+          "position": 129,
+          "logits_exact": true,
+          "max_logit_abs": 0.0,
+          "logit_cosine": 1.0000000000000002,
+          "top_tokens": [
+            3390,
+            3390
+          ],
+          "kv_exact_layers": 24,
+          "kv_mismatch_layers": [],
+          "kv_layers": 24
+        }
+      ]
+    },
+    {
+      "prompt_tokens": 130,
+      "split_at": null,
+      "exact": true,
+      "same_engine_build": true,
+      "comparisons": [
+        {
+          "label": "prefill",
+          "position": 130,
+          "logits_exact": true,
+          "max_logit_abs": 0.0,
+          "logit_cosine": 0.9999999999999999,
+          "top_tokens": [
+            17045,
+            17045
+          ],
+          "kv_exact_layers": 24,
+          "kv_mismatch_layers": [],
+          "kv_layers": 24
+        }
+      ]
+    },
+    {
+      "prompt_tokens": 131,
+      "split_at": null,
+      "exact": true,
+      "same_engine_build": true,
+      "comparisons": [
+        {
+          "label": "prefill",
+          "position": 131,
+          "logits_exact": true,
+          "max_logit_abs": 0.0,
+          "logit_cosine": 0.9999999999999999,
+          "top_tokens": [
+            7907,
+            7907
+          ],
+          "kv_exact_layers": 24,
+          "kv_mismatch_layers": [],
+          "kv_layers": 24
+        }
+      ]
+    },
+    {
+      "prompt_tokens": 132,
+      "split_at": null,
+      "exact": true,
+      "same_engine_build": true,
+      "comparisons": [
+        {
+          "label": "prefill",
+          "position": 132,
+          "logits_exact": true,
+          "max_logit_abs": 0.0,
+          "logit_cosine": 1.0,
+          "top_tokens": [
+            4119,
+            4119
+          ],
+          "kv_exact_layers": 24,
+          "kv_mismatch_layers": [],
+          "kv_layers": 24
+        }
+      ]
+    }
+  ],
+  "source_token_fixture": "tests/fixtures/issue833/qwen2-natural-429.json",
+  "source_token_sha256": "38595eb60673e62b1cbc98ba116cf5c9ea7ba64da6afe49614a9cea09cde2e23",
+  "token_selection": "first prompt_tokens IDs of source_token_fixture"
+}
