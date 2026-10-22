@@ -50,6 +50,73 @@ def _arg(name: str, expr: str) -> dict[str, str]:
 
 
 class HiddenExportExtentTests(unittest.TestCase):
+    def test_ffn_norm_captures_execute_full_grid(self) -> None:
+        compiler = shutil.which("cc")
+        if compiler is None:
+            self.skipTest("C compiler unavailable")
+        source_head = r'''
+#include <stddef.h>
+#include <string.h>
+#define EMBED_DIM 4
+static float captured[12];
+static int capture_ok;
+static void rmsnorm_forward_parallel_dispatch(const float *input, const float *gamma,
+        float *output, float *rstd_cache, int tokens, int dim, int stride, float eps) {
+    (void)gamma; (void)rstd_cache; (void)eps;
+    for (int row = 0; row < tokens; ++row)
+        for (int col = 0; col < dim; ++col)
+            output[row * stride + col] = input[row * stride + col] + 1.0f;
+}
+static void ck_debug_export_hidden(void *model, int layer, const char *name,
+        const float *src, size_t count) {
+    (void)model;
+    if (layer == 10 && count == 12 &&
+            (strcmp(name, "ffn_norm") == 0 || strcmp(name, "post_ffn_norm") == 0)) {
+        memcpy(captured, src, count * sizeof(float));
+        capture_ok = 1;
+    }
+}
+int main(void) {
+    float input[12], output[14] = {0};
+    void *model = NULL;
+    for (int i = 0; i < 12; ++i) input[i] = (float)(10 * i);
+    output[12] = 12345.0f;
+    output[13] = -12345.0f;
+'''
+        source_tail = r'''
+    if (!capture_ok || output[12] != 12345.0f || output[13] != -12345.0f) return 1;
+    for (int i = 0; i < 12; ++i)
+        if (captured[i] != input[i] + 1.0f) return 2;
+    return 0;
+}
+'''
+        with tempfile.TemporaryDirectory(prefix="ffn_norm_grid_capture_") as tmpdir:
+            path = Path(tmpdir)
+            for name in ("ffn_norm", "post_ffn_norm"):
+                with self.subTest(name=name):
+                    op = {
+                        "op": name,
+                        "function": "rmsnorm_forward_parallel_dispatch",
+                        "layer": 10,
+                        "args": [
+                            _arg("input", "input"),
+                            _arg("gamma", "NULL"),
+                            _arg("output", "output"),
+                            _arg("rstd_cache", "NULL"),
+                            _arg("tokens", "3"),
+                            _arg("d_model", "4"),
+                            _arg("aligned_embed_dim", "4"),
+                            _arg("eps", "0.000001f"),
+                        ],
+                    }
+                    emitted = codegen.emit_op(op)
+                    (path / "fixture.c").write_text(source_head + emitted + source_tail, encoding="utf-8")
+                    subprocess.run(
+                        [compiler, "-std=c11", str(path / "fixture.c"), "-o", str(path / "fixture")],
+                        check=True, capture_output=True,
+                    )
+                    subprocess.run([str(path / "fixture")], check=True, capture_output=True)
+
     def test_rmsnorm_capture_executes_full_resolved_grid(self) -> None:
         compiler = shutil.which("cc")
         if compiler is None:
