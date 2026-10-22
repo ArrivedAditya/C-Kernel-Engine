@@ -2267,16 +2267,15 @@ def emit_op(
             ) or "EMBED_DIM"
             lines.append(f'    ck_debug_export_hidden(model, {layer}, "post_attn_norm", (const float*){out_expr}, {count_expr});')
             _emit_hidden_export_last_row(out_expr, "post_attn_norm", "EMBED_DIM")
-    elif op_name == "ffn_norm":
+    elif op_name in ("ffn_norm", "post_ffn_norm"):
         out_expr = _hidden_raw(_hidden_arg("output", "out", "x", "y"))
         if out_expr:
-            lines.append(f'    ck_debug_export_hidden(model, {layer}, "ffn_norm", (const float*){out_expr}, EMBED_DIM);')
-            _emit_hidden_export_last_row(out_expr, "ffn_norm", "EMBED_DIM")
-    elif op_name == "post_ffn_norm":
-        out_expr = _hidden_raw(_hidden_arg("output", "out", "x", "y"))
-        if out_expr:
-            lines.append(f'    ck_debug_export_hidden(model, {layer}, "post_ffn_norm", (const float*){out_expr}, EMBED_DIM);')
-            _emit_hidden_export_last_row(out_expr, "post_ffn_norm", "EMBED_DIM")
+            count_expr = _mul_expr(
+                _hidden_arg("tokens", "num_tokens", "rows"),
+                _hidden_arg("d_model", "aligned_embed_dim", "embed_dim", "dim"),
+            ) or "EMBED_DIM"
+            _emit_hidden_export(out_expr, op_name, count_expr)
+            _emit_hidden_export_last_row(out_expr, op_name, "EMBED_DIM")
     elif op_name == "moe_router":
         output = _hidden_arg("C", "output", "out", "y")
         rows = _hidden_arg("M", "m", "rows", "tokens")
