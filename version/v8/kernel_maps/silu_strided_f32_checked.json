@@ -1,0 +1,186 @@
+{
+  "id": "silu_strided_f32_checked",
+  "op": "silu_strided_checked",
+  "operation_interface": "activation.silu.checked.strided.fp32.v1",
+  "variant": "checked_scalar_strided",
+  "selection": {
+    "status": "candidate",
+    "priority": 100,
+    "equivalence_group": "silu_strided_f32_checked",
+    "phases": [
+      "prefill"
+    ]
+  },
+  "quant": {
+    "weight": "none",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {
+      "name": "input",
+      "dtype": "fp32",
+      "shape": [
+        "R",
+        "C"
+      ],
+      "layout": "row_major_strided",
+      "placement": "local",
+      "access": "read",
+      "storage_class": "activation",
+      "consumption": "required"
+    }
+  ],
+  "weights": [],
+  "outputs": [
+    {
+      "name": "output",
+      "dtype": "fp32",
+      "shape": [
+        "R",
+        "C"
+      ],
+      "layout": "row_major_strided",
+      "placement": "local",
+      "access": "write",
+      "storage_class": "activation",
+      "consumption": "required"
+    }
+  ],
+  "scratch": [],
+  "dims": [
+    "input_elements",
+    "input_stride",
+    "output_elements",
+    "output_stride",
+    "rows",
+    "columns"
+  ],
+  "impl": {
+    "function": "silu_strided_f32_checked",
+    "c_declaration": "int silu_strided_f32_checked(const float *input, size_t input_elements, size_t input_stride, float *output, size_t output_elements, size_t output_stride, size_t rows, size_t columns);",
+    "sources": [
+      "src/kernels/strided_unary_checked.c"
+    ]
+  },
+  "modes": {
+    "inference": true,
+    "training": false,
+    "backward": false
+  },
+  "numerical_capabilities": [
+    {
+      "contract_id": "silu_strided_f32_checked_fp32_libm",
+      "status": "validated",
+      "phases": [
+        "prefill"
+      ],
+      "function": "silu_strided_f32_checked",
+      "explicit_selector": true,
+      "implementation": {
+        "isa_dispatch": "scalar",
+        "threading": {
+          "runtime": "serial",
+          "work_partition": [
+            "serial"
+          ],
+          "dispatch": [
+            "inline"
+          ],
+          "reduction_order_effect": "none"
+        }
+      },
+      "arithmetic": {
+        "partial_accumulator": "none",
+        "merge_order": "none",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false,
+        "split_strategy": "serial"
+      }
+    }
+  ],
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {
+        "name": "input",
+        "source": "activation:input",
+        "cast": "const float*",
+        "ports": [
+          "input:input"
+        ]
+      },
+      {
+        "name": "input_elements",
+        "source": "runtime:silu_input_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "input_stride",
+        "source": "runtime:silu_input_stride",
+        "value_type": "size_t"
+      },
+      {
+        "name": "output",
+        "source": "output:output",
+        "cast": "float*",
+        "ports": [
+          "output:output"
+        ]
+      },
+      {
+        "name": "output_elements",
+        "source": "runtime:silu_output_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "output_stride",
+        "source": "runtime:silu_output_stride",
+        "value_type": "size_t"
+      },
+      {
+        "name": "rows",
+        "source": "runtime:silu_rows",
+        "value_type": "size_t"
+      },
+      {
+        "name": "columns",
+        "source": "runtime:silu_columns",
+        "value_type": "size_t"
+      }
+    ]
+  },
+  "tests": {
+    "unit": [
+      "tests/test_v8_qwen3_tts_first_block.py"
+    ],
+    "oracle": "Pinned Qwen3-TTS CustomVoice FP32 projection and independent scalar SiLU reference"
+  },
+  "notes": "Checked generic strided FP32 SiLU, scalar expf arithmetic. Rejects nonfinite inputs and insufficient capacity before writes; output padding remains untouched.",
+  "call_constant_contract": {
+    "shape_symbols": {
+      "R": "silu_rows",
+      "C": "silu_columns"
+    },
+    "buffer_spans": [
+      {
+        "pointer": "input",
+        "elements": "silu_input_elements",
+        "rows": "silu_rows",
+        "width": "silu_columns",
+        "element_bytes": 4,
+        "stride": "silu_input_stride",
+        "physical_row_stride": true
+      },
+      {
+        "pointer": "output",
+        "elements": "silu_output_elements",
+        "rows": "silu_rows",
+        "width": "silu_columns",
+        "element_bytes": 4,
+        "stride": "silu_output_stride",
+        "physical_row_stride": true
+      }
+    ]
+  }
+}

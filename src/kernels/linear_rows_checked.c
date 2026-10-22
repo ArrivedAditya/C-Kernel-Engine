@@ -29,11 +29,11 @@ int linear_rows_checked_f32(
     float *output, size_t output_elements, size_t output_stride,
     size_t rows, size_t input_channels, size_t output_channels)
 {
-    if (!input || !weight || !bias || !output ||
+    if (!input || !weight || !output ||
         !span_fits(rows, input_stride, input_channels, input_elements) ||
         !span_fits(output_channels, weight_stride, input_channels, weight_elements) ||
         !span_fits(rows, output_stride, output_channels, output_elements) ||
-        bias_elements < output_channels)
+        (bias ? bias_elements < output_channels : bias_elements != 0))
         return -1;
 
     /* Validate every accessed value and every result before the first write. */
@@ -41,7 +41,7 @@ int linear_rows_checked_f32(
         for (size_t c = 0; c < input_channels; ++c)
             if (!isfinite(input[r * input_stride + c])) return -1;
     for (size_t o = 0; o < output_channels; ++o) {
-        if (!isfinite(bias[o])) return -1;
+        if (bias && !isfinite(bias[o])) return -1;
         for (size_t c = 0; c < input_channels; ++c)
             if (!isfinite(weight[o * weight_stride + c])) return -1;
     }
@@ -49,13 +49,13 @@ int linear_rows_checked_f32(
         for (size_t o = 0; o < output_channels; ++o) {
             const double result = dot_bias(input + r * input_stride,
                                            weight + o * weight_stride,
-                                           input_channels, bias[o]);
+                                           input_channels, bias ? bias[o] : 0.0f);
             if (!isfinite(result) || fabs(result) > FLT_MAX) return -1;
         }
     for (size_t r = 0; r < rows; ++r)
         for (size_t o = 0; o < output_channels; ++o)
             output[r * output_stride + o] = (float)dot_bias(
                 input + r * input_stride, weight + o * weight_stride,
-                input_channels, bias[o]);
+                input_channels, bias ? bias[o] : 0.0f);
     return 0;
 }

@@ -1,0 +1,159 @@
+{
+  "id": "layout_token_to_head_checked_f32",
+  "op": "token_head_layout_checked",
+  "operation_interface": "layout.token_to_head.checked.fp32.v1",
+  "variant": "checked_scalar_fp32",
+  "selection": {
+    "status": "candidate",
+    "priority": 100,
+    "equivalence_group": "layout.token_to_head.checked.fp32.v1",
+    "phases": [
+      "prefill"
+    ]
+  },
+  "quant": {
+    "weight": "none",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {
+      "name": "input",
+      "dtype": "fp32",
+      "shape": [
+        "T",
+        "H",
+        "D"
+      ],
+      "layout": "token_major",
+      "placement": "local",
+      "access": "read",
+      "storage_class": "activation",
+      "consumption": "required"
+    }
+  ],
+  "weights": [],
+  "outputs": [
+    {
+      "name": "output",
+      "dtype": "fp32",
+      "shape": [
+        "T",
+        "H",
+        "D"
+      ],
+      "layout": "head_major",
+      "placement": "local",
+      "access": "write",
+      "storage_class": "activation",
+      "consumption": "required"
+    }
+  ],
+  "scratch": [],
+  "dims": [
+    "T",
+    "H",
+    "D"
+  ],
+  "impl": {
+    "function": "token_head_layout_checked_f32",
+    "c_declaration": "int token_head_layout_checked_f32(const float *input, size_t input_elements, float *output, size_t output_elements, size_t tokens, size_t heads, size_t head_dim, int head_to_token);",
+    "sources": [
+      "src/kernels/transformer_rows_checked.c"
+    ]
+  },
+  "modes": {
+    "inference": true,
+    "training": false,
+    "backward": false
+  },
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {
+        "name": "input",
+        "source": "activation:input",
+        "cast": "const float*",
+        "ports": [
+          "input:input"
+        ]
+      },
+      {
+        "name": "input_elements",
+        "source": "runtime:input_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "output",
+        "source": "output:output",
+        "cast": "float*",
+        "ports": [
+          "output:output"
+        ]
+      },
+      {
+        "name": "output_elements",
+        "source": "runtime:output_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "tokens",
+        "source": "runtime:tokens",
+        "value_type": "size_t"
+      },
+      {
+        "name": "heads",
+        "source": "runtime:heads",
+        "value_type": "size_t"
+      },
+      {
+        "name": "head_dim",
+        "source": "runtime:head_dim",
+        "value_type": "size_t"
+      },
+      {
+        "name": "head_to_token",
+        "source": "const:0"
+      }
+    ]
+  },
+  "tests": {
+    "unit": [
+      "tests/test_v8_qwen3_tts_first_block.py"
+    ]
+  },
+  "notes": "Checked exact FP32 token/head layout conversion for grouped-query attention.",
+  "call_constant_contract": {
+    "shape_symbols": {
+      "T": "tokens",
+      "H": "heads",
+      "D": "head_dim"
+    },
+    "buffer_spans": [
+      {
+        "pointer": "input",
+        "elements": "input_elements",
+        "rows": 1,
+        "width": "input_elements",
+        "element_bytes": 4,
+        "exact_elements_product": [
+          "tokens",
+          "heads",
+          "head_dim"
+        ]
+      },
+      {
+        "pointer": "output",
+        "elements": "output_elements",
+        "rows": 1,
+        "width": "output_elements",
+        "element_bytes": 4,
+        "exact_elements_product": [
+          "tokens",
+          "heads",
+          "head_dim"
+        ]
+      }
+    ]
+  }
+}
