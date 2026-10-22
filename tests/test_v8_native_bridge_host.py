@@ -1430,21 +1430,79 @@ class V8NativeBridgeHostTests(unittest.TestCase):
             "<bos><|turn>system\n<|think|>\n<turn|>\n<|turn>user\n"
             "<|image><image_embeds><image|>Explain this image.<turn|>\n<|turn>model\n",
         )
+        suppressed = bridge_runner_v8._format_multimodal_prompt_segments(
+            "Explain this image.", contract, include_image=True, thinking_mode="suppressed",
+        )
+        self.assertEqual(suppressed["before_text"], "<bos><|turn>user\n<|image>")
+        self.assertEqual(suppressed["after_text"], segments["after_text"])
 
-    def test_gemma4_text_prompt_uses_the_same_default_system_turn(self) -> None:
+    def test_gemma4_text_prompt_respects_thinking_mode(self) -> None:
         template_doc = build_ir_v8._load_builtin_template_doc("gemma4")
         self.assertIsNotNone(template_doc)
         contract = template_doc["contract"]["chat_contract"]
 
-        formatted = bridge_runner_v8._format_prompt_with_chat_contract(
+        visible = bridge_runner_v8._format_prompt_with_chat_contract(
+            "Hello.", contract, thinking_mode="visible",
+        )
+        auto = bridge_runner_v8._format_prompt_with_chat_contract(
+            "Hello.", contract, thinking_mode="auto",
+        )
+        suppressed = bridge_runner_v8._format_prompt_with_chat_contract(
             "Hello.", contract, thinking_mode="suppressed",
         )
 
         self.assertEqual(
-            formatted,
+            visible,
             "<bos><|turn>system\n<|think|>\n<turn|>\n"
             "<|turn>user\nHello.<turn|>\n<|turn>model\n",
         )
+        self.assertEqual(auto, visible)
+        self.assertEqual(
+            suppressed,
+            "<bos><|turn>user\nHello.<turn|>\n<|turn>model\n",
+        )
+        self.assertEqual(
+            bridge_runner_v8._format_prompt_with_chat_contract(
+                "Hello.", contract, thinking_mode="suppressed", system_prompt="Policy.",
+            ),
+            "<bos><|turn>system\nPolicy.<turn|>\n"
+            "<|turn>user\nHello.<turn|>\n<|turn>model\n",
+        )
+        self.assertEqual(
+            bridge_runner_v8._format_prompt_with_chat_contract(
+                "Hello.", contract, thinking_mode="visible", system_prompt="Policy.",
+            ),
+            "<bos><|turn>system\n<|think|>\nPolicy.<turn|>\n"
+            "<|turn>user\nHello.<turn|>\n<|turn>model\n",
+        )
+
+    def test_gemma4_generated_chat_uses_declared_default_mode(self) -> None:
+        cc = shutil.which("cc")
+        if not cc:
+            self.skipTest("C compiler unavailable")
+        template_doc = build_ir_v8._load_builtin_template_doc("gemma4")
+        contract = template_doc["contract"]["chat_contract"]
+        source = build_ir_v8._generate_chat_contract_c_api(contract)
+        with tempfile.TemporaryDirectory(prefix="gemma4_chat_contract_") as tmpdir:
+            library = Path(tmpdir) / "chat.so"
+            result = subprocess.run(
+                [cc, "-shared", "-fPIC", "-x", "c", "-", "-o", str(library)],
+                input="#include <string.h>\n#define CK_EXPORT\n" + source,
+                text=True, capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            formatter = ctypes.CDLL(str(library)).ck_model_format_chat
+            formatter.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int]
+            formatter.restype = ctypes.c_int
+            for system in (None, b"Policy."):
+                output = ctypes.create_string_buffer(256)
+                written = formatter(system, b"Hello.", output, len(output))
+                expected = bridge_runner_v8._format_prompt_with_chat_contract(
+                    "Hello.", contract, thinking_mode="auto",
+                    system_prompt=system.decode() if system else None,
+                )
+                self.assertEqual(written, len(expected))
+                self.assertEqual(output.value.decode(), expected)
 
     def test_prompt_segment_encoding_does_not_add_bos_after_image(self) -> None:
         class FakeTokenizer:

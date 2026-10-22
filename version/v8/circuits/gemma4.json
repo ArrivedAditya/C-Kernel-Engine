@@ -60,8 +60,12 @@
       },
       "system_prompt_mode": "dedicated_turn",
       "system_prompt_separator": "\n\n",
-      "default_system_prompt": "<|think|>\n",
-      "inject_default_system_prompt": true,
+      "default_system_prompt": "",
+      "system_prompt_prefix_by_thinking_mode": {
+        "visible": "<|think|>\n"
+      },
+      "inject_default_system_prompt": false,
+      "thinking_mode_default": "visible",
       "force_bos_text_if_tokenizer_add_bos_false": "<bos>",
       "last_user_prefix": "",
       "last_user_prefix_suppression_markers": [],
