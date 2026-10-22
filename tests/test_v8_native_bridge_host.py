@@ -1420,11 +1420,30 @@ class V8NativeBridgeHostTests(unittest.TestCase):
         )
 
         self.assertTrue(segments["uses_image_chunks"])
-        self.assertEqual(segments["before_text"], "<bos><|turn>user\n<|image>")
+        self.assertEqual(
+            segments["before_text"],
+            "<bos><|turn>system\n<|think|>\n<turn|>\n<|turn>user\n<|image>",
+        )
         self.assertEqual(segments["after_text"], "<image|>Explain this image.<turn|>\n<|turn>model\n")
         self.assertEqual(
             segments["formatted_prompt"],
-            "<bos><|turn>user\n<|image><image_embeds><image|>Explain this image.<turn|>\n<|turn>model\n",
+            "<bos><|turn>system\n<|think|>\n<turn|>\n<|turn>user\n"
+            "<|image><image_embeds><image|>Explain this image.<turn|>\n<|turn>model\n",
+        )
+
+    def test_gemma4_text_prompt_uses_the_same_default_system_turn(self) -> None:
+        template_doc = build_ir_v8._load_builtin_template_doc("gemma4")
+        self.assertIsNotNone(template_doc)
+        contract = template_doc["contract"]["chat_contract"]
+
+        formatted = bridge_runner_v8._format_prompt_with_chat_contract(
+            "Hello.", contract, thinking_mode="suppressed",
+        )
+
+        self.assertEqual(
+            formatted,
+            "<bos><|turn>system\n<|think|>\n<turn|>\n"
+            "<|turn>user\nHello.<turn|>\n<|turn>model\n",
         )
 
     def test_prompt_segment_encoding_does_not_add_bos_after_image(self) -> None:
