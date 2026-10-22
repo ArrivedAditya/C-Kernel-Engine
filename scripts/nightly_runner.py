@@ -739,6 +739,10 @@ TEST_SUITES = {
         "TTS Kokoro Extent and Duration Expansion", "kernels",
         ROOT / "tests" / "test_v8_kokoro_shape_bounds.py",
     ),
+    "tts_qwen3_customvoice_oracle_contract": TestSuite(
+        "Qwen3-TTS 0.6B CustomVoice Pinned Oracle Contract", "inference",
+        ROOT / "tests" / "test_v8_qwen3_tts_oracle_capture.py",
+    ),
     "tts_runtime_extent": TestSuite(
         "TTS Runtime Extent Kernels and Compiler Contract", "kernels",
         ROOT / "tests" / "test_v8_runtime_extent_kernel.py",
