@@ -5,12 +5,14 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "version/v8/kernel_maps",
     "counts": {
-      "total": 436,
+      "total": 445,
       "by_op": {
         "add_backward": 1,
+        "add_rows_checked": 1,
         "add_stream": 2,
         "assistant_layer_scale": 1,
         "attention": 38,
+        "attention_causal_bounded": 1,
         "attention_full_token_major_checked": 1,
         "attention_projection": 1,
         "attention_sliding": 13,
@@ -101,6 +103,7 @@
         "layout_transform": 1,
         "leaky_relu_strided_checked": 1,
         "linear_rows_checked": 1,
+        "linear_rows_checked_no_bias": 1,
         "logits_store_indexed": 1,
         "mamba_conv1d_state_update": 1,
         "mamba_dt_softplus": 1,
@@ -146,9 +149,11 @@
         "residual_add": 2,
         "residual_save": 1,
         "rmsnorm": 12,
+        "rmsnorm_rows_checked": 1,
         "rope": 19,
         "rope_backward": 2,
         "rope_init": 3,
+        "rope_qk_bounded": 1,
         "rowwise_bias_add": 1,
         "runtime_copy_valid": 1,
         "runtime_extent_affine": 1,
@@ -164,6 +169,8 @@
         "rwkv7_wkv_decode": 1,
         "shared_relu2_expert_mlp": 1,
         "shared_swiglu_expert_mlp": 6,
+        "silu_mul_rows_checked": 1,
+        "silu_strided_checked": 1,
         "softmax": 1,
         "spatial_merge": 3,
         "speculative_commit_or_reject": 1,
@@ -175,6 +182,7 @@
         "ssm_conv1d_backward": 1,
         "swiglu": 5,
         "tanh_strided_checked": 1,
+        "token_head_layout_checked": 2,
         "tokenizer": 1,
         "transpose_strided_checked": 1,
         "unweighted_rmsnorm": 1,
@@ -342,6 +350,167 @@
       "notes": "FP32 AdamW parameter update kernel.",
       "name": "adamw_update_f32",
       "_source_file": "adamw_update_f32.json"
+    },
+    {
+      "id": "add_rows_checked_f32",
+      "op": "add_rows_checked",
+      "operation_interface": "add.rows.checked.fp32.v1",
+      "variant": "checked_scalar_fp32",
+      "selection": {
+        "status": "candidate",
+        "priority": 100,
+        "equivalence_group": "add.rows.checked.fp32.v1",
+        "phases": [
+          "prefill"
+        ]
+      },
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "left",
+          "dtype": "fp32",
+          "shape": [
+            "N"
+          ],
+          "layout": "flat",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        },
+        {
+          "name": "right",
+          "dtype": "fp32",
+          "shape": [
+            "N"
+          ],
+          "layout": "flat",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "N"
+          ],
+          "layout": "flat",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "N"
+      ],
+      "impl": {
+        "function": "add_rows_checked_f32",
+        "c_declaration": "int add_rows_checked_f32(const float *left, size_t left_elements, const float *right, size_t right_elements, float *output, size_t output_elements, size_t elements);",
+        "sources": [
+          "src/kernels/transformer_rows_checked.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "left",
+            "source": "activation:left",
+            "cast": "const float*",
+            "ports": [
+              "input:left"
+            ]
+          },
+          {
+            "name": "left_elements",
+            "source": "runtime:left_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "right",
+            "source": "activation:right",
+            "cast": "const float*",
+            "ports": [
+              "input:right"
+            ]
+          },
+          {
+            "name": "right_elements",
+            "source": "runtime:right_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output",
+            "source": "output:output",
+            "cast": "float*",
+            "ports": [
+              "output:output"
+            ]
+          },
+          {
+            "name": "output_elements",
+            "source": "runtime:output_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "elements",
+            "source": "runtime:elements",
+            "value_type": "size_t"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "tests/test_v8_qwen3_tts_first_block.py"
+        ]
+      },
+      "notes": "Checked exact FP32 residual add with no heap allocation.",
+      "call_constant_contract": {
+        "shape_symbols": {
+          "N": "elements"
+        },
+        "buffer_spans": [
+          {
+            "pointer": "left",
+            "elements": "left_elements",
+            "rows": 1,
+            "width": "elements",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "right",
+            "elements": "right_elements",
+            "rows": 1,
+            "width": "elements",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "output",
+            "elements": "output_elements",
+            "rows": 1,
+            "width": "elements",
+            "element_bytes": 4
+          }
+        ]
+      },
+      "name": "add_rows_checked_f32",
+      "_source_file": "add_rows_checked_f32.json"
     },
     {
       "id": "add_stream_inplace",
@@ -683,6 +852,284 @@
       "notes": "GQA-aware causal attention backward reference kernel.",
       "name": "attention_backward_causal_head_major_gqa",
       "_source_file": "attention_backward_causal_head_major_gqa.json"
+    },
+    {
+      "id": "attention_causal_head_major_bounded_f32",
+      "op": "attention_causal_bounded",
+      "operation_interface": "attention.bounded_causal_gqa.fp32.v1",
+      "variant": "bounded_causal_gqa_fp32",
+      "selection": {
+        "status": "candidate",
+        "priority": 100,
+        "equivalence_group": "attention.bounded_causal_gqa.fp32.v1",
+        "phases": [
+          "prefill"
+        ]
+      },
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "layout": "head_major_contiguous",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        },
+        {
+          "name": "k",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "T",
+            "D"
+          ],
+          "layout": "head_major_contiguous",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        },
+        {
+          "name": "v",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "T",
+            "D"
+          ],
+          "layout": "head_major_contiguous",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "work",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "layout": "head_major_contiguous",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        },
+        {
+          "name": "out",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "layout": "head_major_contiguous",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "H",
+        "KV",
+        "T",
+        "D"
+      ],
+      "impl": {
+        "function": "attention_causal_bounded_checked_f32",
+        "c_declaration": "int attention_causal_bounded_checked_f32(const float *q, size_t q_elements, const float *k, size_t k_elements, const float *v, size_t v_elements, float *work, size_t work_elements, float *output, size_t output_elements, size_t heads, size_t kv_heads, size_t tokens, size_t head_dim);",
+        "sources": [
+          "src/kernels/transformer_rows_checked.c",
+          "src/kernels/attention_kernels.c",
+          "src/kernels/softmax_kernels.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "q",
+            "source": "activation:q",
+            "cast": "const float*",
+            "ports": [
+              "input:q"
+            ]
+          },
+          {
+            "name": "q_elements",
+            "source": "runtime:q_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "k",
+            "source": "activation:k",
+            "cast": "const float*",
+            "ports": [
+              "input:k"
+            ]
+          },
+          {
+            "name": "k_elements",
+            "source": "runtime:k_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "v",
+            "source": "activation:v",
+            "cast": "const float*",
+            "ports": [
+              "input:v"
+            ]
+          },
+          {
+            "name": "v_elements",
+            "source": "runtime:v_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "work",
+            "source": "output:work",
+            "cast": "float*",
+            "ports": [
+              "output:work"
+            ]
+          },
+          {
+            "name": "work_elements",
+            "source": "runtime:work_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output",
+            "source": "output:out",
+            "cast": "float*",
+            "ports": [
+              "output:out"
+            ]
+          },
+          {
+            "name": "output_elements",
+            "source": "runtime:output_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "heads",
+            "source": "runtime:heads",
+            "value_type": "size_t"
+          },
+          {
+            "name": "kv_heads",
+            "source": "runtime:kv_heads",
+            "value_type": "size_t"
+          },
+          {
+            "name": "tokens",
+            "source": "runtime:tokens",
+            "value_type": "size_t"
+          },
+          {
+            "name": "head_dim",
+            "source": "runtime:head_dim",
+            "value_type": "size_t"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "tests/test_v8_qwen3_tts_first_block.py"
+        ]
+      },
+      "notes": "Bounded causal FP32 grouped-query attention over current prompt only; no prior KV history.",
+      "call_constant_contract": {
+        "shape_symbols": {
+          "H": "heads",
+          "KV": "kv_heads",
+          "T": "tokens",
+          "D": "head_dim"
+        },
+        "buffer_spans": [
+          {
+            "pointer": "q",
+            "elements": "q_elements",
+            "rows": 1,
+            "width": "q_elements",
+            "element_bytes": 4,
+            "exact_elements_product": [
+              "heads",
+              "tokens",
+              "head_dim"
+            ]
+          },
+          {
+            "pointer": "k",
+            "elements": "k_elements",
+            "rows": 1,
+            "width": "k_elements",
+            "element_bytes": 4,
+            "exact_elements_product": [
+              "kv_heads",
+              "tokens",
+              "head_dim"
+            ]
+          },
+          {
+            "pointer": "v",
+            "elements": "v_elements",
+            "rows": 1,
+            "width": "v_elements",
+            "element_bytes": 4,
+            "exact_elements_product": [
+              "kv_heads",
+              "tokens",
+              "head_dim"
+            ]
+          },
+          {
+            "pointer": "work",
+            "elements": "work_elements",
+            "rows": 1,
+            "width": "work_elements",
+            "element_bytes": 4,
+            "exact_elements_product": [
+              "heads",
+              "tokens",
+              "head_dim"
+            ]
+          },
+          {
+            "pointer": "output",
+            "elements": "output_elements",
+            "rows": 1,
+            "width": "output_elements",
+            "element_bytes": 4,
+            "exact_elements_product": [
+              "heads",
+              "tokens",
+              "head_dim"
+            ]
+          }
+        ]
+      },
+      "name": "attention_causal_head_major_bounded_f32",
+      "_source_file": "attention_causal_head_major_bounded_f32.json"
     },
     {
       "id": "attention_forward_decode_head_major_gqa_flash",
@@ -48880,6 +49327,328 @@
       "_source_file": "layout_convert_token_to_head_f32.json"
     },
     {
+      "id": "layout_head_to_token_checked_f32",
+      "op": "token_head_layout_checked",
+      "operation_interface": "layout.head_to_token.checked.fp32.v1",
+      "variant": "checked_scalar_fp32",
+      "selection": {
+        "status": "candidate",
+        "priority": 100,
+        "equivalence_group": "layout.head_to_token.checked.fp32.v1",
+        "phases": [
+          "prefill"
+        ]
+      },
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "input",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "H",
+            "D"
+          ],
+          "layout": "head_major",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "H",
+            "D"
+          ],
+          "layout": "token_major",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "T",
+        "H",
+        "D"
+      ],
+      "impl": {
+        "function": "token_head_layout_checked_f32",
+        "c_declaration": "int token_head_layout_checked_f32(const float *input, size_t input_elements, float *output, size_t output_elements, size_t tokens, size_t heads, size_t head_dim, int head_to_token);",
+        "sources": [
+          "src/kernels/transformer_rows_checked.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "input",
+            "source": "activation:input",
+            "cast": "const float*",
+            "ports": [
+              "input:input"
+            ]
+          },
+          {
+            "name": "input_elements",
+            "source": "runtime:input_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output",
+            "source": "output:output",
+            "cast": "float*",
+            "ports": [
+              "output:output"
+            ]
+          },
+          {
+            "name": "output_elements",
+            "source": "runtime:output_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "tokens",
+            "source": "runtime:tokens",
+            "value_type": "size_t"
+          },
+          {
+            "name": "heads",
+            "source": "runtime:heads",
+            "value_type": "size_t"
+          },
+          {
+            "name": "head_dim",
+            "source": "runtime:head_dim",
+            "value_type": "size_t"
+          },
+          {
+            "name": "head_to_token",
+            "source": "const:1"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "tests/test_v8_qwen3_tts_first_block.py"
+        ]
+      },
+      "notes": "Checked exact FP32 token/head layout conversion for grouped-query attention.",
+      "call_constant_contract": {
+        "shape_symbols": {
+          "T": "tokens",
+          "H": "heads",
+          "D": "head_dim"
+        },
+        "buffer_spans": [
+          {
+            "pointer": "input",
+            "elements": "input_elements",
+            "rows": 1,
+            "width": "input_elements",
+            "element_bytes": 4,
+            "exact_elements_product": [
+              "tokens",
+              "heads",
+              "head_dim"
+            ]
+          },
+          {
+            "pointer": "output",
+            "elements": "output_elements",
+            "rows": 1,
+            "width": "output_elements",
+            "element_bytes": 4,
+            "exact_elements_product": [
+              "tokens",
+              "heads",
+              "head_dim"
+            ]
+          }
+        ]
+      },
+      "name": "layout_head_to_token_checked_f32",
+      "_source_file": "layout_head_to_token_checked_f32.json"
+    },
+    {
+      "id": "layout_token_to_head_checked_f32",
+      "op": "token_head_layout_checked",
+      "operation_interface": "layout.token_to_head.checked.fp32.v1",
+      "variant": "checked_scalar_fp32",
+      "selection": {
+        "status": "candidate",
+        "priority": 100,
+        "equivalence_group": "layout.token_to_head.checked.fp32.v1",
+        "phases": [
+          "prefill"
+        ]
+      },
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "input",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "H",
+            "D"
+          ],
+          "layout": "token_major",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "H",
+            "D"
+          ],
+          "layout": "head_major",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "T",
+        "H",
+        "D"
+      ],
+      "impl": {
+        "function": "token_head_layout_checked_f32",
+        "c_declaration": "int token_head_layout_checked_f32(const float *input, size_t input_elements, float *output, size_t output_elements, size_t tokens, size_t heads, size_t head_dim, int head_to_token);",
+        "sources": [
+          "src/kernels/transformer_rows_checked.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "input",
+            "source": "activation:input",
+            "cast": "const float*",
+            "ports": [
+              "input:input"
+            ]
+          },
+          {
+            "name": "input_elements",
+            "source": "runtime:input_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output",
+            "source": "output:output",
+            "cast": "float*",
+            "ports": [
+              "output:output"
+            ]
+          },
+          {
+            "name": "output_elements",
+            "source": "runtime:output_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "tokens",
+            "source": "runtime:tokens",
+            "value_type": "size_t"
+          },
+          {
+            "name": "heads",
+            "source": "runtime:heads",
+            "value_type": "size_t"
+          },
+          {
+            "name": "head_dim",
+            "source": "runtime:head_dim",
+            "value_type": "size_t"
+          },
+          {
+            "name": "head_to_token",
+            "source": "const:0"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "tests/test_v8_qwen3_tts_first_block.py"
+        ]
+      },
+      "notes": "Checked exact FP32 token/head layout conversion for grouped-query attention.",
+      "call_constant_contract": {
+        "shape_symbols": {
+          "T": "tokens",
+          "H": "heads",
+          "D": "head_dim"
+        },
+        "buffer_spans": [
+          {
+            "pointer": "input",
+            "elements": "input_elements",
+            "rows": 1,
+            "width": "input_elements",
+            "element_bytes": 4,
+            "exact_elements_product": [
+              "tokens",
+              "heads",
+              "head_dim"
+            ]
+          },
+          {
+            "pointer": "output",
+            "elements": "output_elements",
+            "rows": 1,
+            "width": "output_elements",
+            "element_bytes": 4,
+            "exact_elements_product": [
+              "tokens",
+              "heads",
+              "head_dim"
+            ]
+          }
+        ]
+      },
+      "name": "layout_token_to_head_checked_f32",
+      "_source_file": "layout_token_to_head_checked_f32.json"
+    },
+    {
       "id": "leaky_relu_strided_f32_checked",
       "op": "leaky_relu_strided_checked",
       "operation_interface": "activation.leaky_relu.checked.strided.fp32.v1",
@@ -49369,6 +50138,256 @@
       "notes": "Reusable checked linear operator for inference only; Kokoro ALBERT projection is one consumer. FP64 accumulation is deliberately distinct from PyTorch's FP32 reduction and uses an explicit numerical tolerance. Pinned first Kokoro ALBERT FFN projection at [36,2048] to [36,768] differs from PyTorch 2.8 FP32 by 3.814697265625e-5 on oracle-fed inputs while matching independently executed FP64 arithmetic exactly. Its new composition fixture declares its own 5e-5 absolute projection/residual bound and keeps normalized outputs at 1e-5; existing projection/QKV bounds remain unchanged. Direct pinned full-model SDPA hooks show that the first Q/K/V projections already differ in the connected graph before attention reduction; pinned PyTorch 2.8 same-input replay attributes up to 2.38e-6, 2.86e-6 and 1.55e-6, respectively, to this provider's local reduction contract. These observations do not identify a universally preferable reduction order. If a tighter PyTorch-dispatch match is required, add a separately named reduction provider/contract rather than modifying this FP64 provider.",
       "name": "linear_rows_checked_f32",
       "_source_file": "linear_rows_checked_f32.json"
+    },
+    {
+      "id": "linear_rows_checked_no_bias_f32",
+      "op": "linear_rows_checked_no_bias",
+      "operation_interface": "linear.row_major.checked.zero_bias.fp32.v1",
+      "variant": "strided_row_major_scalar_fp64_accumulation_zero_bias",
+      "selection": {
+        "status": "candidate",
+        "priority": 100,
+        "equivalence_group": "linear_rows_checked_zero_bias_fp32",
+        "phases": [
+          "prefill"
+        ]
+      },
+      "quant": {
+        "weight": "fp32",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "input",
+          "dtype": "fp32",
+          "shape": [
+            "M",
+            "K"
+          ],
+          "layout": "row_major_input_stride",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "weights": [
+        {
+          "name": "weight",
+          "dtype": "fp32",
+          "shape": [
+            "N",
+            "K"
+          ],
+          "layout": "row_major_weight_stride",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "weight",
+          "consumption": "required"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "M",
+            "N"
+          ],
+          "layout": "row_major_output_stride",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "input_elements",
+        "input_stride",
+        "weight_elements",
+        "weight_stride",
+        "bias_elements",
+        "output_elements",
+        "output_stride",
+        "rows",
+        "input_channels",
+        "output_channels"
+      ],
+      "constraints": {
+        "notes": "M, K, N positive; checked physical spans; nonaliasing caller-owned buffers; all accessed inputs and results finite. Rejection leaves all output unchanged. No allocation or global state."
+      },
+      "impl": {
+        "function": "linear_rows_checked_f32",
+        "c_declaration": "int linear_rows_checked_f32(const float *input, size_t input_elements, size_t input_stride, const float *weight, size_t weight_elements, size_t weight_stride, const float *bias, size_t bias_elements, float *output, size_t output_elements, size_t output_stride, size_t rows, size_t input_channels, size_t output_channels);",
+        "sources": [
+          "src/kernels/linear_rows_checked.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "call_constant_contract": {
+        "shape_symbols": {
+          "M": "linear_rows",
+          "K": "linear_input_channels",
+          "N": "linear_output_channels"
+        },
+        "buffer_spans": [
+          {
+            "pointer": "input",
+            "elements": "linear_input_elements",
+            "stride": "linear_input_stride",
+            "physical_row_stride": true,
+            "rows": "linear_rows",
+            "width": "linear_input_channels",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "weight",
+            "elements": "linear_weight_elements",
+            "stride": "linear_weight_stride",
+            "rows": "linear_output_channels",
+            "width": "linear_input_channels",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "output",
+            "elements": "linear_output_elements",
+            "stride": "linear_output_stride",
+            "physical_row_stride": true,
+            "rows": "linear_rows",
+            "width": "linear_output_channels",
+            "element_bytes": 4
+          }
+        ]
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "linear_rows_checked_no_bias_f32_scalar_fp64_accumulation",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "linear_rows_checked_f32",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp64",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "serial"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "input",
+            "source": "activation:input",
+            "cast": "const float*",
+            "ports": [
+              "input:input"
+            ]
+          },
+          {
+            "name": "input_elements",
+            "source": "runtime:linear_input_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "input_stride",
+            "source": "runtime:linear_input_stride",
+            "value_type": "size_t"
+          },
+          {
+            "name": "weight",
+            "source": "weight:weight",
+            "cast": "const float*",
+            "ports": [
+              "weight:weight"
+            ]
+          },
+          {
+            "name": "weight_elements",
+            "source": "runtime:linear_weight_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "weight_stride",
+            "source": "runtime:linear_weight_stride",
+            "value_type": "size_t"
+          },
+          {
+            "name": "bias",
+            "source": "null",
+            "cast": "const float*"
+          },
+          {
+            "name": "bias_elements",
+            "source": "const:0"
+          },
+          {
+            "name": "output",
+            "source": "output:output",
+            "cast": "float*",
+            "ports": [
+              "output:output"
+            ]
+          },
+          {
+            "name": "output_elements",
+            "source": "runtime:linear_output_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output_stride",
+            "source": "runtime:linear_output_stride",
+            "value_type": "size_t"
+          },
+          {
+            "name": "rows",
+            "source": "runtime:linear_rows",
+            "value_type": "size_t"
+          },
+          {
+            "name": "input_channels",
+            "source": "runtime:linear_input_channels",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output_channels",
+            "source": "runtime:linear_output_channels",
+            "value_type": "size_t"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "tests/test_v8_qwen3_tts_first_block.py"
+        ],
+        "oracle": "Pinned Qwen3-TTS 0.6B CustomVoice FP32 first-layer projections"
+      },
+      "notes": "Same checked FP64 reduction as linear_rows_checked_f32, with an explicit zero-bias ABI. No full-model dequantization.",
+      "name": "linear_rows_checked_no_bias_f32",
+      "_source_file": "linear_rows_checked_no_bias_f32.json"
     },
     {
       "id": "logits_copy_to_position",
@@ -73412,6 +74431,201 @@
       "_source_file": "rmsnorm_no_weight.json"
     },
     {
+      "id": "rmsnorm_rows_checked_f32",
+      "op": "rmsnorm_rows_checked",
+      "operation_interface": "rmsnorm.checked_rows.fp32.v1",
+      "variant": "checked_scalar_fp32",
+      "selection": {
+        "status": "candidate",
+        "priority": 100,
+        "equivalence_group": "rmsnorm.checked_rows.fp32.v1",
+        "phases": [
+          "prefill"
+        ]
+      },
+      "quant": {
+        "weight": "fp32",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "input",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "C"
+          ],
+          "layout": "row_major_strided",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "weights": [
+        {
+          "name": "gamma",
+          "dtype": "fp32",
+          "shape": [
+            "C"
+          ],
+          "layout": "feature_contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "weight",
+          "consumption": "required"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "C"
+          ],
+          "layout": "row_major_strided",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "R",
+        "C"
+      ],
+      "impl": {
+        "function": "rmsnorm_rows_checked_f32",
+        "c_declaration": "int rmsnorm_rows_checked_f32(const float *input, size_t input_elements, size_t input_stride, const float *gamma, size_t gamma_elements, float *output, size_t output_elements, size_t output_stride, size_t rows, size_t width, float eps);",
+        "sources": [
+          "src/kernels/transformer_rows_checked.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "input",
+            "source": "activation:input",
+            "cast": "const float*",
+            "ports": [
+              "input:input"
+            ]
+          },
+          {
+            "name": "input_elements",
+            "source": "runtime:input_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "input_stride",
+            "source": "runtime:input_stride",
+            "value_type": "size_t"
+          },
+          {
+            "name": "gamma",
+            "source": "weight:gamma",
+            "cast": "const float*",
+            "ports": [
+              "weight:gamma"
+            ]
+          },
+          {
+            "name": "gamma_elements",
+            "source": "runtime:gamma_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output",
+            "source": "output:output",
+            "cast": "float*",
+            "ports": [
+              "output:output"
+            ]
+          },
+          {
+            "name": "output_elements",
+            "source": "runtime:output_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output_stride",
+            "source": "runtime:output_stride",
+            "value_type": "size_t"
+          },
+          {
+            "name": "rows",
+            "source": "runtime:rows",
+            "value_type": "size_t"
+          },
+          {
+            "name": "width",
+            "source": "runtime:width",
+            "value_type": "size_t"
+          },
+          {
+            "name": "eps",
+            "source": "param:eps"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "tests/test_v8_qwen3_tts_first_block.py"
+        ]
+      },
+      "notes": "Checked FP32 row RMSNorm with independent strides and no heap allocation.",
+      "call_constant_contract": {
+        "shape_symbols": {
+          "R": "rows",
+          "C": "width"
+        },
+        "buffer_spans": [
+          {
+            "pointer": "input",
+            "elements": "input_elements",
+            "rows": "rows",
+            "width": "width",
+            "element_bytes": 4,
+            "stride": "input_stride",
+            "exact_elements_product": [
+              "rows",
+              "width"
+            ]
+          },
+          {
+            "pointer": "gamma",
+            "elements": "gamma_elements",
+            "rows": 1,
+            "width": "width",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "output",
+            "elements": "output_elements",
+            "rows": "rows",
+            "width": "width",
+            "element_bytes": 4,
+            "stride": "output_stride",
+            "exact_elements_product": [
+              "rows",
+              "width"
+            ]
+          }
+        ]
+      },
+      "name": "rmsnorm_rows_checked_f32",
+      "_source_file": "rmsnorm_rows_checked_f32.json"
+    },
+    {
       "id": "rope_backward_qk_f32",
       "op": "rope_backward",
       "operation_interface": "rope_backward.half_split.fp32.v1",
@@ -76596,6 +77810,208 @@
       "_source_file": "rope_precompute_cache_split.json"
     },
     {
+      "id": "rope_qk_split_bounded_f32",
+      "op": "rope_qk_bounded",
+      "operation_interface": "rope.bounded_split_direct.fp32.v1",
+      "variant": "bounded_split_half_direct_fp32",
+      "selection": {
+        "status": "candidate",
+        "priority": 100,
+        "equivalence_group": "rope.bounded_split_direct.fp32.v1",
+        "phases": [
+          "prefill"
+        ]
+      },
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "layout": "head_major_contiguous",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        },
+        {
+          "name": "k",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "T",
+            "D"
+          ],
+          "layout": "head_major_contiguous",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "layout": "head_major_contiguous",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required",
+          "alias_of": "input:q"
+        },
+        {
+          "name": "k",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "T",
+            "D"
+          ],
+          "layout": "head_major_contiguous",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required",
+          "alias_of": "input:k"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "H",
+        "KV",
+        "T",
+        "D"
+      ],
+      "impl": {
+        "function": "rope_qk_bounded_checked_f32",
+        "c_declaration": "int rope_qk_bounded_checked_f32(float *q, size_t q_elements, float *k, size_t k_elements, size_t heads, size_t kv_heads, size_t tokens, size_t head_dim, size_t pos_offset, float freq_base);",
+        "sources": [
+          "src/kernels/transformer_rows_checked.c",
+          "src/kernels/rope_kernels.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "q",
+            "source": "activation:q",
+            "cast": "float*",
+            "ports": [
+              "input:q",
+              "output:q"
+            ]
+          },
+          {
+            "name": "q_elements",
+            "source": "runtime:q_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "k",
+            "source": "activation:k",
+            "cast": "float*",
+            "ports": [
+              "input:k",
+              "output:k"
+            ]
+          },
+          {
+            "name": "k_elements",
+            "source": "runtime:k_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "heads",
+            "source": "runtime:heads",
+            "value_type": "size_t"
+          },
+          {
+            "name": "kv_heads",
+            "source": "runtime:kv_heads",
+            "value_type": "size_t"
+          },
+          {
+            "name": "tokens",
+            "source": "runtime:tokens",
+            "value_type": "size_t"
+          },
+          {
+            "name": "head_dim",
+            "source": "runtime:head_dim",
+            "value_type": "size_t"
+          },
+          {
+            "name": "pos_offset",
+            "source": "runtime:pos_offset",
+            "value_type": "size_t"
+          },
+          {
+            "name": "freq_base",
+            "source": "param:freq_base"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "tests/test_v8_qwen3_tts_first_block.py"
+        ]
+      },
+      "notes": "Generic split-half RoPE; bounded text-only M-RoPE uses identical temporal/height/width positions. No frequency factors.",
+      "call_constant_contract": {
+        "shape_symbols": {
+          "H": "heads",
+          "KV": "kv_heads",
+          "T": "tokens",
+          "D": "head_dim"
+        },
+        "buffer_spans": [
+          {
+            "pointer": "q",
+            "elements": "q_elements",
+            "rows": 1,
+            "width": "q_elements",
+            "element_bytes": 4,
+            "exact_elements_product": [
+              "heads",
+              "tokens",
+              "head_dim"
+            ]
+          },
+          {
+            "pointer": "k",
+            "elements": "k_elements",
+            "rows": 1,
+            "width": "k_elements",
+            "element_bytes": 4,
+            "exact_elements_product": [
+              "kv_heads",
+              "tokens",
+              "head_dim"
+            ]
+          }
+        ]
+      },
+      "name": "rope_qk_split_bounded_f32",
+      "_source_file": "rope_qk_split_bounded_f32.json"
+    },
+    {
       "id": "rowwise_bias_add",
       "op": "rowwise_bias_add",
       "variant": "fp32_token_major",
@@ -79661,6 +81077,355 @@
       },
       "name": "rwkv7_wkv_decode_f32",
       "_source_file": "rwkv7_wkv_decode_f32.json"
+    },
+    {
+      "id": "silu_mul_rows_checked_f32",
+      "op": "silu_mul_rows_checked",
+      "operation_interface": "swiglu.separate_rows.checked.fp32.v1",
+      "variant": "checked_scalar_fp32",
+      "selection": {
+        "status": "candidate",
+        "priority": 100,
+        "equivalence_group": "swiglu.separate_rows.checked.fp32.v1",
+        "phases": [
+          "prefill"
+        ]
+      },
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "gate",
+          "dtype": "fp32",
+          "shape": [
+            "N"
+          ],
+          "layout": "flat",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        },
+        {
+          "name": "up",
+          "dtype": "fp32",
+          "shape": [
+            "N"
+          ],
+          "layout": "flat",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "N"
+          ],
+          "layout": "flat",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "N"
+      ],
+      "impl": {
+        "function": "silu_mul_rows_checked_f32",
+        "c_declaration": "int silu_mul_rows_checked_f32(const float *gate, size_t gate_elements, const float *up, size_t up_elements, float *output, size_t output_elements, size_t elements);",
+        "sources": [
+          "src/kernels/transformer_rows_checked.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "gate",
+            "source": "activation:gate",
+            "cast": "const float*",
+            "ports": [
+              "input:gate"
+            ]
+          },
+          {
+            "name": "gate_elements",
+            "source": "runtime:gate_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "up",
+            "source": "activation:up",
+            "cast": "const float*",
+            "ports": [
+              "input:up"
+            ]
+          },
+          {
+            "name": "up_elements",
+            "source": "runtime:up_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output",
+            "source": "output:output",
+            "cast": "float*",
+            "ports": [
+              "output:output"
+            ]
+          },
+          {
+            "name": "output_elements",
+            "source": "runtime:output_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "elements",
+            "source": "runtime:elements",
+            "value_type": "size_t"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "tests/test_v8_qwen3_tts_first_block.py"
+        ]
+      },
+      "notes": "Checked FP32 scalar SiLU(gate) times up, with separate operands and no heap allocation.",
+      "call_constant_contract": {
+        "shape_symbols": {
+          "N": "elements"
+        },
+        "buffer_spans": [
+          {
+            "pointer": "gate",
+            "elements": "gate_elements",
+            "rows": 1,
+            "width": "elements",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "up",
+            "elements": "up_elements",
+            "rows": 1,
+            "width": "elements",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "output",
+            "elements": "output_elements",
+            "rows": 1,
+            "width": "elements",
+            "element_bytes": 4
+          }
+        ]
+      },
+      "name": "silu_mul_rows_checked_f32",
+      "_source_file": "silu_mul_rows_checked_f32.json"
+    },
+    {
+      "id": "silu_strided_f32_checked",
+      "op": "silu_strided_checked",
+      "operation_interface": "activation.silu.checked.strided.fp32.v1",
+      "variant": "checked_scalar_strided",
+      "selection": {
+        "status": "candidate",
+        "priority": 100,
+        "equivalence_group": "silu_strided_f32_checked",
+        "phases": [
+          "prefill"
+        ]
+      },
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "input",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "C"
+          ],
+          "layout": "row_major_strided",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "C"
+          ],
+          "layout": "row_major_strided",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "input_elements",
+        "input_stride",
+        "output_elements",
+        "output_stride",
+        "rows",
+        "columns"
+      ],
+      "impl": {
+        "function": "silu_strided_f32_checked",
+        "c_declaration": "int silu_strided_f32_checked(const float *input, size_t input_elements, size_t input_stride, float *output, size_t output_elements, size_t output_stride, size_t rows, size_t columns);",
+        "sources": [
+          "src/kernels/strided_unary_checked.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "silu_strided_f32_checked_fp32_libm",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "silu_strided_f32_checked",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "none",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "serial"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "input",
+            "source": "activation:input",
+            "cast": "const float*",
+            "ports": [
+              "input:input"
+            ]
+          },
+          {
+            "name": "input_elements",
+            "source": "runtime:silu_input_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "input_stride",
+            "source": "runtime:silu_input_stride",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output",
+            "source": "output:output",
+            "cast": "float*",
+            "ports": [
+              "output:output"
+            ]
+          },
+          {
+            "name": "output_elements",
+            "source": "runtime:silu_output_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output_stride",
+            "source": "runtime:silu_output_stride",
+            "value_type": "size_t"
+          },
+          {
+            "name": "rows",
+            "source": "runtime:silu_rows",
+            "value_type": "size_t"
+          },
+          {
+            "name": "columns",
+            "source": "runtime:silu_columns",
+            "value_type": "size_t"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "tests/test_v8_qwen3_tts_first_block.py"
+        ],
+        "oracle": "Pinned Qwen3-TTS CustomVoice FP32 projection and independent scalar SiLU reference"
+      },
+      "notes": "Checked generic strided FP32 SiLU, scalar expf arithmetic. Rejects nonfinite inputs and insufficient capacity before writes; output padding remains untouched.",
+      "call_constant_contract": {
+        "shape_symbols": {
+          "R": "silu_rows",
+          "C": "silu_columns"
+        },
+        "buffer_spans": [
+          {
+            "pointer": "input",
+            "elements": "silu_input_elements",
+            "rows": "silu_rows",
+            "width": "silu_columns",
+            "element_bytes": 4,
+            "stride": "silu_input_stride",
+            "physical_row_stride": true
+          },
+          {
+            "pointer": "output",
+            "elements": "silu_output_elements",
+            "rows": "silu_rows",
+            "width": "silu_columns",
+            "element_bytes": 4,
+            "stride": "silu_output_stride",
+            "physical_row_stride": true
+          }
+        ]
+      },
+      "name": "silu_strided_f32_checked",
+      "_source_file": "silu_strided_f32_checked.json"
     },
     {
       "id": "softmax_cross_entropy_loss",

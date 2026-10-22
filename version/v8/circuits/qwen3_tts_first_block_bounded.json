@@ -1,0 +1,805 @@
+{
+  "version": 3,
+  "name": "qwen3_tts_first_block_bounded",
+  "family": "bounded_graph",
+  "checked_native_entry": true,
+  "contract": {
+    "runtime_invariants": {
+      "inference_only": true,
+      "production_kernel_heap_allocation": false,
+      "tokens": 18,
+      "oracle_fed_block_input": true,
+      "complete_talker": false,
+      "complete_synthesis": false
+    }
+  },
+  "activation_buffers": {
+    "block_input": {
+      "shape": [
+        18,
+        1024
+      ]
+    },
+    "input_norm": {
+      "shape": [
+        18,
+        1024
+      ]
+    },
+    "q_proj": {
+      "shape": [
+        18,
+        2048
+      ]
+    },
+    "k_proj": {
+      "shape": [
+        18,
+        1024
+      ]
+    },
+    "v_proj": {
+      "shape": [
+        18,
+        1024
+      ]
+    },
+    "q_norm": {
+      "shape": [
+        18,
+        2048
+      ]
+    },
+    "k_norm": {
+      "shape": [
+        18,
+        1024
+      ]
+    },
+    "q_head": {
+      "shape": [
+        16,
+        18,
+        128
+      ]
+    },
+    "k_head": {
+      "shape": [
+        8,
+        18,
+        128
+      ]
+    },
+    "v_head": {
+      "shape": [
+        8,
+        18,
+        128
+      ]
+    },
+    "attention_work": {
+      "shape": [
+        16,
+        18,
+        128
+      ]
+    },
+    "attention_head": {
+      "shape": [
+        16,
+        18,
+        128
+      ]
+    },
+    "attention_token": {
+      "shape": [
+        18,
+        2048
+      ]
+    },
+    "attention_proj": {
+      "shape": [
+        18,
+        1024
+      ]
+    },
+    "post_attention": {
+      "shape": [
+        18,
+        1024
+      ]
+    },
+    "post_attention_norm": {
+      "shape": [
+        18,
+        1024
+      ]
+    },
+    "gate_proj": {
+      "shape": [
+        18,
+        3072
+      ]
+    },
+    "up_proj": {
+      "shape": [
+        18,
+        3072
+      ]
+    },
+    "gated_mlp": {
+      "shape": [
+        18,
+        3072
+      ]
+    },
+    "down_proj": {
+      "shape": [
+        18,
+        1024
+      ]
+    },
+    "block_output": {
+      "shape": [
+        18,
+        1024
+      ]
+    }
+  },
+  "activation_bindings": {
+    "block_input": "block_input",
+    "input_norm": "input_norm",
+    "q_proj": "q_proj",
+    "k_proj": "k_proj",
+    "v_proj": "v_proj",
+    "q_norm": "q_norm",
+    "k_norm": "k_norm",
+    "q_head": "q_head",
+    "k_head": "k_head",
+    "v_head": "v_head",
+    "attention_work": "attention_work",
+    "attention_head": "attention_head",
+    "attention_token": "attention_token",
+    "attention_proj": "attention_proj",
+    "post_attention": "post_attention",
+    "post_attention_norm": "post_attention_norm",
+    "gate_proj": "gate_proj",
+    "up_proj": "up_proj",
+    "gated_mlp": "gated_mlp",
+    "down_proj": "down_proj",
+    "block_output": "block_output"
+  },
+  "native_entry": {
+    "function": "ck_qwen3_tts_first_block_bounded",
+    "params": [
+      {
+        "c_type": "uint8_t *",
+        "name": "arena"
+      },
+      {
+        "c_type": "size_t",
+        "name": "arena_bytes"
+      }
+    ],
+    "arena": {
+      "pointer": "arena",
+      "bytes": "arena_bytes"
+    }
+  },
+  "sequence": [
+    "first_block"
+  ],
+  "block_types": {
+    "first_block": {
+      "sequence": [
+        "header",
+        "body",
+        "footer"
+      ],
+      "header": [],
+      "body": {
+        "type": "dense",
+        "ops": [
+          {
+            "id": "input_norm",
+            "op": "rmsnorm_rows_checked",
+            "kernel": "rmsnorm_rows_checked_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "input": "external:block_input"
+              },
+              "outputs": {
+                "output": "input_norm"
+              }
+            },
+            "weight_refs": {
+              "gamma": "talker.model.layers.0.input_layernorm.weight"
+            },
+            "params": {
+              "R": 18,
+              "C": 1024,
+              "eps": 1e-06,
+              "call_constants": {
+                "input_elements": 18432,
+                "input_stride": 1024,
+                "gamma_elements": 1024,
+                "output_elements": 18432,
+                "output_stride": 1024,
+                "rows": 18,
+                "width": 1024
+              }
+            }
+          },
+          {
+            "id": "q_proj",
+            "op": "linear_rows_checked_no_bias",
+            "kernel": "linear_rows_checked_no_bias_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "input": "input_norm"
+              },
+              "outputs": {
+                "output": "q_proj"
+              }
+            },
+            "weight_refs": {
+              "weight": "talker.model.layers.0.self_attn.q_proj.weight"
+            },
+            "params": {
+              "M": 18,
+              "K": 1024,
+              "N": 2048,
+              "call_constants": {
+                "linear_input_elements": 18432,
+                "linear_input_stride": 1024,
+                "linear_weight_elements": 2097152,
+                "linear_weight_stride": 1024,
+                "linear_output_elements": 36864,
+                "linear_output_stride": 2048,
+                "linear_rows": 18,
+                "linear_input_channels": 1024,
+                "linear_output_channels": 2048
+              }
+            }
+          },
+          {
+            "id": "k_proj",
+            "op": "linear_rows_checked_no_bias",
+            "kernel": "linear_rows_checked_no_bias_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "input": "input_norm"
+              },
+              "outputs": {
+                "output": "k_proj"
+              }
+            },
+            "weight_refs": {
+              "weight": "talker.model.layers.0.self_attn.k_proj.weight"
+            },
+            "params": {
+              "M": 18,
+              "K": 1024,
+              "N": 1024,
+              "call_constants": {
+                "linear_input_elements": 18432,
+                "linear_input_stride": 1024,
+                "linear_weight_elements": 1048576,
+                "linear_weight_stride": 1024,
+                "linear_output_elements": 18432,
+                "linear_output_stride": 1024,
+                "linear_rows": 18,
+                "linear_input_channels": 1024,
+                "linear_output_channels": 1024
+              }
+            }
+          },
+          {
+            "id": "v_proj",
+            "op": "linear_rows_checked_no_bias",
+            "kernel": "linear_rows_checked_no_bias_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "input": "input_norm"
+              },
+              "outputs": {
+                "output": "v_proj"
+              }
+            },
+            "weight_refs": {
+              "weight": "talker.model.layers.0.self_attn.v_proj.weight"
+            },
+            "params": {
+              "M": 18,
+              "K": 1024,
+              "N": 1024,
+              "call_constants": {
+                "linear_input_elements": 18432,
+                "linear_input_stride": 1024,
+                "linear_weight_elements": 1048576,
+                "linear_weight_stride": 1024,
+                "linear_output_elements": 18432,
+                "linear_output_stride": 1024,
+                "linear_rows": 18,
+                "linear_input_channels": 1024,
+                "linear_output_channels": 1024
+              }
+            }
+          },
+          {
+            "id": "q_norm",
+            "op": "rmsnorm_rows_checked",
+            "kernel": "rmsnorm_rows_checked_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "input": "q_proj"
+              },
+              "outputs": {
+                "output": "q_norm"
+              }
+            },
+            "weight_refs": {
+              "gamma": "talker.model.layers.0.self_attn.q_norm.weight"
+            },
+            "params": {
+              "R": 288,
+              "C": 128,
+              "eps": 1e-06,
+              "call_constants": {
+                "input_elements": 36864,
+                "input_stride": 128,
+                "gamma_elements": 128,
+                "output_elements": 36864,
+                "output_stride": 128,
+                "rows": 288,
+                "width": 128
+              }
+            }
+          },
+          {
+            "id": "k_norm",
+            "op": "rmsnorm_rows_checked",
+            "kernel": "rmsnorm_rows_checked_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "input": "k_proj"
+              },
+              "outputs": {
+                "output": "k_norm"
+              }
+            },
+            "weight_refs": {
+              "gamma": "talker.model.layers.0.self_attn.k_norm.weight"
+            },
+            "params": {
+              "R": 144,
+              "C": 128,
+              "eps": 1e-06,
+              "call_constants": {
+                "input_elements": 18432,
+                "input_stride": 128,
+                "gamma_elements": 128,
+                "output_elements": 18432,
+                "output_stride": 128,
+                "rows": 144,
+                "width": 128
+              }
+            }
+          },
+          {
+            "id": "q_head",
+            "op": "token_head_layout_checked",
+            "kernel": "layout_token_to_head_checked_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "input": "q_norm"
+              },
+              "outputs": {
+                "output": "q_head"
+              }
+            },
+            "params": {
+              "T": 18,
+              "H": 16,
+              "D": 128,
+              "call_constants": {
+                "input_elements": 36864,
+                "output_elements": 36864,
+                "tokens": 18,
+                "heads": 16,
+                "head_dim": 128
+              }
+            }
+          },
+          {
+            "id": "k_head",
+            "op": "token_head_layout_checked",
+            "kernel": "layout_token_to_head_checked_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "input": "k_norm"
+              },
+              "outputs": {
+                "output": "k_head"
+              }
+            },
+            "params": {
+              "T": 18,
+              "H": 8,
+              "D": 128,
+              "call_constants": {
+                "input_elements": 18432,
+                "output_elements": 18432,
+                "tokens": 18,
+                "heads": 8,
+                "head_dim": 128
+              }
+            }
+          },
+          {
+            "id": "v_head",
+            "op": "token_head_layout_checked",
+            "kernel": "layout_token_to_head_checked_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "input": "v_proj"
+              },
+              "outputs": {
+                "output": "v_head"
+              }
+            },
+            "params": {
+              "T": 18,
+              "H": 8,
+              "D": 128,
+              "call_constants": {
+                "input_elements": 18432,
+                "output_elements": 18432,
+                "tokens": 18,
+                "heads": 8,
+                "head_dim": 128
+              }
+            }
+          },
+          {
+            "id": "rope_qk",
+            "op": "rope_qk_bounded",
+            "kernel": "rope_qk_split_bounded_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "q": "q_head",
+                "k": "k_head"
+              },
+              "outputs": {
+                "q": "q_head",
+                "k": "k_head"
+              }
+            },
+            "params": {
+              "H": 16,
+              "KV": 8,
+              "T": 18,
+              "D": 128,
+              "freq_base": 1000000.0,
+              "call_constants": {
+                "q_elements": 36864,
+                "k_elements": 18432,
+                "heads": 16,
+                "kv_heads": 8,
+                "tokens": 18,
+                "head_dim": 128,
+                "pos_offset": 0
+              }
+            }
+          },
+          {
+            "id": "attention_head",
+            "op": "attention_causal_bounded",
+            "kernel": "attention_causal_head_major_bounded_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "q": "q_head",
+                "k": "k_head",
+                "v": "v_head"
+              },
+              "outputs": {
+                "work": "attention_work",
+                "out": "attention_head"
+              }
+            },
+            "params": {
+              "H": 16,
+              "KV": 8,
+              "T": 18,
+              "D": 128,
+              "call_constants": {
+                "q_elements": 36864,
+                "k_elements": 18432,
+                "v_elements": 18432,
+                "work_elements": 36864,
+                "output_elements": 36864,
+                "heads": 16,
+                "kv_heads": 8,
+                "tokens": 18,
+                "head_dim": 128
+              }
+            }
+          },
+          {
+            "id": "attention_token",
+            "op": "token_head_layout_checked",
+            "kernel": "layout_head_to_token_checked_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "input": "attention_head"
+              },
+              "outputs": {
+                "output": "attention_token"
+              }
+            },
+            "params": {
+              "T": 18,
+              "H": 16,
+              "D": 128,
+              "call_constants": {
+                "input_elements": 36864,
+                "output_elements": 36864,
+                "tokens": 18,
+                "heads": 16,
+                "head_dim": 128
+              }
+            }
+          },
+          {
+            "id": "attention_proj",
+            "op": "linear_rows_checked_no_bias",
+            "kernel": "linear_rows_checked_no_bias_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "input": "attention_token"
+              },
+              "outputs": {
+                "output": "attention_proj"
+              }
+            },
+            "weight_refs": {
+              "weight": "talker.model.layers.0.self_attn.o_proj.weight"
+            },
+            "params": {
+              "M": 18,
+              "K": 2048,
+              "N": 1024,
+              "call_constants": {
+                "linear_input_elements": 36864,
+                "linear_input_stride": 2048,
+                "linear_weight_elements": 2097152,
+                "linear_weight_stride": 2048,
+                "linear_output_elements": 18432,
+                "linear_output_stride": 1024,
+                "linear_rows": 18,
+                "linear_input_channels": 2048,
+                "linear_output_channels": 1024
+              }
+            }
+          },
+          {
+            "id": "post_attention",
+            "op": "add_rows_checked",
+            "kernel": "add_rows_checked_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "left": "external:block_input",
+                "right": "attention_proj"
+              },
+              "outputs": {
+                "output": "post_attention"
+              }
+            },
+            "params": {
+              "N": 18432,
+              "call_constants": {
+                "left_elements": 18432,
+                "right_elements": 18432,
+                "output_elements": 18432,
+                "elements": 18432
+              }
+            }
+          },
+          {
+            "id": "post_attention_norm",
+            "op": "rmsnorm_rows_checked",
+            "kernel": "rmsnorm_rows_checked_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "input": "post_attention"
+              },
+              "outputs": {
+                "output": "post_attention_norm"
+              }
+            },
+            "weight_refs": {
+              "gamma": "talker.model.layers.0.post_attention_layernorm.weight"
+            },
+            "params": {
+              "R": 18,
+              "C": 1024,
+              "eps": 1e-06,
+              "call_constants": {
+                "input_elements": 18432,
+                "input_stride": 1024,
+                "gamma_elements": 1024,
+                "output_elements": 18432,
+                "output_stride": 1024,
+                "rows": 18,
+                "width": 1024
+              }
+            }
+          },
+          {
+            "id": "gate_proj",
+            "op": "linear_rows_checked_no_bias",
+            "kernel": "linear_rows_checked_no_bias_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "input": "post_attention_norm"
+              },
+              "outputs": {
+                "output": "gate_proj"
+              }
+            },
+            "weight_refs": {
+              "weight": "talker.model.layers.0.mlp.gate_proj.weight"
+            },
+            "params": {
+              "M": 18,
+              "K": 1024,
+              "N": 3072,
+              "call_constants": {
+                "linear_input_elements": 18432,
+                "linear_input_stride": 1024,
+                "linear_weight_elements": 3145728,
+                "linear_weight_stride": 1024,
+                "linear_output_elements": 55296,
+                "linear_output_stride": 3072,
+                "linear_rows": 18,
+                "linear_input_channels": 1024,
+                "linear_output_channels": 3072
+              }
+            }
+          },
+          {
+            "id": "up_proj",
+            "op": "linear_rows_checked_no_bias",
+            "kernel": "linear_rows_checked_no_bias_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "input": "post_attention_norm"
+              },
+              "outputs": {
+                "output": "up_proj"
+              }
+            },
+            "weight_refs": {
+              "weight": "talker.model.layers.0.mlp.up_proj.weight"
+            },
+            "params": {
+              "M": 18,
+              "K": 1024,
+              "N": 3072,
+              "call_constants": {
+                "linear_input_elements": 18432,
+                "linear_input_stride": 1024,
+                "linear_weight_elements": 3145728,
+                "linear_weight_stride": 1024,
+                "linear_output_elements": 55296,
+                "linear_output_stride": 3072,
+                "linear_rows": 18,
+                "linear_input_channels": 1024,
+                "linear_output_channels": 3072
+              }
+            }
+          },
+          {
+            "id": "gated_mlp",
+            "op": "silu_mul_rows_checked",
+            "kernel": "silu_mul_rows_checked_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "gate": "gate_proj",
+                "up": "up_proj"
+              },
+              "outputs": {
+                "output": "gated_mlp"
+              }
+            },
+            "params": {
+              "N": 55296,
+              "call_constants": {
+                "gate_elements": 55296,
+                "up_elements": 55296,
+                "output_elements": 55296,
+                "elements": 55296
+              }
+            }
+          },
+          {
+            "id": "down_proj",
+            "op": "linear_rows_checked_no_bias",
+            "kernel": "linear_rows_checked_no_bias_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "input": "gated_mlp"
+              },
+              "outputs": {
+                "output": "down_proj"
+              }
+            },
+            "weight_refs": {
+              "weight": "talker.model.layers.0.mlp.down_proj.weight"
+            },
+            "params": {
+              "M": 18,
+              "K": 3072,
+              "N": 1024,
+              "call_constants": {
+                "linear_input_elements": 55296,
+                "linear_input_stride": 3072,
+                "linear_weight_elements": 3145728,
+                "linear_weight_stride": 3072,
+                "linear_output_elements": 18432,
+                "linear_output_stride": 1024,
+                "linear_rows": 18,
+                "linear_input_channels": 3072,
+                "linear_output_channels": 1024
+              }
+            }
+          },
+          {
+            "id": "block_output",
+            "op": "add_rows_checked",
+            "kernel": "add_rows_checked_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "left": "post_attention",
+                "right": "down_proj"
+              },
+              "outputs": {
+                "output": "block_output"
+              }
+            },
+            "params": {
+              "N": 18432,
+              "call_constants": {
+                "left_elements": 18432,
+                "right_elements": 18432,
+                "output_elements": 18432,
+                "elements": 18432
+              }
+            }
+          }
+        ]
+      },
+      "footer": []
+    }
+  }
+}

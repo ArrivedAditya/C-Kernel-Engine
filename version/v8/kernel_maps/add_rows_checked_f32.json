@@ -1,0 +1,159 @@
+{
+  "id": "add_rows_checked_f32",
+  "op": "add_rows_checked",
+  "operation_interface": "add.rows.checked.fp32.v1",
+  "variant": "checked_scalar_fp32",
+  "selection": {
+    "status": "candidate",
+    "priority": 100,
+    "equivalence_group": "add.rows.checked.fp32.v1",
+    "phases": [
+      "prefill"
+    ]
+  },
+  "quant": {
+    "weight": "none",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {
+      "name": "left",
+      "dtype": "fp32",
+      "shape": [
+        "N"
+      ],
+      "layout": "flat",
+      "placement": "local",
+      "access": "read",
+      "storage_class": "activation",
+      "consumption": "required"
+    },
+    {
+      "name": "right",
+      "dtype": "fp32",
+      "shape": [
+        "N"
+      ],
+      "layout": "flat",
+      "placement": "local",
+      "access": "read",
+      "storage_class": "activation",
+      "consumption": "required"
+    }
+  ],
+  "weights": [],
+  "outputs": [
+    {
+      "name": "output",
+      "dtype": "fp32",
+      "shape": [
+        "N"
+      ],
+      "layout": "flat",
+      "placement": "local",
+      "access": "write",
+      "storage_class": "activation",
+      "consumption": "required"
+    }
+  ],
+  "scratch": [],
+  "dims": [
+    "N"
+  ],
+  "impl": {
+    "function": "add_rows_checked_f32",
+    "c_declaration": "int add_rows_checked_f32(const float *left, size_t left_elements, const float *right, size_t right_elements, float *output, size_t output_elements, size_t elements);",
+    "sources": [
+      "src/kernels/transformer_rows_checked.c"
+    ]
+  },
+  "modes": {
+    "inference": true,
+    "training": false,
+    "backward": false
+  },
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {
+        "name": "left",
+        "source": "activation:left",
+        "cast": "const float*",
+        "ports": [
+          "input:left"
+        ]
+      },
+      {
+        "name": "left_elements",
+        "source": "runtime:left_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "right",
+        "source": "activation:right",
+        "cast": "const float*",
+        "ports": [
+          "input:right"
+        ]
+      },
+      {
+        "name": "right_elements",
+        "source": "runtime:right_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "output",
+        "source": "output:output",
+        "cast": "float*",
+        "ports": [
+          "output:output"
+        ]
+      },
+      {
+        "name": "output_elements",
+        "source": "runtime:output_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "elements",
+        "source": "runtime:elements",
+        "value_type": "size_t"
+      }
+    ]
+  },
+  "tests": {
+    "unit": [
+      "tests/test_v8_qwen3_tts_first_block.py"
+    ]
+  },
+  "notes": "Checked exact FP32 residual add with no heap allocation.",
+  "call_constant_contract": {
+    "shape_symbols": {
+      "N": "elements"
+    },
+    "buffer_spans": [
+      {
+        "pointer": "left",
+        "elements": "left_elements",
+        "rows": 1,
+        "width": "elements",
+        "element_bytes": 4
+      },
+      {
+        "pointer": "right",
+        "elements": "right_elements",
+        "rows": 1,
+        "width": "elements",
+        "element_bytes": 4
+      },
+      {
+        "pointer": "output",
+        "elements": "output_elements",
+        "rows": 1,
+        "width": "elements",
+        "element_bytes": 4
+      }
+    ]
+  }
+}

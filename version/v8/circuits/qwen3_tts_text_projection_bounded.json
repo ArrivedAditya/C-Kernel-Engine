@@ -1,0 +1,347 @@
+{
+  "version": 3,
+  "name": "qwen3_tts_text_projection_bounded",
+  "family": "bounded_graph",
+  "checked_native_entry": true,
+  "contract": {
+    "runtime_invariants": {
+      "inference_only": true,
+      "production_kernel_heap_allocation": false,
+      "tokens": 7,
+      "complete_talker_block": false,
+      "complete_synthesis": false
+    }
+  },
+  "activation_buffers": {
+    "text_ids": {
+      "shape": [
+        7
+      ]
+    },
+    "embedding_channel": {
+      "shape": [
+        2048,
+        7
+      ]
+    },
+    "embedding_token": {
+      "shape": [
+        7,
+        2048
+      ]
+    },
+    "projection_fc1": {
+      "shape": [
+        7,
+        2048
+      ]
+    },
+    "projection_active": {
+      "shape": [
+        7,
+        2048
+      ]
+    },
+    "projection_output": {
+      "shape": [
+        7,
+        1024
+      ]
+    }
+  },
+  "activation_bindings": {
+    "text_ids": "text_ids",
+    "embedding_channel": "embedding_channel",
+    "embedding_token": "embedding_token",
+    "projection_fc1": "projection_fc1",
+    "projection_active": "projection_active",
+    "projection_output": "projection_output"
+  },
+  "native_entry": {
+    "function": "ck_qwen3_tts_text_projection_bounded",
+    "params": [
+      {
+        "c_type": "uint8_t *",
+        "name": "arena"
+      },
+      {
+        "c_type": "size_t",
+        "name": "arena_bytes"
+      }
+    ],
+    "arena": {
+      "pointer": "arena",
+      "bytes": "arena_bytes"
+    }
+  },
+  "sequence": [
+    "text_projection"
+  ],
+  "block_types": {
+    "text_projection": {
+      "sequence": [
+        "header",
+        "body",
+        "footer"
+      ],
+      "header": [],
+      "body": {
+        "type": "dense",
+        "ops": [
+          {
+            "id": "text_embedding",
+            "op": "embedding_lookup_checked",
+            "kernel": "audio_text_embedding_channel_major_f32",
+            "returns_status": true,
+            "weight_refs": {
+              "table": "talker.model.text_embedding.weight"
+            },
+            "graph_slots": {
+              "inputs": {
+                "ids": "external:text_ids"
+              },
+              "outputs": {
+                "output": "embedding_channel"
+              }
+            },
+            "params": {
+              "T": 7,
+              "V": 151936,
+              "C": 2048,
+              "T_capacity": 7,
+              "call_constants": {
+                "id_elements": 7,
+                "table_elements": 311164928,
+                "vocabulary": 151936,
+                "channels": 2048,
+                "table_stride": 2048,
+                "output_elements": 14336,
+                "tokens": 7,
+                "output_stride": 7
+              }
+            }
+          },
+          {
+            "id": "embedding_transpose",
+            "op": "transpose_strided_checked",
+            "kernel": "transpose_strided_f32_checked",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "input": "embedding_channel"
+              },
+              "outputs": {
+                "output": "embedding_token"
+              }
+            },
+            "params": {
+              "R": 2048,
+              "C": 7,
+              "call_constants": {
+                "transpose_input_elements": 14336,
+                "transpose_input_stride": 7,
+                "transpose_output_elements": 14336,
+                "transpose_output_stride": 2048,
+                "transpose_rows": 2048,
+                "transpose_columns": 7
+              }
+            }
+          },
+          {
+            "id": "projection_fc1",
+            "op": "linear_rows_checked",
+            "kernel": "linear_rows_checked_f32",
+            "returns_status": true,
+            "weight_refs": {
+              "weight": "talker.text_projection.linear_fc1.weight",
+              "bias": "talker.text_projection.linear_fc1.bias"
+            },
+            "graph_slots": {
+              "inputs": {
+                "input": "embedding_token"
+              },
+              "outputs": {
+                "output": "projection_fc1"
+              }
+            },
+            "params": {
+              "M": 7,
+              "K": 2048,
+              "N": 2048,
+              "call_constants": {
+                "linear_input_elements": 14336,
+                "linear_input_stride": 2048,
+                "linear_weight_elements": 4194304,
+                "linear_weight_stride": 2048,
+                "linear_bias_elements": 2048,
+                "linear_output_elements": 14336,
+                "linear_output_stride": 2048,
+                "linear_rows": 7,
+                "linear_input_channels": 2048,
+                "linear_output_channels": 2048
+              }
+            }
+          },
+          {
+            "id": "projection_active",
+            "op": "silu_strided_checked",
+            "kernel": "silu_strided_f32_checked",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "input": "projection_fc1"
+              },
+              "outputs": {
+                "output": "projection_active"
+              }
+            },
+            "params": {
+              "R": 7,
+              "C": 2048,
+              "call_constants": {
+                "silu_input_elements": 14336,
+                "silu_input_stride": 2048,
+                "silu_output_elements": 14336,
+                "silu_output_stride": 2048,
+                "silu_rows": 7,
+                "silu_columns": 2048
+              }
+            }
+          },
+          {
+            "id": "projection_fc2",
+            "op": "linear_rows_checked",
+            "kernel": "linear_rows_checked_f32",
+            "returns_status": true,
+            "weight_refs": {
+              "weight": "talker.text_projection.linear_fc2.weight",
+              "bias": "talker.text_projection.linear_fc2.bias"
+            },
+            "graph_slots": {
+              "inputs": {
+                "input": "projection_active"
+              },
+              "outputs": {
+                "output": "projection_output"
+              }
+            },
+            "params": {
+              "M": 7,
+              "K": 2048,
+              "N": 1024,
+              "call_constants": {
+                "linear_input_elements": 14336,
+                "linear_input_stride": 2048,
+                "linear_weight_elements": 2097152,
+                "linear_weight_stride": 2048,
+                "linear_bias_elements": 1024,
+                "linear_output_elements": 7168,
+                "linear_output_stride": 1024,
+                "linear_rows": 7,
+                "linear_input_channels": 2048,
+                "linear_output_channels": 1024
+              }
+            }
+          }
+        ]
+      },
+      "footer": []
+    }
+  },
+  "semantic_checkpoints": {
+    "schema": "cke.semantic_checkpoint_contract",
+    "schema_version": 1,
+    "exports": {
+      "text_embedding": {
+        "section": "body",
+        "template_op_id": "text_embedding",
+        "op": "embedding_lookup_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.talker.text_embedding",
+            "producer": "text_embedding",
+            "tensor": "embedding_channel",
+            "logical_layout": "channel_major",
+            "axis_names": [
+              "channel",
+              "token"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "embedding_transpose": {
+        "section": "body",
+        "template_op_id": "embedding_transpose",
+        "op": "transpose_strided_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.talker.embedding_transpose",
+            "producer": "embedding_transpose",
+            "tensor": "embedding_token",
+            "logical_layout": "token_major",
+            "axis_names": [
+              "token",
+              "channel"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "projection_fc1": {
+        "section": "body",
+        "template_op_id": "projection_fc1",
+        "op": "linear_rows_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.talker.projection_fc1",
+            "producer": "projection_fc1",
+            "tensor": "projection_fc1",
+            "logical_layout": "token_major",
+            "axis_names": [
+              "token",
+              "channel"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "projection_active": {
+        "section": "body",
+        "template_op_id": "projection_active",
+        "op": "silu_strided_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.talker.projection_active",
+            "producer": "projection_active",
+            "tensor": "projection_active",
+            "logical_layout": "token_major",
+            "axis_names": [
+              "token",
+              "channel"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "projection_fc2": {
+        "section": "body",
+        "template_op_id": "projection_fc2",
+        "op": "linear_rows_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.talker.projection_fc2",
+            "producer": "projection_fc2",
+            "tensor": "projection_output",
+            "logical_layout": "token_major",
+            "axis_names": [
+              "token",
+              "channel"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      }
+    }
+  }
+}

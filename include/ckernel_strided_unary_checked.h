@@ -24,6 +24,12 @@ int tanh_strided_f32_checked(
     float *output, size_t output_elements, size_t output_stride,
     size_t rows, size_t columns);
 
+/* SiLU on bounded token-major rows, with unchanged output on rejection. */
+int silu_strided_f32_checked(
+    const float *input, size_t input_elements, size_t input_stride,
+    float *output, size_t output_elements, size_t output_stride,
+    size_t rows, size_t columns);
+
 #ifdef __cplusplus
 }
 #endif

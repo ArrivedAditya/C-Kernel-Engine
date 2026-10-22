@@ -1,0 +1,200 @@
+{
+  "id": "rope_qk_split_bounded_f32",
+  "op": "rope_qk_bounded",
+  "operation_interface": "rope.bounded_split_direct.fp32.v1",
+  "variant": "bounded_split_half_direct_fp32",
+  "selection": {
+    "status": "candidate",
+    "priority": 100,
+    "equivalence_group": "rope.bounded_split_direct.fp32.v1",
+    "phases": [
+      "prefill"
+    ]
+  },
+  "quant": {
+    "weight": "none",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {
+      "name": "q",
+      "dtype": "fp32",
+      "shape": [
+        "H",
+        "T",
+        "D"
+      ],
+      "layout": "head_major_contiguous",
+      "access": "read",
+      "storage_class": "activation",
+      "consumption": "required"
+    },
+    {
+      "name": "k",
+      "dtype": "fp32",
+      "shape": [
+        "KV",
+        "T",
+        "D"
+      ],
+      "layout": "head_major_contiguous",
+      "access": "read",
+      "storage_class": "activation",
+      "consumption": "required"
+    }
+  ],
+  "weights": [],
+  "outputs": [
+    {
+      "name": "q",
+      "dtype": "fp32",
+      "shape": [
+        "H",
+        "T",
+        "D"
+      ],
+      "layout": "head_major_contiguous",
+      "access": "write",
+      "storage_class": "activation",
+      "consumption": "required",
+      "alias_of": "input:q"
+    },
+    {
+      "name": "k",
+      "dtype": "fp32",
+      "shape": [
+        "KV",
+        "T",
+        "D"
+      ],
+      "layout": "head_major_contiguous",
+      "access": "write",
+      "storage_class": "activation",
+      "consumption": "required",
+      "alias_of": "input:k"
+    }
+  ],
+  "scratch": [],
+  "dims": [
+    "H",
+    "KV",
+    "T",
+    "D"
+  ],
+  "impl": {
+    "function": "rope_qk_bounded_checked_f32",
+    "c_declaration": "int rope_qk_bounded_checked_f32(float *q, size_t q_elements, float *k, size_t k_elements, size_t heads, size_t kv_heads, size_t tokens, size_t head_dim, size_t pos_offset, float freq_base);",
+    "sources": [
+      "src/kernels/transformer_rows_checked.c",
+      "src/kernels/rope_kernels.c"
+    ]
+  },
+  "modes": {
+    "inference": true,
+    "training": false,
+    "backward": false
+  },
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {
+        "name": "q",
+        "source": "activation:q",
+        "cast": "float*",
+        "ports": [
+          "input:q",
+          "output:q"
+        ]
+      },
+      {
+        "name": "q_elements",
+        "source": "runtime:q_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "k",
+        "source": "activation:k",
+        "cast": "float*",
+        "ports": [
+          "input:k",
+          "output:k"
+        ]
+      },
+      {
+        "name": "k_elements",
+        "source": "runtime:k_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "heads",
+        "source": "runtime:heads",
+        "value_type": "size_t"
+      },
+      {
+        "name": "kv_heads",
+        "source": "runtime:kv_heads",
+        "value_type": "size_t"
+      },
+      {
+        "name": "tokens",
+        "source": "runtime:tokens",
+        "value_type": "size_t"
+      },
+      {
+        "name": "head_dim",
+        "source": "runtime:head_dim",
+        "value_type": "size_t"
+      },
+      {
+        "name": "pos_offset",
+        "source": "runtime:pos_offset",
+        "value_type": "size_t"
+      },
+      {
+        "name": "freq_base",
+        "source": "param:freq_base"
+      }
+    ]
+  },
+  "tests": {
+    "unit": [
+      "tests/test_v8_qwen3_tts_first_block.py"
+    ]
+  },
+  "notes": "Generic split-half RoPE; bounded text-only M-RoPE uses identical temporal/height/width positions. No frequency factors.",
+  "call_constant_contract": {
+    "shape_symbols": {
+      "H": "heads",
+      "KV": "kv_heads",
+      "T": "tokens",
+      "D": "head_dim"
+    },
+    "buffer_spans": [
+      {
+        "pointer": "q",
+        "elements": "q_elements",
+        "rows": 1,
+        "width": "q_elements",
+        "element_bytes": 4,
+        "exact_elements_product": [
+          "heads",
+          "tokens",
+          "head_dim"
+        ]
+      },
+      {
+        "pointer": "k",
+        "elements": "k_elements",
+        "rows": 1,
+        "width": "k_elements",
+        "element_bytes": 4,
+        "exact_elements_product": [
+          "kv_heads",
+          "tokens",
+          "head_dim"
+        ]
+      }
+    ]
+  }
+}

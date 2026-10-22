@@ -3,7 +3,8 @@
 
 #include <stddef.h>
 
-/* Row-major Y = X W^T + bias. All buffers are caller owned and nonaliasing.
+/* Row-major Y = X W^T + bias. Pass NULL bias with zero bias_elements for a
+ * bias-free projection. All buffers are caller owned and nonaliasing.
  * Physical row strides may exceed logical widths. Rejection returns -1 before
  * any output write. This scalar inference provider accumulates in FP64. */
 int linear_rows_checked_f32(

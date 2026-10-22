@@ -1949,6 +1949,39 @@ OP_DATAFLOW = {
         "inputs": {"input": "external:features"},
         "outputs": {"output": {"slot": "activated_features", "dtype": "fp32"}},
     },
+    "silu_strided_checked": {
+        "inputs": {"input": "external:features"},
+        "outputs": {"output": {"slot": "activated_features", "dtype": "fp32"}},
+    },
+    "rmsnorm_rows_checked": {
+        "inputs": {"input": "external:features"},
+        "outputs": {"output": {"slot": "normalized_features", "dtype": "fp32"}},
+    },
+    "linear_rows_checked_no_bias": {
+        "inputs": {"input": "external:features"},
+        "outputs": {"output": {"slot": "projected_features", "dtype": "fp32"}},
+    },
+    "token_head_layout_checked": {
+        "inputs": {"input": "external:features"},
+        "outputs": {"output": {"slot": "converted_features", "dtype": "fp32"}},
+    },
+    "add_rows_checked": {
+        "inputs": {"left": "external:left", "right": "external:right"},
+        "outputs": {"output": {"slot": "summed_features", "dtype": "fp32"}},
+    },
+    "silu_mul_rows_checked": {
+        "inputs": {"gate": "external:gate", "up": "external:up"},
+        "outputs": {"output": {"slot": "activated_features", "dtype": "fp32"}},
+    },
+    "rope_qk_bounded": {
+        "inputs": {"q": "external:q", "k": "external:k"},
+        "outputs": {"q": {"slot": "rotated_q", "dtype": "fp32"},
+                    "k": {"slot": "rotated_k", "dtype": "fp32"}},
+    },
+    "attention_causal_bounded": {
+        "inputs": {"q": "external:q", "k": "external:k", "v": "external:v"},
+        "outputs": {"out": {"slot": "attention_output", "dtype": "fp32"}},
+    },
     "feature_concat_broadcast_rows": {
         "inputs": {"input": "external:features", "feature": "external:feature"},
         "outputs": {"output": {"slot": "broadcast_concat", "dtype": "fp32"}},
@@ -4793,6 +4826,14 @@ TEMPLATE_TO_KERNEL_OP = {
     "audio_reflect_pad1d_left_checked": "audio_reflect_pad1d_left_checked",
     "transpose_strided_checked": "transpose_strided_checked",
     "leaky_relu_strided_checked": "leaky_relu_strided_checked",
+    "silu_strided_checked": "silu_strided_checked",
+    "rmsnorm_rows_checked": "rmsnorm_rows_checked",
+    "linear_rows_checked_no_bias": "linear_rows_checked_no_bias",
+    "token_head_layout_checked": "token_head_layout_checked",
+    "add_rows_checked": "add_rows_checked",
+    "silu_mul_rows_checked": "silu_mul_rows_checked",
+    "rope_qk_bounded": "rope_qk_bounded",
+    "attention_causal_bounded": "attention_causal_bounded",
     "feature_concat_broadcast_rows": "feature_concat_broadcast_rows",
     "audio_lstm_bidirectional_scan": "audio_lstm",
     "audio_adaptive_layer_norm": "audio_adaptive_layer_norm",
