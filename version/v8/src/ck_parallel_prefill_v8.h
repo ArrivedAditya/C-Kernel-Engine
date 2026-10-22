@@ -46,6 +46,8 @@ void quantize_batch_q8_k_4row_nearest_even_parallel_dispatch(
     const float *x, void *y, int num_rows, int k);
 void quantize_batch_q8_k_parallel_dispatch(
     const float *x, void *y, int num_rows, int k);
+void gemv_q4_k_q8_k_prefill_order_parallel_dispatch(
+    float *y, const void *W, const void *x_q8, const float *bias, int N, int K);
 void rmsnorm_forward_llama_production_parallel_dispatch(
     const float *input, const float *gamma, float *output, float *rstd_cache,
     int tokens, int d_model, int aligned_embed_dim, float eps);

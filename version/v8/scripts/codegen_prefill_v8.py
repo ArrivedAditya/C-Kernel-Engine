@@ -1836,6 +1836,11 @@ def emit_prefill_function(ops: List[Dict], config: Dict, profile: bool = False, 
             "prefill codegen requires positive context_length and prefill_chunk_length"
         )
     prefill_chunk_length = min(prefill_chunk_length, context_capacity)
+    initial_chunk_alignment = int(config.get("prefill_initial_chunk_alignment", 1) or 1)
+    if initial_chunk_alignment < 1 or prefill_chunk_length < initial_chunk_alignment:
+        raise RuntimeError(
+            "prefill chunk capacity cannot satisfy selected provider row group"
+        )
     scale_embeddings_sqrt_dim = bool(config.get("scale_embeddings_sqrt_dim", False))
     outproj_policy = str(config.get("out_proj_input_policy") or "").strip().lower()
     debug_outproj_default = 1 if outproj_policy in {"fp32", "fp32_input", "force_fp32"} else 0
@@ -2052,6 +2057,10 @@ static void ck_prefill_range(CKModel *model, const int32_t *tokens, int num_toke
     lines.append("    while (consumed < num_tokens) {")
     lines.append("        if (ck_model_cancel_requested()) return;")
     lines.append(f"        int chunk = num_tokens - consumed > {prefill_chunk_length} ? {prefill_chunk_length} : num_tokens - consumed;")
+    if initial_chunk_alignment > 1:
+        lines.append("        if (consumed == 0 && start_pos == 0 && num_tokens > chunk) {")
+        lines.append(f"            chunk -= chunk % {initial_chunk_alignment};")
+        lines.append("        }")
     if requires_decode_continuation:
         lines.append("        if (consumed > 0 || start_pos > 0) {")
         lines.append("            /* This prefill provider is not proven to read prior KV.")

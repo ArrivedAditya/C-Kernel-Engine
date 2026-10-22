@@ -1,6 +1,8 @@
 {
   "id": "gemm_nt_q4_k_q8_k",
   "op": "gemm",
+  "prefill_row_reduction": "q4k_q8k_packed_meta_superblock.v1",
+  "prefill_row_group": 4,
   "selection": {
     "status": "production",
     "priority": 200,

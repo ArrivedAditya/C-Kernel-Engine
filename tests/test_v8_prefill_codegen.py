@@ -98,6 +98,132 @@ class TestV8PrefillCodegen(unittest.TestCase):
         self.assertIsNone(codegen_v8._prefill_phase_decode_ops(
             decode, [dict(prefill[0], layer=1)]))
 
+    def test_prefill_projection_requires_matching_weight_shape_and_provider(self):
+        group = {"provider_selection": {"equivalence_group": "attention.test.v1"}}
+        prefill_attention = {
+            "op": "attn", "layer": 2, "instance": 0,
+            "prefill_history_scope": "current_chunk",
+            "numerical_reduction_order": "online_query",
+            "resolved_execution": group,
+        }
+        decode_attention = {
+            "op": "attn", "layer": 2, "instance": 0,
+            "function": "decode_attention",
+            "prefill_continuation": {
+                "function": "prefill_attention", "reduction_order": "online_query"},
+            "resolved_execution": group,
+        }
+        prefill_projection = {
+            "op": "mlp_down", "layer": 2, "instance": 0,
+            "prefill_row_reduction": "packed_superblock.v1",
+            "call_abi": {"kernel_id": "gemm_q4k"},
+            "args": [
+                {"name": "A", "source": "activation:a", "buffer_ref": "q8_rows",
+                 "expr": "(const void*)(model->bump + A_Q8_ROWS)"},
+                {"name": "B", "source": "weight:_first_weight",
+                 "weight_ref": "layer.2.w2"},
+                {"name": "bias", "source": "weight_f:_bias",
+                 "weight_ref": "layer.2.b2",
+                 "expr": "(float*)(model->bump + W_LAYER_2_B2)"},
+                {"name": "C", "source": "output:c", "buffer_ref": "output",
+                 "expr": "(float*)(model->bump + A_OUTPUT)"},
+                {"name": "N", "expr": "896"}, {"name": "K", "expr": "4864"},
+            ],
+        }
+        decode_projection = {
+            "op": "mlp_down", "layer": 2, "instance": 0,
+            "function": "ordinary_gemv",
+            "prefill_continuation": {
+                "function": "prefill_order_gemv",
+                "prefill_kernel_id": "gemm_q4k",
+                "reduction_order": "packed_superblock.v1",
+            },
+            "args": [
+                {"name": "y", "source": "output:y", "buffer_ref": "output",
+                 "expr": "(float*)(model->bump + A_OUTPUT)"},
+                {"name": "W", "source": "weight:_first_weight",
+                 "weight_ref": "layer.2.w2"},
+                {"name": "x_q8", "source": "activation:x",
+                 "buffer_ref": "q8_rows",
+                 "expr": "(void*)(model->bump + A_Q8_ROWS)"},
+                {"name": "M", "expr": "896"}, {"name": "K", "expr": "4864"},
+            ],
+        }
+        prefill = [prefill_attention, prefill_projection]
+        decode = [decode_attention, decode_projection]
+        selected = codegen_v8._prefill_phase_decode_ops(decode, prefill)
+        self.assertEqual([op["function"] for op in selected],
+                         ["prefill_attention", "prefill_order_gemv"])
+        self.assertEqual([arg["name"] for arg in selected[1]["args"]],
+                         ["y", "W", "x_q8", "bias", "M", "K"])
+        selected[1]["resolved_execution"] = {
+            "numerical_contract": "q4_k_x_q8_k",
+            "implementation": {
+                "weight_storage": {"format": "q4_k", "block_elements": 256,
+                                   "block_bytes": 144},
+                "activation_storage": {"format": "q8_k", "block_elements": 256},
+                "diagnostic_providers": {"fp32_activation": "diagnostic_fp32"},
+            },
+        }
+        emitted = codegen_v8.codegen_core_v8.emit_op(selected[1])
+        self.assertIn("prefill_order_gemv(", emitted)
+        self.assertIn("(float*)(model->bump + W_LAYER_2_B2),", emitted)
+        without_bias = dict(prefill_projection, args=[
+            arg for arg in prefill_projection["args"] if arg["name"] != "bias"])
+        no_bias = codegen_v8._prefill_phase_decode_ops(
+            decode, [prefill_attention, without_bias])
+        self.assertEqual(no_bias[1]["args"][3]["expr"], "NULL")
+        self.assertEqual(decode_projection["function"], "ordinary_gemv")
+        for changed, expected in (
+            ({"call_abi": {"kernel_id": "other"}}, "provider mismatch"),
+            ({"prefill_row_reduction": "other"}, "provider mismatch"),
+            ({"args": [*prefill_projection["args"][:1],
+                       dict(prefill_projection["args"][1],
+                            weight_ref="layer.3.w2"),
+                       *prefill_projection["args"][2:]]}, "layout mismatch"),
+            ({"args": [*prefill_projection["args"][:-1],
+                       {"name": "K", "expr": "5120"}]}, "layout mismatch"),
+            ({"args": [dict(prefill_projection["args"][0],
+                            buffer_ref="other_rows"),
+                       *prefill_projection["args"][1:]]}, "layout mismatch"),
+            ({"args": [dict(prefill_projection["args"][0],
+                            expr="(const void*)(model->bump + A_Q8_ROWS + 4)"),
+                       *prefill_projection["args"][1:]]}, "layout mismatch"),
+            ({"args": [*prefill_projection["args"][:2],
+                       *prefill_projection["args"][2:3],
+                       dict(prefill_projection["args"][3],
+                            buffer_ref="other_output"),
+                       *prefill_projection["args"][4:]]}, "layout mismatch"),
+            ({"args": [*prefill_projection["args"][:2],
+                       dict(prefill_projection["args"][2],
+                            expr="(float*)(model->bump + W_LAYER_2_B2 + 4)"),
+                       *prefill_projection["args"][3:]]}, "bias binding mismatch"),
+        ):
+            with self.subTest(changed=changed):
+                with self.assertRaisesRegex(RuntimeError, expected):
+                    codegen_v8._prefill_phase_decode_ops(
+                        decode, [prefill_attention,
+                                 {**prefill_projection, **changed}])
+
+    def test_grouped_projection_aligns_only_intermediate_first_chunk(self):
+        op = {
+            "function": "noop_kernel", "op": "attention", "layer": 0,
+            "args": [], "prefill_history_scope": "current_chunk",
+        }
+        emitted = codegen_prefill_v8.emit_prefill_function(
+            [op], {"context_length": 32, "prefill_chunk_length": 7,
+                   "prefill_initial_chunk_alignment": 4, "embed_dim": 4}
+        )
+        self.assertIn("if (consumed == 0 && start_pos == 0 && num_tokens > chunk)",
+                      emitted)
+        self.assertIn("chunk -= chunk % 4;", emitted)
+        self.assertIn("consumed += chunk;", emitted)
+        with self.assertRaisesRegex(RuntimeError, "row group"):
+            codegen_prefill_v8.emit_prefill_function(
+                [op], {"context_length": 32, "prefill_chunk_length": 3,
+                       "prefill_initial_chunk_alignment": 4, "embed_dim": 4}
+            )
+
     def test_generated_embedded_prefill_scales_only_declared_text_rows(self):
         compiler = shutil.which("cc")
         if compiler is None:

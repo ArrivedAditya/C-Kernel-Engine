@@ -125,6 +125,21 @@ def run_case(lib, m_out: int, k: int, tol: float, tol_fp32: float,
         ctypes.c_int(k_used),
     )
 
+    # Continuation uses one row but must have the four-row prefill reduction.
+    # Repeating the same quantized row keeps operand conversion identical.
+    y_continuation = np.zeros(m_out, dtype=np.float32)
+    lib.gemv_q4_k_q8_k_prefill_order_parallel_dispatch(
+        y_continuation.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+        w_ptr, x_q8_ptr, None, ctypes.c_int(m_out), ctypes.c_int(k_used),
+    )
+    prefill_rows = ctypes.create_string_buffer(x_q8.raw * 4)
+    y_prefill = np.zeros((4, m_out), dtype=np.float32)
+    lib.gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch(
+        ctypes.cast(prefill_rows, ctypes.c_void_p), w_ptr, None,
+        y_prefill.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+        ctypes.c_int(4), ctypes.c_int(m_out), ctypes.c_int(k_used),
+    )
+
     max_diff_ref = float(np.max(np.abs(y_ref_kernel - y_ref)))
     max_diff_avx2 = float(np.max(np.abs(y_avx2 - y_ref)))
     max_diff_vnni = float(np.max(np.abs(y_vnni - y_ref)))
@@ -175,6 +190,31 @@ def run_case(lib, m_out: int, k: int, tol: float, tol_fp32: float,
         passed=max_diff_fp32 <= tol_fp32,
         max_diff=max_diff_fp32,
         tolerance=tol_fp32
+    ))
+    acc_report.add_result(TestResult(
+        name=f"continuation vs four-row prefill (M={m_out},K={k_used})",
+        passed=np.array_equal(y_continuation, y_prefill[3]),
+        max_diff=float(np.max(np.abs(y_continuation - y_prefill[3]))),
+        tolerance=0.0,
+    ))
+    bias = np.linspace(-0.2, 0.3, m_out, dtype=np.float32)
+    bias_ptr = bias.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+    y_with_bias = np.zeros(m_out, dtype=np.float32)
+    y_prefill_with_bias = np.zeros((4, m_out), dtype=np.float32)
+    lib.gemv_q4_k_q8_k_prefill_order_parallel_dispatch(
+        y_with_bias.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+        w_ptr, x_q8_ptr, bias_ptr, ctypes.c_int(m_out), ctypes.c_int(k_used),
+    )
+    lib.gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch(
+        ctypes.cast(prefill_rows, ctypes.c_void_p), w_ptr, bias_ptr,
+        y_prefill_with_bias.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+        ctypes.c_int(4), ctypes.c_int(m_out), ctypes.c_int(k_used),
+    )
+    acc_report.add_result(TestResult(
+        name=f"biased continuation vs four-row prefill (M={m_out},K={k_used})",
+        passed=np.array_equal(y_with_bias, y_prefill_with_bias[3]),
+        max_diff=float(np.max(np.abs(y_with_bias - y_prefill_with_bias[3]))),
+        tolerance=0.0,
     ))
 
     # Performance (microbench, small but useful for regressions)
@@ -286,6 +326,18 @@ def main() -> int:
         ctypes.c_int,
     ]
     lib.gemm_nt_q4_k_q8_k.restype = None
+
+    lib.gemv_q4_k_q8_k_prefill_order_parallel_dispatch.argtypes = [
+        ctypes.POINTER(ctypes.c_float), ctypes.c_void_p, ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_float),
+        ctypes.c_int, ctypes.c_int,
+    ]
+    lib.gemv_q4_k_q8_k_prefill_order_parallel_dispatch.restype = None
+    lib.gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch.argtypes = [
+        ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_float),
+        ctypes.POINTER(ctypes.c_float), ctypes.c_int, ctypes.c_int, ctypes.c_int,
+    ]
+    lib.gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch.restype = None
 
     lib.dequant_q4_k_row.argtypes = [
         ctypes.c_void_p,
