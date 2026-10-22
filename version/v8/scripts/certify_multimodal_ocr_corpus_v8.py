@@ -637,6 +637,7 @@ def main(argv: list[str] | None = None) -> int:
         "max_new_tokens": args.max_new_tokens,
         "prompt_template_sha256": _sha256_bytes(args.prompt_template.encode("utf-8")),
         "threads": args.threads,
+        "thread_env_contract": "CK_NUM_THREADS+OMP_NUM_THREADS" if args.threads > 0 else "runtime_auto",
         "adapt_encoder_geometry": bool(args.adapt_encoder_geometry),
         "oracle": {
             "id": args.oracle_id,
@@ -650,7 +651,8 @@ def main(argv: list[str] | None = None) -> int:
 
     env = os.environ.copy()
     if args.threads > 0:
-        env["CK_THREADS"] = str(args.threads)
+        env["CK_NUM_THREADS"] = str(args.threads)
+        env["OMP_NUM_THREADS"] = str(args.threads)
     rows: list[dict[str, Any]] = []
     stop_after_failure = False
     for completed, sample in enumerate(selected, start=1):

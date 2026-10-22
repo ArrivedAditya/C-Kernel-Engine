@@ -165,12 +165,14 @@ class MultimodalOcrCorpusCertificationTest(unittest.TestCase):
                 "--manifest", str(manifest), "--decoder-gguf", str(decoder),
                 "--encoder-gguf", str(encoder), "--adapter-id", "fixture",
                 "--model-label", "fixture", "--output-dir", str(output),
-                "--limit", "1", "--require-images", "1",
+                "--limit", "1", "--require-images", "1", "--threads", "7",
             ]
             calls = []
 
             def run(command, log_path, env):
                 self.assertFalse(report_path.exists())
+                self.assertEqual(env["CK_NUM_THREADS"], "7")
+                self.assertEqual(env["OMP_NUM_THREADS"], "7")
                 calls.append(command)
                 report = {
                     "status": "ok", "prefix_source": "encoder", "prefix_tokens": 2,
