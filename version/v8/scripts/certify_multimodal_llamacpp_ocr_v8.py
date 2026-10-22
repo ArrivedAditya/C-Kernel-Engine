@@ -10,8 +10,10 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 from pathlib import Path
 import re
+import signal
 import subprocess
 import time
 from typing import Any
@@ -84,6 +86,17 @@ def _check_oracle_identity(identity: dict[str, Any]) -> None:
             raise ValueError("oracle binary or loaded library changed during execution")
 
 
+def _oracle_template_identity(gguf_path: Path) -> dict[str, str]:
+    from run_multimodal_bridge_v8 import _read_gguf_metadata
+
+    template = _read_gguf_metadata(gguf_path, {"tokenizer.chat_template"}, strict=True).get(
+        "tokenizer.chat_template"
+    )
+    if not isinstance(template, str) or not template:
+        raise ValueError("decoder GGUF has no chat template for the Jinja oracle lane")
+    return {"source": "decoder_gguf_metadata", "sha256": _sha256_bytes(template.encode("utf-8"))}
+
+
 def _field_comparison(
     truth: dict[str, Any], cke: dict[str, Any] | None, oracle: dict[str, Any] | None,
 ) -> dict[str, int | bool]:
@@ -125,6 +138,29 @@ def _oracle_command(
         "--jinja", "--no-warmup", "--no-mmproj-offload", "-ngl", "0",
         "--flash-attn", flash_attention,
     ]
+
+
+def _run_oracle_command(
+    command: list[str], raw_path: Path, stderr_path: Path, timeout_sec: float,
+) -> tuple[float, int]:
+    started = time.perf_counter()
+    with raw_path.open("wb") as stdout, stderr_path.open("wb") as stderr:
+        raw_path.chmod(0o600)
+        stderr_path.chmod(0o600)
+        process = subprocess.Popen(
+            command, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
+            start_new_session=True,
+        )
+        try:
+            returncode = process.wait(timeout=timeout_sec)
+        except subprocess.TimeoutExpired as exc:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait()
+            raise TimeoutError(f"llama.cpp exceeded {timeout_sec:g}s per-case limit") from exc
+    return time.perf_counter() - started, returncode
 
 
 def _case_identity(global_hash: str, cke: dict[str, Any]) -> dict[str, Any]:
@@ -192,11 +228,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--require-selected-images", type=int)
     parser.add_argument("--threads", type=int, default=16)
     parser.add_argument("--flash-attention", choices=("on", "off", "auto"), default="auto")
+    parser.add_argument("--oracle-timeout-sec", type=float, default=1800.0)
     parser.add_argument("--force-rerun", action="store_true")
     parser.add_argument("--continue-on-failure", action="store_true")
     args = parser.parse_args(argv)
-    if args.threads < 1 or args.start_index < 1 or args.limit is not None and args.limit < 1:
-        parser.error("threads, start-index, and limit must be positive")
+    if (args.threads < 1 or args.start_index < 1 or args.limit is not None and args.limit < 1
+            or not math.isfinite(args.oracle_timeout_sec) or args.oracle_timeout_sec <= 0):
+        parser.error("threads, start-index, limit, and oracle timeout must be positive and finite")
     manifest = args.manifest.resolve(strict=True)
     cke_dir = args.cke_output_dir.resolve(strict=True)
     config = _read_object(cke_dir / "config.json")
@@ -222,6 +260,7 @@ def main(argv: list[str] | None = None) -> int:
         if len(samples) != args.require_selected_images or len({row["image_sha256"] for row in samples}) != len(samples):
             parser.error("selected corpus extent or distinct-image count is incorrect")
     oracle_identity = _oracle_identity(args.llama_root)
+    oracle_template = _oracle_template_identity(Path(config["decoder_gguf"]["path"]))
     global_config = {
         "schema": SCHEMA, "schema_version": 1,
         "manifest_sha256": config["manifest_sha256"],
@@ -230,6 +269,12 @@ def main(argv: list[str] | None = None) -> int:
         "projector_sha256": config["encoder_gguf"]["sha256"],
         "oracle_identity": oracle_identity,
         "threads": args.threads, "flash_attention": args.flash_attention,
+        "oracle_timeout_sec": args.oracle_timeout_sec,
+        "cke_chat_template": config["chat_template"],
+        "cke_thinking_mode": config["thinking_mode"],
+        "oracle_template_source": "GGUF Jinja via pinned llama-mtmd-cli",
+        "oracle_template": oracle_template,
+        "oracle_thinking_mode": "enabled_by_pinned_cli_default",
     }
     global_hash = _sha256_json(global_config)
     output = args.output_dir.resolve()
@@ -274,14 +319,11 @@ def main(argv: list[str] | None = None) -> int:
                 oracle_identity, config, sample["image"], prompt, max_tokens,
                 args.threads, args.flash_attention,
             )
-            started = time.perf_counter()
-            with raw_path.open("wb") as stdout, (case_dir / "llama_stderr.txt").open("wb") as stderr:
-                raw_path.chmod(0o600)
-                (case_dir / "llama_stderr.txt").chmod(0o600)
-                result = subprocess.run(command, stdout=stdout, stderr=stderr, check=False)
-            wall_sec = time.perf_counter() - started
-            if result.returncode:
-                raise RuntimeError(f"llama.cpp exited {result.returncode}")
+            wall_sec, returncode = _run_oracle_command(
+                command, raw_path, case_dir / "llama_stderr.txt", args.oracle_timeout_sec,
+            )
+            if returncode:
+                raise RuntimeError(f"llama.cpp exited {returncode}")
             if _sha256_file(sample["image"]) != sample["image_sha256"]:
                 raise ValueError("image bytes changed during oracle execution")
             _check_oracle_identity(oracle_identity)
@@ -297,6 +339,7 @@ def main(argv: list[str] | None = None) -> int:
                 "comparison": _field_comparison(sample["truth"], cke["parsed_output"], parsed),
                 "oracle_wall_sec": wall_sec,
                 "input_contract": "same_image_bytes_prompt_text_gguf_and_generation_budget",
+                "chat_rendering_alignment": "not_tested",
                 "token_id_alignment": "not_tested",
                 "numerical_parity": "not_tested",
             }
@@ -304,7 +347,8 @@ def main(argv: list[str] | None = None) -> int:
             rows.append(row)
             print("[case complete] independent image answers scored locally")
         except Exception as exc:
-            rows.append({"status": "error", "reason": str(exc)})
+            rows.append({"status": "timeout" if isinstance(exc, TimeoutError) else "error",
+                         "reason": str(exc)})
             _write_json(result_path, rows[-1])
             print("[case error] inspect private result and oracle log")
             if not args.continue_on_failure:
@@ -314,6 +358,7 @@ def main(argv: list[str] | None = None) -> int:
         "status": "complete" if len(rows) == len(samples) and all(row.get("status") == "complete" for row in rows) else "incomplete",
         "scope": "independent_image_to_answer_task_comparison",
         "numerical_parity": "not_tested",
+        "chat_rendering_alignment": "not_tested",
         "token_id_alignment": "not_tested",
         "config_sha256": global_hash,
         "aggregate": _aggregate(rows, len(samples)),

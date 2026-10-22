@@ -3,6 +3,9 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+import time
+
+import pytest
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "version/v8/scripts/certify_multimodal_llamacpp_ocr_v8.py"
@@ -46,6 +49,24 @@ def test_oracle_command_uses_original_image_and_explicit_generation_contract():
     for flag, value in (("-n", "896"), ("-c", "4096"), ("--temp", "0"), ("--flash-attn", "off")):
         assert command[command.index(flag) + 1] == value
     assert "--log-disable" not in command
+
+
+def test_oracle_timeout_reaps_stalled_case_and_next_case_succeeds(tmp_path):
+    raw = tmp_path / "raw.txt"
+    stderr = tmp_path / "stderr.txt"
+    started = time.monotonic()
+    with pytest.raises(TimeoutError, match="per-case limit"):
+        MODULE._run_oracle_command(
+            [sys.executable, "-c", "import time; time.sleep(5)"], raw, stderr, 0.05,
+        )
+    assert time.monotonic() - started < 3
+    elapsed, returncode = MODULE._run_oracle_command(
+        [sys.executable, "-c", "import sys; assert sys.stdin.read() == ''; print('{\"ok\":true}')"],
+        raw, stderr, 3,
+    )
+    assert returncode == 0
+    assert elapsed < 3
+    assert json.loads(raw.read_text()) == {"ok": True}
 
 
 def test_resumed_case_rejects_stale_output_and_metrics(tmp_path):

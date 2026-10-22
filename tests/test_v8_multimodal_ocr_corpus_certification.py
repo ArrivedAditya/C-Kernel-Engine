@@ -198,7 +198,10 @@ class MultimodalOcrCorpusCertificationTest(unittest.TestCase):
                 report_path.write_text(json.dumps(report), encoding="utf-8")
                 return 0.01
 
-            with mock.patch.object(MODULE, "_run", side_effect=run), redirect_stdout(StringIO()):
+            generation = {"source_sha256": "original", "engine_build_fingerprint": "original"}
+            with mock.patch.object(MODULE, "_run", side_effect=run), mock.patch.object(
+                MODULE, "_execution_generation_identity", side_effect=lambda: dict(generation),
+            ), redirect_stdout(StringIO()):
                 self.assertEqual(MODULE.main(args), 0)
                 self.assertEqual(MODULE.main(args), 0)
                 self.assertEqual(len(calls), 1)
@@ -210,9 +213,36 @@ class MultimodalOcrCorpusCertificationTest(unittest.TestCase):
                 snapshot.write_bytes(b"stale")
                 self.assertEqual(MODULE.main(args), 0)
                 self.assertEqual(len(calls), 2)
+                generation["source_sha256"] = "changed-circuit-or-preprocessor"
+                self.assertEqual(MODULE.main(args), 0)
+                self.assertEqual(len(calls), 3)
             summary = json.loads((output / "summary.json").read_text(encoding="utf-8"))
             self.assertEqual(summary["quality_status"], "pass")
             self.assertTrue((output / "image01" / "bridge_report.json").is_file())
+
+    def test_execution_generation_tracks_source_and_build_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for directory in MODULE.EXECUTION_SOURCE_ROOTS:
+                (root / directory).mkdir(parents=True)
+            circuit = root / "version/v8/circuits/gemma4.json"
+            bridge = root / "version/v8/scripts/run_multimodal_bridge_v8.py"
+            circuit.write_text('{"contract":"first"}', encoding="utf-8")
+            bridge.write_text("# preprocessing first\n", encoding="utf-8")
+            first = MODULE._execution_generation_identity(root)
+            (root / "geometry_workspace").mkdir()
+            (root / "geometry_workspace/model.so").write_bytes(b"rebuilt")
+            self.assertEqual(first, MODULE._execution_generation_identity(root))
+            circuit.write_text('{"contract":"second"}', encoding="utf-8")
+            second = MODULE._execution_generation_identity(root)
+            self.assertNotEqual(first["source_sha256"], second["source_sha256"])
+            bridge.write_text("# preprocessing second\n", encoding="utf-8")
+            self.assertNotEqual(second["source_sha256"], MODULE._execution_generation_identity(root)["source_sha256"])
+            with mock.patch.dict("os.environ", {"CFLAGS": "-DCK_TEST=1"}):
+                self.assertNotEqual(
+                    MODULE._execution_generation_identity(root)["engine_build_fingerprint"],
+                    first["engine_build_fingerprint"],
+                )
 
     def test_required_count_applies_to_selected_distinct_images(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -27,6 +27,13 @@ DEFAULT_PROMPT = (
     "field names exactly. Use an empty string for a blank field and selected or unselected "
     "for checkboxes. Return JSON only, without Markdown. Fields: {fields}"
 )
+EXECUTION_SOURCE_ROOTS = (
+    "version/v8/scripts", "version/v8/circuits", "version/v8/kernel_maps",
+    "version/v8/model_maps", "version/v8/contracts", "version/v8/parity_profiles",
+    "version/v8/serving_profiles", "version/v8/schemas", "version/v8/src",
+    "version/v7/ckernel_engine", "src", "include",
+)
+EXECUTION_SOURCE_SUFFIXES = {".py", ".json", ".c", ".h", ".sh", ".map"}
 
 
 def _sha256_bytes(value: bytes) -> str:
@@ -45,6 +52,51 @@ def _sha256_json(value: Any) -> str:
     return _sha256_bytes(
         json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
     )
+
+
+def _execution_generation_identity(root: Path = ROOT) -> dict[str, Any]:
+    digest = hashlib.sha256()
+    count = 0
+    for directory in EXECUTION_SOURCE_ROOTS:
+        source_root = root / directory
+        if not source_root.is_dir():
+            raise FileNotFoundError(f"execution source directory is missing: {source_root}")
+        for path in sorted(source_root.rglob("*")):
+            if not path.is_file() or path.suffix not in EXECUTION_SOURCE_SUFFIXES:
+                continue
+            relative = path.relative_to(root).as_posix()
+            digest.update(relative.encode("utf-8") + b"\0")
+            digest.update(bytes.fromhex(_sha256_file(path)))
+            count += 1
+    if not count:
+        raise ValueError("execution source inventory is empty")
+    for relative in ("Makefile", "version/v8/Makefile"):
+        path = root / relative
+        if path.is_file():
+            digest.update(relative.encode("utf-8") + b"\0")
+            digest.update(bytes.fromhex(_sha256_file(path)))
+            count += 1
+    compiler_name = (os.environ.get("CK_V8_COMPILER") or os.environ.get("CK_V7_COMPILER") or "gcc").strip()
+    compiler_path = shutil.which(compiler_name)
+    if not compiler_path:
+        raise FileNotFoundError(f"requested C compiler is missing: {compiler_name}")
+    compiler_version = subprocess.run(
+        [compiler_path, "--version"], capture_output=True, text=True, check=True,
+    ).stdout.splitlines()[0]
+    build_contract = {
+        "compiler_path": str(Path(compiler_path).resolve()),
+        "compiler_sha256": _sha256_file(Path(compiler_path).resolve()),
+        "compiler_version": compiler_version,
+        "openmp": True,
+        "cflags": os.environ.get("CFLAGS", ""),
+        "ldflags": os.environ.get("LDFLAGS", ""),
+    }
+    return {
+        "source_sha256": digest.hexdigest(),
+        "source_files": count,
+        "engine_build_fingerprint": _sha256_json(build_contract),
+        "engine_build_contract": build_contract,
+    }
 
 
 def _write_json(path: Path, value: Any) -> None:
@@ -677,6 +729,7 @@ def main(argv: list[str] | None = None) -> int:
         "threads": args.threads,
         "thread_env_contract": "CK_NUM_THREADS+OMP_NUM_THREADS" if args.threads > 0 else "runtime_auto",
         "adapt_encoder_geometry": bool(args.adapt_encoder_geometry),
+        "execution_generation": _execution_generation_identity(),
         "oracle": {
             "id": args.oracle_id,
             "status": args.oracle_status,
