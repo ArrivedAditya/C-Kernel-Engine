@@ -55,6 +55,7 @@ class TestV8PrefillCodegen(unittest.TestCase):
             self.assertFalse(result["logits_exact"])
             self.assertEqual(result["max_logit_abs"], 1.0)
             self.assertEqual(result["kv_exact_layers"], 1)
+            self.assertEqual(result["kv_mismatch_layers"], [1])
             with self.assertRaisesRegex(RuntimeError, "state geometry differs"):
                 chunked_compare._comparison(
                     left, right, "prefill", a, dict(b, position=3))

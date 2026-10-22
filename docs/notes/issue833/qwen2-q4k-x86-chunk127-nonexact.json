@@ -1,0 +1,120 @@
+{
+  "schema": "cke.chunked_prefill_comparison.v1",
+  "prompt_tokens": 429,
+  "continuation_tokens": 3,
+  "token_sha256": "38595eb60673e62b1cbc98ba116cf5c9ea7ba64da6afe49614a9cea09cde2e23",
+  "identities": {
+    "full": {
+      "weights.bump": "f4db941e066c66ab60356d87763da2475f4058549420eb24f3f4d645ea89ee18",
+      "weights_manifest.json": "b15697ca123ddc06a4a160332f302f46fa5716a41b77b4dd33d0f0ab8a57e500",
+      "weights_manifest.map": "5a601fbb633c534b2846d34f039bfc761b8deee9c91f458fc9df306b695735bb",
+      "config.json": "95a1ca3d5118259789539676807c5943b6ae3af3c742ed4f0c2603904fe3cec0",
+      "model_v8.c": "326ad4b9a62fd355298940023574512fea8977ea79e25c21493a3f33bd2b3db9",
+      "libmodel.so": "b8eff9aa016b3a4c79bedc54566ffd249e639ae0ec2c61c988926c527e621c6e",
+      "libckernel_engine.so": "9b1b5f67b2db1eb6065befb92c8462639c99e8a65f78e0e73f09b8264c76e740",
+      "libckernel_tokenizer.so": "d087eb3bcb521463976e42b9707a650bfff962839b99fd6bb7d0471416037239"
+    },
+    "chunked": {
+      "weights.bump": "f4db941e066c66ab60356d87763da2475f4058549420eb24f3f4d645ea89ee18",
+      "weights_manifest.json": "b15697ca123ddc06a4a160332f302f46fa5716a41b77b4dd33d0f0ab8a57e500",
+      "weights_manifest.map": "5a601fbb633c534b2846d34f039bfc761b8deee9c91f458fc9df306b695735bb",
+      "config.json": "95a1ca3d5118259789539676807c5943b6ae3af3c742ed4f0c2603904fe3cec0",
+      "model_v8.c": "14d0cabe22a5b3f8f0df444ff9863b07383ec902a39555949b9609a014d6655a",
+      "libmodel.so": "ada7e8aabf2faffdc28b669329cec7b3a7c85889bcef452ac3237f4b8497e8a3",
+      "libckernel_engine.so": "9b1b5f67b2db1eb6065befb92c8462639c99e8a65f78e0e73f09b8264c76e740",
+      "libckernel_tokenizer.so": "d087eb3bcb521463976e42b9707a650bfff962839b99fd6bb7d0471416037239"
+    }
+  },
+  "execution": {
+    "machine": "x86_64",
+    "omp_num_threads": null,
+    "strict_parity": null
+  },
+  "comparisons": [
+    {
+      "label": "prefill",
+      "position": 429,
+      "logits_exact": false,
+      "max_logit_abs": 0.367919921875,
+      "logit_cosine": 0.999890448639752,
+      "top_tokens": [
+        15278,
+        15278
+      ],
+      "kv_exact_layers": 18,
+      "kv_mismatch_layers": [
+        18,
+        19,
+        20,
+        21,
+        22,
+        23
+      ],
+      "kv_layers": 24
+    },
+    {
+      "label": "decode-001",
+      "position": 430,
+      "logits_exact": false,
+      "max_logit_abs": 0.34274041652679443,
+      "logit_cosine": 0.9997181720357953,
+      "top_tokens": [
+        11,
+        11
+      ],
+      "kv_exact_layers": 18,
+      "kv_mismatch_layers": [
+        18,
+        19,
+        20,
+        21,
+        22,
+        23
+      ],
+      "kv_layers": 24
+    },
+    {
+      "label": "decode-002",
+      "position": 431,
+      "logits_exact": false,
+      "max_logit_abs": 0.28960633277893066,
+      "logit_cosine": 0.9997105890129812,
+      "top_tokens": [
+        11,
+        11
+      ],
+      "kv_exact_layers": 18,
+      "kv_mismatch_layers": [
+        18,
+        19,
+        20,
+        21,
+        22,
+        23
+      ],
+      "kv_layers": 24
+    },
+    {
+      "label": "decode-003",
+      "position": 432,
+      "logits_exact": false,
+      "max_logit_abs": 0.30558323860168457,
+      "logit_cosine": 0.99975336847191,
+      "top_tokens": [
+        448,
+        448
+      ],
+      "kv_exact_layers": 18,
+      "kv_mismatch_layers": [
+        18,
+        19,
+        20,
+        21,
+        22,
+        23
+      ],
+      "kv_layers": 24
+    }
+  ],
+  "exact": false
+}

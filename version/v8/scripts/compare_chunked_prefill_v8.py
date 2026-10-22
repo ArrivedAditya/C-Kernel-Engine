@@ -134,6 +134,8 @@ def _comparison(left: Path, right: Path, label: str,
             "logit_cosine": float(np.dot(a, b) / denominator) if denominator else None,
             "top_tokens": [left_stage["top_token"], right_stage["top_token"]],
             "kv_exact_layers": sum(x == y for x, y in zip(kv_left, kv_right)),
+            "kv_mismatch_layers": [index for index, (x, y) in
+                                   enumerate(zip(kv_left, kv_right)) if x != y],
             "kv_layers": len(kv_left)}
 
 
