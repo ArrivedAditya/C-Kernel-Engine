@@ -95,7 +95,7 @@ class MultimodalOcrCorpusCertificationTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "changed during OCR execution"):
                 MODULE._verify_bridge_execution(report, sample, config)
 
-    def test_gguf_resume_rejects_changed_generated_library(self) -> None:
+    def test_gguf_resume_checks_immutable_library_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             workspace = root / "runtime"
@@ -121,6 +121,7 @@ class MultimodalOcrCorpusCertificationTest(unittest.TestCase):
                 evidence["model_library_sha256"][role] = MODULE._sha256_file(model)
                 evidence["engine_library_paths"][role] = str(engine)
                 evidence["engine_library_sha256"][role] = MODULE._sha256_file(engine)
+            MODULE._snapshot_generated_libraries(root, evidence)
             expected = {"image_index": 1, "image_sha256": "image", "truth_sha256": "truth"}
             truth = {"name": "Ada"}
             output = '{"name":"Ada"}'
@@ -138,9 +139,11 @@ class MultimodalOcrCorpusCertificationTest(unittest.TestCase):
             path.write_text(json.dumps(row), encoding="utf-8")
             self.assertIsNotNone(MODULE._load_resumed(path, expected, config, truth))
             (workspace / "decoder" / "libdecoder.so").write_bytes(b"changed")
+            self.assertIsNotNone(MODULE._load_resumed(path, expected, config, truth))
+            (root / "runtime_artifacts" / "decoder_model.so").write_bytes(b"changed")
             self.assertIsNone(MODULE._load_resumed(path, expected, config, truth))
 
-    def test_gguf_mode_runs_fresh_report_and_invalidates_changed_runtime(self) -> None:
+    def test_gguf_mode_snapshots_libraries_across_runtime_rebuilds(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             image = root / "image.jpg"
@@ -165,12 +168,14 @@ class MultimodalOcrCorpusCertificationTest(unittest.TestCase):
                 "--manifest", str(manifest), "--decoder-gguf", str(decoder),
                 "--encoder-gguf", str(encoder), "--adapter-id", "fixture",
                 "--model-label", "fixture", "--output-dir", str(output),
-                "--limit", "1", "--require-images", "1",
+                "--limit", "1", "--require-images", "1", "--threads", "7",
             ]
             calls = []
 
             def run(command, log_path, env):
                 self.assertFalse(report_path.exists())
+                self.assertEqual(env["CK_NUM_THREADS"], "7")
+                self.assertEqual(env["OMP_NUM_THREADS"], "7")
                 calls.append(command)
                 report = {
                     "status": "ok", "prefix_source": "encoder", "prefix_tokens": 2,
@@ -193,16 +198,51 @@ class MultimodalOcrCorpusCertificationTest(unittest.TestCase):
                 report_path.write_text(json.dumps(report), encoding="utf-8")
                 return 0.01
 
-            with mock.patch.object(MODULE, "_run", side_effect=run), redirect_stdout(StringIO()):
+            generation = {"source_sha256": "original", "engine_build_fingerprint": "original"}
+            with mock.patch.object(MODULE, "_run", side_effect=run), mock.patch.object(
+                MODULE, "_execution_generation_identity", side_effect=lambda: dict(generation),
+            ), redirect_stdout(StringIO()):
                 self.assertEqual(MODULE.main(args), 0)
                 self.assertEqual(MODULE.main(args), 0)
                 self.assertEqual(len(calls), 1)
+                snapshot = output / "image01" / "runtime_artifacts" / "decoder_model.so"
+                self.assertEqual(snapshot.read_bytes(), b"decoder")
                 (runtime / "decoder" / "libdecoder.so").write_bytes(b"changed")
                 self.assertEqual(MODULE.main(args), 0)
+                self.assertEqual(len(calls), 1)
+                snapshot.write_bytes(b"stale")
+                self.assertEqual(MODULE.main(args), 0)
                 self.assertEqual(len(calls), 2)
+                generation["source_sha256"] = "changed-circuit-or-preprocessor"
+                self.assertEqual(MODULE.main(args), 0)
+                self.assertEqual(len(calls), 3)
             summary = json.loads((output / "summary.json").read_text(encoding="utf-8"))
             self.assertEqual(summary["quality_status"], "pass")
             self.assertTrue((output / "image01" / "bridge_report.json").is_file())
+
+    def test_execution_generation_tracks_source_and_build_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for directory in MODULE.EXECUTION_SOURCE_ROOTS:
+                (root / directory).mkdir(parents=True)
+            circuit = root / "version/v8/circuits/gemma4.json"
+            bridge = root / "version/v8/scripts/run_multimodal_bridge_v8.py"
+            circuit.write_text('{"contract":"first"}', encoding="utf-8")
+            bridge.write_text("# preprocessing first\n", encoding="utf-8")
+            first = MODULE._execution_generation_identity(root)
+            (root / "geometry_workspace").mkdir()
+            (root / "geometry_workspace/model.so").write_bytes(b"rebuilt")
+            self.assertEqual(first, MODULE._execution_generation_identity(root))
+            circuit.write_text('{"contract":"second"}', encoding="utf-8")
+            second = MODULE._execution_generation_identity(root)
+            self.assertNotEqual(first["source_sha256"], second["source_sha256"])
+            bridge.write_text("# preprocessing second\n", encoding="utf-8")
+            self.assertNotEqual(second["source_sha256"], MODULE._execution_generation_identity(root)["source_sha256"])
+            with mock.patch.dict("os.environ", {"CFLAGS": "-DCK_TEST=1"}):
+                self.assertNotEqual(
+                    MODULE._execution_generation_identity(root)["engine_build_fingerprint"],
+                    first["engine_build_fingerprint"],
+                )
 
     def test_required_count_applies_to_selected_distinct_images(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
