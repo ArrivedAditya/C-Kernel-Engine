@@ -409,7 +409,7 @@
       "chat_scope_reason": "circuit references a resolved serving profile",
       "circuit": "gemma4",
       "circuit_path": "version/v8/circuits/gemma4.json",
-      "circuit_sha256": "fa9a88166ea9d9a3e0711671368340840c6211ef3ef29f3271bbcd3d17c2bfd7",
+      "circuit_sha256": "040c8c504942933a98b108e29e8a19e44fc0308dbf1768cd898f08609d411ebb",
       "evidence": {
         "cancellation_recovery": "not_assessed",
         "exact_token_ids": "not_assessed",
