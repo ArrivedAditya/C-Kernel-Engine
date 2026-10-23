@@ -763,6 +763,11 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_qwen3_tts_codec_preconv.py",
         timeout_sec=180,
     ),
+    "tts_qwen3_customvoice_codec_qkv": TestSuite(
+        "Qwen3-TTS Generated Codec Pre-Transformer Q/K/V", "inference",
+        ROOT / "tests" / "test_v8_qwen3_tts_codec_qkv.py",
+        timeout_sec=180,
+    ),
     "tts_audio_zero_pad_oracle": TestSuite(
         "Checked Left Zero Padding Independent Oracle", "kernels",
         ROOT / "tests" / "test_v8_audio_zero_pad_oracle.py",
