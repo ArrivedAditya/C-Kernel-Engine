@@ -753,6 +753,11 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_qwen3_tts_first_block.py",
         timeout_sec=180,
     ),
+    "tts_qwen3_customvoice_codec_semantic": TestSuite(
+        "Qwen3-TTS Generated Split-RVQ Codec Prefix", "inference",
+        ROOT / "tests" / "test_v8_qwen3_tts_codec_semantic.py",
+        timeout_sec=180,
+    ),
     "tts_transformer_rows_checked": TestSuite(
         "TTS Checked Transformer Rows and RoPE Boundaries", "kernels",
         ROOT / "tests" / "test_v8_transformer_rows_checked.py",
