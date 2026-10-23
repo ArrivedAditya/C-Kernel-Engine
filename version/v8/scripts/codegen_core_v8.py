@@ -3607,8 +3607,8 @@ CK_EXPORT int32_t ck_model_audio_prompt_token_id(int index) {{
         prefill_guard = " && (getenv(\"CK_V8_FORCE_BATCHED_PREFILL\") && atoi(getenv(\"CK_V8_FORCE_BATCHED_PREFILL\")) != 0)"
     else:
         prefill_guard = " && !(getenv(\"CK_V8_FORCE_DECODE_PREFILL\") && atoi(getenv(\"CK_V8_FORCE_DECODE_PREFILL\")) != 0)"
-    prefill_append_row_group = int(config.get("prefill_append_row_group", 1) or 1)
-    if prefill_append_row_group < 1:
+    prefill_append_row_group = config.get("prefill_append_row_group", 1)
+    if type(prefill_append_row_group) is not int or prefill_append_row_group < 1:
         raise RuntimeError("prefill append row group must be positive")
     prefill_count_guard = (
         "count > 0" if uses_persistent_cross_kv_cache else

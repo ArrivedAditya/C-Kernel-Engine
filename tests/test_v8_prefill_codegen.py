@@ -69,11 +69,13 @@ class TestV8PrefillCodegen(unittest.TestCase):
         )
         self.assertIn("if (count > 1 &&", ordinary)
         self.assertNotIn("a prior tail reduction cannot be regrouped", ordinary)
-        with self.assertRaisesRegex(RuntimeError, "row group must be positive"):
-            codegen_core_v8.emit_model_and_api(
-                layout={"memory": {"activations": {"buffers": []}}},
-                config={"prefill_append_row_group": -4},
-            )
+        for bad in (0, -4, 1.5, "4", True):
+            with self.subTest(bad=bad), self.assertRaisesRegex(
+                    RuntimeError, "row group must be positive"):
+                codegen_core_v8.emit_model_and_api(
+                    layout={"memory": {"activations": {"buffers": []}}},
+                    config={"prefill_append_row_group": bad},
+                )
         api = source[
             source.index("CK_EXPORT int ck_model_prefill_append_row_group(void)"):
             source.index("/* Forward pass (after embed_tokens) */")
