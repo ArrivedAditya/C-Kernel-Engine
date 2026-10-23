@@ -13,6 +13,12 @@ For an asset-backed sweep, pass --matrix-lengths, --matrix-chunk-sizes and
 Use --matrix-splits 0,120 to compare chunking from the start and staged append
 after an existing 120-token prefix. A failing or missing case never counts as
 a matrix pass. The original #872 one-call fixture uses no append option.
+
+--aligned-chunks plans every external append using the row-group alignment
+exported by the loaded generated model. It allows a final partial group but
+rejects an unaligned prior prefix or too-small intermediate budget before
+model initialization. This certifies isolated-request prefill only; it does
+not certify mixed-request packing or the HTTP decode-replay prefill path.
 """
 
 from __future__ import annotations
@@ -33,6 +39,8 @@ import numpy as np
 
 import xray_execution_state_v8
 from xray_execution_state_v8 import compare_equivalent_stage
+import prefill_chunk_contract_v8
+from prefill_chunk_contract_v8 import plan_prefill_chunks
 
 
 def _sha256(path: Path) -> str:
@@ -139,6 +147,25 @@ def _segments(prompt: list[int], split_at: int | None,
     return segments
 
 
+def _preflight_aligned_chunks(bundle: Path, identity: dict[str, str],
+                              total_tokens: int, chunk_size: int,
+                              split_at: int | None) -> int:
+    """Reject an unsafe plan without initializing or executing either model."""
+    lib = ctypes.CDLL(str(bundle / "libmodel.so"), mode=ctypes.RTLD_GLOBAL)
+    loaded = _loaded_identity(lib, bundle)
+    for name, digest in loaded.items():
+        if digest != identity[name]:
+            raise RuntimeError(f"loaded {name} differs from preflight")
+    exported = getattr(lib, "ck_model_prefill_append_row_group", None)
+    if exported is None:
+        raise RuntimeError("generated model does not export prefill append row group")
+    exported.restype = ctypes.c_int
+    row_group = int(exported())
+    plan_prefill_chunks(total_tokens, chunk_size, row_group,
+                        initial_prefix=split_at or 0)
+    return row_group
+
+
 def _kv_only_state_contract(bundle: Path) -> dict:
     """Fail closed when this comparator cannot export all mutable sequence state."""
     path = bundle / "layout_decode.json"
@@ -157,7 +184,8 @@ def _kv_only_state_contract(bundle: Path) -> dict:
 
 
 def _probe(bundle: Path, prompt: list[int], continuation: list[int], output: Path,
-           split_at: int | None = None, append_chunk_size: int | None = None) -> None:
+           split_at: int | None = None, append_chunk_size: int | None = None,
+           aligned_chunks: bool = False) -> None:
     state_contract = _kv_only_state_contract(bundle)
     lib = ctypes.CDLL(str(bundle / "libmodel.so"), mode=ctypes.RTLD_GLOBAL)
     loaded = _loaded_identity(lib, bundle)
@@ -177,12 +205,26 @@ def _probe(bundle: Path, prompt: list[int], continuation: list[int], output: Pat
     lib.ck_model_debug_export_kv.argtypes = [ctypes.c_char_p, ctypes.c_int]
     lib.ck_model_debug_export_kv.restype = ctypes.c_int
     lib.ck_model_free.restype = None
+    row_group = None
+    if aligned_chunks:
+        exported = getattr(lib, "ck_model_prefill_append_row_group", None)
+        if exported is None:
+            raise RuntimeError("generated model does not export prefill append row group")
+        exported.restype = ctypes.c_int
+        row_group = int(exported())
+        if row_group < 1:
+            raise RuntimeError("generated model exports invalid prefill append row group")
+        calls = plan_prefill_chunks(
+            len(prompt), append_chunk_size, row_group,
+            initial_prefix=split_at or 0)
+        segments = [(start, prompt[start:start + count]) for start, count in calls]
+    else:
+        segments = _segments(prompt, split_at, append_chunk_size)
     if lib.ck_model_init(str(bundle / "weights.bump").encode()) != 0:
         raise RuntimeError("ck_model_init failed")
     try:
         lib.ck_get_num_threads.restype = ctypes.c_int
         native_threads = int(lib.ck_get_num_threads())
-        segments = _segments(prompt, split_at, append_chunk_size)
         for _, segment in segments:
             rows = (ctypes.c_int32 * len(segment))(*segment)
             if lib.ck_model_embed_tokens(rows, len(segment)) != 0:
@@ -232,6 +274,7 @@ def _probe(bundle: Path, prompt: list[int], continuation: list[int], output: Pat
             json.dumps({"stages": stages, "loaded_libraries": loaded,
                         "native_threads": native_threads,
                         "state_contract": state_contract,
+                        "prefill_append_row_group": row_group,
                         "calls": [{"start": start, "count": len(segment)}
                                   for start, segment in segments]}, indent=2) + "\n", encoding="utf-8")
     finally:
@@ -301,6 +344,22 @@ def _matrix_cases(lengths: str, chunks: str, threads: str,
     return cases
 
 
+def _aligned_report_plan_matches(detail: dict, length: int, chunk: int,
+                                 split: int | None) -> bool:
+    if not isinstance(detail, dict) or not isinstance(detail.get("execution_calls"), dict):
+        return False
+    group = detail.get("prefill_append_row_group")
+    if type(group) is not int or group < 1:
+        return False
+    try:
+        expected = plan_prefill_chunks(length, chunk, group,
+                                       initial_prefix=split or 0)
+    except ValueError:
+        return False
+    return detail["execution_calls"].get("chunked") == [
+        {"start": start, "count": count} for start, count in expected]
+
+
 def _run_matrix(args: argparse.Namespace, prompt: list[int]) -> int:
     if not args.matrix_chunk_sizes or not args.matrix_threads:
         raise ValueError("matrix requires --matrix-chunk-sizes and --matrix-threads")
@@ -322,6 +381,8 @@ def _run_matrix(args: argparse.Namespace, prompt: list[int]) -> int:
                    "--append-chunk-size", str(chunk), "--require-exact"]
         if args.continuation:
             command.extend(("--continuation", str(args.continuation.resolve())))
+        if args.aligned_chunks:
+            command.append("--aligned-chunks")
         if split is not None:
             command.extend(("--split-at", str(split)))
         environment = dict(os.environ, OMP_NUM_THREADS=str(threads), CK_NUM_THREADS=str(threads))
@@ -338,11 +399,14 @@ def _run_matrix(args: argparse.Namespace, prompt: list[int]) -> int:
                      detail.get("schema") == "cke.chunked_prefill_comparison.v1" and
                      detail.get("prompt_tokens") == length and
                      detail.get("append_chunk_size") == chunk and
+                     detail.get("aligned_chunks") == args.aligned_chunks and
                      detail.get("split_at") == split and
                      detail.get("token_sha256") == _sha256(token_path) and
                      detail.get("execution", {}).get("omp_num_threads") == str(threads) and
                      detail.get("execution", {}).get("native_threads") ==
-                     {"full": threads, "chunked": threads})
+                     {"full": threads, "chunked": threads} and
+                     (not args.aligned_chunks or
+                      _aligned_report_plan_matches(detail, length, chunk, split)))
         status = ("pass" if run.returncode == 0 and bound and detail.get("exact") and
                   detail.get("same_engine_build") else
                   "fail" if detail or run.returncode in (0, 124) else "not_tested")
@@ -356,9 +420,12 @@ def _run_matrix(args: argparse.Namespace, prompt: list[int]) -> int:
               "status": status, "subject": "chunked", "reference": "uninterrupted",
               "source_token_sha256": _sha256(args.tokens),
               "source_revision": _source_revision(),
+              "aligned_chunks": args.aligned_chunks,
               "continuation_sha256": _sha256(args.continuation) if args.continuation else None,
               "machine": platform.machine(), "cpu_model": _cpu_model(),
               "comparison_source_sha256": _sha256(Path(__file__)),
+              "prefill_planner_source_sha256": _sha256(
+                  Path(prefill_chunk_contract_v8.__file__)),
               "xray_source_sha256": _sha256(Path(xray_execution_state_v8.__file__)),
               "cases": results}
     args.json_out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
@@ -378,6 +445,8 @@ def main() -> int:
                         help="Append at this position in the chunked child (nonzero-position test)")
     parser.add_argument("--append-chunk-size", type=int,
                         help="Split the chunked child into repeated append calls of at most this many tokens")
+    parser.add_argument("--aligned-chunks", action="store_true",
+                        help="Plan append boundaries from the loaded model's provider row-group export")
     parser.add_argument("--matrix-lengths", help="Comma-separated prompt lengths for a bounded equivalence sweep")
     parser.add_argument("--matrix-chunk-sizes", help="Comma-separated repeated-append sizes for the sweep")
     parser.add_argument("--matrix-threads", help="Comma-separated native/OpenMP thread counts for the sweep")
@@ -391,7 +460,8 @@ def main() -> int:
     if args.child:
         _probe(args.full.resolve(), _tokens(args.tokens),
                _tokens(args.continuation) if args.continuation else [],
-               args.output.resolve(), args.split_at, args.append_chunk_size)
+               args.output.resolve(), args.split_at, args.append_chunk_size,
+               args.aligned_chunks)
         return 0
     if not args.full or not args.chunked or not args.tokens or not args.json_out:
         parser.error("--full, --chunked, --tokens and --json-out are required")
@@ -405,6 +475,8 @@ def main() -> int:
         parser.error("--split-at must be inside the prompt")
     if args.append_chunk_size is not None and args.append_chunk_size <= 0:
         parser.error("--append-chunk-size must be positive")
+    if args.aligned_chunks and args.append_chunk_size is None and not args.matrix_lengths:
+        parser.error("--aligned-chunks requires --append-chunk-size or matrix chunk sizes")
     continuation = _tokens(args.continuation) if args.continuation else []
     if args.matrix_lengths:
         if args.split_at is not None or args.append_chunk_size is not None:
@@ -412,6 +484,13 @@ def main() -> int:
         if args.matrix_case_timeout_sec <= 0:
             parser.error("--matrix-case-timeout-sec must be positive")
         return _run_matrix(args, prompt)
+    try:
+        expected_row_group = (
+            _preflight_aligned_chunks(chunked, identities["chunked"], len(prompt),
+                                      args.append_chunk_size, args.split_at)
+            if args.aligned_chunks else None)
+    except ValueError as exc:
+        parser.error(str(exc))
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
         for name, bundle in (("full", full), ("chunked", chunked)):
@@ -426,9 +505,18 @@ def main() -> int:
                 command.extend(("--split-at", str(args.split_at)))
             if name == "chunked" and args.append_chunk_size is not None:
                 command.extend(("--append-chunk-size", str(args.append_chunk_size)))
+            if name == "chunked" and args.aligned_chunks:
+                command.append("--aligned-chunks")
             subprocess.run(command, check=True)
         left = json.loads((root / "full" / "probe.json").read_text())
         right = json.loads((root / "chunked" / "probe.json").read_text())
+        if right["prefill_append_row_group"] != expected_row_group:
+            raise RuntimeError("loaded append row group changed after preflight")
+        if args.aligned_chunks and not _aligned_report_plan_matches(
+                {"prefill_append_row_group": expected_row_group,
+                 "execution_calls": {"chunked": right["calls"]}},
+                len(prompt), args.append_chunk_size, args.split_at):
+            raise RuntimeError("executed append calls differ from checked aligned plan")
         loaded = {"full": left["loaded_libraries"],
                   "chunked": right["loaded_libraries"]}
         if left["state_contract"]["exported_state"] != right["state_contract"]["exported_state"]:
@@ -450,6 +538,8 @@ def main() -> int:
               "prompt_tokens": len(prompt), "continuation_tokens": len(continuation),
               "split_at": args.split_at,
               "append_chunk_size": args.append_chunk_size,
+              "aligned_chunks": args.aligned_chunks,
+              "prefill_append_row_group": right["prefill_append_row_group"],
               "execution_calls": {"full": left["calls"], "chunked": right["calls"]},
               "state_contract": {"full": left["state_contract"],
                                  "chunked": right["state_contract"]},
@@ -466,6 +556,8 @@ def main() -> int:
                                                "chunked": right["native_threads"]},
                             "strict_parity": os.environ.get("CK_STRICT_PARITY")},
               "comparison_source_sha256": _sha256(Path(__file__)),
+              "prefill_planner_source_sha256": _sha256(
+                  Path(prefill_chunk_contract_v8.__file__)),
               "xray_source_sha256": _sha256(Path(xray_execution_state_v8.__file__)),
               "comparisons": comparisons,
               "first_observed_divergence": next(
