@@ -1,0 +1,2040 @@
+{
+  "version": 3,
+  "name": "qwen3_tts_codec_rvq_bounded",
+  "family": "bounded_graph",
+  "checked_native_entry": true,
+  "contract": {
+    "runtime_invariants": {
+      "inference_only": true,
+      "production_kernel_heap_allocation": false,
+      "frames": 46,
+      "complete_codec": false,
+      "complete_synthesis": false,
+      "acoustic_codebooks": 15,
+      "complete_rvq": true
+    }
+  },
+  "activation_buffers": {
+    "semantic_ids": {
+      "shape": [
+        46
+      ]
+    },
+    "semantic_channel": {
+      "shape": [
+        256,
+        46
+      ]
+    },
+    "semantic_token": {
+      "shape": [
+        46,
+        256
+      ]
+    },
+    "semantic_projected": {
+      "shape": [
+        46,
+        512
+      ]
+    },
+    "acoustic_ids_0": {
+      "shape": [
+        46
+      ]
+    },
+    "acoustic_channel_0": {
+      "shape": [
+        256,
+        46
+      ]
+    },
+    "acoustic_ids_1": {
+      "shape": [
+        46
+      ]
+    },
+    "acoustic_channel_1": {
+      "shape": [
+        256,
+        46
+      ]
+    },
+    "acoustic_sum_1": {
+      "shape": [
+        256,
+        46
+      ]
+    },
+    "acoustic_ids_2": {
+      "shape": [
+        46
+      ]
+    },
+    "acoustic_channel_2": {
+      "shape": [
+        256,
+        46
+      ]
+    },
+    "acoustic_sum_2": {
+      "shape": [
+        256,
+        46
+      ]
+    },
+    "acoustic_ids_3": {
+      "shape": [
+        46
+      ]
+    },
+    "acoustic_channel_3": {
+      "shape": [
+        256,
+        46
+      ]
+    },
+    "acoustic_sum_3": {
+      "shape": [
+        256,
+        46
+      ]
+    },
+    "acoustic_ids_4": {
+      "shape": [
+        46
+      ]
+    },
+    "acoustic_channel_4": {
+      "shape": [
+        256,
+        46
+      ]
+    },
+    "acoustic_sum_4": {
+      "shape": [
+        256,
+        46
+      ]
+    },
+    "acoustic_ids_5": {
+      "shape": [
+        46
+      ]
+    },
+    "acoustic_channel_5": {
+      "shape": [
+        256,
+        46
+      ]
+    },
+    "acoustic_sum_5": {
+      "shape": [
+        256,
+        46
+      ]
+    },
+    "acoustic_ids_6": {
+      "shape": [
+        46
+      ]
+    },
+    "acoustic_channel_6": {
+      "shape": [
+        256,
+        46
+      ]
+    },
+    "acoustic_sum_6": {
+      "shape": [
+        256,
+        46
+      ]
+    },
+    "acoustic_ids_7": {
+      "shape": [
+        46
+      ]
+    },
+    "acoustic_channel_7": {
+      "shape": [
+        256,
+        46
+      ]
+    },
+    "acoustic_sum_7": {
+      "shape": [
+        256,
+        46
+      ]
+    },
+    "acoustic_ids_8": {
+      "shape": [
+        46
+      ]
+    },
+    "acoustic_channel_8": {
+      "shape": [
+        256,
+        46
+      ]
+    },
+    "acoustic_sum_8": {
+      "shape": [
+        256,
+        46
+      ]
+    },
+    "acoustic_ids_9": {
+      "shape": [
+        46
+      ]
+    },
+    "acoustic_channel_9": {
+      "shape": [
+        256,
+        46
+      ]
+    },
+    "acoustic_sum_9": {
+      "shape": [
+        256,
+        46
+      ]
+    },
+    "acoustic_ids_10": {
+      "shape": [
+        46
+      ]
+    },
+    "acoustic_channel_10": {
+      "shape": [
+        256,
+        46
+      ]
+    },
+    "acoustic_sum_10": {
+      "shape": [
+        256,
+        46
+      ]
+    },
+    "acoustic_ids_11": {
+      "shape": [
+        46
+      ]
+    },
+    "acoustic_channel_11": {
+      "shape": [
+        256,
+        46
+      ]
+    },
+    "acoustic_sum_11": {
+      "shape": [
+        256,
+        46
+      ]
+    },
+    "acoustic_ids_12": {
+      "shape": [
+        46
+      ]
+    },
+    "acoustic_channel_12": {
+      "shape": [
+        256,
+        46
+      ]
+    },
+    "acoustic_sum_12": {
+      "shape": [
+        256,
+        46
+      ]
+    },
+    "acoustic_ids_13": {
+      "shape": [
+        46
+      ]
+    },
+    "acoustic_channel_13": {
+      "shape": [
+        256,
+        46
+      ]
+    },
+    "acoustic_sum_13": {
+      "shape": [
+        256,
+        46
+      ]
+    },
+    "acoustic_ids_14": {
+      "shape": [
+        46
+      ]
+    },
+    "acoustic_channel_14": {
+      "shape": [
+        256,
+        46
+      ]
+    },
+    "acoustic_sum_14": {
+      "shape": [
+        256,
+        46
+      ]
+    },
+    "acoustic_token": {
+      "shape": [
+        46,
+        256
+      ]
+    },
+    "acoustic_projected": {
+      "shape": [
+        46,
+        512
+      ]
+    },
+    "rvq_output": {
+      "shape": [
+        46,
+        512
+      ]
+    }
+  },
+  "activation_bindings": {
+    "semantic_ids": "semantic_ids",
+    "semantic_channel": "semantic_channel",
+    "semantic_token": "semantic_token",
+    "semantic_projected": "semantic_projected",
+    "acoustic_ids_0": "acoustic_ids_0",
+    "acoustic_channel_0": "acoustic_channel_0",
+    "acoustic_ids_1": "acoustic_ids_1",
+    "acoustic_channel_1": "acoustic_channel_1",
+    "acoustic_sum_1": "acoustic_sum_1",
+    "acoustic_ids_2": "acoustic_ids_2",
+    "acoustic_channel_2": "acoustic_channel_2",
+    "acoustic_sum_2": "acoustic_sum_2",
+    "acoustic_ids_3": "acoustic_ids_3",
+    "acoustic_channel_3": "acoustic_channel_3",
+    "acoustic_sum_3": "acoustic_sum_3",
+    "acoustic_ids_4": "acoustic_ids_4",
+    "acoustic_channel_4": "acoustic_channel_4",
+    "acoustic_sum_4": "acoustic_sum_4",
+    "acoustic_ids_5": "acoustic_ids_5",
+    "acoustic_channel_5": "acoustic_channel_5",
+    "acoustic_sum_5": "acoustic_sum_5",
+    "acoustic_ids_6": "acoustic_ids_6",
+    "acoustic_channel_6": "acoustic_channel_6",
+    "acoustic_sum_6": "acoustic_sum_6",
+    "acoustic_ids_7": "acoustic_ids_7",
+    "acoustic_channel_7": "acoustic_channel_7",
+    "acoustic_sum_7": "acoustic_sum_7",
+    "acoustic_ids_8": "acoustic_ids_8",
+    "acoustic_channel_8": "acoustic_channel_8",
+    "acoustic_sum_8": "acoustic_sum_8",
+    "acoustic_ids_9": "acoustic_ids_9",
+    "acoustic_channel_9": "acoustic_channel_9",
+    "acoustic_sum_9": "acoustic_sum_9",
+    "acoustic_ids_10": "acoustic_ids_10",
+    "acoustic_channel_10": "acoustic_channel_10",
+    "acoustic_sum_10": "acoustic_sum_10",
+    "acoustic_ids_11": "acoustic_ids_11",
+    "acoustic_channel_11": "acoustic_channel_11",
+    "acoustic_sum_11": "acoustic_sum_11",
+    "acoustic_ids_12": "acoustic_ids_12",
+    "acoustic_channel_12": "acoustic_channel_12",
+    "acoustic_sum_12": "acoustic_sum_12",
+    "acoustic_ids_13": "acoustic_ids_13",
+    "acoustic_channel_13": "acoustic_channel_13",
+    "acoustic_sum_13": "acoustic_sum_13",
+    "acoustic_ids_14": "acoustic_ids_14",
+    "acoustic_channel_14": "acoustic_channel_14",
+    "acoustic_sum_14": "acoustic_sum_14",
+    "acoustic_token": "acoustic_token",
+    "acoustic_projected": "acoustic_projected",
+    "rvq_output": "rvq_output"
+  },
+  "native_entry": {
+    "function": "ck_qwen3_tts_codec_rvq_bounded",
+    "params": [
+      {
+        "c_type": "uint8_t *",
+        "name": "arena"
+      },
+      {
+        "c_type": "size_t",
+        "name": "arena_bytes"
+      }
+    ],
+    "arena": {
+      "pointer": "arena",
+      "bytes": "arena_bytes"
+    }
+  },
+  "sequence": [
+    "codec_semantic"
+  ],
+  "block_types": {
+    "codec_semantic": {
+      "sequence": [
+        "header",
+        "body",
+        "footer"
+      ],
+      "header": [],
+      "body": {
+        "type": "dense",
+        "ops": [
+          {
+            "id": "semantic_lookup",
+            "op": "embedding_lookup_checked",
+            "kernel": "audio_text_embedding_channel_major_f32",
+            "returns_status": true,
+            "weight_refs": {
+              "table": "codec.semantic.effective_embedding"
+            },
+            "graph_slots": {
+              "inputs": {
+                "ids": "external:semantic_ids"
+              },
+              "outputs": {
+                "output": "semantic_channel"
+              }
+            },
+            "params": {
+              "T": 46,
+              "V": 2048,
+              "C": 256,
+              "T_capacity": 46,
+              "call_constants": {
+                "id_elements": 46,
+                "table_elements": 524288,
+                "vocabulary": 2048,
+                "channels": 256,
+                "table_stride": 256,
+                "output_elements": 11776,
+                "tokens": 46,
+                "output_stride": 46
+              }
+            }
+          },
+          {
+            "id": "semantic_transpose",
+            "op": "transpose_strided_checked",
+            "kernel": "transpose_strided_f32_checked",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "input": "semantic_channel"
+              },
+              "outputs": {
+                "output": "semantic_token"
+              }
+            },
+            "params": {
+              "R": 256,
+              "C": 46,
+              "call_constants": {
+                "transpose_input_elements": 11776,
+                "transpose_input_stride": 46,
+                "transpose_output_elements": 11776,
+                "transpose_output_stride": 256,
+                "transpose_rows": 256,
+                "transpose_columns": 46
+              }
+            }
+          },
+          {
+            "id": "semantic_projection",
+            "op": "linear_rows_checked_no_bias",
+            "kernel": "linear_rows_checked_no_bias_f32",
+            "returns_status": true,
+            "weight_refs": {
+              "weight": "codec.semantic.output_projection.weight"
+            },
+            "graph_slots": {
+              "inputs": {
+                "input": "semantic_token"
+              },
+              "outputs": {
+                "output": "semantic_projected"
+              }
+            },
+            "params": {
+              "M": 46,
+              "K": 256,
+              "N": 512,
+              "call_constants": {
+                "linear_input_elements": 11776,
+                "linear_input_stride": 256,
+                "linear_weight_elements": 131072,
+                "linear_weight_stride": 256,
+                "linear_output_elements": 23552,
+                "linear_output_stride": 512,
+                "linear_rows": 46,
+                "linear_input_channels": 256,
+                "linear_output_channels": 512
+              }
+            }
+          },
+          {
+            "id": "acoustic_lookup_0",
+            "op": "embedding_lookup_checked",
+            "kernel": "audio_text_embedding_channel_major_f32",
+            "returns_status": true,
+            "weight_refs": {
+              "table": "codec.acoustic.0.effective_embedding"
+            },
+            "graph_slots": {
+              "inputs": {
+                "ids": "external:acoustic_ids_0"
+              },
+              "outputs": {
+                "output": "acoustic_channel_0"
+              }
+            },
+            "params": {
+              "T": 46,
+              "V": 2048,
+              "C": 256,
+              "T_capacity": 46,
+              "call_constants": {
+                "id_elements": 46,
+                "table_elements": 524288,
+                "vocabulary": 2048,
+                "channels": 256,
+                "table_stride": 256,
+                "output_elements": 11776,
+                "tokens": 46,
+                "output_stride": 46
+              }
+            }
+          },
+          {
+            "id": "acoustic_lookup_1",
+            "op": "embedding_lookup_checked",
+            "kernel": "audio_text_embedding_channel_major_f32",
+            "returns_status": true,
+            "weight_refs": {
+              "table": "codec.acoustic.1.effective_embedding"
+            },
+            "graph_slots": {
+              "inputs": {
+                "ids": "external:acoustic_ids_1"
+              },
+              "outputs": {
+                "output": "acoustic_channel_1"
+              }
+            },
+            "params": {
+              "T": 46,
+              "V": 2048,
+              "C": 256,
+              "T_capacity": 46,
+              "call_constants": {
+                "id_elements": 46,
+                "table_elements": 524288,
+                "vocabulary": 2048,
+                "channels": 256,
+                "table_stride": 256,
+                "output_elements": 11776,
+                "tokens": 46,
+                "output_stride": 46
+              }
+            }
+          },
+          {
+            "id": "acoustic_sum_1",
+            "op": "add_rows_checked",
+            "kernel": "add_rows_checked_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "left": "acoustic_channel_0",
+                "right": "acoustic_channel_1"
+              },
+              "outputs": {
+                "output": "acoustic_sum_1"
+              }
+            },
+            "params": {
+              "N": 11776,
+              "call_constants": {
+                "left_elements": 11776,
+                "right_elements": 11776,
+                "output_elements": 11776,
+                "elements": 11776
+              }
+            }
+          },
+          {
+            "id": "acoustic_lookup_2",
+            "op": "embedding_lookup_checked",
+            "kernel": "audio_text_embedding_channel_major_f32",
+            "returns_status": true,
+            "weight_refs": {
+              "table": "codec.acoustic.2.effective_embedding"
+            },
+            "graph_slots": {
+              "inputs": {
+                "ids": "external:acoustic_ids_2"
+              },
+              "outputs": {
+                "output": "acoustic_channel_2"
+              }
+            },
+            "params": {
+              "T": 46,
+              "V": 2048,
+              "C": 256,
+              "T_capacity": 46,
+              "call_constants": {
+                "id_elements": 46,
+                "table_elements": 524288,
+                "vocabulary": 2048,
+                "channels": 256,
+                "table_stride": 256,
+                "output_elements": 11776,
+                "tokens": 46,
+                "output_stride": 46
+              }
+            }
+          },
+          {
+            "id": "acoustic_sum_2",
+            "op": "add_rows_checked",
+            "kernel": "add_rows_checked_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "left": "acoustic_sum_1",
+                "right": "acoustic_channel_2"
+              },
+              "outputs": {
+                "output": "acoustic_sum_2"
+              }
+            },
+            "params": {
+              "N": 11776,
+              "call_constants": {
+                "left_elements": 11776,
+                "right_elements": 11776,
+                "output_elements": 11776,
+                "elements": 11776
+              }
+            }
+          },
+          {
+            "id": "acoustic_lookup_3",
+            "op": "embedding_lookup_checked",
+            "kernel": "audio_text_embedding_channel_major_f32",
+            "returns_status": true,
+            "weight_refs": {
+              "table": "codec.acoustic.3.effective_embedding"
+            },
+            "graph_slots": {
+              "inputs": {
+                "ids": "external:acoustic_ids_3"
+              },
+              "outputs": {
+                "output": "acoustic_channel_3"
+              }
+            },
+            "params": {
+              "T": 46,
+              "V": 2048,
+              "C": 256,
+              "T_capacity": 46,
+              "call_constants": {
+                "id_elements": 46,
+                "table_elements": 524288,
+                "vocabulary": 2048,
+                "channels": 256,
+                "table_stride": 256,
+                "output_elements": 11776,
+                "tokens": 46,
+                "output_stride": 46
+              }
+            }
+          },
+          {
+            "id": "acoustic_sum_3",
+            "op": "add_rows_checked",
+            "kernel": "add_rows_checked_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "left": "acoustic_sum_2",
+                "right": "acoustic_channel_3"
+              },
+              "outputs": {
+                "output": "acoustic_sum_3"
+              }
+            },
+            "params": {
+              "N": 11776,
+              "call_constants": {
+                "left_elements": 11776,
+                "right_elements": 11776,
+                "output_elements": 11776,
+                "elements": 11776
+              }
+            }
+          },
+          {
+            "id": "acoustic_lookup_4",
+            "op": "embedding_lookup_checked",
+            "kernel": "audio_text_embedding_channel_major_f32",
+            "returns_status": true,
+            "weight_refs": {
+              "table": "codec.acoustic.4.effective_embedding"
+            },
+            "graph_slots": {
+              "inputs": {
+                "ids": "external:acoustic_ids_4"
+              },
+              "outputs": {
+                "output": "acoustic_channel_4"
+              }
+            },
+            "params": {
+              "T": 46,
+              "V": 2048,
+              "C": 256,
+              "T_capacity": 46,
+              "call_constants": {
+                "id_elements": 46,
+                "table_elements": 524288,
+                "vocabulary": 2048,
+                "channels": 256,
+                "table_stride": 256,
+                "output_elements": 11776,
+                "tokens": 46,
+                "output_stride": 46
+              }
+            }
+          },
+          {
+            "id": "acoustic_sum_4",
+            "op": "add_rows_checked",
+            "kernel": "add_rows_checked_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "left": "acoustic_sum_3",
+                "right": "acoustic_channel_4"
+              },
+              "outputs": {
+                "output": "acoustic_sum_4"
+              }
+            },
+            "params": {
+              "N": 11776,
+              "call_constants": {
+                "left_elements": 11776,
+                "right_elements": 11776,
+                "output_elements": 11776,
+                "elements": 11776
+              }
+            }
+          },
+          {
+            "id": "acoustic_lookup_5",
+            "op": "embedding_lookup_checked",
+            "kernel": "audio_text_embedding_channel_major_f32",
+            "returns_status": true,
+            "weight_refs": {
+              "table": "codec.acoustic.5.effective_embedding"
+            },
+            "graph_slots": {
+              "inputs": {
+                "ids": "external:acoustic_ids_5"
+              },
+              "outputs": {
+                "output": "acoustic_channel_5"
+              }
+            },
+            "params": {
+              "T": 46,
+              "V": 2048,
+              "C": 256,
+              "T_capacity": 46,
+              "call_constants": {
+                "id_elements": 46,
+                "table_elements": 524288,
+                "vocabulary": 2048,
+                "channels": 256,
+                "table_stride": 256,
+                "output_elements": 11776,
+                "tokens": 46,
+                "output_stride": 46
+              }
+            }
+          },
+          {
+            "id": "acoustic_sum_5",
+            "op": "add_rows_checked",
+            "kernel": "add_rows_checked_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "left": "acoustic_sum_4",
+                "right": "acoustic_channel_5"
+              },
+              "outputs": {
+                "output": "acoustic_sum_5"
+              }
+            },
+            "params": {
+              "N": 11776,
+              "call_constants": {
+                "left_elements": 11776,
+                "right_elements": 11776,
+                "output_elements": 11776,
+                "elements": 11776
+              }
+            }
+          },
+          {
+            "id": "acoustic_lookup_6",
+            "op": "embedding_lookup_checked",
+            "kernel": "audio_text_embedding_channel_major_f32",
+            "returns_status": true,
+            "weight_refs": {
+              "table": "codec.acoustic.6.effective_embedding"
+            },
+            "graph_slots": {
+              "inputs": {
+                "ids": "external:acoustic_ids_6"
+              },
+              "outputs": {
+                "output": "acoustic_channel_6"
+              }
+            },
+            "params": {
+              "T": 46,
+              "V": 2048,
+              "C": 256,
+              "T_capacity": 46,
+              "call_constants": {
+                "id_elements": 46,
+                "table_elements": 524288,
+                "vocabulary": 2048,
+                "channels": 256,
+                "table_stride": 256,
+                "output_elements": 11776,
+                "tokens": 46,
+                "output_stride": 46
+              }
+            }
+          },
+          {
+            "id": "acoustic_sum_6",
+            "op": "add_rows_checked",
+            "kernel": "add_rows_checked_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "left": "acoustic_sum_5",
+                "right": "acoustic_channel_6"
+              },
+              "outputs": {
+                "output": "acoustic_sum_6"
+              }
+            },
+            "params": {
+              "N": 11776,
+              "call_constants": {
+                "left_elements": 11776,
+                "right_elements": 11776,
+                "output_elements": 11776,
+                "elements": 11776
+              }
+            }
+          },
+          {
+            "id": "acoustic_lookup_7",
+            "op": "embedding_lookup_checked",
+            "kernel": "audio_text_embedding_channel_major_f32",
+            "returns_status": true,
+            "weight_refs": {
+              "table": "codec.acoustic.7.effective_embedding"
+            },
+            "graph_slots": {
+              "inputs": {
+                "ids": "external:acoustic_ids_7"
+              },
+              "outputs": {
+                "output": "acoustic_channel_7"
+              }
+            },
+            "params": {
+              "T": 46,
+              "V": 2048,
+              "C": 256,
+              "T_capacity": 46,
+              "call_constants": {
+                "id_elements": 46,
+                "table_elements": 524288,
+                "vocabulary": 2048,
+                "channels": 256,
+                "table_stride": 256,
+                "output_elements": 11776,
+                "tokens": 46,
+                "output_stride": 46
+              }
+            }
+          },
+          {
+            "id": "acoustic_sum_7",
+            "op": "add_rows_checked",
+            "kernel": "add_rows_checked_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "left": "acoustic_sum_6",
+                "right": "acoustic_channel_7"
+              },
+              "outputs": {
+                "output": "acoustic_sum_7"
+              }
+            },
+            "params": {
+              "N": 11776,
+              "call_constants": {
+                "left_elements": 11776,
+                "right_elements": 11776,
+                "output_elements": 11776,
+                "elements": 11776
+              }
+            }
+          },
+          {
+            "id": "acoustic_lookup_8",
+            "op": "embedding_lookup_checked",
+            "kernel": "audio_text_embedding_channel_major_f32",
+            "returns_status": true,
+            "weight_refs": {
+              "table": "codec.acoustic.8.effective_embedding"
+            },
+            "graph_slots": {
+              "inputs": {
+                "ids": "external:acoustic_ids_8"
+              },
+              "outputs": {
+                "output": "acoustic_channel_8"
+              }
+            },
+            "params": {
+              "T": 46,
+              "V": 2048,
+              "C": 256,
+              "T_capacity": 46,
+              "call_constants": {
+                "id_elements": 46,
+                "table_elements": 524288,
+                "vocabulary": 2048,
+                "channels": 256,
+                "table_stride": 256,
+                "output_elements": 11776,
+                "tokens": 46,
+                "output_stride": 46
+              }
+            }
+          },
+          {
+            "id": "acoustic_sum_8",
+            "op": "add_rows_checked",
+            "kernel": "add_rows_checked_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "left": "acoustic_sum_7",
+                "right": "acoustic_channel_8"
+              },
+              "outputs": {
+                "output": "acoustic_sum_8"
+              }
+            },
+            "params": {
+              "N": 11776,
+              "call_constants": {
+                "left_elements": 11776,
+                "right_elements": 11776,
+                "output_elements": 11776,
+                "elements": 11776
+              }
+            }
+          },
+          {
+            "id": "acoustic_lookup_9",
+            "op": "embedding_lookup_checked",
+            "kernel": "audio_text_embedding_channel_major_f32",
+            "returns_status": true,
+            "weight_refs": {
+              "table": "codec.acoustic.9.effective_embedding"
+            },
+            "graph_slots": {
+              "inputs": {
+                "ids": "external:acoustic_ids_9"
+              },
+              "outputs": {
+                "output": "acoustic_channel_9"
+              }
+            },
+            "params": {
+              "T": 46,
+              "V": 2048,
+              "C": 256,
+              "T_capacity": 46,
+              "call_constants": {
+                "id_elements": 46,
+                "table_elements": 524288,
+                "vocabulary": 2048,
+                "channels": 256,
+                "table_stride": 256,
+                "output_elements": 11776,
+                "tokens": 46,
+                "output_stride": 46
+              }
+            }
+          },
+          {
+            "id": "acoustic_sum_9",
+            "op": "add_rows_checked",
+            "kernel": "add_rows_checked_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "left": "acoustic_sum_8",
+                "right": "acoustic_channel_9"
+              },
+              "outputs": {
+                "output": "acoustic_sum_9"
+              }
+            },
+            "params": {
+              "N": 11776,
+              "call_constants": {
+                "left_elements": 11776,
+                "right_elements": 11776,
+                "output_elements": 11776,
+                "elements": 11776
+              }
+            }
+          },
+          {
+            "id": "acoustic_lookup_10",
+            "op": "embedding_lookup_checked",
+            "kernel": "audio_text_embedding_channel_major_f32",
+            "returns_status": true,
+            "weight_refs": {
+              "table": "codec.acoustic.10.effective_embedding"
+            },
+            "graph_slots": {
+              "inputs": {
+                "ids": "external:acoustic_ids_10"
+              },
+              "outputs": {
+                "output": "acoustic_channel_10"
+              }
+            },
+            "params": {
+              "T": 46,
+              "V": 2048,
+              "C": 256,
+              "T_capacity": 46,
+              "call_constants": {
+                "id_elements": 46,
+                "table_elements": 524288,
+                "vocabulary": 2048,
+                "channels": 256,
+                "table_stride": 256,
+                "output_elements": 11776,
+                "tokens": 46,
+                "output_stride": 46
+              }
+            }
+          },
+          {
+            "id": "acoustic_sum_10",
+            "op": "add_rows_checked",
+            "kernel": "add_rows_checked_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "left": "acoustic_sum_9",
+                "right": "acoustic_channel_10"
+              },
+              "outputs": {
+                "output": "acoustic_sum_10"
+              }
+            },
+            "params": {
+              "N": 11776,
+              "call_constants": {
+                "left_elements": 11776,
+                "right_elements": 11776,
+                "output_elements": 11776,
+                "elements": 11776
+              }
+            }
+          },
+          {
+            "id": "acoustic_lookup_11",
+            "op": "embedding_lookup_checked",
+            "kernel": "audio_text_embedding_channel_major_f32",
+            "returns_status": true,
+            "weight_refs": {
+              "table": "codec.acoustic.11.effective_embedding"
+            },
+            "graph_slots": {
+              "inputs": {
+                "ids": "external:acoustic_ids_11"
+              },
+              "outputs": {
+                "output": "acoustic_channel_11"
+              }
+            },
+            "params": {
+              "T": 46,
+              "V": 2048,
+              "C": 256,
+              "T_capacity": 46,
+              "call_constants": {
+                "id_elements": 46,
+                "table_elements": 524288,
+                "vocabulary": 2048,
+                "channels": 256,
+                "table_stride": 256,
+                "output_elements": 11776,
+                "tokens": 46,
+                "output_stride": 46
+              }
+            }
+          },
+          {
+            "id": "acoustic_sum_11",
+            "op": "add_rows_checked",
+            "kernel": "add_rows_checked_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "left": "acoustic_sum_10",
+                "right": "acoustic_channel_11"
+              },
+              "outputs": {
+                "output": "acoustic_sum_11"
+              }
+            },
+            "params": {
+              "N": 11776,
+              "call_constants": {
+                "left_elements": 11776,
+                "right_elements": 11776,
+                "output_elements": 11776,
+                "elements": 11776
+              }
+            }
+          },
+          {
+            "id": "acoustic_lookup_12",
+            "op": "embedding_lookup_checked",
+            "kernel": "audio_text_embedding_channel_major_f32",
+            "returns_status": true,
+            "weight_refs": {
+              "table": "codec.acoustic.12.effective_embedding"
+            },
+            "graph_slots": {
+              "inputs": {
+                "ids": "external:acoustic_ids_12"
+              },
+              "outputs": {
+                "output": "acoustic_channel_12"
+              }
+            },
+            "params": {
+              "T": 46,
+              "V": 2048,
+              "C": 256,
+              "T_capacity": 46,
+              "call_constants": {
+                "id_elements": 46,
+                "table_elements": 524288,
+                "vocabulary": 2048,
+                "channels": 256,
+                "table_stride": 256,
+                "output_elements": 11776,
+                "tokens": 46,
+                "output_stride": 46
+              }
+            }
+          },
+          {
+            "id": "acoustic_sum_12",
+            "op": "add_rows_checked",
+            "kernel": "add_rows_checked_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "left": "acoustic_sum_11",
+                "right": "acoustic_channel_12"
+              },
+              "outputs": {
+                "output": "acoustic_sum_12"
+              }
+            },
+            "params": {
+              "N": 11776,
+              "call_constants": {
+                "left_elements": 11776,
+                "right_elements": 11776,
+                "output_elements": 11776,
+                "elements": 11776
+              }
+            }
+          },
+          {
+            "id": "acoustic_lookup_13",
+            "op": "embedding_lookup_checked",
+            "kernel": "audio_text_embedding_channel_major_f32",
+            "returns_status": true,
+            "weight_refs": {
+              "table": "codec.acoustic.13.effective_embedding"
+            },
+            "graph_slots": {
+              "inputs": {
+                "ids": "external:acoustic_ids_13"
+              },
+              "outputs": {
+                "output": "acoustic_channel_13"
+              }
+            },
+            "params": {
+              "T": 46,
+              "V": 2048,
+              "C": 256,
+              "T_capacity": 46,
+              "call_constants": {
+                "id_elements": 46,
+                "table_elements": 524288,
+                "vocabulary": 2048,
+                "channels": 256,
+                "table_stride": 256,
+                "output_elements": 11776,
+                "tokens": 46,
+                "output_stride": 46
+              }
+            }
+          },
+          {
+            "id": "acoustic_sum_13",
+            "op": "add_rows_checked",
+            "kernel": "add_rows_checked_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "left": "acoustic_sum_12",
+                "right": "acoustic_channel_13"
+              },
+              "outputs": {
+                "output": "acoustic_sum_13"
+              }
+            },
+            "params": {
+              "N": 11776,
+              "call_constants": {
+                "left_elements": 11776,
+                "right_elements": 11776,
+                "output_elements": 11776,
+                "elements": 11776
+              }
+            }
+          },
+          {
+            "id": "acoustic_lookup_14",
+            "op": "embedding_lookup_checked",
+            "kernel": "audio_text_embedding_channel_major_f32",
+            "returns_status": true,
+            "weight_refs": {
+              "table": "codec.acoustic.14.effective_embedding"
+            },
+            "graph_slots": {
+              "inputs": {
+                "ids": "external:acoustic_ids_14"
+              },
+              "outputs": {
+                "output": "acoustic_channel_14"
+              }
+            },
+            "params": {
+              "T": 46,
+              "V": 2048,
+              "C": 256,
+              "T_capacity": 46,
+              "call_constants": {
+                "id_elements": 46,
+                "table_elements": 524288,
+                "vocabulary": 2048,
+                "channels": 256,
+                "table_stride": 256,
+                "output_elements": 11776,
+                "tokens": 46,
+                "output_stride": 46
+              }
+            }
+          },
+          {
+            "id": "acoustic_sum_14",
+            "op": "add_rows_checked",
+            "kernel": "add_rows_checked_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "left": "acoustic_sum_13",
+                "right": "acoustic_channel_14"
+              },
+              "outputs": {
+                "output": "acoustic_sum_14"
+              }
+            },
+            "params": {
+              "N": 11776,
+              "call_constants": {
+                "left_elements": 11776,
+                "right_elements": 11776,
+                "output_elements": 11776,
+                "elements": 11776
+              }
+            }
+          },
+          {
+            "id": "acoustic_transpose",
+            "op": "transpose_strided_checked",
+            "kernel": "transpose_strided_f32_checked",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "input": "acoustic_sum_14"
+              },
+              "outputs": {
+                "output": "acoustic_token"
+              }
+            },
+            "params": {
+              "R": 256,
+              "C": 46,
+              "call_constants": {
+                "transpose_input_elements": 11776,
+                "transpose_input_stride": 46,
+                "transpose_output_elements": 11776,
+                "transpose_output_stride": 256,
+                "transpose_rows": 256,
+                "transpose_columns": 46
+              }
+            }
+          },
+          {
+            "id": "acoustic_projection",
+            "op": "linear_rows_checked_no_bias",
+            "kernel": "linear_rows_checked_no_bias_f32",
+            "returns_status": true,
+            "weight_refs": {
+              "weight": "codec.acoustic.output_projection.weight"
+            },
+            "graph_slots": {
+              "inputs": {
+                "input": "acoustic_token"
+              },
+              "outputs": {
+                "output": "acoustic_projected"
+              }
+            },
+            "params": {
+              "M": 46,
+              "K": 256,
+              "N": 512,
+              "call_constants": {
+                "linear_input_elements": 11776,
+                "linear_input_stride": 256,
+                "linear_weight_elements": 131072,
+                "linear_weight_stride": 256,
+                "linear_output_elements": 23552,
+                "linear_output_stride": 512,
+                "linear_rows": 46,
+                "linear_input_channels": 256,
+                "linear_output_channels": 512
+              }
+            }
+          },
+          {
+            "id": "rvq_join",
+            "op": "add_rows_checked",
+            "kernel": "add_rows_checked_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "left": "semantic_projected",
+                "right": "acoustic_projected"
+              },
+              "outputs": {
+                "output": "rvq_output"
+              }
+            },
+            "params": {
+              "N": 23552,
+              "call_constants": {
+                "left_elements": 23552,
+                "right_elements": 23552,
+                "output_elements": 23552,
+                "elements": 23552
+              }
+            }
+          }
+        ]
+      },
+      "footer": []
+    }
+  },
+  "semantic_checkpoints": {
+    "schema": "cke.semantic_checkpoint_contract",
+    "schema_version": 1,
+    "exports": {
+      "semantic_lookup": {
+        "section": "body",
+        "template_op_id": "semantic_lookup",
+        "op": "embedding_lookup_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.codec.semantic_lookup",
+            "producer": "semantic_lookup",
+            "tensor": "semantic_channel",
+            "logical_layout": "channel_major",
+            "axis_names": [
+              "channel",
+              "frame"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "semantic_transpose": {
+        "section": "body",
+        "template_op_id": "semantic_transpose",
+        "op": "transpose_strided_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.codec.semantic_transpose",
+            "producer": "semantic_transpose",
+            "tensor": "semantic_token",
+            "logical_layout": "token_major",
+            "axis_names": [
+              "frame",
+              "channel"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "semantic_projection": {
+        "section": "body",
+        "template_op_id": "semantic_projection",
+        "op": "linear_rows_checked_no_bias",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.codec.semantic_projection",
+            "producer": "semantic_projection",
+            "tensor": "semantic_projected",
+            "logical_layout": "token_major",
+            "axis_names": [
+              "frame",
+              "channel"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "acoustic_lookup_0": {
+        "section": "body",
+        "template_op_id": "acoustic_lookup_0",
+        "op": "embedding_lookup_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.codec.acoustic_lookup_0",
+            "producer": "acoustic_lookup_0",
+            "tensor": "acoustic_channel_0",
+            "logical_layout": "channel_major",
+            "axis_names": [
+              "channel",
+              "frame"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "acoustic_lookup_1": {
+        "section": "body",
+        "template_op_id": "acoustic_lookup_1",
+        "op": "embedding_lookup_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.codec.acoustic_lookup_1",
+            "producer": "acoustic_lookup_1",
+            "tensor": "acoustic_channel_1",
+            "logical_layout": "channel_major",
+            "axis_names": [
+              "channel",
+              "frame"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "acoustic_sum_1": {
+        "section": "body",
+        "template_op_id": "acoustic_sum_1",
+        "op": "add_rows_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.codec.acoustic_sum_1",
+            "producer": "acoustic_sum_1",
+            "tensor": "acoustic_sum_1",
+            "logical_layout": "channel_major",
+            "axis_names": [
+              "channel",
+              "frame"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "acoustic_lookup_2": {
+        "section": "body",
+        "template_op_id": "acoustic_lookup_2",
+        "op": "embedding_lookup_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.codec.acoustic_lookup_2",
+            "producer": "acoustic_lookup_2",
+            "tensor": "acoustic_channel_2",
+            "logical_layout": "channel_major",
+            "axis_names": [
+              "channel",
+              "frame"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "acoustic_sum_2": {
+        "section": "body",
+        "template_op_id": "acoustic_sum_2",
+        "op": "add_rows_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.codec.acoustic_sum_2",
+            "producer": "acoustic_sum_2",
+            "tensor": "acoustic_sum_2",
+            "logical_layout": "channel_major",
+            "axis_names": [
+              "channel",
+              "frame"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "acoustic_lookup_3": {
+        "section": "body",
+        "template_op_id": "acoustic_lookup_3",
+        "op": "embedding_lookup_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.codec.acoustic_lookup_3",
+            "producer": "acoustic_lookup_3",
+            "tensor": "acoustic_channel_3",
+            "logical_layout": "channel_major",
+            "axis_names": [
+              "channel",
+              "frame"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "acoustic_sum_3": {
+        "section": "body",
+        "template_op_id": "acoustic_sum_3",
+        "op": "add_rows_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.codec.acoustic_sum_3",
+            "producer": "acoustic_sum_3",
+            "tensor": "acoustic_sum_3",
+            "logical_layout": "channel_major",
+            "axis_names": [
+              "channel",
+              "frame"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "acoustic_lookup_4": {
+        "section": "body",
+        "template_op_id": "acoustic_lookup_4",
+        "op": "embedding_lookup_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.codec.acoustic_lookup_4",
+            "producer": "acoustic_lookup_4",
+            "tensor": "acoustic_channel_4",
+            "logical_layout": "channel_major",
+            "axis_names": [
+              "channel",
+              "frame"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "acoustic_sum_4": {
+        "section": "body",
+        "template_op_id": "acoustic_sum_4",
+        "op": "add_rows_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.codec.acoustic_sum_4",
+            "producer": "acoustic_sum_4",
+            "tensor": "acoustic_sum_4",
+            "logical_layout": "channel_major",
+            "axis_names": [
+              "channel",
+              "frame"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "acoustic_lookup_5": {
+        "section": "body",
+        "template_op_id": "acoustic_lookup_5",
+        "op": "embedding_lookup_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.codec.acoustic_lookup_5",
+            "producer": "acoustic_lookup_5",
+            "tensor": "acoustic_channel_5",
+            "logical_layout": "channel_major",
+            "axis_names": [
+              "channel",
+              "frame"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "acoustic_sum_5": {
+        "section": "body",
+        "template_op_id": "acoustic_sum_5",
+        "op": "add_rows_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.codec.acoustic_sum_5",
+            "producer": "acoustic_sum_5",
+            "tensor": "acoustic_sum_5",
+            "logical_layout": "channel_major",
+            "axis_names": [
+              "channel",
+              "frame"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "acoustic_lookup_6": {
+        "section": "body",
+        "template_op_id": "acoustic_lookup_6",
+        "op": "embedding_lookup_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.codec.acoustic_lookup_6",
+            "producer": "acoustic_lookup_6",
+            "tensor": "acoustic_channel_6",
+            "logical_layout": "channel_major",
+            "axis_names": [
+              "channel",
+              "frame"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "acoustic_sum_6": {
+        "section": "body",
+        "template_op_id": "acoustic_sum_6",
+        "op": "add_rows_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.codec.acoustic_sum_6",
+            "producer": "acoustic_sum_6",
+            "tensor": "acoustic_sum_6",
+            "logical_layout": "channel_major",
+            "axis_names": [
+              "channel",
+              "frame"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "acoustic_lookup_7": {
+        "section": "body",
+        "template_op_id": "acoustic_lookup_7",
+        "op": "embedding_lookup_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.codec.acoustic_lookup_7",
+            "producer": "acoustic_lookup_7",
+            "tensor": "acoustic_channel_7",
+            "logical_layout": "channel_major",
+            "axis_names": [
+              "channel",
+              "frame"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "acoustic_sum_7": {
+        "section": "body",
+        "template_op_id": "acoustic_sum_7",
+        "op": "add_rows_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.codec.acoustic_sum_7",
+            "producer": "acoustic_sum_7",
+            "tensor": "acoustic_sum_7",
+            "logical_layout": "channel_major",
+            "axis_names": [
+              "channel",
+              "frame"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "acoustic_lookup_8": {
+        "section": "body",
+        "template_op_id": "acoustic_lookup_8",
+        "op": "embedding_lookup_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.codec.acoustic_lookup_8",
+            "producer": "acoustic_lookup_8",
+            "tensor": "acoustic_channel_8",
+            "logical_layout": "channel_major",
+            "axis_names": [
+              "channel",
+              "frame"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "acoustic_sum_8": {
+        "section": "body",
+        "template_op_id": "acoustic_sum_8",
+        "op": "add_rows_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.codec.acoustic_sum_8",
+            "producer": "acoustic_sum_8",
+            "tensor": "acoustic_sum_8",
+            "logical_layout": "channel_major",
+            "axis_names": [
+              "channel",
+              "frame"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "acoustic_lookup_9": {
+        "section": "body",
+        "template_op_id": "acoustic_lookup_9",
+        "op": "embedding_lookup_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.codec.acoustic_lookup_9",
+            "producer": "acoustic_lookup_9",
+            "tensor": "acoustic_channel_9",
+            "logical_layout": "channel_major",
+            "axis_names": [
+              "channel",
+              "frame"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "acoustic_sum_9": {
+        "section": "body",
+        "template_op_id": "acoustic_sum_9",
+        "op": "add_rows_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.codec.acoustic_sum_9",
+            "producer": "acoustic_sum_9",
+            "tensor": "acoustic_sum_9",
+            "logical_layout": "channel_major",
+            "axis_names": [
+              "channel",
+              "frame"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "acoustic_lookup_10": {
+        "section": "body",
+        "template_op_id": "acoustic_lookup_10",
+        "op": "embedding_lookup_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.codec.acoustic_lookup_10",
+            "producer": "acoustic_lookup_10",
+            "tensor": "acoustic_channel_10",
+            "logical_layout": "channel_major",
+            "axis_names": [
+              "channel",
+              "frame"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "acoustic_sum_10": {
+        "section": "body",
+        "template_op_id": "acoustic_sum_10",
+        "op": "add_rows_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.codec.acoustic_sum_10",
+            "producer": "acoustic_sum_10",
+            "tensor": "acoustic_sum_10",
+            "logical_layout": "channel_major",
+            "axis_names": [
+              "channel",
+              "frame"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "acoustic_lookup_11": {
+        "section": "body",
+        "template_op_id": "acoustic_lookup_11",
+        "op": "embedding_lookup_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.codec.acoustic_lookup_11",
+            "producer": "acoustic_lookup_11",
+            "tensor": "acoustic_channel_11",
+            "logical_layout": "channel_major",
+            "axis_names": [
+              "channel",
+              "frame"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "acoustic_sum_11": {
+        "section": "body",
+        "template_op_id": "acoustic_sum_11",
+        "op": "add_rows_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.codec.acoustic_sum_11",
+            "producer": "acoustic_sum_11",
+            "tensor": "acoustic_sum_11",
+            "logical_layout": "channel_major",
+            "axis_names": [
+              "channel",
+              "frame"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "acoustic_lookup_12": {
+        "section": "body",
+        "template_op_id": "acoustic_lookup_12",
+        "op": "embedding_lookup_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.codec.acoustic_lookup_12",
+            "producer": "acoustic_lookup_12",
+            "tensor": "acoustic_channel_12",
+            "logical_layout": "channel_major",
+            "axis_names": [
+              "channel",
+              "frame"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "acoustic_sum_12": {
+        "section": "body",
+        "template_op_id": "acoustic_sum_12",
+        "op": "add_rows_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.codec.acoustic_sum_12",
+            "producer": "acoustic_sum_12",
+            "tensor": "acoustic_sum_12",
+            "logical_layout": "channel_major",
+            "axis_names": [
+              "channel",
+              "frame"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "acoustic_lookup_13": {
+        "section": "body",
+        "template_op_id": "acoustic_lookup_13",
+        "op": "embedding_lookup_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.codec.acoustic_lookup_13",
+            "producer": "acoustic_lookup_13",
+            "tensor": "acoustic_channel_13",
+            "logical_layout": "channel_major",
+            "axis_names": [
+              "channel",
+              "frame"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "acoustic_sum_13": {
+        "section": "body",
+        "template_op_id": "acoustic_sum_13",
+        "op": "add_rows_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.codec.acoustic_sum_13",
+            "producer": "acoustic_sum_13",
+            "tensor": "acoustic_sum_13",
+            "logical_layout": "channel_major",
+            "axis_names": [
+              "channel",
+              "frame"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "acoustic_lookup_14": {
+        "section": "body",
+        "template_op_id": "acoustic_lookup_14",
+        "op": "embedding_lookup_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.codec.acoustic_lookup_14",
+            "producer": "acoustic_lookup_14",
+            "tensor": "acoustic_channel_14",
+            "logical_layout": "channel_major",
+            "axis_names": [
+              "channel",
+              "frame"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "acoustic_sum_14": {
+        "section": "body",
+        "template_op_id": "acoustic_sum_14",
+        "op": "add_rows_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.codec.acoustic_sum_14",
+            "producer": "acoustic_sum_14",
+            "tensor": "acoustic_sum_14",
+            "logical_layout": "channel_major",
+            "axis_names": [
+              "channel",
+              "frame"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "acoustic_transpose": {
+        "section": "body",
+        "template_op_id": "acoustic_transpose",
+        "op": "transpose_strided_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.codec.acoustic_transpose",
+            "producer": "acoustic_transpose",
+            "tensor": "acoustic_token",
+            "logical_layout": "token_major",
+            "axis_names": [
+              "frame",
+              "channel"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "acoustic_projection": {
+        "section": "body",
+        "template_op_id": "acoustic_projection",
+        "op": "linear_rows_checked_no_bias",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.codec.acoustic_projection",
+            "producer": "acoustic_projection",
+            "tensor": "acoustic_projected",
+            "logical_layout": "token_major",
+            "axis_names": [
+              "frame",
+              "channel"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "rvq_join": {
+        "section": "body",
+        "template_op_id": "rvq_join",
+        "op": "add_rows_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.codec.rvq_join",
+            "producer": "rvq_join",
+            "tensor": "rvq_output",
+            "logical_layout": "token_major",
+            "axis_names": [
+              "frame",
+              "channel"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      }
+    }
+  }
+}

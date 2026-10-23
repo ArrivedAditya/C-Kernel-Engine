@@ -1,0 +1,234 @@
+{
+  "version": 3,
+  "name": "qwen3_tts_codec_semantic_bounded",
+  "family": "bounded_graph",
+  "checked_native_entry": true,
+  "contract": {
+    "runtime_invariants": {
+      "inference_only": true,
+      "production_kernel_heap_allocation": false,
+      "frames": 46,
+      "complete_codec": false,
+      "complete_synthesis": false
+    }
+  },
+  "activation_buffers": {
+    "semantic_ids": {
+      "shape": [
+        46
+      ]
+    },
+    "semantic_channel": {
+      "shape": [
+        256,
+        46
+      ]
+    },
+    "semantic_token": {
+      "shape": [
+        46,
+        256
+      ]
+    },
+    "semantic_projected": {
+      "shape": [
+        46,
+        512
+      ]
+    }
+  },
+  "activation_bindings": {
+    "semantic_ids": "semantic_ids",
+    "semantic_channel": "semantic_channel",
+    "semantic_token": "semantic_token",
+    "semantic_projected": "semantic_projected"
+  },
+  "native_entry": {
+    "function": "ck_qwen3_tts_codec_semantic_bounded",
+    "params": [
+      {
+        "c_type": "uint8_t *",
+        "name": "arena"
+      },
+      {
+        "c_type": "size_t",
+        "name": "arena_bytes"
+      }
+    ],
+    "arena": {
+      "pointer": "arena",
+      "bytes": "arena_bytes"
+    }
+  },
+  "sequence": [
+    "codec_semantic"
+  ],
+  "block_types": {
+    "codec_semantic": {
+      "sequence": [
+        "header",
+        "body",
+        "footer"
+      ],
+      "header": [],
+      "body": {
+        "type": "dense",
+        "ops": [
+          {
+            "id": "semantic_lookup",
+            "op": "embedding_lookup_checked",
+            "kernel": "audio_text_embedding_channel_major_f32",
+            "returns_status": true,
+            "weight_refs": {
+              "table": "codec.semantic.effective_embedding"
+            },
+            "graph_slots": {
+              "inputs": {
+                "ids": "external:semantic_ids"
+              },
+              "outputs": {
+                "output": "semantic_channel"
+              }
+            },
+            "params": {
+              "T": 46,
+              "V": 2048,
+              "C": 256,
+              "T_capacity": 46,
+              "call_constants": {
+                "id_elements": 46,
+                "table_elements": 524288,
+                "vocabulary": 2048,
+                "channels": 256,
+                "table_stride": 256,
+                "output_elements": 11776,
+                "tokens": 46,
+                "output_stride": 46
+              }
+            }
+          },
+          {
+            "id": "semantic_transpose",
+            "op": "transpose_strided_checked",
+            "kernel": "transpose_strided_f32_checked",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "input": "semantic_channel"
+              },
+              "outputs": {
+                "output": "semantic_token"
+              }
+            },
+            "params": {
+              "R": 256,
+              "C": 46,
+              "call_constants": {
+                "transpose_input_elements": 11776,
+                "transpose_input_stride": 46,
+                "transpose_output_elements": 11776,
+                "transpose_output_stride": 256,
+                "transpose_rows": 256,
+                "transpose_columns": 46
+              }
+            }
+          },
+          {
+            "id": "semantic_projection",
+            "op": "linear_rows_checked_no_bias",
+            "kernel": "linear_rows_checked_no_bias_f32",
+            "returns_status": true,
+            "weight_refs": {
+              "weight": "codec.semantic.output_projection.weight"
+            },
+            "graph_slots": {
+              "inputs": {
+                "input": "semantic_token"
+              },
+              "outputs": {
+                "output": "semantic_projected"
+              }
+            },
+            "params": {
+              "M": 46,
+              "K": 256,
+              "N": 512,
+              "call_constants": {
+                "linear_input_elements": 11776,
+                "linear_input_stride": 256,
+                "linear_weight_elements": 131072,
+                "linear_weight_stride": 256,
+                "linear_output_elements": 23552,
+                "linear_output_stride": 512,
+                "linear_rows": 46,
+                "linear_input_channels": 256,
+                "linear_output_channels": 512
+              }
+            }
+          }
+        ]
+      },
+      "footer": []
+    }
+  },
+  "semantic_checkpoints": {
+    "schema": "cke.semantic_checkpoint_contract",
+    "schema_version": 1,
+    "exports": {
+      "semantic_lookup": {
+        "section": "body",
+        "template_op_id": "semantic_lookup",
+        "op": "embedding_lookup_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.codec.semantic_lookup",
+            "producer": "semantic_lookup",
+            "tensor": "semantic_channel",
+            "logical_layout": "channel_major",
+            "axis_names": [
+              "channel",
+              "frame"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "semantic_transpose": {
+        "section": "body",
+        "template_op_id": "semantic_transpose",
+        "op": "transpose_strided_checked",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.codec.semantic_transpose",
+            "producer": "semantic_transpose",
+            "tensor": "semantic_token",
+            "logical_layout": "token_major",
+            "axis_names": [
+              "frame",
+              "channel"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "semantic_projection": {
+        "section": "body",
+        "template_op_id": "semantic_projection",
+        "op": "linear_rows_checked_no_bias",
+        "checkpoints": [
+          {
+            "id": "qwen3_tts.codec.semantic_projection",
+            "producer": "semantic_projection",
+            "tensor": "semantic_projected",
+            "logical_layout": "token_major",
+            "axis_names": [
+              "frame",
+              "channel"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      }
+    }
+  }
+}

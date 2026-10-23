@@ -1,0 +1,11 @@
+{
+  "codec_source_sha256": "844e8dd8c0182ef9c6463c874631c22ef3c5a4fd1899dd657016164cc5379628",
+  "frames": 46,
+  "model_revision": "85e237c12c027371202489a0ec509ded67b5e4b5",
+  "npz_sha256": "9967fd12374ccdaf5d043b6365149956a53785f19e4c6923ddbed5e3369127bc",
+  "reference_revision": "022e286b98fbec7e1e916cb940cdf532cd9f488e",
+  "schema": 1,
+  "scope": "official operation-level split-RVQ only; CKE and full codec NOT_TESTED",
+  "semantic_codebook": 0,
+  "source_codes_sha256": "949c2b4ea814e01800c53c546216606e72a26361d7ce0a6c70a287a0e72a8f57"
+}
