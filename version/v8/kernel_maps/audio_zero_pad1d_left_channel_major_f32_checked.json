@@ -194,7 +194,7 @@
       "tests/test_v8_audio_zero_pad_oracle.py",
       "tests/test_v8_audio_zero_pad_generated.py"
     ],
-    "oracle": "Independent NumPy zero-padding values and optional live PyTorch constant padding; exact FP32 copying"
+    "oracle": "Independent NumPy constant-zero padding values; exact FP32 copying"
   },
   "notes": "Left zero padding matches constant-zero causal Conv1D input preparation. Caller owns input and output; no scratch or allocation. Checked dimensions, spans, disjoint regions and finite input precede writes; rejected calls preserve output. Valid frames differ from physical row strides. Inference only."
 }

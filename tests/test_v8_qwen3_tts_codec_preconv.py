@@ -30,6 +30,29 @@ def fill_ids(arena, acts, codes):
 
 
 class Qwen3TTSCodecPreconvTest(unittest.TestCase):
+    def _assert_committed_checkpoint_integrity(self):
+        checkpoint = MODEL.with_name("qwen3_tts_codec_preconv.npz")
+        source_rvq = MODEL.with_name("qwen3_tts_codec_semantic.npz")
+        manifest = json.loads(checkpoint.with_suffix(".json").read_text())
+        self.assertEqual(hashlib.sha256(checkpoint.read_bytes()).hexdigest(),
+                         manifest["npz_sha256"])
+        self.assertEqual(hashlib.sha256(source_rvq.read_bytes()).hexdigest(),
+                         manifest["source_rvq_sha256"])
+        self.assertEqual(manifest["model_revision"],
+                         "85e237c12c027371202489a0ec509ded67b5e4b5")
+        self.assertEqual(manifest["reference_revision"],
+                         "022e286b98fbec7e1e916cb940cdf532cd9f488e")
+        with np.load(MODEL) as fixture, np.load(source_rvq) as rvq, np.load(checkpoint) as oracle:
+            frames = manifest["frames"]
+            self.assertEqual(frames, len(fixture["codec_tokens"]))
+            self.assertEqual(rvq["rvq_output"].shape, (frames, 512))
+            self.assertEqual(oracle["preconv_output"].shape, (1024, frames))
+            self.assertEqual(oracle["preconv_output"].dtype, np.float32)
+            self.assertTrue(np.isfinite(oracle["preconv_output"]).all())
+
+    def test_committed_checkpoint_integrity_without_model_assets(self):
+        self._assert_committed_checkpoint_integrity()
+
     def test_authored_circuit_is_current(self):
         path = ROOT / "version/v8/circuits/qwen3_tts_codec_preconv_bounded.json"
         self.assertEqual(json.loads(path.read_text()), build_circuit())
@@ -40,7 +63,7 @@ class Qwen3TTSCodecPreconvTest(unittest.TestCase):
 
     def test_generated_nonzero_causal_edge_and_failure(self):
         rng = np.random.default_rng(20261024)
-        frames, vocab, width, output_width, latent = 5, 11, 4, 7, 3
+        vocab, width, output_width, latent = 11, 4, 7, 3
         arrays = {
             TABLE: rng.normal(size=(vocab, width)).astype(np.float32),
             PROJECTION: (rng.normal(size=(output_width, width)) * .1).astype(np.float32),
@@ -51,61 +74,74 @@ class Qwen3TTSCodecPreconvTest(unittest.TestCase):
         for index in range(2):
             arrays[f"codec.acoustic.{index}.effective_embedding"] = (
                 rng.normal(size=(vocab, width)).astype(np.float32))
-        with tempfile.TemporaryDirectory() as temp:
-            fn, arena, acts, calls, _ = generated_entry(
-                Path(temp), arrays, frames, acoustic_codebooks=2, pre_conv=True)
-            self.assertEqual([op["function"] for op in calls["operations"][-3:]],
-                ["transpose_strided_f32_checked",
-                 "audio_zero_pad1d_left_channel_major_f32_checked",
-                 "audio_conv1d_checked_channel_major_f32"])
-            codes = np.stack([np.arange(1, frames + 1),
-                              np.arange(2, frames + 2),
-                              np.arange(3, frames + 3)], axis=1).astype(np.int32)
-            fill_ids(arena, acts, codes)
-            self.assertEqual(fn(arena, len(arena)), 0)
-            rvq = view(arena, acts, "rvq_output", np.float32,
-                       (frames, output_width))
-            padded = view(arena, acts, "preconv_padded", np.float32,
-                          (output_width, frames + 2))
-            output = view(arena, acts, "preconv_output", np.float32,
-                          (latent, frames))
-            np.testing.assert_array_equal(padded[:, :2], 0.)
-            np.testing.assert_array_equal(padded[:, 2:], rvq.T)
-            expected = np.zeros_like(output)
-            for oc in range(latent):
-                for frame in range(frames):
-                    value = float(arrays[CONV_BIAS][oc])
-                    for ic in range(output_width):
-                        for tap in range(3):
-                            value += float(padded[ic, frame + tap]) * float(
-                                arrays[CONV_WEIGHT][oc, ic, tap])
-                    expected[oc, frame] = value
-            np.testing.assert_allclose(output, expected, atol=1e-6, rtol=1e-6)
-            baseline = output.copy()
-            weight_entry = next(e for e in calls["memory"]["weights"]["entries"]
-                                if e["name"] == CONV_WEIGHT)
-            weight = np.ndarray(arrays[CONV_WEIGHT].shape, dtype=np.float32,
-                                buffer=arena, offset=weight_entry["abs_offset"])
-            original = float(weight[0, 0, 0])
-            weight[0, 0, 0] = original + 2.
-            self.assertEqual(fn(arena, len(arena)), 0)
-            self.assertGreater(float(np.max(np.abs(output - baseline))), 1e-3)
-            weight[0, 0, 0] = np.nan
-            output[:] = -123.
-            self.assertNotEqual(fn(arena, len(arena)), 0)
-            np.testing.assert_array_equal(output, -123.)
-            weight[0, 0, 0] = original
-            self.assertEqual(fn(arena, len(arena)), 0)
-            np.testing.assert_array_equal(output, baseline)
-            # A wrong late codebook ID must stop before the pre-convolution.
-            late = view(arena, acts, "acoustic_ids_1", np.int32, (frames,))
-            late[-1] = vocab
-            output[:] = -123.
-            self.assertNotEqual(fn(arena, len(arena)), 0)
-            np.testing.assert_array_equal(output, -123.)
-            late[-1] = codes[-1, 2]
-            self.assertEqual(fn(arena, len(arena)), 0)
-            np.testing.assert_array_equal(output, baseline)
+        for frames in (1, 5):
+            with self.subTest(frames=frames), tempfile.TemporaryDirectory() as temp:
+                fn, arena, acts, calls, _ = generated_entry(
+                    Path(temp), arrays, frames, acoustic_codebooks=2, pre_conv=True)
+                self.assertEqual([op["function"] for op in calls["operations"][-3:]],
+                    ["transpose_strided_f32_checked",
+                     "audio_zero_pad1d_left_channel_major_f32_checked",
+                     "audio_conv1d_checked_channel_major_f32"])
+                codes = np.stack([np.arange(1, frames + 1),
+                                  np.arange(2, frames + 2),
+                                  np.arange(3, frames + 3)], axis=1).astype(np.int32)
+                fill_ids(arena, acts, codes)
+                self.assertEqual(fn(arena, len(arena)), 0)
+                rvq = view(arena, acts, "rvq_output", np.float32,
+                           (frames, output_width))
+                padded = view(arena, acts, "preconv_padded", np.float32,
+                              (output_width, frames + 2))
+                output = view(arena, acts, "preconv_output", np.float32,
+                              (latent, frames))
+                np.testing.assert_array_equal(padded[:, :2], 0.)
+                np.testing.assert_array_equal(padded[:, 2:], rvq.T)
+                expected = np.zeros_like(output)
+                for oc in range(latent):
+                    for frame in range(frames):
+                        value = float(arrays[CONV_BIAS][oc])
+                        for ic in range(output_width):
+                            for tap in range(3):
+                                value += float(padded[ic, frame + tap]) * float(
+                                    arrays[CONV_WEIGHT][oc, ic, tap])
+                        expected[oc, frame] = value
+                np.testing.assert_allclose(output, expected, atol=1e-6, rtol=1e-6)
+                baseline = output.copy()
+                if frames > 1:
+                    # A future code cannot affect any earlier causal-convolution frame.
+                    late = view(arena, acts, "acoustic_ids_1", np.int32, (frames,))
+                    original_late = int(late[-1])
+                    late[-1] = (original_late + 1) % vocab
+                    self.assertEqual(fn(arena, len(arena)), 0)
+                    np.testing.assert_array_equal(output[:, :-1], baseline[:, :-1])
+                    self.assertGreater(float(np.max(np.abs(output[:, -1] - baseline[:, -1]))),
+                                       1e-5)
+                    late[-1] = original_late
+                    self.assertEqual(fn(arena, len(arena)), 0)
+                    np.testing.assert_array_equal(output, baseline)
+                weight_entry = next(e for e in calls["memory"]["weights"]["entries"]
+                                    if e["name"] == CONV_WEIGHT)
+                weight = np.ndarray(arrays[CONV_WEIGHT].shape, dtype=np.float32,
+                                    buffer=arena, offset=weight_entry["abs_offset"])
+                original = float(weight[0, 0, 2])
+                weight[0, 0, 2] = original + 2.
+                self.assertEqual(fn(arena, len(arena)), 0)
+                self.assertGreater(float(np.max(np.abs(output - baseline))), 1e-3)
+                weight[0, 0, 2] = np.nan
+                output[:] = -123.
+                self.assertNotEqual(fn(arena, len(arena)), 0)
+                np.testing.assert_array_equal(output, -123.)
+                weight[0, 0, 2] = original
+                self.assertEqual(fn(arena, len(arena)), 0)
+                np.testing.assert_array_equal(output, baseline)
+                # A wrong late codebook ID must stop before the pre-convolution.
+                late = view(arena, acts, "acoustic_ids_1", np.int32, (frames,))
+                late[-1] = vocab
+                output[:] = -123.
+                self.assertNotEqual(fn(arena, len(arena)), 0)
+                np.testing.assert_array_equal(output, -123.)
+                late[-1] = codes[-1, 2]
+                self.assertEqual(fn(arena, len(arena)), 0)
+                np.testing.assert_array_equal(output, baseline)
 
     @unittest.skipUnless(os.environ.get("CKE_QWEN3_TTS_MODEL_DIR"),
                          "pinned codec weights unavailable; pre-convolution parity NOT_TESTED")
@@ -115,15 +151,7 @@ class Qwen3TTSCodecPreconvTest(unittest.TestCase):
         model_dir = Path(os.environ["CKE_QWEN3_TTS_MODEL_DIR"])
         verify_model_dir(model_dir)
         checkpoint = MODEL.with_name("qwen3_tts_codec_preconv.npz")
-        manifest = json.loads(checkpoint.with_suffix(".json").read_text())
-        self.assertEqual(hashlib.sha256(checkpoint.read_bytes()).hexdigest(),
-                         manifest["npz_sha256"])
-        self.assertEqual(manifest["model_revision"],
-                         "85e237c12c027371202489a0ec509ded67b5e4b5")
-        self.assertEqual(manifest["reference_revision"],
-                         "022e286b98fbec7e1e916cb940cdf532cd9f488e")
-        self.assertEqual(manifest["source_rvq_sha256"], hashlib.sha256(
-            MODEL.with_name("qwen3_tts_codec_semantic.npz").read_bytes()).hexdigest())
+        self._assert_committed_checkpoint_integrity()
         arrays = {}
         with safe_open(model_dir / "speech_tokenizer/model.safetensors",
                        framework="pt", device="cpu") as source:
