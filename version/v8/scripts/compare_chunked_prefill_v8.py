@@ -214,8 +214,10 @@ def _probe(bundle: Path, prompt: list[int], continuation: list[int], output: Pat
             with tempfile.TemporaryDirectory() as temporary:
                 for layer in range(layers):
                     path = Path(temporary) / f"kv-{layer}.bin"
-                    if lib.ck_model_debug_export_kv(str(path).encode(), layer) != 0:
-                        raise RuntimeError(f"KV export failed at layer {layer}")
+                    export_status = lib.ck_model_debug_export_kv(str(path).encode(), layer)
+                    if export_status != 0:
+                        raise RuntimeError(
+                            f"KV export failed at {label} layer {layer}: status {export_status}")
                     kv.append(_sha256(path))
             stages.append({"label": label, "position": active,
                            "logits_sha256": hashlib.sha256(logits.tobytes()).hexdigest(),
