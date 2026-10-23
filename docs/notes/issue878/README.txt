@@ -48,3 +48,24 @@ TOKENS_128_JSON is the first 128 integer IDs from
 tests/fixtures/issue833/qwen2-natural-429.json. The remaining reports use
 the indicated split position or full 429-token fixture. Loaded-library
 digests in the reports are verified against their actual backing mappings.
+
+Aligned external-call planning (code commit 0e48f6ed8f27) is recorded in
+aligned-chunk-matrix.json and its eight linked case reports. The comparator
+reads the four-row requirement from the loaded generated model, checks all
+call boundaries before initialization, and compares actual calls with the
+plan. The 125- and 129-token cases pass exact full-logit and 24-layer KV
+comparison at one and four native threads. They cover chunking from the
+start and appending after an aligned 124-token prefix. A seven-token
+budget produces four-row intermediate calls and a final partial group.
+The 127-token prefix is rejected before model initialization. These cases
+do not certify cross-request row packing, cancellation during computation,
+or the HTTP path that replays prefill through decode.
+
+To repeat the aligned matrix with the same first 129 token IDs:
+
+  python version/v8/scripts/compare_chunked_prefill_v8.py \
+    --full FULL_BUNDLE --chunked CHUNKED_BUNDLE \
+    --tokens tests/fixtures/issue833/qwen2-natural-429.json \
+    --matrix-lengths 125,129 --matrix-chunk-sizes 7 \
+    --matrix-threads 1,4 --matrix-splits 0,124 \
+    --aligned-chunks --json-out aligned-matrix.json
