@@ -1,0 +1,182 @@
+{
+  "schema": "cke.xray_execution_equivalence_evidence.v1",
+  "source_revision": "bf09a6308c24daf53ac92a70eef7dc398089ec8a",
+  "cpu_model": "Intel(R) Core(TM) i7-14700T",
+  "machine": "x86_64",
+  "native_threads": {
+    "full": 4,
+    "chunked": 4
+  },
+  "model_artifact": "Qwen2-0.5B-Instruct Q4_K_M",
+  "fixture": "tests/fixtures/issue833/qwen2-natural-429.json",
+  "fixture_sha256": "38595eb60673e62b1cbc98ba116cf5c9ea7ba64da6afe49614a9cea09cde2e23",
+  "weights_sha256": "96313bd15bdfeaf800f6164da21c9823d1afaddea7859e7fcad69bbba0dd9bd1",
+  "generated_source_sha256": {
+    "full": "1a2948a32ee29a610996a54057c254b01cc69a06933be7455cf319ebf77eb358",
+    "chunk127": "203ac71d44d89ee2581026c619164db099c2b3d3b8cdd1bc339dd33b00ea2a38"
+  },
+  "loaded_library_sha256": {
+    "full": {
+      "libmodel.so": "7f96af2795b11dba712cfcd4e2ef972391904ae24b2e6726d7c19f6c5eedfd64",
+      "libckernel_engine.so": "a3ee1f2bc9feaac39e0f959ad9561c7b53daa10a26c4c4dfe63813686d9573e1",
+      "libckernel_tokenizer.so": "d087eb3bcb521463976e42b9707a650bfff962839b99fd6bb7d0471416037239"
+    },
+    "chunked": {
+      "libmodel.so": "70a89301aa75bfcdb8a7732aca0f49894fbb78cf1567049e573677169dd0003f",
+      "libckernel_engine.so": "a3ee1f2bc9feaac39e0f959ad9561c7b53daa10a26c4c4dfe63813686d9573e1",
+      "libckernel_tokenizer.so": "d087eb3bcb521463976e42b9707a650bfff962839b99fd6bb7d0471416037239"
+    }
+  },
+  "comparison_source_sha256": "014ba8a0f473f6e407ba7b7efc0bfce81d808aa624c7cfc2d8bbccccc5e7729e",
+  "xray_source_sha256": "240a1c59c30ba870545708cca8517cf6253f725f02b8d506802d59876eb6d343",
+  "cases": [
+    {
+      "case": "uninterrupted_vs_internal_chunk127",
+      "status": "pass",
+      "prompt_tokens": 429,
+      "continuation_tokens": 3,
+      "split_at": null,
+      "append_chunk_size": null,
+      "execution_calls": {
+        "full": [
+          {
+            "start": 0,
+            "count": 429
+          }
+        ],
+        "chunked": [
+          {
+            "start": 0,
+            "count": 429
+          }
+        ]
+      },
+      "first_observed_stage": null,
+      "prefill_position": 429,
+      "prefill_logits_exact": true,
+      "prefill_max_logit_abs": 0.0,
+      "prefill_kv_exact_layers": 24,
+      "prefill_kv_mismatch_layers": [],
+      "verdicts": {
+        "arithmetic_reference": "not_tested",
+        "reduction_equivalence": "not_tested",
+        "generated_composition": "pass",
+        "state_continuity": "pass",
+        "negative_controls": "not_tested",
+        "artifact_identity": "pass",
+        "recovery": "not_tested"
+      }
+    },
+    {
+      "case": "external_append_128_split_0",
+      "status": "fail",
+      "prompt_tokens": 128,
+      "continuation_tokens": 3,
+      "split_at": null,
+      "append_chunk_size": 127,
+      "execution_calls": {
+        "full": [
+          {
+            "start": 0,
+            "count": 128
+          }
+        ],
+        "chunked": [
+          {
+            "start": 0,
+            "count": 127
+          },
+          {
+            "start": 127,
+            "count": 1
+          }
+        ]
+      },
+      "first_observed_stage": "prefill",
+      "prefill_position": 128,
+      "prefill_logits_exact": false,
+      "prefill_max_logit_abs": 0.34728652238845825,
+      "prefill_kv_exact_layers": 9,
+      "prefill_kv_mismatch_layers": [
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23
+      ],
+      "verdicts": {
+        "arithmetic_reference": "not_tested",
+        "reduction_equivalence": "not_tested",
+        "generated_composition": "fail",
+        "state_continuity": "fail",
+        "negative_controls": "not_tested",
+        "artifact_identity": "pass",
+        "recovery": "not_tested"
+      }
+    },
+    {
+      "case": "external_append_128_split_120",
+      "status": "pass",
+      "prompt_tokens": 128,
+      "continuation_tokens": 3,
+      "split_at": 120,
+      "append_chunk_size": 127,
+      "execution_calls": {
+        "full": [
+          {
+            "start": 0,
+            "count": 128
+          }
+        ],
+        "chunked": [
+          {
+            "start": 0,
+            "count": 120
+          },
+          {
+            "start": 120,
+            "count": 8
+          }
+        ]
+      },
+      "first_observed_stage": null,
+      "prefill_position": 128,
+      "prefill_logits_exact": true,
+      "prefill_max_logit_abs": 0.0,
+      "prefill_kv_exact_layers": 24,
+      "prefill_kv_mismatch_layers": [],
+      "verdicts": {
+        "arithmetic_reference": "not_tested",
+        "reduction_equivalence": "not_tested",
+        "generated_composition": "pass",
+        "state_continuity": "pass",
+        "negative_controls": "not_tested",
+        "artifact_identity": "pass",
+        "recovery": "not_tested"
+      }
+    }
+  ],
+  "interpretation": "The bounded one-call internal chunk path remains exact. Separate external append calls at 127 rows fail despite identical serialized weights and engine. This is a first observed generated-execution divergence, not a proven locally introduced kernel error. The earlier #833 closure did not certify external staged append.",
+  "limitations": [
+    "No intermediate operation captures or exact-input replay for this new boundary",
+    "Actual shape-selected provider is not instrumented in this report",
+    "Only one Qwen2 artifact and one x86 CPU tested"
+  ],
+  "diagnostic_attempts": [
+    {
+      "case": "uninterrupted_vs_internal_chunk127",
+      "result": "no_verdict",
+      "reason": "Two isolated retries stopped at a native layer-23 KV export during continuation before comparison; the later same-artifact run passed. The earlier export return code was not retained, so cause is unresolved."
+    }
+  ]
+}

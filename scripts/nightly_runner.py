@@ -1417,6 +1417,12 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_xray_operation_bundle.py",
         timeout_sec=120,
     ),
+    "v8_xray_execution_equivalence": TestSuite(
+        "X-Ray Full/Chunked Execution Equivalence",
+        "parity",
+        ROOT / "tests" / "test_v8_xray_execution_equivalence.py",
+        timeout_sec=120,
+    ),
     "v8_xray_conv_operands": TestSuite(
         "X-Ray Convolution Operand Construction",
         "parity",
