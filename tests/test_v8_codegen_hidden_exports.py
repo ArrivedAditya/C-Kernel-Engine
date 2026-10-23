@@ -50,6 +50,93 @@ def _arg(name: str, expr: str) -> dict[str, str]:
 
 
 class HiddenExportExtentTests(unittest.TestCase):
+    def test_spatial_merge_exports_only_written_elements(self) -> None:
+        compiler = shutil.which("cc")
+        if compiler is None:
+            self.skipTest("C compiler unavailable")
+        source_head = r'''
+#include <stddef.h>
+#include <string.h>
+static int expected_count;
+static int capture_ok;
+static float captured[32];
+static void write_output(float *output) {
+    for (int i = 0; i < expected_count; ++i) output[i] = (float)(i + 1);
+}
+static void spatial_average_pool_contiguous(const float *input, float *output,
+        int grid_h, int grid_w, int embed_dim, int merge_size) {
+    (void)input; (void)grid_h; (void)grid_w; (void)embed_dim; (void)merge_size;
+    write_output(output);
+}
+static void spatial_merge_contiguous_tiled(const float *input, float *output,
+        int grid_h, int grid_w, int embed_dim, int merge_size) {
+    (void)input; (void)grid_h; (void)grid_w; (void)embed_dim; (void)merge_size;
+    write_output(output);
+}
+static void spatial_merge_2x2(const float *input, float *output,
+        int grid_h, int grid_w, int embed_dim) {
+    (void)input; (void)grid_h; (void)grid_w; (void)embed_dim;
+    write_output(output);
+}
+static void ck_debug_export_hidden(void *model, int layer, const char *name,
+        const float *src, size_t count) {
+    (void)model;
+    if (count == 0) return;
+    if (layer != -1 || strcmp(name, "vision_spatial_merge") != 0 ||
+            count != (size_t)expected_count) return;
+    memcpy(captured, src, count * sizeof(float));
+    capture_ok = 1;
+}
+int main(void) {
+    float input[30] = {0};
+    float output[32] = {0};
+    void *model = NULL;
+    expected_count = EXPECTED_COUNT;
+    output[expected_count] = 12345.0f;
+    output[expected_count + 1] = -12345.0f;
+'''
+        source_tail = r'''
+    if (capture_ok != (expected_count > 0) || output[expected_count] != 12345.0f ||
+            output[expected_count + 1] != -12345.0f) return 1;
+    for (int i = 0; i < expected_count; ++i)
+        if (captured[i] != (float)(i + 1)) return 2;
+    return 0;
+}
+'''
+        with tempfile.TemporaryDirectory(prefix="spatial_merge_capture_") as tmpdir:
+            path = Path(tmpdir)
+            for function, expected in (
+                ("spatial_average_pool_contiguous", 4),
+                ("spatial_merge_2x2", 16),
+                ("spatial_merge_contiguous_tiled", 24),
+            ):
+                for invalid in (False, True):
+                    with self.subTest(function=function, invalid=invalid):
+                        args = [
+                            _arg("input", "input"),
+                            _arg("output", "output"),
+                            _arg("grid_h", "0" if invalid and function == "spatial_merge_2x2" else "3"),
+                            _arg("grid_w", "5"),
+                            _arg("embed_dim", "2"),
+                        ]
+                        if function != "spatial_merge_2x2":
+                            args.append(_arg("merge_size", "0" if invalid else "2"))
+                        emitted = codegen.emit_op({
+                            "op": "spatial_merge",
+                            "function": function,
+                            "layer": -1,
+                            "args": args,
+                        })
+                        (path / "fixture.c").write_text(
+                            source_head.replace("EXPECTED_COUNT", str(0 if invalid else expected)) + emitted + source_tail,
+                            encoding="utf-8",
+                        )
+                        subprocess.run(
+                            [compiler, "-std=c11", str(path / "fixture.c"), "-o", str(path / "fixture")],
+                            check=True, capture_output=True,
+                        )
+                        subprocess.run([str(path / "fixture")], check=True, capture_output=True)
+
     def test_ffn_norm_captures_execute_full_grid(self) -> None:
         compiler = shutil.which("cc")
         if compiler is None:
