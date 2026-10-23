@@ -4,15 +4,29 @@
  */
 
 #include <math.h>
+#include <pthread.h>
 #include <stddef.h>
 #include <stdint.h>
 
 #include "ckernel_engine.h"
+#include "ckernel_quant.h"
 #include "bf16_utils.h"
 
 /* Reuse existing optimized GELU implementation from gelu_kernels.c. */
 extern void gelu_fast_inplace(float *data, size_t n);
 extern void gelu_ggml_native_inplace(float *data, size_t n);
+
+static ck_half ck_geglu_quick_fp16_table[1u << 16];
+static pthread_once_t ck_geglu_quick_fp16_once = PTHREAD_ONCE_INIT;
+
+static void ck_geglu_quick_fp16_init(void)
+{
+    for (unsigned int bits = 0; bits < (1u << 16); ++bits) {
+        const float gate = CK_FP16_TO_FP32((ck_half)bits);
+        const float gelu = gate * (1.0f / (1.0f + expf(-1.702f * gate)));
+        ck_geglu_quick_fp16_table[bits] = CK_FP32_TO_FP16(gelu);
+    }
+}
 
 void geglu_forward_ggml_native(const float *x, float *out, int tokens, int dim)
 {
@@ -63,6 +77,22 @@ void geglu_forward_quick(const float *x, float *out, int tokens, int dim)
         for (int d = 0; d < dim; ++d) {
             const float gate = row[d];
             dst[d] = (gate * (1.0f / (1.0f + expf(-1.702f * gate)))) * row[dim + d];
+        }
+    }
+}
+
+void geglu_forward_quick_fp16_table(const float *x, float *out, int tokens, int dim)
+{
+    if (!x || !out || tokens <= 0 || dim <= 0) return;
+    pthread_once(&ck_geglu_quick_fp16_once, ck_geglu_quick_fp16_init);
+    const size_t inner_dim = (size_t)dim * 2u;
+    for (int t = 0; t < tokens; ++t) {
+        const float *row = x + (size_t)t * inner_dim;
+        float *dst = out + (size_t)t * (size_t)dim;
+        for (int d = 0; d < dim; ++d) {
+            const ck_half gate = CK_FP32_TO_FP16(row[d]);
+            const float rounded = CK_FP16_TO_FP32(ck_geglu_quick_fp16_table[gate]);
+            dst[d] = rounded * row[dim + d];
         }
     }
 }
