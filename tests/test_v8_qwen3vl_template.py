@@ -1573,7 +1573,8 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
                 line for line in text.splitlines()
                 if 'ck_debug_export_hidden(model, -1, "vision_spatial_merge"' in line
             )
-            self.assertIn("(48) * (48) * (1152)", spatial_export)
+            self.assertIn("(48) > 0 && (48) > 0 && (1152) > 0 && (2) > 0", spatial_export)
+            self.assertIn("(((48) * (48)) / ((2) * (2))) * (2) * (2) * (1152)", spatial_export)
             self.assertIn("feature_concat", text)
             self.assertIn("transpose_attn_out_to_token_major", text)
             self.assertNotIn("transpose_inplace();", text)
