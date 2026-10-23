@@ -3607,8 +3607,21 @@ CK_EXPORT int32_t ck_model_audio_prompt_token_id(int index) {{
         prefill_guard = " && (getenv(\"CK_V8_FORCE_BATCHED_PREFILL\") && atoi(getenv(\"CK_V8_FORCE_BATCHED_PREFILL\")) != 0)"
     else:
         prefill_guard = " && !(getenv(\"CK_V8_FORCE_DECODE_PREFILL\") && atoi(getenv(\"CK_V8_FORCE_DECODE_PREFILL\")) != 0)"
+    prefill_append_row_group = int(config.get("prefill_append_row_group", 1) or 1)
+    if prefill_append_row_group < 1:
+        raise RuntimeError("prefill append row group must be positive")
     prefill_count_guard = (
-        "count > 0" if uses_persistent_cross_kv_cache else "count > 1"
+        "count > 0" if uses_persistent_cross_kv_cache else
+        "(count > 1 || (count == 1 && g_model->pos > 0))"
+        if prefill_append_row_group > 1 else "count > 1"
+    )
+    prefill_append_guard = (
+        f"        if (g_model->pos > 0 && g_model->pos % {prefill_append_row_group} != 0) return -3;\n"
+        if prefill_append_row_group > 1 else ""
+    )
+    prefill_append_comment = (
+        "        /* -3: a prior tail reduction cannot be regrouped; state is untouched. */\n"
+        if prefill_append_row_group > 1 else ""
     )
     decode_encoder_cache_guard = (
         "    if (!g_model->encoder_kv_ready) return -2;\n"
@@ -4046,6 +4059,11 @@ CK_EXPORT void ck_model_set_cancel_flag(const atomic_int *flag) {{
     g_ck_cancel_flag = flag;
 }}
 
+/* One means that external prefill appends have no grouped-row boundary. */
+CK_EXPORT int ck_model_prefill_append_row_group(void) {{
+    return {prefill_append_row_group};
+}}
+
 CK_EXPORT int ck_model_embed_tokens(const int32_t *tokens, int count) {{
     if (!g_model || !tokens || count <= 0) return -1;
     if (ck_model_cancel_requested()) return -2;
@@ -4053,8 +4071,10 @@ CK_EXPORT int ck_model_embed_tokens(const int32_t *tokens, int count) {{
     ck_trace_pos("embed_begin", tokens[0], count, before_pos, g_model->pos);
 
 #ifdef CK_HAS_PREFILL
-    /* Use batched prefill for multiple tokens unless the model requires decode replay. */
+    /* Use batched prefill for multiple tokens, and for aligned singleton
+     * continuation when the selected prefill provider has grouped rows. */
     if ({prefill_count_guard}{prefill_guard}) {{
+{prefill_append_comment}{prefill_append_guard}
         ck_prefill(g_model, tokens, count);{profile_dump_after_prefill}
         ck_parallel_prefill_release_transient_caches();
         if (ck_model_cancel_requested()) return -2;

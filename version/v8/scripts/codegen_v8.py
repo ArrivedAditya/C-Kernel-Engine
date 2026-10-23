@@ -1819,6 +1819,19 @@ def _uses_generated_batched_prefill(
     return policy not in {"sequential_decode", "decode"}
 
 
+def _prefill_row_group_alignment(ops: list[Dict[str, Any]]) -> int:
+    """Resolve the selected providers' external-append boundary."""
+    groups = []
+    for op in ops:
+        value = op.get("prefill_row_group")
+        if value is None:
+            continue
+        if type(value) is not int or value < 1:
+            raise RuntimeError("invalid selected prefill row group")
+        groups.append(value)
+    return math.lcm(*groups) if groups else 1
+
+
 def _prefill_phase_decode_ops(
     decode_ops: list[Dict[str, Any]],
     prefill_ops: list[Dict[str, Any]],
@@ -2762,17 +2775,22 @@ def main(argv: list[str] | None = None) -> int:
         prefill_obj = copy.deepcopy(prefill_obj)
         prefill_obj.setdefault("config", {})[
             "prefill_continuation_entry"] = "ck_decode_prefill_continuation"
-        row_groups = [int(op["prefill_row_group"])
-                      for op in prefill_obj.get("operations", [])
-                      if op.get("prefill_row_group")]
-        if row_groups:
+        row_group_alignment = _prefill_row_group_alignment(
+            prefill_obj.get("operations", []))
+        if row_group_alignment > 1:
             prefill_tail_ops = _prefill_phase_decode_ops(
                 ir_obj.get("operations", []), prefill_obj.get("operations", []),
                 tail_reduction=True)
             prefill_obj["config"]["prefill_initial_chunk_alignment"] = (
-                math.lcm(*row_groups))
+                row_group_alignment)
             prefill_obj["config"]["prefill_tail_continuation_entry"] = (
                 "ck_decode_prefill_tail_continuation")
+            # The first call's residual rows use the provider's tail reduction.
+            # A later append cannot retroactively turn those rows into a full
+            # group. Carry the selected provider boundary into the public
+            # generated entry so external staged calls fail before mutation.
+            ir_obj.setdefault("config", {})["prefill_append_row_group"] = (
+                prefill_obj["config"]["prefill_initial_chunk_alignment"])
 
     init_call_obj = None
     init_path = args.init if args.init is not None else args.ir.parent / "init_call.json"

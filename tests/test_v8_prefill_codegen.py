@@ -36,6 +36,10 @@ codegen_v8 = _load_module(
     "codegen_v8_prefill_phase_tests",
     ROOT / "version" / "v8" / "scripts" / "codegen_v8.py",
 )
+codegen_core_v8 = _load_module(
+    "codegen_core_v8_prefill_append_tests",
+    ROOT / "version" / "v8" / "scripts" / "codegen_core_v8.py",
+)
 chunked_compare = _load_module(
     "compare_chunked_prefill_v8_tests",
     ROOT / "version" / "v8" / "scripts" / "compare_chunked_prefill_v8.py",
@@ -43,6 +47,90 @@ chunked_compare = _load_module(
 
 
 class TestV8PrefillCodegen(unittest.TestCase):
+    def test_selected_prefill_row_groups_define_checked_append_boundary(self):
+        self.assertEqual(codegen_v8._prefill_row_group_alignment([]), 1)
+        self.assertEqual(codegen_v8._prefill_row_group_alignment([
+            {"prefill_row_group": 4}, {"prefill_row_group": 8}, {}]), 8)
+        for bad in (0, -1, 1.5, "4", True):
+            with self.subTest(bad=bad), self.assertRaisesRegex(RuntimeError, "row group"):
+                codegen_v8._prefill_row_group_alignment(
+                    [{"prefill_row_group": bad}])
+
+    def test_grouped_append_rejects_before_mutation_and_uses_prefill_continuation(self):
+        compiler = shutil.which("cc")
+        if compiler is None:
+            self.skipTest("C compiler unavailable")
+        source = codegen_core_v8.emit_model_and_api(
+            layout={"memory": {"activations": {"buffers": []}}},
+            config={"prefill_append_row_group": 4},
+        )
+        ordinary = codegen_core_v8.emit_model_and_api(
+            layout={"memory": {"activations": {"buffers": []}}}, config={},
+        )
+        self.assertIn("if (count > 1 &&", ordinary)
+        self.assertNotIn("a prior tail reduction cannot be regrouped", ordinary)
+        with self.assertRaisesRegex(RuntimeError, "row group must be positive"):
+            codegen_core_v8.emit_model_and_api(
+                layout={"memory": {"activations": {"buffers": []}}},
+                config={"prefill_append_row_group": -4},
+            )
+        api = source[
+            source.index("CK_EXPORT int ck_model_prefill_append_row_group(void)"):
+            source.index("/* Forward pass (after embed_tokens) */")
+        ]
+        harness = r'''
+#include <stdint.h>
+#include <stdlib.h>
+#define CK_EXPORT
+#define CK_HAS_PREFILL 1
+typedef struct { int pos; int state; } CKModel;
+static CKModel storage;
+static CKModel *g_model = &storage;
+static int g_ck_skip_decode_logits;
+static int prefill_calls, decode_calls;
+static int ck_model_cancel_requested(void) { return 0; }
+static void ck_trace_pos(const char *stage, int token, int count, int before, int after) {
+    (void)stage; (void)token; (void)count; (void)before; (void)after;
+}
+static void ck_parallel_prefill_release_transient_caches(void) {}
+static void ck_prefill(CKModel *model, const int32_t *tokens, int count) {
+    (void)tokens;
+    ++prefill_calls;
+    model->pos += count;
+    model->state += count;
+}
+static void ck_decode(CKModel *model, int32_t token) {
+    (void)token;
+    ++decode_calls;
+    ++model->pos;
+    ++model->state;
+}
+''' + api + r'''
+int main(void) {
+    const int32_t token = 7;
+    if (ck_model_prefill_append_row_group() != 4) return 1;
+    storage.pos = 127; storage.state = 91;
+    if (ck_model_embed_tokens(&token, 1) != -3 || storage.pos != 127 ||
+        storage.state != 91 || prefill_calls || decode_calls) return 2;
+    if (ck_model_embed_tokens(&token, 2) != -3 || storage.state != 91 ||
+        prefill_calls || decode_calls) return 3;
+    storage.pos = 124;
+    if (ck_model_embed_tokens(&token, 1) != 0 || storage.pos != 125 ||
+        prefill_calls != 1 || decode_calls) return 4;
+    storage.pos = 0;
+    if (ck_model_embed_tokens(&token, 1) != 0 || storage.pos != 1 ||
+        prefill_calls != 1 || decode_calls != 1) return 5;
+    return 0;
+}
+'''
+        with tempfile.TemporaryDirectory(prefix="prefill_append_", dir=os.environ.get("TMPDIR")) as directory:
+            path = Path(directory)
+            (path / "test.c").write_text(harness, encoding="utf-8")
+            subprocess.run([compiler, "-std=c11", "-Wall", "-Wextra", "-Werror",
+                            str(path / "test.c"), "-o", str(path / "test")],
+                           check=True, capture_output=True, text=True)
+            subprocess.run([str(path / "test")], check=True)
+
     def test_execution_segments_cover_repeated_append_and_nonzero_position(self):
         tokens = list(range(10))
         self.assertEqual(chunked_compare._segments(tokens, None, 4), [
