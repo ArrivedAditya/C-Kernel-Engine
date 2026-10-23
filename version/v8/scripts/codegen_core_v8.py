@@ -1952,8 +1952,17 @@ def emit_op(
         out_expr = _hidden_arg("output", "out", "c", "y")
         grid_h = _hidden_arg("grid_h")
         grid_w = _hidden_arg("grid_w")
-        merge = _hidden_arg("merge_size") or "1"
-        count_expr = _mul_expr(grid_h, grid_w, _hidden_arg("embed_dim"))
+        embed_dim = _hidden_arg("embed_dim")
+        merge = _hidden_arg("merge_size")
+        function = str(op.get("function") or "")
+        if function == "spatial_average_pool_contiguous" and grid_h and grid_w and embed_dim and merge:
+            count_expr = _mul_expr(f"({grid_h}) / ({merge})", f"({grid_w}) / ({merge})", embed_dim)
+        elif function == "spatial_merge_2x2" and grid_h and grid_w and embed_dim:
+            count_expr = _mul_expr(f"({grid_h}) / 2", f"({grid_w}) / 2", "4", embed_dim)
+        elif function == "spatial_merge_contiguous_tiled" and grid_h and grid_w and embed_dim and merge:
+            count_expr = _mul_expr(f"(({grid_h}) * ({grid_w})) / (({merge}) * ({merge}))", merge, merge, embed_dim)
+        else:
+            count_expr = None
         _emit_hidden_export(out_expr, "vision_spatial_merge", count_expr)
     elif op_name == "projector_prep":
         out_expr = _hidden_arg("output", "out", "c", "y")
