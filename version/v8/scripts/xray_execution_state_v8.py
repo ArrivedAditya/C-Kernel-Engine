@@ -154,6 +154,70 @@ def _tensor_metrics(left: np.ndarray, right: np.ndarray) -> dict[str, Any]:
     }
 
 
+def compare_equivalent_stage(
+    subject: np.ndarray, reference: np.ndarray, *,
+    subject_position: int, reference_position: int,
+    subject_state: dict[str, str], reference_state: dict[str, str],
+    contract: dict[str, Any],
+) -> dict[str, Any]:
+    """Compare one semantic execution boundary, independent of call segmentation.
+
+    State digests must cover logical valid values, never arena padding. A numerical
+    logit tolerance does not relax state equality. The caller owns artifact and
+    loaded-library verification before presenting a stage as certified.
+    """
+    mode = contract.get("mode")
+    if mode not in {"exact", "tolerance"}:
+        raise TraceError("execution equivalence requires an explicit exact or tolerance contract")
+    if mode == "tolerance":
+        if not all(key in contract for key in ("atol", "rtol")):
+            raise TraceError("tolerance contract requires atol and rtol")
+        atol, rtol = float(contract["atol"]), float(contract["rtol"])
+        if not all(math.isfinite(x) and x >= 0 for x in (atol, rtol)):
+            raise TraceError("tolerance bounds must be finite and nonnegative")
+    else:
+        atol = rtol = 0.0
+    lhs, rhs = np.asarray(subject), np.asarray(reference)
+    if lhs.shape != rhs.shape or not np.isfinite(lhs).all() or not np.isfinite(rhs).all():
+        raise TraceError("execution boundary has mismatched or nonfinite logits")
+    if not subject_state or subject_state.keys() != reference_state.keys():
+        raise TraceError("execution boundary has missing or mismatched state inventory")
+    if any(not isinstance(value, str) or len(value) != 64 or
+           any(character not in "0123456789abcdef" for character in value.lower())
+           for value in (*subject_state.values(), *reference_state.values())):
+        raise TraceError("execution boundary requires SHA-256 state digests")
+    metrics = _tensor_metrics(lhs, rhs)
+    logits_exact = bool(np.array_equal(
+        np.ascontiguousarray(lhs).view(np.uint8),
+        np.ascontiguousarray(rhs).view(np.uint8)))
+    logits_accepted = logits_exact if mode == "exact" else bool(
+        np.allclose(lhs, rhs, rtol=rtol, atol=atol))
+    mismatched_state = sorted(key for key in subject_state
+                              if subject_state[key] != reference_state[key])
+    if subject_position != reference_position:
+        classification = "POSITION_STATE_MISMATCH"
+    elif mismatched_state:
+        classification = "CACHE_CONTENT_DIVERGENCE"
+    elif not logits_accepted:
+        classification = "NUMERICAL_OUTPUT_DIVERGENCE"
+    else:
+        classification = None
+    return {
+        "status": "fail" if classification else "pass",
+        "classification": classification,
+        "subject_position": subject_position,
+        "reference_position": reference_position,
+        "contract": {"mode": mode, "atol": atol, "rtol": rtol},
+        "subject_dtype": str(lhs.dtype),
+        "reference_dtype": str(rhs.dtype),
+        "logits_exact": logits_exact,
+        "logits_within_contract": logits_accepted,
+        "metrics": metrics,
+        "state_exact": not mismatched_state,
+        "state_mismatches": mismatched_state,
+    }
+
+
 def _fail(classification: str, **evidence: Any) -> dict[str, Any]:
     return {
         "status": "fail", "classification": classification,

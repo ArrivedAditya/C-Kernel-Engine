@@ -175,6 +175,46 @@ class XRayExecutionStateTests(unittest.TestCase):
         self.assertEqual(failure["classification"], "ATTENTION_ARITHMETIC_DIVERGENCE")
         self.assertEqual(failure["stage"], "attention_output")
 
+    def test_execution_equivalence_faults_fail_at_state_and_numeric_boundaries(self):
+        logits = np.array([0.25, 1.0, -0.5], dtype=np.float32)
+        state = {"decoder.layer.0.kv": "a" * 64}
+        common = dict(subject_position=128, reference_position=128,
+                      subject_state=state, reference_state=state,
+                      contract={"mode": "exact"})
+        self.assertEqual(xray.compare_equivalent_stage(
+            logits, logits.copy(), **common)["status"], "pass")
+        shifted = xray.compare_equivalent_stage(
+            logits, logits, **(common | {"subject_position": 127}))
+        self.assertEqual(shifted["classification"], "POSITION_STATE_MISMATCH")
+        missing_history = xray.compare_equivalent_stage(
+            logits, logits, **(common | {"subject_state": {"decoder.layer.0.kv": "b" * 64}}))
+        self.assertEqual(missing_history["classification"], "CACHE_CONTENT_DIVERGENCE")
+        self.assertEqual(missing_history["state_mismatches"], ["decoder.layer.0.kv"])
+        wrong_tail = logits.copy()
+        wrong_tail[1] += np.float32(0.0001)
+        numeric = xray.compare_equivalent_stage(wrong_tail, logits, **common)
+        self.assertEqual(numeric["classification"], "NUMERICAL_OUTPUT_DIVERGENCE")
+        self.assertGreater(numeric["metrics"]["rmse"], 0)
+        self.assertFalse(numeric["logits_exact"])
+        self.assertEqual(int(np.argmax(wrong_tail)), int(np.argmax(logits)))
+
+    def test_execution_equivalence_never_infers_tolerance(self):
+        logits = np.array([1.0], dtype=np.float32)
+        state = {"kv": "a" * 64}
+        kwargs = dict(subject_position=1, reference_position=1,
+                      subject_state=state, reference_state=state)
+        with self.assertRaisesRegex(xray.TraceError, "explicit"):
+            xray.compare_equivalent_stage(logits, logits, contract={}, **kwargs)
+        with self.assertRaisesRegex(xray.TraceError, "requires atol and rtol"):
+            xray.compare_equivalent_stage(logits, logits,
+                                          contract={"mode": "tolerance", "atol": 1e-4}, **kwargs)
+        changed = np.array([1.00001], dtype=np.float32)
+        accepted = xray.compare_equivalent_stage(
+            changed, logits, contract={"mode": "tolerance", "atol": 2e-5, "rtol": 0}, **kwargs)
+        self.assertEqual(accepted["status"], "pass")
+        self.assertFalse(accepted["logits_exact"])
+        self.assertTrue(accepted["logits_within_contract"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

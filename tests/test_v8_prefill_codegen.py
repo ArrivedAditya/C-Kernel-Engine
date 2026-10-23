@@ -43,6 +43,30 @@ chunked_compare = _load_module(
 
 
 class TestV8PrefillCodegen(unittest.TestCase):
+    def test_execution_segments_cover_repeated_append_and_nonzero_position(self):
+        tokens = list(range(10))
+        self.assertEqual(chunked_compare._segments(tokens, None, 4), [
+            (0, [0, 1, 2, 3]), (4, [4, 5, 6, 7]), (8, [8, 9])])
+        self.assertEqual(chunked_compare._segments(tokens, 5, 3), [
+            (0, [0, 1, 2]), (3, [3, 4]), (5, [5, 6, 7]), (8, [8, 9])])
+        with self.assertRaisesRegex(ValueError, "positive"):
+            chunked_compare._segments(tokens, None, 0)
+
+    def test_execution_comparison_excludes_unexported_recurrent_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = Path(directory)
+            layout = bundle / "layout_decode.json"
+            def write(names):
+                layout.write_text(json.dumps({"memory": {"activations": {"buffers": [
+                    {"name": name, "lifetime": "sequence", "mutable": True}
+                    for name in names]}}}), encoding="utf-8")
+            write(["kv_cache"])
+            self.assertEqual(chunked_compare._kv_only_state_contract(bundle)[
+                "exported_state"], ["kv_cache"])
+            write(["kv_cache", "recurrent_ssm_state"])
+            with self.assertRaisesRegex(RuntimeError, "unexported persistent"):
+                chunked_compare._kv_only_state_contract(bundle)
+
     def test_loaded_library_identity_rejects_replaced_backing(self):
         if not Path("/proc/self/maps").exists():
             self.skipTest("Linux process mappings required")
@@ -81,16 +105,16 @@ class TestV8PrefillCodegen(unittest.TestCase):
             right.mkdir()
             np.array([1.0, 2.0], dtype="<f4").tofile(left / "prefill.f32")
             np.array([1.0, 3.0], dtype="<f4").tofile(right / "prefill.f32")
-            a = {"position": 2, "top_token": 1, "kv_sha256": ["a", "b"]}
-            b = {"position": 2, "top_token": 1, "kv_sha256": ["a", "changed"]}
+            a = {"position": 2, "top_token": 1, "kv_sha256": ["a" * 64, "b" * 64]}
+            b = {"position": 2, "top_token": 1, "kv_sha256": ["a" * 64, "c" * 64]}
             result = chunked_compare._comparison(left, right, "prefill", a, b)
             self.assertFalse(result["logits_exact"])
             self.assertEqual(result["max_logit_abs"], 1.0)
             self.assertEqual(result["kv_exact_layers"], 1)
             self.assertEqual(result["kv_mismatch_layers"], [1])
-            with self.assertRaisesRegex(RuntimeError, "state geometry differs"):
-                chunked_compare._comparison(
-                    left, right, "prefill", a, dict(b, position=3))
+            shifted = chunked_compare._comparison(
+                left, right, "prefill", a, dict(b, position=3))
+            self.assertEqual(shifted["xray"]["classification"], "POSITION_STATE_MISMATCH")
             np.array([0.0], dtype="<f4").tofile(left / "prefill.f32")
             np.array([-0.0], dtype="<f4").tofile(right / "prefill.f32")
             self.assertFalse(chunked_compare._comparison(
