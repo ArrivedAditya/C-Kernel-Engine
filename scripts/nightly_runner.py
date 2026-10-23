@@ -758,6 +758,19 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_qwen3_tts_codec_semantic.py",
         timeout_sec=180,
     ),
+    "tts_qwen3_customvoice_codec_preconv": TestSuite(
+        "Qwen3-TTS Generated Codec Causal Pre-Convolution", "inference",
+        ROOT / "tests" / "test_v8_qwen3_tts_codec_preconv.py",
+        timeout_sec=180,
+    ),
+    "tts_audio_zero_pad_oracle": TestSuite(
+        "Checked Left Zero Padding Independent Oracle", "kernels",
+        ROOT / "tests" / "test_v8_audio_zero_pad_oracle.py",
+    ),
+    "tts_audio_zero_pad_generated": TestSuite(
+        "Model-Neutral Generated Left Zero Padding", "inference",
+        ROOT / "tests" / "test_v8_audio_zero_pad_generated.py",
+    ),
     "tts_transformer_rows_checked": TestSuite(
         "TTS Checked Transformer Rows and RoPE Boundaries", "kernels",
         ROOT / "tests" / "test_v8_transformer_rows_checked.py",

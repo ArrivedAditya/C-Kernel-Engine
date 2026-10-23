@@ -22,6 +22,7 @@ sys.path.insert(0, str(ROOT / "version/v8/tts"))
 import build_ir_v8
 from build_qwen3_tts_codec_semantic_circuit import build_circuit
 from build_qwen3_tts_codec_rvq_circuit import build_circuit as build_rvq_circuit
+from build_qwen3_tts_codec_preconv_circuit import build_circuit as build_preconv_circuit
 
 TABLE = "codec.semantic.effective_embedding"
 PROJECTION = "codec.semantic.output_projection.weight"
@@ -31,14 +32,19 @@ MODEL = (ROOT / "tests/fixtures/tts/qwen3_tts_0b6_customvoice"
 
 
 def generated_entry(folder: Path, arrays: dict[str, np.ndarray], frames: int,
-                    *, acoustic_codebooks: int = 0):
+                    *, acoustic_codebooks: int = 0, pre_conv: bool = False):
     table, projection = arrays[TABLE], arrays[PROJECTION]
     dimensions = {"frames": frames, "vocabulary": table.shape[0],
                   "codebook_width": table.shape[1],
                   "output_width": projection.shape[0]}
-    graph = (build_rvq_circuit(acoustic_codebooks=acoustic_codebooks,
-                               **dimensions) if acoustic_codebooks else
-             build_circuit(**dimensions))
+    if pre_conv:
+        dimensions["latent_width"] = arrays["codec.decoder.pre_conv.conv.weight"].shape[0]
+        graph = build_preconv_circuit(acoustic_codebooks=acoustic_codebooks,
+                                      **dimensions)
+    else:
+        graph = (build_rvq_circuit(acoustic_codebooks=acoustic_codebooks,
+                                   **dimensions) if acoustic_codebooks else
+                 build_circuit(**dimensions))
     if acoustic_codebooks and acoustic_codebooks != 15:
         # Built-in circuits merge canonical checkpoint declarations by name.
         # Give smaller synthetic compositions their own explicit identity.
@@ -82,6 +88,9 @@ def generated_entry(folder: Path, arrays: dict[str, np.ndarray], frames: int,
         "--ir", str(folder / "call.json"),
         "--layout", str(folder / "layout.json"), "--output", str(c_path),
     ], check=True, capture_output=True, text=True)
+    extra_sources = ([str(ROOT / "src/kernels/audio_zero_pad_checked.c"),
+                      str(ROOT / "src/kernels/audio_conv1d_checked.c")]
+                     if pre_conv else [])
     subprocess.run([
         "cc", "-std=gnu11", "-O2", "-w", "-fopenmp",
         "-shared", "-fPIC", "-ffunction-sections", "-fdata-sections",
@@ -90,6 +99,7 @@ def generated_entry(folder: Path, arrays: dict[str, np.ndarray], frames: int,
         str(ROOT / "src/kernels/strided_unary_checked.c"),
         str(ROOT / "src/kernels/linear_rows_checked.c"),
         str(ROOT / "src/kernels/transformer_rows_checked.c"),
+        *extra_sources,
         str(ROOT / "src/kernels/rope_kernels.c"),
         str(ROOT / "src/kernels/attention_kernels.c"),
         str(ROOT / "src/kernels/softmax_kernels.c"),
@@ -99,7 +109,8 @@ def generated_entry(folder: Path, arrays: dict[str, np.ndarray], frames: int,
         "-I", str(ROOT / "include"), "-lm", "-ldl", "-lpthread",
         "-o", str(so_path),
     ], check=True, capture_output=True, text=True)
-    symbol = ("ck_qwen3_tts_codec_rvq_bounded" if acoustic_codebooks else
+    symbol = ("ck_qwen3_tts_codec_preconv_bounded" if pre_conv else
+              "ck_qwen3_tts_codec_rvq_bounded" if acoustic_codebooks else
               "ck_qwen3_tts_codec_semantic_bounded")
     fn = getattr(ctypes.CDLL(str(so_path)), symbol)
     fn.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t]
