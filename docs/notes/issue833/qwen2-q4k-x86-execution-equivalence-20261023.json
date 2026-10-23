@@ -1,6 +1,6 @@
 {
   "schema": "cke.xray_execution_equivalence_evidence.v1",
-  "source_revision": "aa656b922332e6e0d7414482dd12b84ff98c7707",
+  "source_revision": "bf09a6308c24daf53ac92a70eef7dc398089ec8a",
   "cpu_model": "Intel(R) Core(TM) i7-14700T",
   "machine": "x86_64",
   "native_threads": {
@@ -27,7 +27,7 @@
       "libckernel_tokenizer.so": "d087eb3bcb521463976e42b9707a650bfff962839b99fd6bb7d0471416037239"
     }
   },
-  "comparison_source_sha256": "b8465c07fb01ab63df5c33769bac46e4c629920ca118fa5a05707a4c00c24096",
+  "comparison_source_sha256": "014ba8a0f473f6e407ba7b7efc0bfce81d808aa624c7cfc2d8bbccccc5e7729e",
   "xray_source_sha256": "240a1c59c30ba870545708cca8517cf6253f725f02b8d506802d59876eb6d343",
   "cases": [
     {
@@ -171,5 +171,12 @@
     "No intermediate operation captures or exact-input replay for this new boundary",
     "Actual shape-selected provider is not instrumented in this report",
     "Only one Qwen2 artifact and one x86 CPU tested"
+  ],
+  "diagnostic_attempts": [
+    {
+      "case": "uninterrupted_vs_internal_chunk127",
+      "result": "no_verdict",
+      "reason": "Two isolated retries stopped at a native layer-23 KV export during continuation before comparison; the later same-artifact run passed. The earlier export return code was not retained, so cause is unresolved."
+    }
   ]
 }
