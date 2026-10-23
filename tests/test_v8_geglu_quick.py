@@ -27,6 +27,9 @@ class GeGLUQuickTests(unittest.TestCase):
         pointer = ctypes.POINTER(ctypes.c_float)
         cls.quick.argtypes = [pointer, pointer, ctypes.c_int, ctypes.c_int]
         cls.quick.restype = None
+        cls.quick_fp16_table = library.geglu_forward_quick_fp16_table
+        cls.quick_fp16_table.argtypes = [pointer, pointer, ctypes.c_int, ctypes.c_int]
+        cls.quick_fp16_table.restype = None
 
     def test_quick_formula_and_in_place_compaction(self) -> None:
         pointer = ctypes.POINTER(ctypes.c_float)
@@ -49,12 +52,48 @@ class GeGLUQuickTests(unittest.TestCase):
             )
             np.testing.assert_array_equal(in_place[tokens * 2 * dim :], separate.reshape(-1))
 
-    def test_gemma_vision_selects_quick_not_tanh(self) -> None:
+    def test_pinned_quick_fp16_table_oracle_and_alias(self) -> None:
+        pointer = ctypes.POINTER(ctypes.c_float)
+        # Direct Gemma vision layer-0 values from llama.cpp 19e28a27702117d8f2eb16b825b9a308111f67d9.
+        source = np.array([[
+            4.466717720031738, -1.013685703277588, -0.940589427947998,
+            4.46875, 1.1520159244537354, -1.130437970161438,
+        ]], dtype=np.float32)
+        expected = np.array([[
+            19.934814453125, -0.17662744224071503, 0.17842483520507812,
+        ]], dtype=np.float32)
+        output = np.empty((1, 3), dtype=np.float32)
+        self.quick_fp16_table(
+            source.ctypes.data_as(pointer), output.ctypes.data_as(pointer), 1, 3
+        )
+        np.testing.assert_allclose(output, expected, rtol=0, atol=2e-6)
+
+        unrounded = np.empty_like(output)
+        self.quick(source.ctypes.data_as(pointer), unrounded.ctypes.data_as(pointer), 1, 3)
+        self.assertGreater(abs(float(unrounded[0, 0] - expected[0, 0])), 0.01)
+
+        for tokens, dim in ((1, 3), (3, 7), (19, 17)):
+            rows = np.tile(source, (tokens, (dim + 2) // 3))[:, :2 * dim].copy()
+            separate = np.empty((tokens, dim), dtype=np.float32)
+            self.quick_fp16_table(
+                rows.ctypes.data_as(pointer), separate.ctypes.data_as(pointer), tokens, dim
+            )
+            guarded = np.concatenate((rows.reshape(-1), np.full(8, 91.0, dtype=np.float32)))
+            self.quick_fp16_table(
+                guarded.ctypes.data_as(pointer), guarded.ctypes.data_as(pointer), tokens, dim
+            )
+            np.testing.assert_array_equal(guarded[:tokens * dim], separate.reshape(-1))
+            np.testing.assert_array_equal(
+                guarded[tokens * dim : tokens * 2 * dim], rows.reshape(-1)[tokens * dim :]
+            )
+            np.testing.assert_array_equal(guarded[-8:], np.full(8, 91.0, dtype=np.float32))
+
+    def test_gemma_vision_selects_quick_fp16_table_not_unrounded(self) -> None:
         circuit = json.loads((ROOT / "version/v8/circuits/gemma4_vision.json").read_text())
-        self.assertEqual(circuit["kernels"]["geglu"], "geglu_forward_quick")
-        provider = json.loads((ROOT / "version/v8/kernel_maps/geglu_forward_quick.json").read_text())
+        self.assertEqual(circuit["kernels"]["geglu"], "geglu_forward_quick_fp16_table")
+        provider = json.loads((ROOT / "version/v8/kernel_maps/geglu_forward_quick_fp16_table.json").read_text())
         self.assertEqual(provider["operation_interface"], "geglu.fp32_compacting.v1")
-        self.assertEqual(provider["impl"]["function"], "geglu_forward_quick")
+        self.assertEqual(provider["impl"]["function"], "geglu_forward_quick_fp16_table")
         self.assertEqual(
             provider["memory_contract"]["input_output_overlap"],
             "exact_input_output_alias_or_disjoint_only",

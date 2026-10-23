@@ -1702,6 +1702,7 @@ void gelu_backward_fast_bf16(const uint16_t *input,
 void geglu_forward_fp32(const float *x, float *out, int tokens, int dim);
 void geglu_forward_exact(const float *x, float *out, int tokens, int dim);
 void geglu_forward_quick(const float *x, float *out, int tokens, int dim);
+void geglu_forward_quick_fp16_table(const float *x, float *out, int tokens, int dim);
 void geglu_forward_ggml_native(const float *x, float *out, int tokens, int dim);
 void gelu_ggml_native_inplace(float *data, size_t n);
 void geglu_forward_bf16(const uint16_t *x, uint16_t *out, int tokens, int dim, float *scratch);

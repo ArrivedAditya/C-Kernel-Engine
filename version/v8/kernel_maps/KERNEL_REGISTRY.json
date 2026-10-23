@@ -5,7 +5,7 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "version/v8/kernel_maps",
     "counts": {
-      "total": 446,
+      "total": 447,
       "by_op": {
         "add_backward": 1,
         "add_rows_checked": 1,
@@ -82,7 +82,7 @@
         "fused_qkv_block": 1,
         "gated_deltanet": 7,
         "gated_shared_swiglu_expert_mlp": 4,
-        "geglu": 6,
+        "geglu": 7,
         "gelu": 9,
         "gemm": 24,
         "gemm_backward": 1,
@@ -35469,6 +35469,109 @@
       "notes": "GELU-quick(gate) * up, with coefficient 1.702. Only exact input/output aliasing or disjoint buffers are supported; shifted overlap is not covered.",
       "name": "geglu_forward_quick",
       "_source_file": "geglu_forward_quick.json"
+    },
+    {
+      "id": "geglu_forward_quick_fp16_table",
+      "op": "geglu",
+      "operation_interface": "geglu.fp32_compacting.v1",
+      "variant": "geglu_quick_fp16_table_fp32_product",
+      "selection": {
+        "status": "candidate",
+        "priority": 200,
+        "equivalence_group": "geglu_quick_fp16_table_fp32_product",
+        "phases": [
+          "prefill",
+          "decode"
+        ]
+      },
+      "quant": {
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "x",
+          "dtype": "fp32",
+          "shape": [
+            "tokens",
+            "2*dim"
+          ],
+          "layout": "token_major_contiguous",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required",
+          "desc": "Gate and up rows"
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "out",
+          "dtype": "fp32",
+          "shape": [
+            "tokens",
+            "dim"
+          ],
+          "layout": "token_major_contiguous",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required",
+          "desc": "FP16-table GELU-quick(gate) times FP32 up"
+        }
+      ],
+      "memory_contract": {
+        "input_output_overlap": "exact_input_output_alias_or_disjoint_only"
+      },
+      "dims": [
+        "tokens",
+        "dim"
+      ],
+      "params": [],
+      "impl": {
+        "function": "geglu_forward_quick_fp16_table",
+        "c_declaration": "void geglu_forward_quick_fp16_table(const float *x, float *out, int tokens, int dim);",
+        "sources": [
+          "src/kernels/geglu_kernels.c"
+        ]
+      },
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "x",
+            "source": "activation:input",
+            "cast": "const float*",
+            "ports": [
+              "input:x"
+            ]
+          },
+          {
+            "name": "out",
+            "source": "output:output",
+            "cast": "float*",
+            "ports": [
+              "output:out"
+            ]
+          },
+          {
+            "name": "tokens",
+            "source": "dim:seq_len"
+          },
+          {
+            "name": "dim",
+            "source": "dim:intermediate_size"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "tests/test_v8_geglu_quick.py"
+        ],
+        "parity": []
+      },
+      "notes": "Matches pinned ggml-cpu GGML_GELU_QUICK_FP16: round gate to FP16, round quick GELU to FP16, then multiply by FP32 up. Exact alias or disjoint output only.",
+      "name": "geglu_forward_quick_fp16_table",
+      "_source_file": "geglu_forward_quick_fp16_table.json"
     },
     {
       "id": "gelu_erf_bf16_storage",
