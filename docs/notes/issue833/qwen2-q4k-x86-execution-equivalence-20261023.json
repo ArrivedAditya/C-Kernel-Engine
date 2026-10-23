@@ -1,6 +1,6 @@
 {
   "schema": "cke.xray_execution_equivalence_evidence.v1",
-  "source_revision": "961fe9d42fd57655fd76caa8c636a9a6a64b4b98",
+  "source_revision": "aa656b922332e6e0d7414482dd12b84ff98c7707",
   "cpu_model": "Intel(R) Core(TM) i7-14700T",
   "machine": "x86_64",
   "native_threads": {
@@ -27,8 +27,8 @@
       "libckernel_tokenizer.so": "d087eb3bcb521463976e42b9707a650bfff962839b99fd6bb7d0471416037239"
     }
   },
-  "comparison_source_sha256": "83ba2c908852d410ab603c7dfa30a4d449ed2ec7eec9f2da3eceb7101dea532c",
-  "xray_source_sha256": "3d934d108ca9ade114260d143163c9a002b1c2932b3abe0f0d2a7d1592c714d0",
+  "comparison_source_sha256": "b8465c07fb01ab63df5c33769bac46e4c629920ca118fa5a05707a4c00c24096",
+  "xray_source_sha256": "240a1c59c30ba870545708cca8517cf6253f725f02b8d506802d59876eb6d343",
   "cases": [
     {
       "case": "uninterrupted_vs_internal_chunk127",
