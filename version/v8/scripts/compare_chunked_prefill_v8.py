@@ -240,8 +240,8 @@ def _comparison(left: Path, right: Path, label: str,
                 left_stage: dict, right_stage: dict) -> dict:
     left_bytes = (left / f"{label}.f32").read_bytes()
     right_bytes = (right / f"{label}.f32").read_bytes()
-    a = np.frombuffer(left_bytes, dtype="<f4").astype(np.float64)
-    b = np.frombuffer(right_bytes, dtype="<f4").astype(np.float64)
+    a = np.frombuffer(left_bytes, dtype="<f4")
+    b = np.frombuffer(right_bytes, dtype="<f4")
     if a.shape != b.shape or not np.isfinite(a).all() or not np.isfinite(b).all():
         raise RuntimeError(f"invalid logits comparison at {label}")
     kv_left, kv_right = left_stage["kv_sha256"], right_stage["kv_sha256"]
