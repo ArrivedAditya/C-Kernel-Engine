@@ -81,6 +81,7 @@ static void spatial_merge_2x2(const float *input, float *output,
 static void ck_debug_export_hidden(void *model, int layer, const char *name,
         const float *src, size_t count) {
     (void)model;
+    if (count == 0) return;
     if (layer != -1 || strcmp(name, "vision_spatial_merge") != 0 ||
             count != (size_t)expected_count) return;
     memcpy(captured, src, count * sizeof(float));
@@ -95,7 +96,7 @@ int main(void) {
     output[expected_count + 1] = -12345.0f;
 '''
         source_tail = r'''
-    if (!capture_ok || output[expected_count] != 12345.0f ||
+    if (capture_ok != (expected_count > 0) || output[expected_count] != 12345.0f ||
             output[expected_count + 1] != -12345.0f) return 1;
     for (int i = 0; i < expected_count; ++i)
         if (captured[i] != (float)(i + 1)) return 2;
@@ -109,31 +110,32 @@ int main(void) {
                 ("spatial_merge_2x2", 16),
                 ("spatial_merge_contiguous_tiled", 24),
             ):
-                with self.subTest(function=function):
-                    args = [
-                        _arg("input", "input"),
-                        _arg("output", "output"),
-                        _arg("grid_h", "3"),
-                        _arg("grid_w", "5"),
-                        _arg("embed_dim", "2"),
-                    ]
-                    if function != "spatial_merge_2x2":
-                        args.append(_arg("merge_size", "2"))
-                    emitted = codegen.emit_op({
-                        "op": "spatial_merge",
-                        "function": function,
-                        "layer": -1,
-                        "args": args,
-                    })
-                    (path / "fixture.c").write_text(
-                        source_head.replace("EXPECTED_COUNT", str(expected)) + emitted + source_tail,
-                        encoding="utf-8",
-                    )
-                    subprocess.run(
-                        [compiler, "-std=c11", str(path / "fixture.c"), "-o", str(path / "fixture")],
-                        check=True, capture_output=True,
-                    )
-                    subprocess.run([str(path / "fixture")], check=True, capture_output=True)
+                for invalid in (False, True):
+                    with self.subTest(function=function, invalid=invalid):
+                        args = [
+                            _arg("input", "input"),
+                            _arg("output", "output"),
+                            _arg("grid_h", "0" if invalid and function == "spatial_merge_2x2" else "3"),
+                            _arg("grid_w", "5"),
+                            _arg("embed_dim", "2"),
+                        ]
+                        if function != "spatial_merge_2x2":
+                            args.append(_arg("merge_size", "0" if invalid else "2"))
+                        emitted = codegen.emit_op({
+                            "op": "spatial_merge",
+                            "function": function,
+                            "layer": -1,
+                            "args": args,
+                        })
+                        (path / "fixture.c").write_text(
+                            source_head.replace("EXPECTED_COUNT", str(0 if invalid else expected)) + emitted + source_tail,
+                            encoding="utf-8",
+                        )
+                        subprocess.run(
+                            [compiler, "-std=c11", str(path / "fixture.c"), "-o", str(path / "fixture")],
+                            check=True, capture_output=True,
+                        )
+                        subprocess.run([str(path / "fixture")], check=True, capture_output=True)
 
     def test_ffn_norm_captures_execute_full_grid(self) -> None:
         compiler = shutil.which("cc")
