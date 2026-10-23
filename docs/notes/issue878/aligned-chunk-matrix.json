@@ -1,0 +1,89 @@
+{
+  "schema": "cke.xray_execution_equivalence_matrix.v1",
+  "status": "pass",
+  "subject": "chunked",
+  "reference": "uninterrupted",
+  "source_token_sha256": "8e570524e3b82e214182cb9853b5342acf9e8b96a42598a8439818dd5d073754",
+  "source_revision": "0e48f6ed8f27fb2ad6503a06ea670d20e7be48fc",
+  "aligned_chunks": true,
+  "continuation_sha256": null,
+  "machine": "x86_64",
+  "cpu_model": "Intel(R) Core(TM) i7-14700T",
+  "comparison_source_sha256": "f629585b2b7bfe16571835a29591def4a45eb2ecedd9bbcb285e2daa8b10b3a2",
+  "prefill_planner_source_sha256": "24758f3565530a1e66d6f8955ceee052954300a65ed9efa9c1626fc397114f7a",
+  "xray_source_sha256": "240a1c59c30ba870545708cca8517cf6253f725f02b8d506802d59876eb6d343",
+  "cases": [
+    {
+      "length": 125,
+      "append_chunk_size": 7,
+      "threads": 1,
+      "split_at": null,
+      "status": "pass",
+      "token_sha256": "afa4cbc25bd5a8a1e8a6cb8edf27854e5febaf5e35cb0743a4ed44bb66a2e918",
+      "report": "aligned-case-000.json"
+    },
+    {
+      "length": 125,
+      "append_chunk_size": 7,
+      "threads": 1,
+      "split_at": 124,
+      "status": "pass",
+      "token_sha256": "afa4cbc25bd5a8a1e8a6cb8edf27854e5febaf5e35cb0743a4ed44bb66a2e918",
+      "report": "aligned-case-001.json"
+    },
+    {
+      "length": 125,
+      "append_chunk_size": 7,
+      "threads": 4,
+      "split_at": null,
+      "status": "pass",
+      "token_sha256": "afa4cbc25bd5a8a1e8a6cb8edf27854e5febaf5e35cb0743a4ed44bb66a2e918",
+      "report": "aligned-case-002.json"
+    },
+    {
+      "length": 125,
+      "append_chunk_size": 7,
+      "threads": 4,
+      "split_at": 124,
+      "status": "pass",
+      "token_sha256": "afa4cbc25bd5a8a1e8a6cb8edf27854e5febaf5e35cb0743a4ed44bb66a2e918",
+      "report": "aligned-case-003.json"
+    },
+    {
+      "length": 129,
+      "append_chunk_size": 7,
+      "threads": 1,
+      "split_at": null,
+      "status": "pass",
+      "token_sha256": "8e570524e3b82e214182cb9853b5342acf9e8b96a42598a8439818dd5d073754",
+      "report": "aligned-case-004.json"
+    },
+    {
+      "length": 129,
+      "append_chunk_size": 7,
+      "threads": 1,
+      "split_at": 124,
+      "status": "pass",
+      "token_sha256": "8e570524e3b82e214182cb9853b5342acf9e8b96a42598a8439818dd5d073754",
+      "report": "aligned-case-005.json"
+    },
+    {
+      "length": 129,
+      "append_chunk_size": 7,
+      "threads": 4,
+      "split_at": null,
+      "status": "pass",
+      "token_sha256": "8e570524e3b82e214182cb9853b5342acf9e8b96a42598a8439818dd5d073754",
+      "report": "aligned-case-006.json"
+    },
+    {
+      "length": 129,
+      "append_chunk_size": 7,
+      "threads": 4,
+      "split_at": 124,
+      "status": "pass",
+      "token_sha256": "8e570524e3b82e214182cb9853b5342acf9e8b96a42598a8439818dd5d073754",
+      "report": "aligned-case-007.json"
+    }
+  ]
+}

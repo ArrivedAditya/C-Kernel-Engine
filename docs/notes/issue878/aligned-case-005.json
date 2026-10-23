@@ -1,0 +1,144 @@
+{
+  "schema": "cke.chunked_prefill_comparison.v1",
+  "prompt_tokens": 129,
+  "continuation_tokens": 0,
+  "split_at": 124,
+  "append_chunk_size": 7,
+  "aligned_chunks": true,
+  "prefill_append_row_group": 4,
+  "execution_calls": {
+    "full": [
+      {
+        "start": 0,
+        "count": 129
+      }
+    ],
+    "chunked": [
+      {
+        "start": 0,
+        "count": 124
+      },
+      {
+        "start": 124,
+        "count": 5
+      }
+    ]
+  },
+  "state_contract": {
+    "full": {
+      "exported_state": [
+        "kv_cache"
+      ],
+      "layout_decode_sha256": "5c030d3f1b507cc54b11e7fa8f08e58e8d580c79b9c1be64136c772db22f2c9d"
+    },
+    "chunked": {
+      "exported_state": [
+        "kv_cache"
+      ],
+      "layout_decode_sha256": "37b92eb56f1b7ad9c0271406ca62bd2cc8463097a2c5fd5ccc49383a6e8c445c"
+    }
+  },
+  "token_sha256": "8e570524e3b82e214182cb9853b5342acf9e8b96a42598a8439818dd5d073754",
+  "identities": {
+    "full": {
+      "weights.bump": "96313bd15bdfeaf800f6164da21c9823d1afaddea7859e7fcad69bbba0dd9bd1",
+      "weights_manifest.json": "b15697ca123ddc06a4a160332f302f46fa5716a41b77b4dd33d0f0ab8a57e500",
+      "weights_manifest.map": "5a601fbb633c534b2846d34f039bfc761b8deee9c91f458fc9df306b695735bb",
+      "config.json": "95a1ca3d5118259789539676807c5943b6ae3af3c742ed4f0c2603904fe3cec0",
+      "model_v8.c": "c4bc99de80d13369c8606d8fe17f26f52bf153c205e131c34a059b85b233be28",
+      "libmodel.so": "2b5168add27cca8c9357975da8085e85e82b0ec8351cd2f05c62b67be19d9179",
+      "libckernel_engine.so": "a3ee1f2bc9feaac39e0f959ad9561c7b53daa10a26c4c4dfe63813686d9573e1",
+      "libckernel_tokenizer.so": "d087eb3bcb521463976e42b9707a650bfff962839b99fd6bb7d0471416037239"
+    },
+    "chunked": {
+      "weights.bump": "96313bd15bdfeaf800f6164da21c9823d1afaddea7859e7fcad69bbba0dd9bd1",
+      "weights_manifest.json": "b15697ca123ddc06a4a160332f302f46fa5716a41b77b4dd33d0f0ab8a57e500",
+      "weights_manifest.map": "5a601fbb633c534b2846d34f039bfc761b8deee9c91f458fc9df306b695735bb",
+      "config.json": "95a1ca3d5118259789539676807c5943b6ae3af3c742ed4f0c2603904fe3cec0",
+      "model_v8.c": "b7ed77d097b8fba9f622e52f56f660e5b63b51dc976ebe083e0fe46cef774151",
+      "libmodel.so": "eee8df1aaaf96e55bd958395992b6956e7ce8c055ead40d808f5f429af72bd0b",
+      "libckernel_engine.so": "a3ee1f2bc9feaac39e0f959ad9561c7b53daa10a26c4c4dfe63813686d9573e1",
+      "libckernel_tokenizer.so": "d087eb3bcb521463976e42b9707a650bfff962839b99fd6bb7d0471416037239"
+    }
+  },
+  "source_revision": "0e48f6ed8f27fb2ad6503a06ea670d20e7be48fc",
+  "loaded_libraries": {
+    "full": {
+      "libmodel.so": "2b5168add27cca8c9357975da8085e85e82b0ec8351cd2f05c62b67be19d9179",
+      "libckernel_engine.so": "a3ee1f2bc9feaac39e0f959ad9561c7b53daa10a26c4c4dfe63813686d9573e1",
+      "libckernel_tokenizer.so": "d087eb3bcb521463976e42b9707a650bfff962839b99fd6bb7d0471416037239"
+    },
+    "chunked": {
+      "libmodel.so": "eee8df1aaaf96e55bd958395992b6956e7ce8c055ead40d808f5f429af72bd0b",
+      "libckernel_engine.so": "a3ee1f2bc9feaac39e0f959ad9561c7b53daa10a26c4c4dfe63813686d9573e1",
+      "libckernel_tokenizer.so": "d087eb3bcb521463976e42b9707a650bfff962839b99fd6bb7d0471416037239"
+    }
+  },
+  "same_engine_build": true,
+  "execution": {
+    "machine": "x86_64",
+    "cpu_model": "Intel(R) Core(TM) i7-14700T",
+    "omp_num_threads": "1",
+    "ck_num_threads": "1",
+    "native_threads": {
+      "full": 1,
+      "chunked": 1
+    },
+    "strict_parity": null
+  },
+  "comparison_source_sha256": "f629585b2b7bfe16571835a29591def4a45eb2ecedd9bbcb285e2daa8b10b3a2",
+  "prefill_planner_source_sha256": "24758f3565530a1e66d6f8955ceee052954300a65ed9efa9c1626fc397114f7a",
+  "xray_source_sha256": "240a1c59c30ba870545708cca8517cf6253f725f02b8d506802d59876eb6d343",
+  "comparisons": [
+    {
+      "label": "prefill",
+      "position": 129,
+      "logits_exact": true,
+      "max_logit_abs": 0.0,
+      "logit_cosine": 1.0000000000000002,
+      "top_tokens": [
+        3390,
+        3390
+      ],
+      "kv_exact_layers": 24,
+      "kv_mismatch_layers": [],
+      "kv_layers": 24,
+      "xray": {
+        "status": "pass",
+        "classification": null,
+        "subject_position": 129,
+        "reference_position": 129,
+        "contract": {
+          "mode": "exact",
+          "atol": 0.0,
+          "rtol": 0.0
+        },
+        "subject_dtype": "float32",
+        "reference_dtype": "float32",
+        "logits_exact": true,
+        "logits_within_contract": true,
+        "metrics": {
+          "cosine": 1.0000000000000002,
+          "rmse": 0.0,
+          "max_abs": 0.0,
+          "mean_abs": 0.0,
+          "worst_flat_index": 0,
+          "finite": true
+        },
+        "state_exact": true,
+        "state_mismatches": []
+      }
+    }
+  ],
+  "first_observed_divergence": null,
+  "verdicts": {
+    "arithmetic_reference": "not_tested",
+    "reduction_equivalence": "not_tested",
+    "generated_composition": "pass",
+    "state_continuity": "pass",
+    "negative_controls": "not_tested",
+    "artifact_identity": "pass",
+    "recovery": "not_tested"
+  },
+  "exact": true
+}
