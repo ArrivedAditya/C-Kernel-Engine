@@ -15,7 +15,7 @@ int audio_conv_transpose1d_dense_f32_workspace(
     return CK_AUDIO_DECONV_DENSE_OK;
 }
 
-int audio_conv_transpose1d_dense_channel_major_f32_checked(
+static int dense_deconv_checked(
     const float *input, size_t input_elements, size_t input_stride,
     const float *weight, size_t weight_elements,
     const float *bias, size_t bias_elements,
@@ -23,7 +23,7 @@ int audio_conv_transpose1d_dense_channel_major_f32_checked(
     float *scratch, size_t scratch_elements,
     size_t input_channels, size_t output_channels, size_t input_frames,
     size_t kernel_size, size_t stride, size_t padding,
-    size_t output_padding, size_t output_frames) {
+    size_t output_padding, size_t right_crop, size_t output_frames) {
     size_t geometry, input_span, output_span, weight_need, scratch_need;
     if (!input_channels || !output_channels || !input_frames ||
         !kernel_size || !stride || !output_frames || output_padding >= stride)
@@ -35,7 +35,8 @@ int audio_conv_transpose1d_dense_channel_major_f32_checked(
         geometry + kernel_size > SIZE_MAX - output_padding)
         return CK_AUDIO_DECONV_DENSE_OVERFLOW;
     geometry += kernel_size + output_padding;
-    if (2 * padding >= geometry || geometry - 2 * padding != output_frames)
+    if (2 * padding >= geometry || right_crop >= geometry - 2 * padding ||
+        geometry - 2 * padding - right_crop != output_frames)
         return CK_AUDIO_DECONV_DENSE_INVALID;
     if (!ck_checked_span(input_channels, input_frames, input_stride,
                          &input_span) ||
@@ -98,4 +99,36 @@ int audio_conv_transpose1d_dense_channel_major_f32_checked(
                scratch + oc * output_frames,
                output_frames * sizeof(float));
     return CK_AUDIO_DECONV_DENSE_OK;
+}
+
+int audio_conv_transpose1d_dense_channel_major_f32_checked(
+    const float *input, size_t input_elements, size_t input_stride,
+    const float *weight, size_t weight_elements,
+    const float *bias, size_t bias_elements,
+    float *output, size_t output_elements, size_t output_stride,
+    float *scratch, size_t scratch_elements,
+    size_t input_channels, size_t output_channels, size_t input_frames,
+    size_t kernel_size, size_t stride, size_t padding,
+    size_t output_padding, size_t output_frames) {
+    return dense_deconv_checked(input, input_elements, input_stride,
+        weight, weight_elements, bias, bias_elements, output,
+        output_elements, output_stride, scratch, scratch_elements,
+        input_channels, output_channels, input_frames, kernel_size,
+        stride, padding, output_padding, 0, output_frames);
+}
+
+int audio_conv_transpose1d_dense_crop_right_channel_major_f32_checked(
+    const float *input, size_t input_elements, size_t input_stride,
+    const float *weight, size_t weight_elements,
+    const float *bias, size_t bias_elements,
+    float *output, size_t output_elements, size_t output_stride,
+    float *scratch, size_t scratch_elements,
+    size_t input_channels, size_t output_channels, size_t input_frames,
+    size_t kernel_size, size_t stride, size_t padding,
+    size_t output_padding, size_t right_crop, size_t output_frames) {
+    return dense_deconv_checked(input, input_elements, input_stride,
+        weight, weight_elements, bias, bias_elements, output,
+        output_elements, output_stride, scratch, scratch_elements,
+        input_channels, output_channels, input_frames, kernel_size,
+        stride, padding, output_padding, right_crop, output_frames);
 }

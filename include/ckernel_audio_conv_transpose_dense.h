@@ -33,6 +33,19 @@ int audio_conv_transpose1d_dense_channel_major_f32_checked(
     size_t kernel_size, size_t stride, size_t padding,
     size_t output_padding, size_t output_frames);
 
+/* The transposed-convolution result is cropped on the right before publication.
+ * The crop is part of checked geometry; discarded tail samples are never
+ * written to output. The existing uncropped ABI remains available above. */
+int audio_conv_transpose1d_dense_crop_right_channel_major_f32_checked(
+    const float *input, size_t input_elements, size_t input_stride,
+    const float *weight, size_t weight_elements,
+    const float *bias, size_t bias_elements,
+    float *output, size_t output_elements, size_t output_stride,
+    float *scratch, size_t scratch_elements,
+    size_t input_channels, size_t output_channels, size_t input_frames,
+    size_t kernel_size, size_t stride, size_t padding,
+    size_t output_padding, size_t right_crop, size_t output_frames);
+
 #ifdef __cplusplus
 }
 #endif
