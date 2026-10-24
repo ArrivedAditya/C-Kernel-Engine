@@ -987,6 +987,27 @@ def _tokenizer_pretokenizer_profile(data: dict) -> Optional[str]:
     return None
 
 
+_GGUF_PRETOKENIZER_KEY = "tokenizer.ggml.pre"
+_GGUF_TOKENIZER_METADATA_KEYS = frozenset({
+    "tokenizer.ggml.tokens",
+    "tokenizer.ggml.merges",
+    "tokenizer.ggml.scores",
+    "tokenizer.ggml.token_type",
+    "tokenizer.ggml.model",
+    _GGUF_PRETOKENIZER_KEY,
+})
+
+
+def _gguf_pretokenizer_profile(meta: dict) -> Optional[str]:
+    """Resolve a GGUF tokenizer policy by its declared pre-tokenizer tag."""
+    tag = str(meta.get(_GGUF_PRETOKENIZER_KEY) or "").strip().lower()
+    # This GGUF tag declares the byte-level regex without GPT-2's newline
+    # attachment. Keep the mapping at the tokenizer-asset boundary.
+    if tag == "command-r":
+        return "bytelevel_simple"
+    return None
+
+
 def _apply_tokenizer_contract_overrides(template_data: dict, tokenizer_type: Optional[str]) -> dict:
     patched = copy.deepcopy(template_data)
     if not tokenizer_type:
@@ -3480,11 +3501,6 @@ def main() -> None:
         "gemma4.rope.dimension_count",
         "gemma4.rope.dimension_count_swa",
         # Tokenizer keys (for automatic extraction from GGUF)
-        "tokenizer.ggml.tokens",
-        "tokenizer.ggml.merges",
-        "tokenizer.ggml.scores",
-        "tokenizer.ggml.token_type",
-        "tokenizer.ggml.model",
         # Special token IDs (EOS, BOS, etc.) - propagated to manifest for orchestrator
         "tokenizer.ggml.eos_token_id",
         "tokenizer.ggml.bos_token_id",
@@ -3522,6 +3538,7 @@ def main() -> None:
         "mistral3.embedding_weight_tying",
         "deepseek2.embedding_weight_tying",
     }
+    wanted_meta.update(_GGUF_TOKENIZER_METADATA_KEYS)
     wanted_meta.update(gguf_ck_artifact_match_keys())
     wanted_meta.update(gguf_ck_declared_metadata_keys())
 
@@ -4878,6 +4895,9 @@ def main() -> None:
                     "tokenizer_type": "sentencepiece" if str(meta.get("tokenizer.ggml.model", "")).strip().lower() in {"llama", "sentencepiece", "spm"} else _normalize_tokenizer_type_name(meta.get("tokenizer.ggml.model")),
                     "source": "gguf_metadata",
                 }
+                pretokenizer = _gguf_pretokenizer_profile(meta)
+                if pretokenizer:
+                    tokenizer_contract["pretokenizer"] = pretokenizer
                 print(f"[tokenizer] extracted {len(vocab_offsets)} tokens, {num_merges} merges, {total_vocab_bytes} bytes from GGUF metadata")
 
         num_layers = meta_int(

@@ -1629,6 +1629,12 @@ MAKE_TARGETS = {
         "target": "test-tokenizer-special",
         "timeout_sec": 180,
     },
+    "v8_gguf_bytelevel_pretokenizer": {
+        "name": "v8 GGUF Byte-Level Pretokenizer Contract",
+        "category": "inference",
+        "target": "test-v8-gguf-bytelevel-pretokenizer",
+        "timeout_sec": 180,
+    },
     "litmus": {
         "name": "Litmus Test",
         "category": "parity",

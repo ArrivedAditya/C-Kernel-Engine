@@ -3204,9 +3204,15 @@ def _generate_tokenizer_c_code(tokenizer_type: str, vocab_size: int, num_merges:
             )
         pretokenizer = str((tokenizer_contract or {}).get("pretokenizer") or "").strip().lower()
         if add_bos is not None or add_eos is not None or add_space_prefix is not None or pretokenizer:
-            pretokenizer_enum = {
+            pretokenizer_profiles = {
                 "unicode_split_isolated": "CK_BPE_PRETOKENIZER_UNICODE_SPLIT_ISOLATED",
-            }.get(pretokenizer, "CK_BPE_PRETOKENIZER_GPT2")
+                "bytelevel_simple": "CK_BPE_PRETOKENIZER_BYTELEVEL_SIMPLE",
+            }
+            if pretokenizer and pretokenizer not in pretokenizer_profiles:
+                raise ValueError(f"unsupported BPE pretokenizer profile: {pretokenizer}")
+            pretokenizer_enum = pretokenizer_profiles.get(
+                pretokenizer, "CK_BPE_PRETOKENIZER_GPT2"
+            )
             bpe_contract_lines.extend(
                 [
                     "        {",

@@ -49,10 +49,12 @@ typedef enum {
     CK_SPACE_PREFIX_ASCII = 3    /* ASCII identity mode: no UTF-8/byte remap */
 } CKSpacePrefixStyle;
 
-/* Pretokenization policy declared by tokenizer.json. */
+/* Pretokenization policy declared by tokenizer assets. */
 typedef enum {
     CK_BPE_PRETOKENIZER_GPT2 = 0,
-    CK_BPE_PRETOKENIZER_UNICODE_SPLIT_ISOLATED = 1
+    CK_BPE_PRETOKENIZER_UNICODE_SPLIT_ISOLATED = 1,
+    /* Byte-level regex without GPT-2's punctuation/newline attachment. */
+    CK_BPE_PRETOKENIZER_BYTELEVEL_SIMPLE = 2
 } CKBPEPretokenizer;
 
 /* True BPE configuration */
