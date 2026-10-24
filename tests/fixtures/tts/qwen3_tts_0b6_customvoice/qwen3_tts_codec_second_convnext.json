@@ -1,0 +1,16 @@
+{
+  "attention_implementation": "eager",
+  "codec_source_sha256": "844e8dd8c0182ef9c6463c874631c22ef3c5a4fd1899dd657016164cc5379628",
+  "frames": 184,
+  "latent_width": 1024,
+  "model_revision": "85e237c12c027371202489a0ec509ded67b5e4b5",
+  "npz_sha256": "81a7aa784c80fe2d11601e7854f9b1332a371ef30b14265efc39efd42e46b31f",
+  "reference_revision": "022e286b98fbec7e1e916cb940cdf532cd9f488e",
+  "schema": 1,
+  "scope": "direct pinned full decoder through second complete ConvNeXt; remaining decoder and waveform NOT_TESTED",
+  "source_second_upsample_max_abs": 0.0,
+  "source_second_upsample_sha256": "b14c707a22723b3b4c6ce1086b6f180587c0f180fa4a3c5413cc1292eda54b29",
+  "torch_mkldnn_enabled": true,
+  "torch_num_threads": 4,
+  "torch_version": "2.14.1+cpu"
+}
