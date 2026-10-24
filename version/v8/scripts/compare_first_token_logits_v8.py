@@ -17,6 +17,7 @@ import ctypes
 import hashlib
 import json
 import os
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -305,10 +306,14 @@ def run_llama_logits(
     threads: int,
     decode_mode: str = "batched",
     no_repack: bool = False,
+    batch_tokens: int = 1024,
 ) -> dict[str, Any]:
+    if batch_tokens <= 0:
+        raise ValueError("oracle batch_tokens must be positive")
     helper = ensure_llama_helper()
     with tempfile.TemporaryDirectory(prefix="llama_token_replay_") as td:
         logits_path = Path(td) / "llama_logits.f32"
+        token_csv = ",".join(str(t) for t in tokens)
         mode = str(decode_mode or "batched").strip().lower()
         if mode not in {"batched", "sequential"}:
             raise ValueError(f"unsupported llama decode mode: {decode_mode}")
@@ -316,8 +321,6 @@ def run_llama_logits(
             str(helper),
             "--model",
             str(gguf_path),
-            "--tokens",
-            ",".join(str(t) for t in tokens),
             "--ctx",
             str(int(ctx_len)),
             "--top-k",
@@ -327,6 +330,17 @@ def run_llama_logits(
             "--decode-mode",
             mode,
         ]
+        # Linux limits each process argument independently. A real long-context
+        # token sequence can exceed that limit well before the model context.
+        if len(token_csv) > 100_000:
+            token_path = Path(td) / "tokens.csv"
+            token_path.write_text(token_csv, encoding="ascii")
+            cmd.extend(["--tokens-file", str(token_path)])
+            # The oracle helper otherwise sizes one llama.cpp compute batch to
+            # the entire prompt, which can exceed host memory at long context.
+            cmd.extend(["--batch-tokens", str(batch_tokens)])
+        else:
+            cmd.extend(["--tokens", token_csv])
         if no_repack:
             cmd.append("--no-repack")
         if threads > 0:
@@ -870,10 +884,15 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Tokenizer-free first-token logits parity (CK vs llama.cpp)")
     ap.add_argument("--model-dir", required=True, type=Path, help="run dir or .ck_build dir containing libmodel.so")
     ap.add_argument("--gguf", default=None, type=Path, help="GGUF path for llama.cpp runtime")
-    ap.add_argument("--tokens", required=True, help="comma-separated token IDs")
+    token_input = ap.add_mutually_exclusive_group(required=True)
+    token_input.add_argument("--tokens", help="comma-separated token IDs")
+    token_input.add_argument("--tokens-file", type=Path,
+                             help="comma- or whitespace-separated token IDs in a file")
     ap.add_argument("--ctx-len", type=int, default=256)
     ap.add_argument("--top-k", type=int, default=16)
     ap.add_argument("--threads", type=int, default=0)
+    ap.add_argument("--llama-batch-tokens", type=int, default=1024,
+                    help="maximum llama.cpp replay rows per call for long token files")
     ap.add_argument(
         "--ck-prefill-mode",
         choices=["auto", "batched", "sequential", "hybrid"],
@@ -905,10 +924,15 @@ def main() -> int:
 
     if int(args.ck_repeatability_runs) <= 0:
         ap.error("--ck-repeatability-runs must be positive")
+    if int(args.llama_batch_tokens) <= 0:
+        ap.error("--llama-batch-tokens must be positive")
 
     model_dir = discover_ck_model_dir(args.model_dir)
     gguf_path = discover_gguf(args.gguf, model_dir)
-    tokens = parse_tokens_csv(args.tokens)
+    tokens = parse_tokens_csv(
+        args.tokens if args.tokens is not None
+        else re.sub(r"\s+", ",", args.tokens_file.read_text(encoding="ascii"))
+    )
     runtime_contract = load_runtime_contract(model_dir)
     contract_prefill_policy = str(
         runtime_contract.get("prefill_policy") or "batched"
@@ -929,6 +953,7 @@ def main() -> int:
         int(args.threads),
         decode_mode=llama_decode_mode,
         no_repack=bool(args.llama_no_repack),
+        batch_tokens=int(args.llama_batch_tokens),
     )
     ck_runs = [
         load_ck_logits(model_dir, tokens, ck_prefill_mode=str(args.ck_prefill_mode))
@@ -952,6 +977,9 @@ def main() -> int:
         "gguf_path": str(gguf_path),
         "tokens": tokens,
         "ctx_len": int(args.ctx_len),
+        "token_ids_sha256": hashlib.sha256(
+            np.asarray(tokens, dtype=np.dtype("<i4")).tobytes()
+        ).hexdigest(),
         "thresholds": {
             "require_top1_match": bool(args.require_top1_match),
             "min_topk_overlap": float(args.min_topk_overlap),
@@ -980,6 +1008,8 @@ def main() -> int:
             "n_vocab": int(ll["meta"]["n_vocab"]),
             "token_count": int(ll["meta"]["token_count"]),
             "decode_mode": llama_decode_mode,
+            "n_batch": int(ll["meta"].get("effective_settings", {}).get("batch", 0)),
+            "n_ubatch": int(ll["meta"].get("effective_settings", {}).get("ubatch", 0)),
             "no_repack": bool(args.llama_no_repack),
             "topk_count": int(len(ll["meta"].get("topk", []) or [])),
             "topk_sample": ll["meta"].get("topk", [])[: min(8, int(args.top_k))],
