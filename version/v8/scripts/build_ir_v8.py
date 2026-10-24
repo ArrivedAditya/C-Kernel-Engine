@@ -1921,6 +1921,10 @@ OP_DATAFLOW = {
         "inputs": {"input": "external:audio_features"},
         "outputs": {"output": {"slot": "audio_conv_output", "dtype": "fp32"}},
     },
+    "audio_conv1d_depthwise_checked": {
+        "inputs": {"input": "external:audio_features"},
+        "outputs": {"output": {"slot": "audio_conv_output", "dtype": "fp32"}},
+    },
     "audio_conv1d_dilated_checked": {
         "inputs": {"input": "external:audio_features"},
         "outputs": {"output": {"slot": "audio_conv_output", "dtype": "fp32"}},
@@ -4860,6 +4864,7 @@ def _validated_kernel_codegen_capability(kernel_id: str, kernel_map: Dict) -> Op
 TEMPLATE_TO_KERNEL_OP = {
     "layernorm_rows_param_checked": "layernorm",
     "audio_conv1d_checked": "audio_conv1d_checked",
+    "audio_conv1d_depthwise_checked": "audio_conv1d_depthwise_checked",
     "audio_conv1d_dilated_checked": "audio_conv1d_dilated_checked",
     "audio_upsample_nearest_checked": "audio_upsample_nearest_checked",
     "audio_conv_transpose1d_depthwise_checked": "audio_conv_transpose1d_depthwise_checked",

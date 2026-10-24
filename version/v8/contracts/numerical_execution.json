@@ -4567,6 +4567,44 @@
       },
       "position_transform": null,
       "description": "Causal MLA: BF16-RNE Q/K/V operands carried in FP32; FP32 ascending QK accumulation stored as BF16 before scaling; scaled score stored as BF16; FP32 max/exp/sum/normalize softmax; probability stored as BF16; FP32 ascending probability-V accumulation stored as BF16. Prefill uses current chunk, decode uses one bounded cache prefix. No cross-row arithmetic reduction."
+    },
+    "audio_conv1d_depthwise_scalar_fma_fp32": {
+      "operator_family": "audio_conv1d",
+      "status": "validated",
+      "storage": {
+        "input": "fp32",
+        "weight": "fp32",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "fp32",
+        "accumulator": "fp32",
+        "contraction": "enabled",
+        "evaluation_order": "ascending_channel_frame_kernel_fmaf"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "input_load",
+          "reduction_update",
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "dot_product",
+        "order": "ascending_k",
+        "partial_accumulator": "fp32",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "serial",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Checked channel-major depthwise Conv1D with caller-owned staged output; causal padding is separately declared. Independent PyTorch and generated connected stage certify tolerance-based FP32 results."
     }
   }
 }
