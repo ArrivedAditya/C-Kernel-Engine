@@ -1440,6 +1440,12 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_xray_operation_bundle.py",
         timeout_sec=120,
     ),
+    "v8_ggml_attention_packet": TestSuite(
+        "X-Ray Pinned GGML Attention Replay Contracts",
+        "parity",
+        ROOT / "tests" / "test_v8_ggml_attention_packet.py",
+        timeout_sec=120,
+    ),
     "v8_xray_execution_equivalence": TestSuite(
         "X-Ray Full/Chunked Execution Equivalence",
         "parity",

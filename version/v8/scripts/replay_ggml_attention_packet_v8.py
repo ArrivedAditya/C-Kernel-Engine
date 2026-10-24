@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Compare a verified CKE attention packet with the pinned llama.cpp non-flash GGML graph."""
+"""Replay retained attention operands through pinned GGML attention graphs."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import subprocess
 import tempfile
@@ -25,6 +26,7 @@ else:
 
 
 SOURCE = Path(__file__).with_name("ggml_nonflash_attention_packet_v8.c")
+FLASH_SOURCE = Path(__file__).with_name("ggml_flash_attention_rows_v8.c")
 REPO = Path(__file__).resolve().parents[3]
 
 
@@ -63,6 +65,32 @@ def pinned_tree_identity(tree: Path) -> dict[str, object]:
             "ggml_base_sha256": _sha256(base)}
 
 
+def _compile_ggml_source(tree: Path, source: Path, executable: Path) -> dict:
+    build_bin = tree / "build" / "bin"
+    compile_cmd = [
+        "cc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
+        "-I", str(tree / "ggml" / "include"), str(source),
+        "-L", str(build_bin), "-Wl,-rpath," + str(build_bin),
+        "-lggml-cpu", "-lggml-base", "-lggml", "-lm", "-o", str(executable),
+    ]
+    subprocess.run(compile_cmd, check=True, capture_output=True, text=True)
+    linked = subprocess.check_output(["ldd", str(executable)], text=True)
+    resolved = {}
+    for line in linked.splitlines():
+        fields = line.strip().split("=>", 1)
+        if len(fields) != 2 or not fields[0].startswith("libggml"):
+            continue
+        path = Path(fields[1].strip().split(" ", 1)[0]).resolve()
+        if path.parent != build_bin.resolve() or not path.is_file():
+            raise BundleError(f"GGML replay linked an unexpected library: {line.strip()}")
+        resolved[fields[0].strip()] = {"path": str(path), "sha256": _sha256(path)}
+    if not any(name.startswith("libggml-cpu") for name in resolved) or not any(
+        name.startswith("libggml-base") for name in resolved
+    ):
+        raise BundleError("GGML replay did not link the expected CPU/base libraries")
+    return resolved
+
+
 def run_ggml(tree: Path, q: np.ndarray, k: np.ndarray, v: np.ndarray) -> tuple[np.ndarray, dict]:
     tokens, heads, dim = q.shape
     kv_heads = k.shape[1]
@@ -71,27 +99,7 @@ def run_ggml(tree: Path, q: np.ndarray, k: np.ndarray, v: np.ndarray) -> tuple[n
     with tempfile.TemporaryDirectory(prefix="cke-ggml-attn-replay-") as temp:
         directory = Path(temp)
         executable = directory / "replay"
-        compile_cmd = [
-            "cc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
-            "-I", str(tree / "ggml" / "include"), str(SOURCE),
-            "-L", str(build_bin), "-Wl,-rpath," + str(build_bin),
-            "-lggml-cpu", "-lggml-base", "-lggml", "-lm", "-o", str(executable),
-        ]
-        subprocess.run(compile_cmd, check=True, capture_output=True, text=True)
-        linked = subprocess.check_output(["ldd", str(executable)], text=True)
-        resolved = {}
-        for line in linked.splitlines():
-            fields = line.strip().split("=>", 1)
-            if len(fields) != 2 or not fields[0].startswith("libggml"):
-                continue
-            path = Path(fields[1].strip().split(" ", 1)[0]).resolve()
-            if path.parent != build_bin.resolve() or not path.is_file():
-                raise BundleError(f"GGML replay linked an unexpected library: {line.strip()}")
-            resolved[fields[0].strip()] = {"path": str(path), "sha256": _sha256(path)}
-        if not any(name.startswith("libggml-cpu") for name in resolved) or not any(
-            name.startswith("libggml-base") for name in resolved
-        ):
-            raise BundleError("GGML replay did not link the expected CPU/base libraries")
+        resolved = _compile_ggml_source(tree, SOURCE, executable)
         paths = [directory / name for name in ("q.f32", "k.f16", "v.f16", "out.f32")]
         np.asarray(q, dtype="<f4").tofile(paths[0])
         np.asarray(k, dtype="<f2").tofile(paths[1])
@@ -110,6 +118,92 @@ def run_ggml(tree: Path, q: np.ndarray, k: np.ndarray, v: np.ndarray) -> tuple[n
         identity["resolved_libraries"] = resolved
         identity["library_build_revision_verified"] = False
         return output.reshape(q.shape), identity
+
+
+def run_ggml_flash_rows(
+    tree: Path, q: np.ndarray, k: np.ndarray, v: np.ndarray, *,
+    scale: float, threads: int = 1, allow_subset_queries: bool = False,
+) -> tuple[np.ndarray, dict]:
+    """Replay full, unmasked flash self-attention; subsets are diagnostic only."""
+    q, k, v = np.asarray(q), np.asarray(k), np.asarray(v)
+    if q.dtype != np.float32 or k.dtype != np.float16 or v.dtype != np.float16:
+        raise BundleError("flash replay requires observed FP32 Q and post-store FP16 K/V")
+    if q.ndim != 3 or k.ndim != 3 or v.shape != k.shape:
+        raise BundleError("flash replay requires Q[queries,heads,dim] and matching K/V[keys,kv_heads,dim]")
+    queries, heads, dim = q.shape
+    keys, kv_heads, key_dim = k.shape
+    if not (1 <= queries <= 32768 and 1 <= keys <= 32768 and 1 <= heads <= 128 and
+            1 <= kv_heads <= heads and heads % kv_heads == 0 and
+            1 <= dim <= 256 and key_dim == dim and 1 <= threads <= 256):
+        raise BundleError("unsupported full-flash attention geometry")
+    if queries != keys and not allow_subset_queries:
+        raise BundleError("full-query geometry is required for connected flash replay fidelity")
+    if not math.isfinite(scale) or scale <= 0 or not all(np.isfinite(x).all() for x in (q, k, v)):
+        raise BundleError("flash replay requires finite operands and positive finite scale")
+    if q.nbytes + k.nbytes + v.nbytes > 256 * 1024 * 1024:
+        raise BundleError("flash replay operands exceed capacity")
+
+    identity = pinned_tree_identity(tree)
+    build_bin = tree / "build" / "bin"
+    with tempfile.TemporaryDirectory(prefix="cke-ggml-flash-replay-") as temp:
+        directory = Path(temp)
+        executable = directory / "replay"
+        resolved = _compile_ggml_source(tree, FLASH_SOURCE, executable)
+        paths = [directory / name for name in ("q.f32", "k.f16", "v.f16", "out.f32")]
+        np.asarray(q, dtype="<f4").tofile(paths[0])
+        np.asarray(k, dtype="<f2").tofile(paths[1])
+        np.asarray(v, dtype="<f2").tofile(paths[2])
+        env = dict(os.environ, LD_LIBRARY_PATH=str(build_bin))
+        subprocess.run(
+            [str(executable), *(str(path) for path in paths),
+             str(queries), str(keys), str(heads), str(kv_heads), str(dim),
+             repr(float(np.float32(scale))), str(threads)],
+            env=env, check=True, capture_output=True, text=True, timeout=300,
+        )
+        output = np.fromfile(paths[3], dtype="<f4")
+        if output.size != q.size or not np.isfinite(output).all():
+            raise BundleError("GGML flash replay produced incomplete or nonfinite output")
+        identity["replay_binary_sha256"] = _sha256(executable)
+        identity["replay_source_sha256"] = _sha256(FLASH_SOURCE)
+        identity["resolved_libraries"] = resolved
+        identity["library_build_revision_verified"] = False
+        identity["contract"] = {
+            "mode": "full_noncausal_flash", "q_dtype": "fp32", "kv_dtype": "fp16",
+            "accumulation": "ggml_prec_f32", "mask": "none", "scale": float(np.float32(scale)),
+            "queries": queries, "keys": keys, "heads": heads, "kv_heads": kv_heads,
+            "head_dim": dim, "threads": threads,
+            "query_extent": "complete" if queries == keys else "subset_not_connected_fidelity",
+        }
+        return output.reshape(q.shape), identity
+
+
+def fp64_full_flash_reference_rows(
+    q: np.ndarray, k: np.ndarray, v: np.ndarray, rows: list[int], *, scale: float,
+) -> np.ndarray:
+    """Evaluate selected noncausal rows with FP16-rounded K/V and FP64 arithmetic."""
+    q = np.asarray(q, dtype=np.float32)
+    k = np.asarray(k, dtype=np.float16)
+    v = np.asarray(v, dtype=np.float16)
+    if q.ndim != 3 or k.ndim != 3 or v.shape != k.shape:
+        raise BundleError("FP64 flash reference requires rank-three Q and matching K/V")
+    queries, heads, dim = q.shape
+    keys, kv_heads, key_dim = k.shape
+    if (not queries or not keys or not heads or not kv_heads or key_dim != dim or
+            heads % kv_heads or not math.isfinite(scale) or scale <= 0 or
+            not all(np.isfinite(x).all() for x in (q, k, v))):
+        raise BundleError("invalid FP64 flash reference contract")
+    if not rows or len(set(rows)) != len(rows) or any(row < 0 or row >= queries for row in rows):
+        raise BundleError("FP64 flash reference requires distinct in-range query rows")
+    result = np.empty((len(rows), heads, dim), dtype=np.float64)
+    k64 = k.astype(np.float64)
+    v64 = v.astype(np.float64)
+    for index, row in enumerate(rows):
+        for head in range(heads):
+            kv_head = head // (heads // kv_heads)
+            scores = (k64[:, kv_head] @ q[row, head].astype(np.float64)) * scale
+            weights = np.exp(scores - scores.max())
+            result[index, head] = (weights / weights.sum()) @ v64[:, kv_head]
+    return result
 
 
 def fp64_reference(q: np.ndarray, k: np.ndarray, v: np.ndarray) -> np.ndarray:
