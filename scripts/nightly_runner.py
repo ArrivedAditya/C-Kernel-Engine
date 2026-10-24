@@ -1512,6 +1512,12 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_codegen_hidden_exports.py",
         timeout_sec=120,
     ),
+    "v8_long_kv_offset_codegen": TestSuite(
+        "Generated Long-Context KV Offset Width",
+        "inference",
+        ROOT / "tests" / "test_v8_long_kv_offset_codegen.py",
+        timeout_sec=120,
+    ),
     "v8_instella_mla_bf16_phases": TestSuite(
         "Instella MLA BF16 Arithmetic",
         "inference",

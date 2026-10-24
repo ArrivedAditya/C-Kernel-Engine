@@ -237,7 +237,13 @@ def emit_prefill_op(
     layer = op.get("layer", -1)
     section = op.get("section", "")
     op_instance_idx = int(op.get("op_instance_idx", op.get("instance", 0)) or 0)
-    args_list = op.get("args", [])
+    from codegen_core_v8 import _normalize_arg_expr
+
+    args_list = [
+        {**arg, "expr": _normalize_arg_expr(str(arg.get("expr", "0")))}
+        if isinstance(arg, dict) else arg
+        for arg in op.get("args", [])
+    ]
     linear_emission = resolved_quantized_linear_emission(op)
     segmented_row_function = (
         _segmented_row_provider(op, config) if segment_plan_available else ""
@@ -589,7 +595,7 @@ def emit_prefill_op(
             kv_cache_head_dim = int(config.get("head_dim", 1) or 1)
         if kv_cache_head_dim <= 0:
             kv_cache_head_dim = 1
-        term = f"({int(source_layer)}*2)" if which == "k" else f"({int(source_layer)}*2+1)"
+        term = f"((size_t){int(source_layer)}*2)" if which == "k" else f"((size_t){int(source_layer)}*2+1)"
         return f"(model->kv_cache + {term}*NUM_KV_HEADS*MAX_SEQ_LEN*{kv_cache_head_dim})"
 
     dynamic_token_arg_names = {

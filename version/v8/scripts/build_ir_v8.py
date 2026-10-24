@@ -15719,7 +15719,7 @@ def generate_ir_lower_2(
                         else:
                             kv_slot = layer_idx * 2 + (1 if cache_kind == "v" else 0)
                             cache_expr = (
-                                f"(model->kv_cache + ({kv_slot})"
+                                f"(model->kv_cache + (size_t)({kv_slot})"
                                 f"*NUM_KV_HEADS*MAX_SEQ_LEN*{int(head_dim)})"
                             )
                         lowered_op["scratch"].append({
@@ -17447,10 +17447,10 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
                     k_expr_f16 = f"(model->kv_cache_f16 + {int(layer_k_offsets[kv_layer])}ULL*MAX_SEQ_LEN)"
                     v_expr_f16 = f"(model->kv_cache_f16 + {int(layer_v_offsets[kv_layer])}ULL*MAX_SEQ_LEN)"
                 elif not compact_kv_layout:
-                    k_expr = f"(model->kv_cache + ({kv_layer}*2)*NUM_KV_HEADS*MAX_SEQ_LEN*{kv_cache_head_dim})"
-                    v_expr = f"(model->kv_cache + ({kv_layer}*2+1)*NUM_KV_HEADS*MAX_SEQ_LEN*{kv_cache_head_dim})"
-                    k_expr_f16 = f"(model->kv_cache_f16 + ({kv_layer}*2)*NUM_KV_HEADS*MAX_SEQ_LEN*{kv_cache_head_dim})"
-                    v_expr_f16 = f"(model->kv_cache_f16 + ({kv_layer}*2+1)*NUM_KV_HEADS*MAX_SEQ_LEN*{kv_cache_head_dim})"
+                    k_expr = f"(model->kv_cache + ((size_t){kv_layer}*2)*NUM_KV_HEADS*MAX_SEQ_LEN*{kv_cache_head_dim})"
+                    v_expr = f"(model->kv_cache + ((size_t){kv_layer}*2+1)*NUM_KV_HEADS*MAX_SEQ_LEN*{kv_cache_head_dim})"
+                    k_expr_f16 = f"(model->kv_cache_f16 + ((size_t){kv_layer}*2)*NUM_KV_HEADS*MAX_SEQ_LEN*{kv_cache_head_dim})"
+                    v_expr_f16 = f"(model->kv_cache_f16 + ((size_t){kv_layer}*2+1)*NUM_KV_HEADS*MAX_SEQ_LEN*{kv_cache_head_dim})"
                 else:
                     k_expr = v_expr = k_expr_f16 = v_expr_f16 = "0"
                 audio_runtime_exprs = {
