@@ -987,9 +987,12 @@ def _tokenizer_pretokenizer_profile(data: dict) -> Optional[str]:
     return None
 
 
+_GGUF_PRETOKENIZER_KEY = "tokenizer.ggml.pre"
+
+
 def _gguf_pretokenizer_profile(meta: dict) -> Optional[str]:
     """Resolve a GGUF tokenizer policy by its declared pre-tokenizer tag."""
-    tag = str(meta.get("tokenizer.ggml.pre") or "").strip().lower()
+    tag = str(meta.get(_GGUF_PRETOKENIZER_KEY) or "").strip().lower()
     # This GGUF tag declares the byte-level regex without GPT-2's newline
     # attachment. Keep the mapping at the tokenizer-asset boundary.
     if tag == "command-r":
@@ -3495,6 +3498,7 @@ def main() -> None:
         "tokenizer.ggml.scores",
         "tokenizer.ggml.token_type",
         "tokenizer.ggml.model",
+        _GGUF_PRETOKENIZER_KEY,
         # Special token IDs (EOS, BOS, etc.) - propagated to manifest for orchestrator
         "tokenizer.ggml.eos_token_id",
         "tokenizer.ggml.bos_token_id",
