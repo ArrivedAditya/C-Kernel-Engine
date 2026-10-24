@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import sys
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 
@@ -121,3 +123,45 @@ def test_sequential_replay_does_not_force_batched_runtime() -> None:
     finally:
         if previous is not None:
             os.environ[name] = previous
+
+
+def test_long_oracle_replay_passes_exact_ids_through_a_file() -> None:
+    for token_id, length, expect_file in ((12345, 21_000, True),
+                                          (1, 42_132, False),
+                                          (12345, 3000, False)):
+        tokens = [token_id] * length
+
+        def fake_run(command, **_kwargs):
+            assert ("--tokens-file" in command) == expect_file
+            if expect_file:
+                token_file = Path(command[command.index("--tokens-file") + 1])
+                actual = compare.parse_tokens_csv(token_file.read_text(encoding="ascii"))
+            else:
+                actual = compare.parse_tokens_csv(command[command.index("--tokens") + 1])
+            assert actual == tokens
+            assert command[command.index("--batch-tokens") + 1] == "512"
+            np.array([1.0, 2.0], dtype=np.float32).tofile(
+                command[command.index("--logits-out") + 1]
+            )
+            return mock.Mock(returncode=0, stdout=json.dumps({"ok": True, "n_vocab": 2}), stderr="")
+
+        with mock.patch.object(compare, "ensure_llama_helper", return_value=Path("/tmp/helper")), \
+             mock.patch.object(compare, "_run", side_effect=fake_run):
+            result = compare.run_llama_logits(Path("model.gguf"), tokens, 32768, 2, 4,
+                                              batch_tokens=512)
+        assert result["logits"].tolist() == [1.0, 2.0]
+
+
+def test_short_oracle_replay_retains_inline_ids() -> None:
+    def fake_run(command, **_kwargs):
+        assert command[command.index("--tokens") + 1] == "1,2,3"
+        assert "--tokens-file" not in command
+        np.array([3.0], dtype=np.float32).tofile(
+            command[command.index("--logits-out") + 1]
+        )
+        return mock.Mock(returncode=0, stdout=json.dumps({"ok": True, "n_vocab": 1}), stderr="")
+
+    with mock.patch.object(compare, "ensure_llama_helper", return_value=Path("/tmp/helper")), \
+         mock.patch.object(compare, "_run", side_effect=fake_run):
+        result = compare.run_llama_logits(Path("model.gguf"), [1, 2, 3], 256, 1, 1)
+    assert result["logits"].tolist() == [3.0]

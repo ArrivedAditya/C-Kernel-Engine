@@ -961,6 +961,37 @@ def _tokenizer_pretokenizer_profile(data: dict) -> Optional[str]:
     if not isinstance(rows, list) or len(rows) < 2:
         return None
 
+    # A four-stage isolated split is used by publisher tokenizer.json assets:
+    # 1–3 digit groups, a CJK run, a Unicode word/punctuation/space split,
+    # then ByteLevel without its own regex. The existing native isolated-split
+    # provider implements these boundaries. Require the complete declaration;
+    # a merely similar regex must not inherit its numerical token contract.
+    unicode_word_pattern = (
+        r'''[!"#$%&'()*+,\-./:;<=>?@\[\\\]^_`{|}~][A-Za-z]+'''
+        r'''|[^\r\n\p{L}\p{P}\p{S}]?[\p{L}\p{M}]+'''
+        r'''| ?[\p{P}\p{S}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+'''
+    ).replace(r"\r", "\r").replace(r"\n", "\n")
+    isolated_patterns = (
+        r"\p{N}{1,3}",
+        r"[一-龥぀-ゟ゠-ヿ]+",
+        unicode_word_pattern,
+    )
+    if len(rows) == 4 and all(
+        isinstance(row, dict)
+        and row.get("type") == "Split"
+        and row.get("behavior") == "Isolated"
+        and row.get("invert") is False
+        and isinstance(row.get("pattern"), dict)
+        and row["pattern"].get("Regex") == pattern
+        for row, pattern in zip(rows[:3], isolated_patterns)
+    ) and rows[3] == {
+        "type": "ByteLevel",
+        "add_prefix_space": False,
+        "trim_offsets": True,
+        "use_regex": False,
+    }:
+        return "unicode_split_isolated"
+
     split_patterns: list[str] = []
     has_byte_level = False
     for row in rows:
@@ -984,6 +1015,27 @@ def _tokenizer_pretokenizer_profile(data: dict) -> Optional[str]:
         and any("\\p{Lu}" in pattern and "\\p{Ll}" in pattern for pattern in split_patterns)
     ):
         return "unicode_split_isolated"
+    return None
+
+
+_GGUF_PRETOKENIZER_KEY = "tokenizer.ggml.pre"
+_GGUF_TOKENIZER_METADATA_KEYS = frozenset({
+    "tokenizer.ggml.tokens",
+    "tokenizer.ggml.merges",
+    "tokenizer.ggml.scores",
+    "tokenizer.ggml.token_type",
+    "tokenizer.ggml.model",
+    _GGUF_PRETOKENIZER_KEY,
+})
+
+
+def _gguf_pretokenizer_profile(meta: dict) -> Optional[str]:
+    """Resolve a GGUF tokenizer policy by its declared pre-tokenizer tag."""
+    tag = str(meta.get(_GGUF_PRETOKENIZER_KEY) or "").strip().lower()
+    # This GGUF tag declares the byte-level regex without GPT-2's newline
+    # attachment. Keep the mapping at the tokenizer-asset boundary.
+    if tag == "command-r":
+        return "bytelevel_simple"
     return None
 
 
@@ -1019,13 +1071,19 @@ def load_tokenizer_json(path: str, vocab_size: int) -> tuple[list[int], bytes, l
 
     added_tokens = data.get("added_tokens", [])
     exact_added_ids: set[int] = set()
+    normalizer = data.get("normalizer")
+    identity_normalizer = normalizer is None or (
+        isinstance(normalizer, dict)
+        and normalizer.get("type") == "Sequence"
+        and normalizer.get("normalizers") == []
+    )
     def validate_raw_added_token(row: dict, source: str) -> None:
         """Native type-4 matching is an exact raw substring, with no HF flags."""
         for flag in ("single_word", "lstrip", "rstrip"):
             if row.get(flag, False) is not False:
                 raise GGUFError(f"{source}: unsupported AddedToken {flag}={row.get(flag)!r}")
         # Normalization changes matching only when the publisher has a normalizer.
-        if row.get("normalized", False) is True and data.get("normalizer") is not None:
+        if row.get("normalized", False) is True and not identity_normalizer:
             raise GGUFError(f"{source}: normalized AddedToken requires unsupported normalization")
         if "normalized" in row and not isinstance(row["normalized"], bool):
             raise GGUFError(f"{source}: invalid AddedToken normalized flag")
@@ -3480,11 +3538,6 @@ def main() -> None:
         "gemma4.rope.dimension_count",
         "gemma4.rope.dimension_count_swa",
         # Tokenizer keys (for automatic extraction from GGUF)
-        "tokenizer.ggml.tokens",
-        "tokenizer.ggml.merges",
-        "tokenizer.ggml.scores",
-        "tokenizer.ggml.token_type",
-        "tokenizer.ggml.model",
         # Special token IDs (EOS, BOS, etc.) - propagated to manifest for orchestrator
         "tokenizer.ggml.eos_token_id",
         "tokenizer.ggml.bos_token_id",
@@ -3522,6 +3575,7 @@ def main() -> None:
         "mistral3.embedding_weight_tying",
         "deepseek2.embedding_weight_tying",
     }
+    wanted_meta.update(_GGUF_TOKENIZER_METADATA_KEYS)
     wanted_meta.update(gguf_ck_artifact_match_keys())
     wanted_meta.update(gguf_ck_declared_metadata_keys())
 
@@ -4878,6 +4932,9 @@ def main() -> None:
                     "tokenizer_type": "sentencepiece" if str(meta.get("tokenizer.ggml.model", "")).strip().lower() in {"llama", "sentencepiece", "spm"} else _normalize_tokenizer_type_name(meta.get("tokenizer.ggml.model")),
                     "source": "gguf_metadata",
                 }
+                pretokenizer = _gguf_pretokenizer_profile(meta)
+                if pretokenizer:
+                    tokenizer_contract["pretokenizer"] = pretokenizer
                 print(f"[tokenizer] extracted {len(vocab_offsets)} tokens, {num_merges} merges, {total_vocab_bytes} bytes from GGUF metadata")
 
         num_layers = meta_int(

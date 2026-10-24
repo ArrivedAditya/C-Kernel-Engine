@@ -813,6 +813,16 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_qwen3_tts_codec_decoder_ingress.py",
         timeout_sec=300,
     ),
+    "tts_qwen3_customvoice_codec_snake_beta": TestSuite(
+        "Qwen3-TTS Generated Codec First SnakeBeta", "inference",
+        ROOT / "tests" / "test_v8_qwen3_tts_codec_snake_beta.py",
+        timeout_sec=300,
+    ),
+    "tts_qwen3_customvoice_codec_decoder_upsample": TestSuite(
+        "Qwen3-TTS Generated Codec First Causal Decoder Upsample", "inference",
+        ROOT / "tests" / "test_v8_qwen3_tts_codec_decoder_upsample.py",
+        timeout_sec=300,
+    ),
     "tts_audio_sliding_attention_oracle": TestSuite(
         "Checked Sliding Attention Independent Oracle", "kernels",
         ROOT / "tests" / "test_v8_attention_sliding_bounded_oracle.py",
@@ -1222,6 +1232,22 @@ TEST_SUITES = {
         "Checked Channelwise Snake Normal-Compiler Generated Graph", "inference",
         ROOT / "tests" / "test_v8_audio_snake_generated.py",
     ),
+    "tts_audio_snake_beta_checked": TestSuite(
+        "Checked Two-Parameter SnakeBeta Independent Oracle", "kernels",
+        ROOT / "tests" / "test_v8_audio_snake_beta_checked.py",
+    ),
+    "tts_audio_snake_beta_generated": TestSuite(
+        "Checked Two-Parameter SnakeBeta Generated Graph", "inference",
+        ROOT / "tests" / "test_v8_audio_snake_beta_generated.py",
+    ),
+    "tts_dense_deconv_crop_right": TestSuite(
+        "Checked Right-Cropped Dense ConvTranspose1D Oracle", "kernels",
+        ROOT / "tests" / "test_v8_audio_dense_deconv_crop_right.py",
+    ),
+    "tts_dense_deconv_crop_right_generated": TestSuite(
+        "Checked Right-Cropped Dense ConvTranspose1D Generated Graph", "inference",
+        ROOT / "tests" / "test_v8_audio_dense_deconv_crop_right_generated.py",
+    ),
     "tts_audio_dilated_conv": TestSuite(
         "Checked Dilated Conv1D PyTorch Oracles", "kernels",
         ROOT / "tests" / "test_v8_audio_dilated_conv_oracle.py",
@@ -1517,6 +1543,12 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_codegen_hidden_exports.py",
         timeout_sec=120,
     ),
+    "v8_long_kv_offset_codegen": TestSuite(
+        "Generated Long-Context KV Offset Width",
+        "inference",
+        ROOT / "tests" / "test_v8_long_kv_offset_codegen.py",
+        timeout_sec=120,
+    ),
     "v8_instella_mla_bf16_phases": TestSuite(
         "Instella MLA BF16 Arithmetic",
         "inference",
@@ -1614,6 +1646,12 @@ MAKE_TARGETS = {
         "name": "Tokenizer Byte/UTF-8 Parity",
         "category": "inference",
         "target": "test-tokenizer-special",
+        "timeout_sec": 180,
+    },
+    "v8_gguf_bytelevel_pretokenizer": {
+        "name": "v8 GGUF Byte-Level Pretokenizer Contract",
+        "category": "inference",
+        "target": "test-v8-gguf-bytelevel-pretokenizer",
         "timeout_sec": 180,
     },
     "litmus": {

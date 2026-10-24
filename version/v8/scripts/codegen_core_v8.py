@@ -338,7 +338,7 @@ def emit_memory_layout(layout: Dict, config: Dict) -> str:
     if kv_cache_size:
         lines.append(f"#define KV_CACHE_SIZE {kv_cache_size}ULL")
     else:
-        lines.append("#define KV_CACHE_SIZE (NUM_LAYERS * 2 * NUM_KV_HEADS * MAX_SEQ_LEN * HEAD_DIM * sizeof(float))")
+        lines.append("#define KV_CACHE_SIZE ((size_t)NUM_LAYERS * 2 * NUM_KV_HEADS * MAX_SEQ_LEN * HEAD_DIM * sizeof(float))")
     lines.append("")
 
     # Header offsets struct

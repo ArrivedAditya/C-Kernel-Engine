@@ -1941,6 +1941,10 @@ OP_DATAFLOW = {
         "inputs": {"input": "external:audio_features"},
         "outputs": {"output": {"slot": "transposed_convolution_output", "dtype": "fp32"}},
     },
+    "audio_conv_transpose1d_dense_crop_right_checked": {
+        "inputs": {"input": "external:audio_features"},
+        "outputs": {"output": {"slot": "cropped_transposed_convolution_output", "dtype": "fp32"}},
+    },
     "audio_reflect_pad1d_left_checked": {
         "inputs": {"input": "external:audio_features"},
         "outputs": {"output": {"slot": "reflected_features", "dtype": "fp32"}},
@@ -2041,6 +2045,10 @@ OP_DATAFLOW = {
     "audio_snake_strided_checked": {
         "inputs": {"input": "external:snake_input"},
         "outputs": {"output": {"slot": "snake_output", "dtype": "fp32"}},
+    },
+    "audio_snake_beta_strided_checked": {
+        "inputs": {"input": "external:snake_beta_input"},
+        "outputs": {"output": {"slot": "snake_beta_output", "dtype": "fp32"}},
     },
     "embedding_three_table_layer_norm": {
         "inputs": {"word_ids": "external:word_ids", "type_ids": "external:type_ids"},
@@ -3200,9 +3208,15 @@ def _generate_tokenizer_c_code(tokenizer_type: str, vocab_size: int, num_merges:
             )
         pretokenizer = str((tokenizer_contract or {}).get("pretokenizer") or "").strip().lower()
         if add_bos is not None or add_eos is not None or add_space_prefix is not None or pretokenizer:
-            pretokenizer_enum = {
+            pretokenizer_profiles = {
                 "unicode_split_isolated": "CK_BPE_PRETOKENIZER_UNICODE_SPLIT_ISOLATED",
-            }.get(pretokenizer, "CK_BPE_PRETOKENIZER_GPT2")
+                "bytelevel_simple": "CK_BPE_PRETOKENIZER_BYTELEVEL_SIMPLE",
+            }
+            if pretokenizer and pretokenizer not in pretokenizer_profiles:
+                raise ValueError(f"unsupported BPE pretokenizer profile: {pretokenizer}")
+            pretokenizer_enum = pretokenizer_profiles.get(
+                pretokenizer, "CK_BPE_PRETOKENIZER_GPT2"
+            )
             bpe_contract_lines.extend(
                 [
                     "        {",
@@ -4869,6 +4883,7 @@ TEMPLATE_TO_KERNEL_OP = {
     "audio_upsample_nearest_checked": "audio_upsample_nearest_checked",
     "audio_conv_transpose1d_depthwise_checked": "audio_conv_transpose1d_depthwise_checked",
     "audio_conv_transpose1d_dense_checked": "audio_conv_transpose1d_dense_checked",
+    "audio_conv_transpose1d_dense_crop_right_checked": "audio_conv_transpose1d_dense_crop_right_checked",
     "audio_reflect_pad1d_left_checked": "audio_reflect_pad1d_left_checked",
     "audio_zero_pad1d_left_checked": "audio_zero_pad1d_left_checked",
     "transpose_strided_checked": "transpose_strided_checked",
@@ -4894,6 +4909,7 @@ TEMPLATE_TO_KERNEL_OP = {
     "linear_rows_checked": "linear_rows_checked",
     "tanh_strided_checked": "tanh_strided_checked",
     "audio_snake_strided_checked": "audio_snake_strided_checked",
+    "audio_snake_beta_strided_checked": "audio_snake_beta_strided_checked",
     "embedding_three_table_layer_norm": "embedding_three_table_layer_norm",
     "embedding_lookup_checked": "embedding_lookup_checked",
     "audio_duration_logits_to_frames": "audio_duration_logits_to_frames",
@@ -9619,6 +9635,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         "audio_upsample_nearest_checked": None,
         "audio_conv_transpose1d_depthwise_checked": ["weight", "bias"],
         "audio_conv_transpose1d_dense_checked": ["weight", "bias"],
+        "audio_conv_transpose1d_dense_crop_right_checked": ["weight", "bias"],
         "audio_reflect_pad1d_left_checked": None,
         "audio_zero_pad1d_left_checked": None,
         "audio_duration_expand": None,
@@ -9629,6 +9646,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         "audio_stft_mag_phase_checked": None,
         "tanh_strided_checked": None,
         "audio_snake_strided_checked": ["alpha"],
+        "audio_snake_beta_strided_checked": ["alpha", "beta"],
         # Ops with quantized weights - look up in quant_summary
         "patch_proj": ["patch_emb"],
         "patch_proj_aux": ["patch_emb_aux"],
@@ -13013,6 +13031,7 @@ TEMPLATE_OP_WEIGHTS = {
     "audio_upsample_nearest_checked": [],
     "audio_conv_transpose1d_depthwise_checked": ["weight", "bias"],
     "audio_conv_transpose1d_dense_checked": ["weight", "bias"],
+    "audio_conv_transpose1d_dense_crop_right_checked": ["weight", "bias"],
     "audio_reflect_pad1d_left_checked": [],
     "audio_zero_pad1d_left_checked": [],
     "audio_duration_expand": [],
@@ -13023,6 +13042,7 @@ TEMPLATE_OP_WEIGHTS = {
     "audio_stft_mag_phase_checked": [],
     "tanh_strided_checked": [],
     "audio_snake_strided_checked": ["alpha"],
+    "audio_snake_beta_strided_checked": ["alpha", "beta"],
     # Header (tokenizer is metadata, not model weights)
     "audio_wav_decode": [],
     "audio_pcm_decode": [],
@@ -15719,7 +15739,7 @@ def generate_ir_lower_2(
                         else:
                             kv_slot = layer_idx * 2 + (1 if cache_kind == "v" else 0)
                             cache_expr = (
-                                f"(model->kv_cache + ({kv_slot})"
+                                f"(model->kv_cache + (size_t)({kv_slot})"
                                 f"*NUM_KV_HEADS*MAX_SEQ_LEN*{int(head_dim)})"
                             )
                         lowered_op["scratch"].append({
@@ -17447,10 +17467,10 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
                     k_expr_f16 = f"(model->kv_cache_f16 + {int(layer_k_offsets[kv_layer])}ULL*MAX_SEQ_LEN)"
                     v_expr_f16 = f"(model->kv_cache_f16 + {int(layer_v_offsets[kv_layer])}ULL*MAX_SEQ_LEN)"
                 elif not compact_kv_layout:
-                    k_expr = f"(model->kv_cache + ({kv_layer}*2)*NUM_KV_HEADS*MAX_SEQ_LEN*{kv_cache_head_dim})"
-                    v_expr = f"(model->kv_cache + ({kv_layer}*2+1)*NUM_KV_HEADS*MAX_SEQ_LEN*{kv_cache_head_dim})"
-                    k_expr_f16 = f"(model->kv_cache_f16 + ({kv_layer}*2)*NUM_KV_HEADS*MAX_SEQ_LEN*{kv_cache_head_dim})"
-                    v_expr_f16 = f"(model->kv_cache_f16 + ({kv_layer}*2+1)*NUM_KV_HEADS*MAX_SEQ_LEN*{kv_cache_head_dim})"
+                    k_expr = f"(model->kv_cache + ((size_t){kv_layer}*2)*NUM_KV_HEADS*MAX_SEQ_LEN*{kv_cache_head_dim})"
+                    v_expr = f"(model->kv_cache + ((size_t){kv_layer}*2+1)*NUM_KV_HEADS*MAX_SEQ_LEN*{kv_cache_head_dim})"
+                    k_expr_f16 = f"(model->kv_cache_f16 + ((size_t){kv_layer}*2)*NUM_KV_HEADS*MAX_SEQ_LEN*{kv_cache_head_dim})"
+                    v_expr_f16 = f"(model->kv_cache_f16 + ((size_t){kv_layer}*2+1)*NUM_KV_HEADS*MAX_SEQ_LEN*{kv_cache_head_dim})"
                 else:
                     k_expr = v_expr = k_expr_f16 = v_expr_f16 = "0"
                 audio_runtime_exprs = {

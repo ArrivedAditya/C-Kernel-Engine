@@ -1,0 +1,16 @@
+{
+  "attention_implementation": "eager",
+  "channels": 1536,
+  "codec_source_sha256": "844e8dd8c0182ef9c6463c874631c22ef3c5a4fd1899dd657016164cc5379628",
+  "frames": 184,
+  "model_revision": "85e237c12c027371202489a0ec509ded67b5e4b5",
+  "npz_sha256": "21790a6b35799de3c8d0ae13c3e8deafbd005f0ce7a2c12061d0c96a74477dc1",
+  "reference_revision": "022e286b98fbec7e1e916cb940cdf532cd9f488e",
+  "schema": 1,
+  "scope": "direct pinned full decoder through first SnakeBeta; upsampling and waveform NOT_TESTED",
+  "source_decoder_ingress_max_abs": 0.0,
+  "source_decoder_ingress_sha256": "55730ef51b1d5f9299f3fc0f7ee5b4ed080c16a8655e4fc55a69bc2786332e91",
+  "torch_mkldnn_enabled": true,
+  "torch_num_threads": 4,
+  "torch_version": "2.14.1+cpu"
+}

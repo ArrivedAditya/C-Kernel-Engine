@@ -1,5 +1,6 @@
 #include "llama.h"
 #include "ggml-cpu.h"
+#include "llama_token_replay_batches_v8.h"
 
 #include <algorithm>
 #include <chrono>
@@ -21,6 +22,7 @@
 struct Args {
     std::string model_path;
     std::vector<int32_t> tokens;
+    std::string tokens_file_path;
     std::vector<int32_t> tokens_before;
     std::vector<int32_t> tokens_after;
     std::string prompt;
@@ -38,6 +40,7 @@ struct Args {
     int ctx_len = 256;
     int top_k = 16;
     int threads = 0;
+    int batch_tokens = 0;
     int prefix_grid_x = 0;
     int prefix_grid_y = 0;
     int prefix_row_dim = 0;
@@ -144,6 +147,27 @@ static bool parse_args(int argc, char ** argv, Args & args, std::string & err) {
             const char * v = need_value("--tokens");
             if (!v) return false;
             if (!parse_tokens(v, args.tokens, err)) return false;
+            continue;
+        }
+        if (a == "--tokens-file") {
+            const char * v = need_value("--tokens-file");
+            if (!v) return false;
+            args.tokens_file_path = v;
+            continue;
+        }
+        if (a == "--batch-tokens") {
+            const char * v = need_value("--batch-tokens");
+            if (!v) return false;
+            try {
+                args.batch_tokens = std::stoi(v);
+            } catch (...) {
+                err = "invalid --batch-tokens";
+                return false;
+            }
+            if (args.batch_tokens < 1) {
+                err = "--batch-tokens must be positive";
+                return false;
+            }
             continue;
         }
         if (a == "--tokens-before") {
@@ -322,10 +346,10 @@ static bool parse_args(int argc, char ** argv, Args & args, std::string & err) {
         if (a == "-h" || a == "--help") {
             std::cout
                 << "Usage: llama_token_replay --model <path.gguf> "
-                << "(--tokens <id,id,...> | --prompt <text> | [--tokens-before <id,id,...>] [--tokens-after <id,id,...>]) "
+                << "(--tokens <id,id,...> | --tokens-file <path> | --prompt <text> | [--tokens-before <id,id,...>] [--tokens-after <id,id,...>]) "
                 << "--logits-out <path.bin> [--logits-seq-out <path.bin> --greedy-steps N] [--embeddings-out <path.f32>] [--prefix-f32 <path.f32>] "
                 << "[--prefix-grid-x N --prefix-grid-y N] [--prefix-row-dim N] [--prefix-text-pos N] [--ctx N] [--top-k K] [--threads N] "
-                << "[--decode-mode batched|sequential] [--prefix-decode-mode batched|sequential] "
+                << "[--decode-mode batched|sequential] [--batch-tokens N] [--prefix-decode-mode batched|sequential] "
                 << "[--prefix-decode-policy causal_mixed_prefix|non_causal_visual_chunk] "
                 << "[--flash-attn disabled|auto|enabled] "
                 << "[--dump-dir dir --dump-names a,b,matmul_weight:WEIGHT] [--dump-greedy-decode-step N] "
@@ -340,6 +364,17 @@ static bool parse_args(int argc, char ** argv, Args & args, std::string & err) {
     if (args.model_path.empty()) {
         err = "missing --model";
         return false;
+    }
+    if (!args.tokens_file_path.empty()) {
+        if (!args.tokens.empty() || !args.prompt.empty() ||
+            !args.tokens_before.empty() || !args.tokens_after.empty()) {
+            err = "--tokens-file cannot be combined with other prompt inputs";
+            return false;
+        }
+        std::string csv;
+        if (!cke_oracle::read_bounded_token_file(
+                args.tokens_file_path, 64u << 20, csv, err)) return false;
+        if (!parse_tokens(csv, args.tokens, err)) return false;
     }
     const bool segmented = !args.tokens_before.empty() || !args.tokens_after.empty();
     if (segmented) {
@@ -1057,40 +1092,30 @@ static int32_t decode_tokens(
     const std::vector<llama_token> & tokens,
     const std::string & decode_mode,
     int32_t pos0,
-    DumpState * dump_state
+    DumpState * dump_state,
+    int32_t submission_limit
 ) {
-    if (decode_mode == "sequential") {
-        for (size_t i = 0; i < tokens.size(); ++i) {
-            begin_dump_batch(dump_state, pos0 + static_cast<int32_t>(i));
-            llama_batch batch = llama_batch_init(1, 0, 1);
-            batch.n_tokens = 1;
-            batch.token[0] = tokens[i];
-            batch.pos[0] = pos0 + static_cast<int32_t>(i);
-            batch.n_seq_id[0] = 1;
-            batch.seq_id[0][0] = 0;
-            batch.logits[0] = 1;
-            const int32_t rc = llama_decode(ctx, batch);
-            llama_batch_free(batch);
-            if (rc != 0) {
-                return rc;
+    size_t max_rows = decode_mode == "sequential" ? 1 :
+        std::max<size_t>(1, llama_n_batch(ctx));
+    if (submission_limit > 0)
+        max_rows = std::min(max_rows, static_cast<size_t>(submission_limit));
+    return cke_oracle::submit_token_batches(
+        tokens, pos0, max_rows, decode_mode == "sequential",
+        [&](const std::vector<cke_oracle::TokenRow> & rows) -> int32_t {
+            begin_dump_batch(dump_state, rows.back().position);
+            llama_batch batch = llama_batch_init(static_cast<int32_t>(rows.size()), 0, 1);
+            batch.n_tokens = static_cast<int32_t>(rows.size());
+            for (size_t i = 0; i < rows.size(); ++i) {
+                batch.token[i] = rows[i].token;
+                batch.pos[i] = rows[i].position;
+                batch.n_seq_id[i] = 1;
+                batch.seq_id[i][0] = rows[i].sequence_id;
+                batch.logits[i] = rows[i].logits ? 1 : 0;
             }
-        }
-        return 0;
-    }
-
-    begin_dump_batch(dump_state, pos0 + static_cast<int32_t>(tokens.size()) - 1);
-    llama_batch batch = llama_batch_init(static_cast<int32_t>(tokens.size()), 0, 1);
-    batch.n_tokens = static_cast<int32_t>(tokens.size());
-    for (size_t i = 0; i < tokens.size(); ++i) {
-        batch.token[i] = tokens[i];
-        batch.pos[i] = pos0 + static_cast<int32_t>(i);
-        batch.n_seq_id[i] = 1;
-        batch.seq_id[i][0] = 0;
-        batch.logits[i] = (i + 1 == tokens.size()) ? 1 : 0;
-    }
-    const int32_t rc = llama_decode(ctx, batch);
-    llama_batch_free(batch);
-    return rc;
+            const int32_t status = llama_decode(ctx, batch);
+            llama_batch_free(batch);
+            return status;
+        });
 }
 
 static int32_t decode_prefix_embeddings(
@@ -1280,11 +1305,18 @@ int main(int argc, char ** argv) {
         llama_backend_free();
         return 12;
     }
+    if (args.batch_tokens > 0 && prefix_tokens > args.batch_tokens) {
+        print_json_error("--batch-tokens cannot split prefix embeddings");
+        llama_model_free(model);
+        llama_backend_free();
+        return 12;
+    }
 
     llama_context_params cparams = llama_context_default_params();
     const int total_tokens = prefix_tokens + static_cast<int>(segmented ? (args.tokens_before.size() + args.tokens_after.size()) : args.tokens.size());
     cparams.n_ctx = static_cast<uint32_t>(std::max(args.ctx_len, total_tokens + 8));
-    cparams.n_batch = static_cast<uint32_t>(std::max<int>(32, total_tokens));
+    cparams.n_batch = static_cast<uint32_t>(std::max<int>(
+        32, args.batch_tokens > 0 ? std::min(total_tokens, args.batch_tokens) : total_tokens));
     cparams.n_ubatch = cparams.n_batch;
     int hw_threads = static_cast<int>(std::thread::hardware_concurrency());
     int n_threads = args.threads > 0 ? args.threads : std::max(1, hw_threads);
@@ -1366,7 +1398,8 @@ int main(int argc, char ** argv) {
             tokens_before,
             args.prefix_decode_mode,
             0,
-            capture_active ? &dump_state : nullptr
+            capture_active ? &dump_state : nullptr,
+            args.batch_tokens
         );
         if (rc != 0) {
             std::ostringstream oss;
@@ -1411,7 +1444,8 @@ int main(int argc, char ** argv) {
             tokens_after,
             args.decode_mode,
             prefix_text_pos,
-            capture_active ? &dump_state : nullptr
+            capture_active ? &dump_state : nullptr,
+            args.batch_tokens
         );
         if (rc != 0) {
             std::ostringstream oss;
@@ -1628,6 +1662,16 @@ int main(int argc, char ** argv) {
     std::cout << "\"context\":" << llama_n_ctx(ctx) << ",";
     std::cout << "\"batch\":" << llama_n_batch(ctx) << ",";
     std::cout << "\"ubatch\":" << llama_n_ubatch(ctx) << ",";
+    std::cout << "\"decode_submission_limit\":"
+              << (args.decode_mode == "sequential" ? 1 :
+                  (args.batch_tokens > 0
+                    ? std::min<int>(llama_n_batch(ctx), args.batch_tokens)
+                    : static_cast<int>(llama_n_batch(ctx)))) << ",";
+    std::cout << "\"prefix_submission_limit\":"
+              << (args.prefix_decode_mode == "sequential" ? 1 :
+                  (args.batch_tokens > 0
+                    ? std::min<int>(llama_n_batch(ctx), args.batch_tokens)
+                    : static_cast<int>(llama_n_batch(ctx)))) << ",";
     std::cout << "\"threads\":" << llama_n_threads(ctx) << ",";
     std::cout << "\"threads_batch\":" << llama_n_threads_batch(ctx) << ",";
     std::cout << "\"cache_k\":\"" << ggml_type_name(cparams.type_k) << "\",";

@@ -954,6 +954,13 @@ static bool is_bpe_newline(const char *s, int len) {
     return len >= 2 && (unsigned char)s[0] == 0xC4 && (unsigned char)s[1] == 0x8A;
 }
 
+/* Byte-level mapped ASCII whitespace: space, tab, line feed and return. */
+static bool is_bpe_whitespace(const char *s, int len) {
+    if (len < 2 || (unsigned char)s[0] != 0xC4) return false;
+    unsigned char c = (unsigned char)s[1];
+    return c == 0xA0 || c == 0x89 || c == 0x8A || c == 0x8D;
+}
+
 /* Check if this is a non-letter, non-digit, non-newline character that can prefix a word */
 static bool is_word_prefix_char(const char *s, int len) {
     /* In GPT-2 regex: [^\r\n\p{L}\p{N}]? matches any char except newline, letter, digit */
@@ -1003,11 +1010,33 @@ static int gpt2_pretokenize(const char *text, int text_len, PretokChunk *chunks,
                             CKBPEPretokenizer pretokenizer) {
     int num_chunks = 0;
     int pos = 0;
+    const bool simple = pretokenizer == CK_BPE_PRETOKENIZER_BYTELEVEL_SIMPLE;
 
     while (pos < text_len && num_chunks < max_chunks) {
         int chunk_start = pos;
         int char_len = utf8_char_len((unsigned char)text[pos]);
         if (pos + char_len > text_len) char_len = text_len - pos;
+
+        if (simple && is_bpe_whitespace(text + pos, text_len - pos)) {
+            int run_end = pos;
+            while (run_end < text_len &&
+                   is_bpe_whitespace(text + run_end, text_len - run_end))
+                run_end += 2;
+            if (run_end - pos > 2) {
+                /* The trailing-whitespace regex consumes the run, except
+                 * its final character before non-whitespace text. That last
+                 * space can prefix the next word or punctuation chunk. */
+                bool before_digit = run_end < text_len &&
+                    is_bpe_digit(text + run_end,
+                                 utf8_char_len((unsigned char)text[run_end]));
+                pos = run_end < text_len && !before_digit ? run_end - 2 : run_end;
+                chunks[num_chunks].start = text + chunk_start;
+                chunks[num_chunks].len = pos - chunk_start;
+                chunks[num_chunks].type = CHUNK_WHITESPACE;
+                num_chunks++;
+                continue;
+            }
+        }
 
         /* Pattern 2: [^\r\n\p{L}\p{N}]?\p{L}+ - Words with optional punctuation prefix */
         /* This pattern MUST be checked before pattern 4 (punctuation) */
@@ -1019,8 +1048,8 @@ static int gpt2_pretokenize(const char *text, int text_len, PretokChunk *chunks,
         if (is_bpe_letter(text + pos, char_len)) {
             /* Word without prefix */
             is_word = true;
-        } else if (is_word_prefix_char(text + pos, char_len) &&
-                   !is_gpt2_space(text + pos, text_len - pos)) {
+        } else if ((!simple && is_word_prefix_char(text + pos, char_len)) ||
+                   (simple && is_gpt2_space(text + pos, text_len - pos))) {
             /* Check if punctuation is followed by a letter */
             int after = pos + char_len;
             if (after < text_len) {
@@ -1100,7 +1129,7 @@ static int gpt2_pretokenize(const char *text, int text_len, PretokChunk *chunks,
                 }
                 /* The isolated Split pattern allows slashes after line breaks;
                  * GPT-2's punctuation branch only includes line breaks. */
-                while (pos < text_len) {
+                while (!simple && pos < text_len) {
                     if (is_bpe_newline(text + pos, text_len - pos)) {
                         pos += 2;
                     } else if (pretokenizer == CK_BPE_PRETOKENIZER_UNICODE_SPLIT_ISOLATED &&

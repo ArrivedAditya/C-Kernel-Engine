@@ -926,6 +926,10 @@ test-tokenizer: $(LIB_TOKENIZER)
 test-tokenizer-quick: $(LIB_TOKENIZER)
 	@LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) unittest/test_tokenizer_unified.py --quick
 
+.PHONY: test-v8-gguf-bytelevel-pretokenizer
+test-v8-gguf-bytelevel-pretokenizer: $(LIB_TOKENIZER)
+	@$(PYTHON) $(PYTHONFLAGS) -m pytest -q tests/test_v8_gguf_bytelevel_pretokenizer.py
+
 test-tokenizer-llama: $(LIB_TOKENIZER)
 	@echo ""
 	@echo "========================================"
