@@ -1,0 +1,19 @@
+{
+  "attention_implementation": "eager",
+  "codec_source_sha256": "844e8dd8c0182ef9c6463c874631c22ef3c5a4fd1899dd657016164cc5379628",
+  "frames": 46,
+  "hidden_width": 512,
+  "latent_width": 1024,
+  "layers": 8,
+  "model_revision": "85e237c12c027371202489a0ec509ded67b5e4b5",
+  "npz_sha256": "e90e7a42559c899da7ae009be74162694b5a01cfc10f6ecb1f789d62e128da98",
+  "reference_revision": "022e286b98fbec7e1e916cb940cdf532cd9f488e",
+  "schema": 1,
+  "scope": "direct full codec pre-transformer checkpoints from captured reference codes; vocoder and waveform NOT_TESTED",
+  "sliding_window": 72,
+  "source_first_block_sha256": "eb100f4b1c746f879ac21d8744ab2a2a8c8b697e5f83159031b03931f8e18478",
+  "source_preconv_sha256": "afb8975833ca2c17004706152fe68525a696eef4fddaec095fc98f40dc4a5f30",
+  "torch_mkldnn_enabled": true,
+  "torch_num_threads": 4,
+  "torch_version": "2.14.1+cpu"
+}
