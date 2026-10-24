@@ -446,6 +446,8 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
             root = Path(tmpdir)
             source = root / "llama_token_replay_v8.cpp"
             source.write_text("int main() { return 0; }\n", encoding="utf-8")
+            header = root / "llama_token_replay_batches_v8.h"
+            header.write_text("// original\n", encoding="utf-8")
             lib_dir = root / "build" / "bin"
             lib_dir.mkdir(parents=True)
             for name in ("libllama.so", "libggml.so", "libggml-cpu.so", "libggml-base.so"):
@@ -459,9 +461,12 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
                 changed_library = helper_module._llama_helper_fingerprint()
                 source.write_text("int main() { return 1; }\n", encoding="utf-8")
                 changed_source = helper_module._llama_helper_fingerprint()
+                header.write_text("// changed\n", encoding="utf-8")
+                changed_header = helper_module._llama_helper_fingerprint()
 
             self.assertNotEqual(original, changed_library)
             self.assertNotEqual(changed_library, changed_source)
+            self.assertNotEqual(changed_source, changed_header)
 
     def test_ck_dump_filter_names_expands_llama_aliases(self) -> None:
         self.assertEqual(

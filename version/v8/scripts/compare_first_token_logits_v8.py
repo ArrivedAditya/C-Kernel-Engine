@@ -76,6 +76,7 @@ def _llama_helper_fingerprint() -> str:
     llama_cpp, _lib_dir, libraries = _llama_helper_paths()
     digest = hashlib.sha256()
     _hash_file(digest, HELPER_SRC)
+    _hash_file(digest, HELPER_SRC.with_name("llama_token_replay_batches_v8.h"))
     digest.update(str(llama_cpp).encode("utf-8"))
     for library in libraries:
         resolved = library.resolve()
@@ -336,11 +337,12 @@ def run_llama_logits(
             token_path = Path(td) / "tokens.csv"
             token_path.write_text(token_csv, encoding="ascii")
             cmd.extend(["--tokens-file", str(token_path)])
-            # The oracle helper otherwise sizes one llama.cpp compute batch to
-            # the entire prompt, which can exceed host memory at long context.
-            cmd.extend(["--batch-tokens", str(batch_tokens)])
         else:
             cmd.extend(["--tokens", token_csv])
+        # Compute admission is independent of whether the IDs fit in argv.
+        # Short prompts retain their historical one-call replay schedule.
+        if len(tokens) > 2048:
+            cmd.extend(["--batch-tokens", str(batch_tokens)])
         if no_repack:
             cmd.append("--no-repack")
         if threads > 0:
@@ -1010,6 +1012,7 @@ def main() -> int:
             "decode_mode": llama_decode_mode,
             "n_batch": int(ll["meta"].get("effective_settings", {}).get("batch", 0)),
             "n_ubatch": int(ll["meta"].get("effective_settings", {}).get("ubatch", 0)),
+            "submission_limit": int(ll["meta"].get("effective_settings", {}).get("decode_submission_limit", 0)),
             "no_repack": bool(args.llama_no_repack),
             "topk_count": int(len(ll["meta"].get("topk", []) or [])),
             "topk_sample": ll["meta"].get("topk", [])[: min(8, int(args.top_k))],
