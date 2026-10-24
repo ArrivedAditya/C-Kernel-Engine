@@ -28,6 +28,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include "ckernel_quant.h"
@@ -992,6 +993,73 @@ void vec_dot_q5_0_q8_0_neon(int n, float *s, const void *vx, const void *vy)
 
     *s = sumf;
 }
+
+#if defined(__ARM_FEATURE_DOTPROD)
+/* Q5_0 x Q8_0 dot using the AArch64 dot-product extension (SDOT). The 5-bit
+ * weights are reconstructed entirely in vector form: low nibbles via
+ * AND/shift, the 5th bit spread from qh with vdup_lane/vtstq (bit j of qh is
+ * tested into byte lane j, matching the scalar reference layout), and the
+ * -16 offset folded into the int8 lanes, so vdotq_s32 sees plain signed
+ * int8 x int8. Only base-NEON intrinsics are used alongside vdotq_s32, so
+ * nothing here is AArch64-only beyond the dot-product gate itself. Integer
+ * arithmetic matches the scalar reference exactly; the FP32 per-block
+ * epilogue is unchanged, so results are bit-identical to
+ * vec_dot_q5_0_q8_0_ref.
+ *
+ * Gated on __ARM_FEATURE_DOTPROD rather than plain NEON: measured on DGX
+ * Spark (GB10, Cortex-X925), the plain-NEON kernel above is 2.5-3.3x SLOWER
+ * than the compiler's autovectorization of the scalar reference (its
+ * per-block scalar unpack dominates), matching the Q4_K precedent, so
+ * baseline armv8-a builds dispatch to the reference instead. The plain-NEON
+ * kernel is kept compiled for the parity test's bit-exactness check. */
+void vec_dot_q5_0_q8_0_neon_sdot(int n, float *s, const void *vx, const void *vy)
+{
+    const int qk = QK5_0;
+    const int nb = n / qk;
+
+    const block_q5_0 *x = (const block_q5_0 *)vx;
+    const block_q8_0 *y = (const block_q8_0 *)vy;
+
+    float sumf = 0.0f;
+
+    const uint8x16_t m4 = vdupq_n_u8(0x0F);
+    const uint8x16_t m10 = vdupq_n_u8(0x10);
+    const int8x16_t off = vdupq_n_s8(16);
+    /* Lane j selects bit (j % 8) of the replicated qh byte. */
+    const uint8x16_t bits = {1, 2, 4, 8, 16, 32, 64, 128,
+                             1, 2, 4, 8, 16, 32, 64, 128};
+
+    for (int ib = 0; ib < nb; ib++) {
+        uint32_t qh32;
+        memcpy(&qh32, x[ib].qh, sizeof(qh32));
+        const uint8x8_t qh8 = vcreate_u8((uint64_t)qh32);
+
+        /* Spread bit j of qh to 0x10 in byte lane j: weights 0-15 use bits
+         * 0-15 (qh bytes 0-1), weights 16-31 use bits 16-31 (qh bytes 2-3). */
+        const uint8x16_t hb_lo = vandq_u8(
+            vtstq_u8(vcombine_u8(vdup_lane_u8(qh8, 0), vdup_lane_u8(qh8, 1)),
+                     bits), m10);
+        const uint8x16_t hb_hi = vandq_u8(
+            vtstq_u8(vcombine_u8(vdup_lane_u8(qh8, 2), vdup_lane_u8(qh8, 3)),
+                     bits), m10);
+
+        const uint8x16_t qs = vld1q_u8(x[ib].qs);
+        const int8x16_t q5_lo = vsubq_s8(
+            vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs, m4), hb_lo)), off);
+        const int8x16_t q5_hi = vsubq_s8(
+            vreinterpretq_s8_u8(vorrq_u8(vshrq_n_u8(qs, 4), hb_hi)), off);
+
+        int32x4_t acc = vdotq_s32(vdupq_n_s32(0), q5_lo,
+                                  vld1q_s8(&y[ib].qs[0]));
+        acc = vdotq_s32(acc, q5_hi, vld1q_s8(&y[ib].qs[16]));
+
+        const float d = CK_FP16_TO_FP32(x[ib].d) * CK_FP16_TO_FP32(y[ib].d);
+        sumf += d * (float)ck_hsum_s32x4(acc);
+    }
+
+    *s = sumf;
+}
+#endif /* __ARM_FEATURE_DOTPROD */
 #endif
 
 #ifdef __AVX512F__
@@ -1597,10 +1665,30 @@ void gemm_nt_q5_0_q8_0_unroll_avx(
  *   1. AVX512 (best performance on modern Intel/AMD)
  *   2. AVX (256-bit float ops, works on Sandy/Ivy Bridge and newer)
  *   3. SSSE3 (128-bit fallback)
- *   4. Reference scalar (last resort)
+ *   4. NEON with SDOT (AArch64 dot-product extension)
+ *   5. Reference scalar (last resort; also the baseline armv8-a default -
+ *      plain NEON measured slower than autovectorized scalar, see the SDOT
+ *      kernel comment above)
+ *
+ * CK_DEBUG_Q5_0_Q8_0_REF=1 forces the scalar reference (A/B escape hatch,
+ * mirrors CK_DEBUG_Q4K_Q8_REF).
  */
+static int ck_q5_0_q8_0_force_ref(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        const char *env = getenv("CK_DEBUG_Q5_0_Q8_0_REF");
+        cached = (env && env[0] && env[0] != '0') ? 1 : 0;
+    }
+    return cached;
+}
+
 void vec_dot_q5_0_q8_0(int n, float *s, const void *vx, const void *vy)
 {
+    if (ck_q5_0_q8_0_force_ref()) {
+        vec_dot_q5_0_q8_0_ref(n, s, vx, vy);
+        return;
+    }
 #if defined(__AVX2__)
     /* llama.cpp uses the packed AVX2 dot on AVX-512 hosts as well. It keeps
      * Q5/Q8 data in byte lanes and avoids the per-block 32-bit lane expansion
@@ -1608,8 +1696,14 @@ void vec_dot_q5_0_q8_0(int n, float *s, const void *vx, const void *vy)
     vec_dot_q5_0_q8_0_avx2(n, s, vx, vy);
 #elif defined(__AVX512F__)
     vec_dot_q5_0_q8_0_avx512(n, s, vx, vy);
-#elif defined(__ARM_NEON) || defined(__aarch64__)
-    vec_dot_q5_0_q8_0_neon(n, s, vx, vy);
+#elif defined(__ARM_FEATURE_DOTPROD)
+    /* SDOT NEON is integer-exact against the scalar reference (identical
+     * block arithmetic and FP32 epilogue); CK_DEBUG_Q5_0_Q8_0_REF=1 still
+     * forces the reference above. Baseline armv8-a builds (no dot-product
+     * extension) keep the scalar reference: the plain-NEON kernel measured
+     * 2.5-3.3x slower than gcc's autovectorized ref on Cortex-X925 (DGX
+     * Spark), so it is not dispatched (same finding as Q4_K). */
+    vec_dot_q5_0_q8_0_neon_sdot(n, s, vx, vy);
 #elif defined(__AVX__)
     /* AVX for 256-bit float ops (works on Ivy Bridge and newer) */
     vec_dot_q5_0_q8_0_avx(n, s, vx, vy);
@@ -1618,6 +1712,29 @@ void vec_dot_q5_0_q8_0(int n, float *s, const void *vx, const void *vy)
     vec_dot_q5_0_q8_0_sse(n, s, vx, vy);
 #else
     vec_dot_q5_0_q8_0_ref(n, s, vx, vy);
+#endif
+}
+
+/* Truthful provider-name helper (same pattern as ck_q4_k_q8_k_provider_name):
+ * reports the provider the dispatcher above actually selects, including the
+ * CK_DEBUG_Q5_0_Q8_0_REF escape hatch. */
+const char *ck_q5_0_q8_0_provider_name(void)
+{
+    if (ck_q5_0_q8_0_force_ref()) {
+        return "q5_0_q8_0_ref";
+    }
+#if defined(__AVX2__)
+    return "q5_0_q8_0_avx2";
+#elif defined(__AVX512F__)
+    return "q5_0_q8_0_avx512";
+#elif defined(__ARM_FEATURE_DOTPROD)
+    return "q5_0_q8_0_neon_sdot";
+#elif defined(__AVX__)
+    return "q5_0_q8_0_avx";
+#elif defined(__SSSE3__)
+    return "q5_0_q8_0_sse";
+#else
+    return "q5_0_q8_0_ref";
 #endif
 }
 
