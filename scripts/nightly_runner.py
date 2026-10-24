@@ -778,6 +778,11 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_qwen3_tts_codec_first_block.py",
         timeout_sec=180,
     ),
+    "tts_qwen3_customvoice_codec_pretransformer": TestSuite(
+        "Qwen3-TTS Generated Codec Complete Pre-Transformer", "inference",
+        ROOT / "tests" / "test_v8_qwen3_tts_codec_pretransformer.py",
+        timeout_sec=180,
+    ),
     "tts_audio_sliding_attention_oracle": TestSuite(
         "Checked Sliding Attention Independent Oracle", "kernels",
         ROOT / "tests" / "test_v8_attention_sliding_bounded_oracle.py",
