@@ -36,6 +36,15 @@ CASES = {
 }
 
 
+class _ReadTool:
+    def model_dump(self):
+        return {"type": "function", "function": {
+            "name": "read_file", "description": "Read a file",
+            "parameters": {"type": "object", "properties": {
+                "path": {"type": "string"}}, "required": ["path"]},
+        }}
+
+
 @pytest.mark.parametrize("family", CASES)
 def test_circuit_linked_chat_only_profile(family: str) -> None:
     circuit = json.loads((ROOT / f"version/v8/circuits/{family}.json").read_text())
@@ -67,6 +76,18 @@ def test_publisher_chat_prompt_bytes(family: str) -> None:
         )
         assert prompt is not None
         assert hashlib.sha256(prompt.encode()).hexdigest() == case[f"{label}_sha"]
+
+
+def test_nemotron_publisher_tool_prompt_bytes_without_tool_capability_claim() -> None:
+    source = (FIXTURES / CASES["nemotron_h"]["fixture"]).read_text()
+    prompt = _render_with_chat_templates(
+        source, None, [{"role": "user", "content": "Read x"}],
+        SimpleNamespace(tools=[_ReadTool()], instructions=None, tool_choice="auto"),
+        renderer_tokens={}, tool_protocol="none",
+    )
+    assert prompt is not None
+    # Pinned publisher AutoTokenizer.apply_chat_template, same tool schema.
+    assert hashlib.sha256(prompt.encode()).hexdigest() == "f8b8eb646cce9b61a2adbdd6f36918c599c1d679bd32495f7334469c98e3d25f"
 
 
 @pytest.mark.parametrize("family", CASES)
@@ -130,5 +151,15 @@ def test_pinned_artifact_token_ids_when_configured(family: str) -> None:
             )
             assert prompt is not None
             assert session.encode_ids(prompt) == expected
+        if family == "nemotron_h":
+            prompt = _render_with_chat_templates(
+                template, None, [{"role": "user", "content": "Read x"}],
+                SimpleNamespace(tools=[_ReadTool()], instructions=None, tool_choice="auto"),
+                renderer_tokens={}, tool_protocol="none",
+            )
+            assert prompt is not None
+            ids = session.encode_ids(prompt)
+            assert len(ids) == 223
+            assert hashlib.sha256(json.dumps(ids, separators=(",", ":")).encode()).hexdigest() == "944d17d07971cccbf1542c78b2fe0ce2bca097ce18c9c82f1c66de52b37544c7"
     finally:
         session.close()
