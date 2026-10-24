@@ -35,6 +35,29 @@ def add_synthetic_weights(arrays, rng, layers):
     arrays[f"{PREFIX}.output_proj.bias"] = np.zeros(3, dtype=np.float32)
 
 
+def pinned_pretransformer_weights(model_dir):
+    from safetensors import safe_open
+
+    arrays = pinned_weights(model_dir)
+    with safe_open(model_dir / "speech_tokenizer/model.safetensors",
+                   framework="pt", device="cpu") as source:
+        for layer in range(8):
+            for name in ("input_layernorm.weight", "self_attn.q_proj.weight",
+                         "self_attn.k_proj.weight", "self_attn.v_proj.weight",
+                         "self_attn.o_proj.weight", "self_attn_layer_scale.scale",
+                         "post_attention_layernorm.weight", "mlp.gate_proj.weight",
+                         "mlp.up_proj.weight", "mlp.down_proj.weight",
+                         "mlp_layer_scale.scale"):
+                key = f"{PREFIX}.layers.{layer}.{name}"
+                arrays[key] = np.ascontiguousarray(
+                    source.get_tensor(key.removeprefix("codec.")).float().numpy())
+        for name in ("norm.weight", "output_proj.weight", "output_proj.bias"):
+            key = f"{PREFIX}.{name}"
+            arrays[key] = np.ascontiguousarray(
+                source.get_tensor(key.removeprefix("codec.")).float().numpy())
+    return arrays
+
+
 class Qwen3TTSCodecPretransformerTest(unittest.TestCase):
     def test_authored_circuit_and_fixture_integrity(self):
         path = ROOT / "version/v8/circuits/qwen3_tts_codec_pretransformer_bounded.json"
@@ -153,25 +176,8 @@ class Qwen3TTSCodecPretransformerTest(unittest.TestCase):
     @unittest.skipUnless(os.environ.get("CKE_QWEN3_TTS_MODEL_DIR"),
                          "pinned weights unavailable; complete codec transformer parity NOT_TESTED")
     def test_pinned_connected_eight_layers(self):
-        from safetensors import safe_open
         model_dir = Path(os.environ["CKE_QWEN3_TTS_MODEL_DIR"])
-        arrays = pinned_weights(model_dir)
-        with safe_open(model_dir / "speech_tokenizer/model.safetensors",
-                       framework="pt", device="cpu") as source:
-            for layer in range(8):
-                for name in ("input_layernorm.weight", "self_attn.q_proj.weight",
-                             "self_attn.k_proj.weight", "self_attn.v_proj.weight",
-                             "self_attn.o_proj.weight", "self_attn_layer_scale.scale",
-                             "post_attention_layernorm.weight", "mlp.gate_proj.weight",
-                             "mlp.up_proj.weight", "mlp.down_proj.weight",
-                             "mlp_layer_scale.scale"):
-                    key = f"{PREFIX}.layers.{layer}.{name}"
-                    arrays[key] = np.ascontiguousarray(
-                        source.get_tensor(key.removeprefix("codec.")).float().numpy())
-            for name in ("norm.weight", "output_proj.weight", "output_proj.bias"):
-                key = f"{PREFIX}.{name}"
-                arrays[key] = np.ascontiguousarray(
-                    source.get_tensor(key.removeprefix("codec.")).float().numpy())
+        arrays = pinned_pretransformer_weights(model_dir)
         with np.load(MODEL) as fixture, np.load(CHECKPOINT) as oracle:
             codes = fixture["codec_tokens"].astype(np.int32)
             with tempfile.TemporaryDirectory() as temp:
