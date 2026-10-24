@@ -961,6 +961,37 @@ def _tokenizer_pretokenizer_profile(data: dict) -> Optional[str]:
     if not isinstance(rows, list) or len(rows) < 2:
         return None
 
+    # A four-stage isolated split is used by publisher tokenizer.json assets:
+    # 1–3 digit groups, a CJK run, a Unicode word/punctuation/space split,
+    # then ByteLevel without its own regex. The existing native isolated-split
+    # provider implements these boundaries. Require the complete declaration;
+    # a merely similar regex must not inherit its numerical token contract.
+    unicode_word_pattern = (
+        r'''[!"#$%&'()*+,\-./:;<=>?@\[\\\]^_`{|}~][A-Za-z]+'''
+        r'''|[^\r\n\p{L}\p{P}\p{S}]?[\p{L}\p{M}]+'''
+        r'''| ?[\p{P}\p{S}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+'''
+    ).replace(r"\r", "\r").replace(r"\n", "\n")
+    isolated_patterns = (
+        r"\p{N}{1,3}",
+        r"[一-龥぀-ゟ゠-ヿ]+",
+        unicode_word_pattern,
+    )
+    if len(rows) == 4 and all(
+        isinstance(row, dict)
+        and row.get("type") == "Split"
+        and row.get("behavior") == "Isolated"
+        and row.get("invert") is False
+        and isinstance(row.get("pattern"), dict)
+        and row["pattern"].get("Regex") == pattern
+        for row, pattern in zip(rows[:3], isolated_patterns)
+    ) and rows[3] == {
+        "type": "ByteLevel",
+        "add_prefix_space": False,
+        "trim_offsets": True,
+        "use_regex": False,
+    }:
+        return "unicode_split_isolated"
+
     split_patterns: list[str] = []
     has_byte_level = False
     for row in rows:
