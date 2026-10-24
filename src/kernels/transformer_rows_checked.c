@@ -95,6 +95,36 @@ int add_rows_checked_f32(const float *left, size_t left_elements,
     return 0;
 }
 
+int channel_scale_rows_checked_f32(const float *input, size_t input_elements,
+                                   size_t input_stride, const float *scale,
+                                   size_t scale_elements, float *output,
+                                   size_t output_elements, size_t output_stride,
+                                   size_t rows, size_t channels)
+{
+    size_t input_span, output_span;
+    if (!ck_checked_span(rows, channels, input_stride, &input_span) ||
+        !ck_checked_span(rows, channels, output_stride, &output_span) ||
+        input_elements < input_span || output_elements < output_span ||
+        scale_elements < channels) return -2;
+    if (!ck_checked_region(input, input_span) ||
+        !ck_checked_region(scale, channels) ||
+        !ck_checked_region(output, output_span) ||
+        ck_checked_overlap(input, input_span, output, output_span) ||
+        ck_checked_overlap(scale, channels, output, output_span)) return -1;
+    if (!ck_checked_finite(scale, channels)) return -3;
+    for (size_t row = 0; row < rows; ++row)
+        for (size_t channel = 0; channel < channels; ++channel) {
+            const float value = input[row * input_stride + channel];
+            if (!isfinite(value) || !isfinite(value * scale[channel]))
+                return -3;
+        }
+    for (size_t row = 0; row < rows; ++row)
+        for (size_t channel = 0; channel < channels; ++channel)
+            output[row * output_stride + channel] =
+                input[row * input_stride + channel] * scale[channel];
+    return 0;
+}
+
 int silu_mul_rows_checked_f32(const float *gate, size_t gate_elements,
                               const float *up, size_t up_elements,
                               float *output, size_t output_elements,
