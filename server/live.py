@@ -1214,13 +1214,41 @@ def _extract_tool_calls_from_text(
     candidates: list[str | dict[str, Any]] = []
     if tool_syntax == _TOOL_SYNTAX_NEMOTRON_TOOLCALL_V1:
         opening, closing = "<TOOLCALL>", "</TOOLCALL>"
-        opens, closes = text.count(opening), text.count(closing)
+        opens, closes = stripped.count(opening), stripped.count(closing)
         if opens != closes or opens > 1:
             return [], "malformed", "malformed Nemotron tool-call envelope"
         if opens:
-            start = text.index(opening) + len(opening)
-            end = text.index(closing, start)
-            payload = text[start:end].strip()
+            start = stripped.find(opening)
+            end = stripped.find(closing)
+            if end < start or not stripped.endswith(closing):
+                return [], "malformed", "Nemotron tool call must be a terminal envelope"
+            leading = text[:len(text) - len(text.lstrip())]
+            if " " in leading or "\t" in leading:
+                return [], "malformed", "Nemotron tool call cannot be indented quoted text"
+            preamble = stripped[:start]
+            # The publisher template starts generation after <think> or
+            # <think></think>. The model may close reasoning before its final
+            # answer; never treat a call inside reasoning as executable.
+            if preamble.startswith("<think>"):
+                thought_end = preamble.find("</think>")
+                if thought_end < 0:
+                    return [], "malformed", "Nemotron tool call is inside reasoning"
+                preamble = preamble[thought_end + len("</think>"):]
+            elif preamble.startswith("</think>"):
+                preamble = preamble[len("</think>"):]
+            preamble_text = preamble.strip()
+            if preamble_text and (
+                not preamble.endswith("\n\n")
+                or len(preamble) > 1024
+                or any(char in preamble for char in "<>`\"'|")
+                or preamble_text[-1] not in ".!?"
+                or re.search(
+                    r"\b(?:example|sample|quoted?|syntax|format)\b",
+                    preamble_text, re.IGNORECASE,
+                )
+            ):
+                return [], "malformed", "Nemotron tool call has invalid outer framing"
+            payload = stripped[start + len(opening):end].strip()
             if not payload.startswith("[") or not payload.endswith("]"):
                 return [], "malformed", "Nemotron tool calls require a JSON array"
             candidates = [payload]

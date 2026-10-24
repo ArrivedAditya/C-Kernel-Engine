@@ -3107,14 +3107,22 @@ def _resolve_tokenizer_contract(
 
     special_tokens = manifest.get("special_tokens", {}) if isinstance(manifest.get("special_tokens"), dict) else {}
     tok_model = str(special_tokens.get("tokenizer_model") or "").strip().lower()
+    fallback_type = None
     if tok_model in {"bpe", "gpt2"}:
-        return {"tokenizer_type": "bpe"}
-    if tok_model in {"wordpiece"}:
-        return {"tokenizer_type": "wordpiece"}
-    if tok_model in {"llama", "sentencepiece", "spm"}:
-        return {"tokenizer_type": "sentencepiece"}
-
-    return {"tokenizer_type": template_type} if template_type else {}
+        fallback_type = "bpe"
+    elif tok_model == "wordpiece":
+        fallback_type = "wordpiece"
+    elif tok_model in {"llama", "sentencepiece", "spm"}:
+        fallback_type = "sentencepiece"
+    else:
+        fallback_type = template_type
+    circuit_type = str(circuit_contract.get("tokenizer_type") or "").strip().lower()
+    if fallback_type and circuit_type and fallback_type != circuit_type:
+        raise ValueError("circuit/imported tokenizer type mismatch")
+    resolved = {"tokenizer_type": fallback_type or circuit_type} if (fallback_type or circuit_type) else {}
+    if "bos_policy" in circuit_contract:
+        resolved["bos_policy"] = circuit_contract["bos_policy"]
+    return resolved
 
 
 def _resolve_tokenizer_type(

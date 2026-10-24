@@ -235,6 +235,38 @@ class TestV8TokenizerCapabilityCodegen(unittest.TestCase):
                 {}, {"tokenizer_contract": {"tokenizer_type": "sentencepiece"}},
             )
 
+    def test_publisher_bos_policy_survives_tokenizer_fallbacks(self) -> None:
+        circuit = {"flags": {"tokenizer": "bpe"}, "contract": {
+            "tokenizer_contract": {
+                "tokenizer_type": "bpe",
+                "bos_policy": "publisher_template_no_implicit_bos",
+            },
+        }}
+        for manifest, config in (
+            ({"special_tokens": {"tokenizer_model": "gpt2"}}, {}),
+            ({}, {}),
+            ({}, {"tokenizer_contract": {"source": "legacy_import"}}),
+        ):
+            with self.subTest(manifest=manifest, config=config):
+                resolved = build_ir_v8._resolve_tokenizer_contract(
+                    circuit, config, manifest,
+                )
+                self.assertEqual(resolved["tokenizer_type"], "bpe")
+                self.assertEqual(
+                    resolved["bos_policy"],
+                    "publisher_template_no_implicit_bos",
+                )
+                generated = build_ir_v8._generate_tokenizer_c_code(
+                    "bpe", vocab_size=256, num_merges=0,
+                    special_tokens={"bos_token_id": 1, "add_bos_token": True},
+                    tokenizer_contract=resolved,
+                )
+                self.assertIn("cfg.add_bos = false;", generated["init"])
+        with self.assertRaisesRegex(ValueError, "tokenizer type mismatch"):
+            build_ir_v8._resolve_tokenizer_contract(
+                circuit, {}, {"special_tokens": {"tokenizer_model": "sentencepiece"}},
+            )
+
     def test_sentencepiece_exports_text_encode_capability(self) -> None:
         generated = build_ir_v8._generate_tokenizer_c_code(
             "sentencepiece",

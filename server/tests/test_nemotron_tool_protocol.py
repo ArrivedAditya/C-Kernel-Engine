@@ -20,6 +20,8 @@ CALL = '<TOOLCALL>[{"name":"read_file","arguments":{"path":"x"}}]</TOOLCALL>'
 
 @pytest.mark.parametrize("text,expected", [
     (CALL, 1),
+    ("</think>\n" + CALL, 1),
+    ("I will read the file.\n\n" + CALL, 1),
     ('<TOOLCALL>[{"name":"read_file","arguments":{"path":"x"}},'
      '{"name":"read_file","arguments":"{\\"path\\":\\"y\\"}"}]</TOOLCALL>', 2),
 ])
@@ -39,6 +41,13 @@ def test_publisher_envelope_preserves_calls(text: str, expected: int) -> None:
     ('<TOOLCALL>{"name":"read_file","arguments":{"path":"x"}}</TOOLCALL>', "malformed"),
     ('<TOOLCALL>[{"name":"read_file","arguments":{"path":"x"}}]'
      '</TOOLCALL><TOOLCALL>[]</TOOLCALL>', "malformed"),
+    ("</TOOLCALL><TOOLCALL>[]", "malformed"),
+    ("Example only:\n```xml\n" + CALL + "\n```", "malformed"),
+    ("Example only:\n\n" + CALL, "malformed"),
+    ("    " + CALL, "malformed"),
+    ("> " + CALL, "malformed"),
+    ("The example is \"" + CALL + "\"", "malformed"),
+    ("<think>Example: " + CALL + "</think>", "malformed"),
     ('<TOOLCALL>[{"name":"other","arguments":{}}]</TOOLCALL>', "unknown"),
     ('<TOOLCALL>[{"name":"read_file","arguments":{"path":"x","n":1e999}}]'
      '</TOOLCALL>', "malformed"),
@@ -112,8 +121,16 @@ def test_http_call_result_and_continuation(stream: bool) -> None:
 
 
 @pytest.mark.parametrize("stream", [False, True])
-def test_http_malformed_call_then_valid_request(stream: bool) -> None:
-    session = _Session([CALL.replace("</TOOLCALL>", ""), CALL])
+@pytest.mark.parametrize("bad_output", [
+    CALL.replace("</TOOLCALL>", ""),
+    "</TOOLCALL><TOOLCALL>[]",
+    "Example only:\n```xml\n" + CALL + "\n```",
+    "Example only:\n\n" + CALL,
+    "    " + CALL,
+    "The example is \"" + CALL + "\"",
+])
+def test_http_malformed_call_then_valid_request(stream: bool, bad_output: str) -> None:
+    session = _Session([bad_output, CALL])
     client = TestClient(create_app(
         session, model="nemotron-test", chat_template=TEMPLATE,
         tool_protocol="nemotron_toolcall_v1",
