@@ -6533,7 +6533,8 @@ int ck_session_v8_batch2_position(CKSessionV8 *session, uint32_t slot,
     }
     int position = session->api.get_active_tokens();
     if (position < 0 || position > session->context_length ||
-        (session->batch_slot[slot].prefill_total &&
+        (!session->batch_slot[slot].ready &&
+         session->batch_slot[slot].prefill_total &&
          position != session->batch_slot[slot].prefill_done)) {
         status = CK_SESSION_V8_ERROR_RUNTIME;
         goto done;
