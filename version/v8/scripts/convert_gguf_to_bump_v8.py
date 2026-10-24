@@ -987,6 +987,16 @@ def _tokenizer_pretokenizer_profile(data: dict) -> Optional[str]:
     return None
 
 
+def _gguf_pretokenizer_profile(meta: dict) -> Optional[str]:
+    """Resolve a GGUF tokenizer policy by its declared pre-tokenizer tag."""
+    tag = str(meta.get("tokenizer.ggml.pre") or "").strip().lower()
+    # This GGUF tag declares the byte-level regex without GPT-2's newline
+    # attachment. Keep the mapping at the tokenizer-asset boundary.
+    if tag == "command-r":
+        return "bytelevel_simple"
+    return None
+
+
 def _apply_tokenizer_contract_overrides(template_data: dict, tokenizer_type: Optional[str]) -> dict:
     patched = copy.deepcopy(template_data)
     if not tokenizer_type:
@@ -4878,6 +4888,9 @@ def main() -> None:
                     "tokenizer_type": "sentencepiece" if str(meta.get("tokenizer.ggml.model", "")).strip().lower() in {"llama", "sentencepiece", "spm"} else _normalize_tokenizer_type_name(meta.get("tokenizer.ggml.model")),
                     "source": "gguf_metadata",
                 }
+                pretokenizer = _gguf_pretokenizer_profile(meta)
+                if pretokenizer:
+                    tokenizer_contract["pretokenizer"] = pretokenizer
                 print(f"[tokenizer] extracted {len(vocab_offsets)} tokens, {num_merges} merges, {total_vocab_bytes} bytes from GGUF metadata")
 
         num_layers = meta_int(
