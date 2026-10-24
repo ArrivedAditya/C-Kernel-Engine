@@ -2420,7 +2420,13 @@ make test-native-session-v8</pre>
         Nemotron's optional <code>tools</code> variant selects the publisher's
         <code>&lt;TOOLCALL&gt;</code> JSON-array protocol. Deterministic HTTP tests cover
         streaming, argument preservation, tool-result continuation, malformed calls,
-        and recovery; real generated tool calls remain an artifact-backed gate.
+        and recovery. A separately rebuilt P3 Nemotron bundle completed a real
+        short HTTP tool call for <code>read_file</code> with preserved arguments,
+        accepted a correlated result, and returned a final answer. Short chat and
+        streaming Responses also completed with the publisher's
+        <code>/no_think</code> control. This is a bounded 2,048-token tool round trip;
+        a coding harness task, repeated recovery, longer prompts, and full-model
+        numerical certification remain untested.
         The imported Cohere GGUF default template does not render supplied function
         tools, so its profile remains chat-only. A usable Cohere tool harness requires
         a verified publisher tool variant and an independently tested output parser.
