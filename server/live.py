@@ -1121,6 +1121,7 @@ def _extract_tool_calls_from_text(
     *,
     tool_syntax: str = _TOOL_SYNTAX_TOOL_CALL_JSON,
     tool_parameters: dict[str, dict[str, Any]] | None = None,
+    prompt_opens_thinking: bool = False,
 ) -> tuple[list[dict[str, Any]], str | None, str | None]:
     """Parse model-native tool calls from generated text.
 
@@ -1226,18 +1227,28 @@ def _extract_tool_calls_from_text(
             if " " in leading or "\t" in leading:
                 return [], "malformed", "Nemotron tool call cannot be indented quoted text"
             preamble = stripped[:start]
-            # The publisher template opens <think> in the prompt. The generated
-            # text can therefore begin with reasoning prose and only contain
-            # </think>. A call is executable only after that single phase close.
-            if "</think>" in preamble:
-                if preamble.count("</think>") != 1:
-                    return [], "malformed", "Nemotron reasoning has multiple closing delimiters"
+            # The supported grammar is: optional closed reasoning phase, an
+            # optional bounded plain-text answer ending in a blank line, then
+            # one terminal envelope on its own line. A prompt-opened phase is
+            # established by the rendered generation prefix, never inferred
+            # from an arbitrary closing tag in generated text. Reject fenced
+            # examples before splitting off any reasoning text.
+            if "```" in preamble or "~~~" in preamble:
+                return [], "malformed", "Nemotron tool call is inside fenced text"
+            explicit_open = preamble.startswith("<think>")
+            opens, closes = preamble.count("<think>"), preamble.count("</think>")
+            if (opens > 1 or closes > 1 or (opens and not explicit_open)
+                    or (prompt_opens_thinking and explicit_open)):
+                return [], "malformed", "Nemotron reasoning has invalid delimiters"
+            if closes:
+                if not (prompt_opens_thinking or explicit_open):
+                    return [], "malformed", "Nemotron reasoning closer has no opening phase"
                 thought, preamble = preamble.split("</think>", 1)
-                if "<think>" in thought and not thought.startswith("<think>"):
-                    return [], "malformed", "Nemotron reasoning has invalid opening delimiter"
-                if thought.count("<think>") > 1:
-                    return [], "malformed", "Nemotron reasoning has multiple opening delimiters"
-            elif "<think>" in preamble:
+                if explicit_open:
+                    thought = thought[len("<think>"):]
+                if any(char in thought for char in "<>|"):
+                    return [], "malformed", "Nemotron reasoning has invalid framing"
+            elif prompt_opens_thinking or explicit_open:
                 return [], "malformed", "Nemotron tool call is inside reasoning"
             preamble_text = preamble.strip()
             final_paragraph = preamble_text.split("\n\n")[-1]
@@ -1245,7 +1256,7 @@ def _extract_tool_calls_from_text(
                 not preamble.endswith("\n\n")
                 or len(preamble) > 1024
                 or any(char in preamble for char in "<>|")
-                or "```" in preamble
+                or re.search(r"(?m)^[ \t]*(?:>|['\"]\s*<TOOLCALL>)", preamble)
                 or re.search(
                     r"\b(?:example|sample|quoted?|syntax|format)\b",
                     final_paragraph, re.IGNORECASE,
@@ -2335,7 +2346,7 @@ def create_app(
         return resp
 
     def _parse_tool_result(
-        text: str, body
+        text: str, body, *, prompt_opens_thinking: bool = False
     ) -> tuple[list[dict[str, Any]] | None, str | None, str | None]:
         if not _has_function_tools(body) and tool_syntax != _TOOL_SYNTAX_MUSE_ATEM_V1:
             return None, None, None
@@ -2350,7 +2361,9 @@ def create_app(
                 params = _strict_tool_parameters(params)
             parameter_schemas[name] = params
         tool_calls, code, msg = _extract_tool_calls_from_text(
-            text, allowed, tool_syntax=tool_syntax, tool_parameters=parameter_schemas
+            text, allowed, tool_syntax=tool_syntax,
+            tool_parameters=parameter_schemas,
+            prompt_opens_thinking=prompt_opens_thinking,
         )
         if (code is None and tool_calls
                 and getattr(body, "parallel_tool_calls", True) is False
@@ -2722,7 +2735,12 @@ def create_app(
                     output_tokens = int(result.get("generated_tokens") or len(complete))
                     message_index = 1 if think_enabled else 0
                     tool_calls, tool_error_code, tool_error_msg = _parse_tool_result(
-                        raw_text if tool_syntax == _TOOL_SYNTAX_MUSE_ATEM_V1 else text, body
+                        raw_text if tool_syntax in {
+                            _TOOL_SYNTAX_MUSE_ATEM_V1,
+                            _TOOL_SYNTAX_NEMOTRON_TOOLCALL_V1,
+                        } else text,
+                        body,
+                        prompt_opens_thinking=_prompt_opens_thinking(generation_prefix),
                     )
                     if channel_error is not None:
                         tool_calls, tool_error_code, tool_error_msg = None, "malformed", channel_error
@@ -3363,7 +3381,12 @@ def create_app(
         if thinking is not None:
             reasoning_tokens = max(0, len(thinking) // 4)
         tool_calls, tool_error_code, tool_error_msg = _parse_tool_result(
-            raw_text if tool_syntax == _TOOL_SYNTAX_MUSE_ATEM_V1 else text, body
+            raw_text if tool_syntax in {
+                _TOOL_SYNTAX_MUSE_ATEM_V1,
+                _TOOL_SYNTAX_NEMOTRON_TOOLCALL_V1,
+            } else text,
+            body,
+            prompt_opens_thinking=_prompt_opens_thinking(generation_prefix),
         )
         if channel_error is not None:
             tool_calls, tool_error_code, tool_error_msg = None, "malformed", channel_error
