@@ -773,9 +773,18 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_qwen3_tts_codec_attention.py",
         timeout_sec=180,
     ),
+    "tts_qwen3_customvoice_codec_first_block": TestSuite(
+        "Qwen3-TTS Generated Codec First Complete Block", "inference",
+        ROOT / "tests" / "test_v8_qwen3_tts_codec_first_block.py",
+        timeout_sec=180,
+    ),
     "tts_audio_sliding_attention_oracle": TestSuite(
         "Checked Sliding Attention Independent Oracle", "kernels",
         ROOT / "tests" / "test_v8_attention_sliding_bounded_oracle.py",
+    ),
+    "tts_channel_scale_rows_oracle": TestSuite(
+        "Checked Channel Scale Independent Oracle", "kernels",
+        ROOT / "tests" / "test_v8_channel_scale_rows_checked.py",
     ),
     "tts_audio_zero_pad_oracle": TestSuite(
         "Checked Left Zero Padding Independent Oracle", "kernels",

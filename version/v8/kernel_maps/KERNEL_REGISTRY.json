@@ -5,7 +5,7 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "version/v8/kernel_maps",
     "counts": {
-      "total": 448,
+      "total": 449,
       "by_op": {
         "add_backward": 1,
         "add_rows_checked": 1,
@@ -65,6 +65,7 @@
         "audio_wav_decode": 1,
         "audio_zero_pad1d_left_checked": 1,
         "bias_add": 1,
+        "channel_scale_rows_checked": 1,
         "copy_last_logits": 1,
         "embedding": 7,
         "embedding_backward": 1,
@@ -27862,6 +27863,198 @@
       "notes": "In-place bias add: y += bias",
       "name": "bias_add",
       "_source_file": "bias_add.json"
+    },
+    {
+      "id": "channel_scale_rows_checked_f32",
+      "op": "channel_scale_rows_checked",
+      "operation_interface": "channel_scale.checked_rows.fp32.v1",
+      "variant": "checked_scalar_fp32",
+      "selection": {
+        "status": "candidate",
+        "priority": 100,
+        "equivalence_group": "channel_scale.checked_rows.fp32.v1",
+        "phases": [
+          "prefill"
+        ]
+      },
+      "quant": {
+        "weight": "fp32",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "input",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "C"
+          ],
+          "layout": "row_major_strided",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "weights": [
+        {
+          "name": "scale",
+          "dtype": "fp32",
+          "shape": [
+            "C"
+          ],
+          "layout": "feature_contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "weight",
+          "consumption": "required"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "C"
+          ],
+          "layout": "row_major_strided",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "R",
+        "C"
+      ],
+      "impl": {
+        "function": "channel_scale_rows_checked_f32",
+        "c_declaration": "int channel_scale_rows_checked_f32(const float *input, size_t input_elements, size_t input_stride, const float *scale, size_t scale_elements, float *output, size_t output_elements, size_t output_stride, size_t rows, size_t channels);",
+        "sources": [
+          "src/kernels/transformer_rows_checked.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "input",
+            "source": "activation:input",
+            "cast": "const float*",
+            "ports": [
+              "input:input"
+            ]
+          },
+          {
+            "name": "input_elements",
+            "source": "runtime:input_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "input_stride",
+            "source": "runtime:input_stride",
+            "value_type": "size_t"
+          },
+          {
+            "name": "scale",
+            "source": "weight:scale",
+            "cast": "const float*",
+            "ports": [
+              "weight:scale"
+            ]
+          },
+          {
+            "name": "scale_elements",
+            "source": "runtime:scale_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output",
+            "source": "output:output",
+            "cast": "float*",
+            "ports": [
+              "output:output"
+            ]
+          },
+          {
+            "name": "output_elements",
+            "source": "runtime:output_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output_stride",
+            "source": "runtime:output_stride",
+            "value_type": "size_t"
+          },
+          {
+            "name": "rows",
+            "source": "runtime:rows",
+            "value_type": "size_t"
+          },
+          {
+            "name": "channels",
+            "source": "runtime:channels",
+            "value_type": "size_t"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "tests/test_v8_channel_scale_rows_checked.py",
+          "tests/test_v8_qwen3_tts_codec_first_block.py"
+        ]
+      },
+      "notes": "Checked scalar FP32 learned per-channel scale across independently strided rows; rejects invalid geometry and nonfinite products before output writes. No heap allocation.",
+      "call_constant_contract": {
+        "shape_symbols": {
+          "R": "rows",
+          "C": "channels"
+        },
+        "buffer_spans": [
+          {
+            "pointer": "input",
+            "elements": "input_elements",
+            "rows": "rows",
+            "width": "channels",
+            "element_bytes": 4,
+            "stride": "input_stride",
+            "exact_elements_product": [
+              "rows",
+              "channels"
+            ]
+          },
+          {
+            "pointer": "scale",
+            "elements": "scale_elements",
+            "rows": 1,
+            "width": "channels",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "output",
+            "elements": "output_elements",
+            "rows": "rows",
+            "width": "channels",
+            "element_bytes": 4,
+            "stride": "output_stride",
+            "exact_elements_product": [
+              "rows",
+              "channels"
+            ]
+          }
+        ]
+      },
+      "name": "channel_scale_rows_checked_f32",
+      "_source_file": "channel_scale_rows_checked_f32.json"
     },
     {
       "id": "ck_attention_project_head_major_quant",

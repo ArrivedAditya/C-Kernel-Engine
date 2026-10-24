@@ -23,7 +23,7 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def capture(model_dir: Path, output_dir: Path) -> None:
+def load_pinned_transformer(model_dir: Path):
     verify_model_dir(model_dir)
     import qwen_tts
     import torch
@@ -50,6 +50,14 @@ def capture(model_dir: Path, output_dir: Path) -> None:
     prior = FIXTURES / "qwen3_tts_codec_preconv.npz"
     with np.load(prior) as values:
         inputs = torch.from_numpy(values["preconv_output"].T.copy()).unsqueeze(0)
+    return transformer, inputs, config, source_dir
+
+
+def capture(model_dir: Path, output_dir: Path) -> None:
+    transformer, inputs, config, source_dir = load_pinned_transformer(model_dir)
+    import torch
+    from qwen_tts.core.tokenizer_12hz import modeling_qwen3_tts_tokenizer_v2 as modeling
+    prior = FIXTURES / "qwen3_tts_codec_preconv.npz"
     captured = []
     original = modeling.eager_attention_forward
 
