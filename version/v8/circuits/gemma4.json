@@ -16,7 +16,7 @@
     "use_qkv_bias": false,
     "activation": "geglu",
     "rope": "rope",
-    "tokenizer": "sentencepiece",
+    "tokenizer": "bpe",
     "scale_embeddings_sqrt_dim": true,
     "has_qk_norm": true,
     "post_attention_norm": true,
@@ -39,7 +39,7 @@
       "gemma4_per_layer_embed": "gemma4_embed_llama_cpu_segmented_projection_norm_v2"
     },
     "tokenizer_contract": {
-      "tokenizer_type": "sentencepiece",
+      "tokenizer_type": "bpe",
       "bos_policy": "model_defined",
       "eos_policy": "model_defined",
       "special_tokens": {
