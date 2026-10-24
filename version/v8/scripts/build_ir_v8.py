@@ -2042,6 +2042,10 @@ OP_DATAFLOW = {
         "inputs": {"input": "external:snake_input"},
         "outputs": {"output": {"slot": "snake_output", "dtype": "fp32"}},
     },
+    "audio_snake_beta_strided_checked": {
+        "inputs": {"input": "external:snake_beta_input"},
+        "outputs": {"output": {"slot": "snake_beta_output", "dtype": "fp32"}},
+    },
     "embedding_three_table_layer_norm": {
         "inputs": {"word_ids": "external:word_ids", "type_ids": "external:type_ids"},
         "outputs": {"output": {"slot": "embedding_output", "dtype": "fp32"}},
@@ -4894,6 +4898,7 @@ TEMPLATE_TO_KERNEL_OP = {
     "linear_rows_checked": "linear_rows_checked",
     "tanh_strided_checked": "tanh_strided_checked",
     "audio_snake_strided_checked": "audio_snake_strided_checked",
+    "audio_snake_beta_strided_checked": "audio_snake_beta_strided_checked",
     "embedding_three_table_layer_norm": "embedding_three_table_layer_norm",
     "embedding_lookup_checked": "embedding_lookup_checked",
     "audio_duration_logits_to_frames": "audio_duration_logits_to_frames",
@@ -9629,6 +9634,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         "audio_stft_mag_phase_checked": None,
         "tanh_strided_checked": None,
         "audio_snake_strided_checked": ["alpha"],
+        "audio_snake_beta_strided_checked": ["alpha", "beta"],
         # Ops with quantized weights - look up in quant_summary
         "patch_proj": ["patch_emb"],
         "patch_proj_aux": ["patch_emb_aux"],
@@ -13023,6 +13029,7 @@ TEMPLATE_OP_WEIGHTS = {
     "audio_stft_mag_phase_checked": [],
     "tanh_strided_checked": [],
     "audio_snake_strided_checked": ["alpha"],
+    "audio_snake_beta_strided_checked": ["alpha", "beta"],
     # Header (tokenizer is metadata, not model weights)
     "audio_wav_decode": [],
     "audio_pcm_decode": [],

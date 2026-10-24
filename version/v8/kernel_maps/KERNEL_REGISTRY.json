@@ -5,7 +5,7 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "version/v8/kernel_maps",
     "counts": {
-      "total": 451,
+      "total": 452,
       "by_op": {
         "add_backward": 1,
         "add_rows_checked": 1,
@@ -57,6 +57,7 @@
         "audio_resample": 2,
         "audio_scaled_residual_add": 2,
         "audio_scaled_sum_strided_checked": 1,
+        "audio_snake_beta_strided_checked": 1,
         "audio_snake_strided_checked": 1,
         "audio_spectral_head_mag_phase": 1,
         "audio_stft": 4,
@@ -25097,6 +25098,266 @@
       "notes": "Inference only. Separate FP32 sum then FP32 scale, no FMA. All valid inputs and derived results are preflighted before output writes; physical padding is untouched. Inputs and output must not alias. No heap or scratch.",
       "name": "audio_scaled_sum_strided_f32_checked",
       "_source_file": "audio_scaled_sum_strided_f32_checked.json"
+    },
+    {
+      "id": "audio_snake_beta_strided_f32_checked",
+      "op": "audio_snake_beta_strided_checked",
+      "operation_interface": "activation.snake_beta.channelwise.checked.fp32.v1",
+      "variant": "scalar_libm_exp_sin_channel_major",
+      "selection": {
+        "status": "candidate",
+        "priority": 100,
+        "equivalence_group": "audio_snake_beta_strided_f32_checked",
+        "phases": [
+          "prefill"
+        ]
+      },
+      "quant": {
+        "weight": "fp32",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "input",
+          "dtype": "fp32",
+          "shape": [
+            "C",
+            "T"
+          ],
+          "layout": "channel_major_strided",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "weights": [
+        {
+          "name": "alpha",
+          "dtype": "fp32",
+          "shape": [
+            "C"
+          ],
+          "layout": "channel_contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "weight",
+          "consumption": "required"
+        },
+        {
+          "name": "beta",
+          "dtype": "fp32",
+          "shape": [
+            "C"
+          ],
+          "layout": "channel_contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "weight",
+          "consumption": "required"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "C",
+            "T"
+          ],
+          "layout": "channel_major_strided",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "input_elements",
+        "input_stride",
+        "alpha_elements",
+        "beta_elements",
+        "output_elements",
+        "output_stride",
+        "channels",
+        "frames"
+      ],
+      "impl": {
+        "function": "audio_snake_beta_strided_f32_checked",
+        "c_declaration": "int audio_snake_beta_strided_f32_checked(const float *input, size_t input_elements, size_t input_stride, const float *alpha, size_t alpha_elements, const float *beta, size_t beta_elements, float *output, size_t output_elements, size_t output_stride, size_t channels, size_t frames);",
+        "sources": [
+          "src/kernels/audio_snake_checked.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "call_constant_contract": {
+        "shape_symbols": {
+          "C": "snake_beta_channels",
+          "T": "snake_beta_frames"
+        },
+        "buffer_spans": [
+          {
+            "pointer": "input",
+            "elements": "snake_beta_input_elements",
+            "stride": "snake_beta_input_stride",
+            "physical_row_stride": true,
+            "rows": "snake_beta_channels",
+            "width": "snake_beta_frames",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "alpha",
+            "elements": "snake_beta_alpha_elements",
+            "rows": "snake_beta_channels",
+            "width": 1,
+            "element_bytes": 4
+          },
+          {
+            "pointer": "beta",
+            "elements": "snake_beta_beta_elements",
+            "rows": "snake_beta_channels",
+            "width": 1,
+            "element_bytes": 4
+          },
+          {
+            "pointer": "output",
+            "elements": "snake_beta_output_elements",
+            "stride": "snake_beta_output_stride",
+            "physical_row_stride": true,
+            "rows": "snake_beta_channels",
+            "width": "snake_beta_frames",
+            "element_bytes": 4
+          }
+        ]
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "audio_snake_beta_scalar_libm_fp32_v1",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "audio_snake_beta_strided_f32_checked",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "none",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "serial"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "input",
+            "source": "activation:input",
+            "cast": "const float*",
+            "ports": [
+              "input:input"
+            ]
+          },
+          {
+            "name": "input_elements",
+            "source": "runtime:snake_beta_input_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "input_stride",
+            "source": "runtime:snake_beta_input_stride",
+            "value_type": "size_t"
+          },
+          {
+            "name": "alpha",
+            "source": "weight:alpha",
+            "cast": "const float*",
+            "ports": [
+              "weight:alpha"
+            ]
+          },
+          {
+            "name": "alpha_elements",
+            "source": "runtime:snake_beta_alpha_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "beta",
+            "source": "weight:beta",
+            "cast": "const float*",
+            "ports": [
+              "weight:beta"
+            ]
+          },
+          {
+            "name": "beta_elements",
+            "source": "runtime:snake_beta_beta_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output",
+            "source": "output:output",
+            "cast": "float*",
+            "ports": [
+              "output:output"
+            ]
+          },
+          {
+            "name": "output_elements",
+            "source": "runtime:snake_beta_output_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output_stride",
+            "source": "runtime:snake_beta_output_stride",
+            "value_type": "size_t"
+          },
+          {
+            "name": "channels",
+            "source": "runtime:snake_beta_channels",
+            "value_type": "size_t"
+          },
+          {
+            "name": "frames",
+            "source": "runtime:snake_beta_frames",
+            "value_type": "size_t"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "tests/test_v8_audio_snake_beta_checked.py",
+          "tests/test_v8_audio_snake_beta_generated.py",
+          "tests/test_v8_qwen3_tts_codec_snake_beta.py"
+        ],
+        "oracle": "Independent NumPy and pinned full-model PyTorch; finite, tails, padding, rejection, and generated composition"
+      },
+      "constraints": {
+        "notes": "Channels and valid frames positive. Separate finite log-alpha and log-beta weights. Input and weight arrays are disjoint from output and one another. Complete preflight leaves output unchanged on rejection; no heap, scratch, or global state."
+      },
+      "notes": "Inference-only scalar reference for x + sin(exp(log_alpha)*x)^2/(exp(log_beta)+1e-9). Valid frames are distinct from physical row stride and capacity. System expf/sinf may vary across libc and PyTorch backends.",
+      "name": "audio_snake_beta_strided_f32_checked",
+      "_source_file": "audio_snake_beta_strided_f32_checked.json"
     },
     {
       "id": "audio_snake_strided_f32_checked",
