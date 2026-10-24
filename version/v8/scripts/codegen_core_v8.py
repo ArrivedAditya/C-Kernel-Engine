@@ -4503,13 +4503,16 @@ static void _ck_profile_dump(void) {
         ))
 
     if logits_stride == 0:
-        from batch_decode_contract_v8 import resolve_two_row_batch_contract
+        from batch_decode_contract_v8 import (
+            resolve_two_row_batch_contract, resolve_mixed_prefill_local_stages)
         from batch_decode_codegen_v8 import emit_two_row_batch_api, emit_full_layer_batch_api
 
         batch_contract = resolve_two_row_batch_contract(ops, layout, config)
         if batch_contract:
             full_layer = batch_contract.get("full_layer_plan")
             if full_layer:
+                phase_aware = resolve_mixed_prefill_local_stages(
+                    ops, prefill_continuation_ops, full_layer)
                 for number, stage in enumerate(full_layer["stages"]):
                     if stage["kind"] != "local":
                         continue
@@ -4521,7 +4524,18 @@ static void _ck_profile_dump(void) {
                         store_token=stage["start"] == 0,
                         advance_position=stage is full_layer["stages"][-1],
                     ))
-                parts.append(emit_full_layer_batch_api(full_layer))
+                    if phase_aware:
+                        parts.append(emit_decode_function(
+                            prefill_continuation_ops[stage["start"]:stage["stop"]],
+                            token_offset, token_base, config=config,
+                            scale_embeddings_sqrt_dim=(
+                                scale_embeddings_sqrt_dim if stage["start"] == 0 else False),
+                            function_name=f"ck_batch_prefill_stage_{number}",
+                            store_token=stage["start"] == 0,
+                            advance_position=stage is full_layer["stages"][-1],
+                        ))
+                parts.append(emit_full_layer_batch_api(
+                    full_layer, prefill_phase=phase_aware))
             else:
                 parts.append(emit_decode_function(
                     ops[:batch_contract["prefix_len"]], token_offset, token_base,

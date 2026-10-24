@@ -227,6 +227,7 @@ typedef struct {
     ck_model_sequence_state_destroy_v8_fn sequence_destroy;
     ck_model_batch_decode_workspace_v8_fn batch_workspace;
     ck_model_decode_batch2_v8_fn decode_batch2;
+    ck_model_decode_batch2_mixed_prefill_v8_fn decode_batch2_mixed_prefill;
 } ModelAPI;
 
 static void print_runtime_capabilities(const ModelAPI *api) {
@@ -1832,6 +1833,8 @@ static bool load_model_api(const char *lib_path, ModelAPI *api) {
     resolve_symbol(api->handle, "ck_model_sequence_state_destroy", (void **)&api->sequence_destroy, false);
     resolve_symbol(api->handle, "ck_model_batch_decode_workspace", (void **)&api->batch_workspace, false);
     resolve_symbol(api->handle, "ck_model_decode_batch2", (void **)&api->decode_batch2, false);
+    resolve_symbol(api->handle, "ck_model_decode_batch2_mixed_prefill",
+                   (void **)&api->decode_batch2_mixed_prefill, false);
     /* ck_prefill - optional, only present when prefill IR was generated */
     resolve_symbol(api->handle, "ck_prefill", (void **)&api->prefill, false);
     resolve_symbol(api->handle, "ck_model_write_embeddings", (void **)&api->write_embeddings, false);
@@ -6315,13 +6318,14 @@ done:
     return status;
 }
 
-int ck_session_v8_batch2_mixed_step(CKSessionV8 *session,
-                                    const int32_t tokens[2],
-                                    const uint64_t tickets[2],
-                                    uint32_t prefill_slot,
-                                    float *const logits[2],
-                                    uint32_t *advanced_mask,
-                                    int32_t *consumed_out) {
+static int batch2_mixed_step_impl(CKSessionV8 *session,
+                                  const int32_t tokens[2],
+                                  const uint64_t tickets[2],
+                                  uint32_t prefill_slot,
+                                  float *const logits[2],
+                                  uint32_t *advanced_mask,
+                                  int32_t *consumed_out,
+                                  int prefill_phase) {
     if (!session || !tokens || !tickets || prefill_slot >= 2 || !logits ||
         !advanced_mask || !consumed_out)
         return CK_SESSION_V8_ERROR_INVALID_ARGUMENT;
@@ -6331,6 +6335,10 @@ int ck_session_v8_batch2_mixed_step(CKSessionV8 *session,
     if (status != CK_SESSION_V8_OK) return status;
     if (!session->batch_enabled || session->batch_poisoned) {
         status = CK_SESSION_V8_ERROR_BUSY;
+        goto done;
+    }
+    if (prefill_phase && !session->api.decode_batch2_mixed_prefill) {
+        status = CK_SESSION_V8_ERROR_CAPABILITY;
         goto done;
     }
     const unsigned decode_slot = prefill_slot ^ 1u;
@@ -6378,8 +6386,13 @@ int ck_session_v8_batch2_mixed_step(CKSessionV8 *session,
             .token = tokens[i], .position = position,
             .row_offset = i, .token_count = 1, .logits = logits[i]};
     }
-    if (session->api.decode_batch2(rows, 2, session->batch_workspace,
-                                   session->batch_workspace_bytes) != 0) {
+    const int execution_status = prefill_phase
+        ? session->api.decode_batch2_mixed_prefill(
+            rows, 2, session->batch_workspace, session->batch_workspace_bytes,
+            prefill_slot)
+        : session->api.decode_batch2(
+            rows, 2, session->batch_workspace, session->batch_workspace_bytes);
+    if (execution_status != 0) {
         status = CK_SESSION_V8_ERROR_RUNTIME;
         goto poison;
     }
@@ -6403,6 +6416,26 @@ poison:
 done:
     pthread_mutex_unlock(&session->generation_lock);
     return status;
+}
+
+int ck_session_v8_batch2_mixed_step(CKSessionV8 *session,
+                                    const int32_t tokens[2],
+                                    const uint64_t tickets[2],
+                                    uint32_t prefill_slot,
+                                    float *const logits[2],
+                                    uint32_t *advanced_mask,
+                                    int32_t *consumed_out) {
+    return batch2_mixed_step_impl(session, tokens, tickets, prefill_slot,
+                                  logits, advanced_mask, consumed_out, 0);
+}
+
+int ck_session_v8_batch2_mixed_step_prefill_phase(
+    CKSessionV8 *session, const int32_t tokens[2],
+    const uint64_t tickets[2], uint32_t prefill_slot,
+    float *const logits[2], uint32_t *advanced_mask,
+    int32_t *consumed_out) {
+    return batch2_mixed_step_impl(session, tokens, tickets, prefill_slot,
+                                  logits, advanced_mask, consumed_out, 1);
 }
 
 int ck_session_v8_batch2_reset_slot(CKSessionV8 *session, uint32_t slot) {
@@ -6442,7 +6475,9 @@ int ck_session_v8_batch2_position(CKSessionV8 *session, uint32_t slot,
         return CK_SESSION_V8_ERROR_INVALID_ARGUMENT;
     int status = batch2_lock(session);
     if (status != CK_SESSION_V8_OK) return status;
-    if (!session->batch_enabled || !session->batch_slot[slot].ready) {
+    if (!session->batch_enabled ||
+        (!session->batch_slot[slot].ready &&
+         !session->batch_slot[slot].prefill_total)) {
         status = CK_SESSION_V8_ERROR_CAPABILITY;
         goto done;
     }
@@ -6451,7 +6486,9 @@ int ck_session_v8_batch2_position(CKSessionV8 *session, uint32_t slot,
         goto done;
     }
     int position = session->api.get_active_tokens();
-    if (position < 0 || position > session->context_length) {
+    if (position < 0 || position > session->context_length ||
+        (session->batch_slot[slot].prefill_total &&
+         position != session->batch_slot[slot].prefill_done)) {
         status = CK_SESSION_V8_ERROR_RUNTIME;
         goto done;
     }

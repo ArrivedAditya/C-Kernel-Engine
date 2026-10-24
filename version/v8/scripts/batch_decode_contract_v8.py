@@ -639,3 +639,42 @@ def resolve_two_row_batch_contract(
         if full_layer:
             contract["full_layer_plan"] = full_layer
     return contract
+
+
+def resolve_mixed_prefill_local_stages(
+    decode_ops: list[dict[str, Any]],
+    prefill_phase_ops: list[dict[str, Any]] | None,
+    plan: dict[str, Any],
+) -> bool:
+    """Admit phase-aware local stages without changing shared projections.
+
+    The prefill-phase operations have already been resolved against selected
+    provider maps. The mixed entry may change only local function bindings;
+    changing an argument, live buffer, or shared projection needs a distinct
+    batch provider contract and must retain decode-replay execution.
+    """
+    if prefill_phase_ops is None or len(decode_ops) != len(prefill_phase_ops):
+        return False
+    local_indices = {index for stage in plan.get("stages", [])
+                     if stage.get("kind") == "local"
+                     for index in range(stage["start"], stage["stop"])}
+    if not local_indices or len(local_indices) == len(decode_ops):
+        return False
+    changed = False
+    for index, (ordinary, prefill) in enumerate(zip(decode_ops, prefill_phase_ops)):
+        if ordinary == prefill:
+            continue
+        if index not in local_indices:
+            return False
+        ordinary_other = {key: value for key, value in ordinary.items()
+                          if key != "function"}
+        prefill_other = {key: value for key, value in prefill.items()
+                         if key != "function"}
+        alternate = ordinary.get("prefill_continuation")
+        if (ordinary_other != prefill_other or
+                not isinstance(alternate, dict) or
+                alternate.get("function") != prefill.get("function") or
+                ordinary.get("function") == prefill.get("function")):
+            return False
+        changed = True
+    return changed

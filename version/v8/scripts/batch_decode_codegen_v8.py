@@ -5,7 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 
-def emit_full_layer_batch_api(plan: dict[str, Any]) -> str:
+def emit_full_layer_batch_api(plan: dict[str, Any], *,
+                              prefill_phase: bool = False) -> str:
     """Emit checked two-row projection stages across admitted decoder layers."""
     offsets: dict[str, int] = {}
     total = 0
@@ -36,6 +37,13 @@ def emit_full_layer_batch_api(plan: dict[str, Any]) -> str:
     packing_copy_bytes = 0
     for number, stage in enumerate(plan["stages"]):
         if stage["kind"] == "local":
+            stage_call = f"ck_batch_stage_{number}(g_model, rows[i].token);"
+            if prefill_phase:
+                stage_call = (
+                    f"if (prefill_row == (int)i) "
+                    f"ck_batch_prefill_stage_{number}(g_model, rows[i].token); "
+                    f"else {stage_call}"
+                )
             lines = ["    for (size_t i = 0; i < 2; ++i) {",
                      "        /* All validation is complete before either row advances. */",
                      "        if (ck_model_sequence_state_activate(rows[i].sequence_handle) != 0) return -2;"]
@@ -45,10 +53,10 @@ def emit_full_layer_batch_api(plan: dict[str, Any]) -> str:
                 snapshot_copy_bytes += 2 * size
             if stage is plan["stages"][-1]:
                 lines.extend(["        g_ck_skip_decode_logits = 0;",
-                              f"        ck_batch_stage_{number}(g_model, rows[i].token);",
+                              f"        {stage_call}",
                               "        memcpy(rows[i].logits, g_model->logits, (size_t)VOCAB_SIZE * sizeof(float));"])
             else:
-                lines.append(f"        ck_batch_stage_{number}(g_model, rows[i].token);")
+                lines.append(f"        {stage_call}")
                 for ref in stage["live_after"]:
                     size, macro = plan["extents"][ref], plan["buffers"][ref]
                     lines.append(f"        memcpy(base + {offsets[ref]}u + i * {size}u, g_model->bump + {macro}, {size}u);")
@@ -86,6 +94,27 @@ def emit_full_layer_batch_api(plan: dict[str, Any]) -> str:
                     packing_copy_bytes += 2 * size
         previous_live = stage.get("live_after", [])
     execution = "\n".join(work).replace("memcpy(", "ck_batch_memcpy(")
+    entry_name = ("ck_model_decode_batch2_impl" if prefill_phase else
+                  "ck_model_decode_batch2")
+    entry_export = "static " if prefill_phase else "CK_EXPORT "
+    phase_argument = ", int prefill_row" if prefill_phase else ""
+    wrappers = ""
+    if prefill_phase:
+        wrappers = '''
+CK_EXPORT int ck_model_decode_batch2(const CKModelBatchDecodeRowV8 *rows,
+                                      size_t count, void *workspace,
+                                      size_t workspace_bytes) {
+    return ck_model_decode_batch2_impl(rows, count, workspace, workspace_bytes, -1);
+}
+
+CK_EXPORT int ck_model_decode_batch2_mixed_prefill(
+    const CKModelBatchDecodeRowV8 *rows, size_t count, void *workspace,
+    size_t workspace_bytes, uint32_t prefill_row) {
+    if (prefill_row >= 2) return -2;
+    return ck_model_decode_batch2_impl(rows, count, workspace,
+                                       workspace_bytes, (int)prefill_row);
+}
+'''
     return f'''
 #include <time.h>
 /* Generated from checked IR cuts. {plan['projection_groups']} shared projection
@@ -138,9 +167,9 @@ CK_EXPORT size_t ck_model_batch_decode_packing_copy_bytes(void) {{
     return {packing_copy_bytes}u;
 }}
 
-CK_EXPORT int ck_model_decode_batch2(const CKModelBatchDecodeRowV8 *rows,
+{entry_export}int {entry_name}(const CKModelBatchDecodeRowV8 *rows,
                                       size_t count, void *workspace,
-                                      size_t workspace_bytes) {{
+                                      size_t workspace_bytes{phase_argument}) {{
     if (!g_model || !rows || count != 2 || !workspace) return -1;
     if (((uintptr_t)workspace & 63u) || workspace_bytes < {total}u) return -3;
     if (ck_model_cancel_requested() || getenv("CK_STOP_OP") ||
@@ -194,6 +223,7 @@ CK_EXPORT int ck_model_decode_batch2(const CKModelBatchDecodeRowV8 *rows,
 {execution}
     return 0;
 }}
+{wrappers}
 '''
 
 

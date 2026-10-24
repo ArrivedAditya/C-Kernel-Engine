@@ -109,8 +109,7 @@ def test_real_native_staged_prefill_interleaves_and_cancel_reuses(fake_bundle):
         second = loop.begin_staged(1, [2, 3, 4], max_tokens=2)
         assert loop.advance_prefill(second, 1) == ()
         assert loop.batch.position(0) == 1
-        with pytest.raises(SessionError, match="capability"):
-            loop.batch.position(1)
+        assert loop.batch.position(1) == 1
         assert any(token.ticket == first for token in loop.advance().tokens)
         assert loop.advance_prefill(second, 1) == ()
         assert loop.advance_prefill(second, 1) == ()

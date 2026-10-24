@@ -19,7 +19,9 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "version/v8/scripts"))
-from batch_decode_contract_v8 import _crossing_at, resolve_two_row_batch_contract  # noqa: E402
+from batch_decode_contract_v8 import (  # noqa: E402
+    _crossing_at, resolve_mixed_prefill_local_stages, resolve_two_row_batch_contract,
+)
 from batch_decode_codegen_v8 import emit_two_row_batch_api, emit_full_layer_batch_api  # noqa: E402
 from certify_batch_decode_v8 import _measure_native_call, _require_projection_groups  # noqa: E402
 from codegen_core_v8 import emit_decode_function  # noqa: E402
@@ -145,6 +147,28 @@ def _avx2_available() -> bool:
 
 
 class BatchContractTests(unittest.TestCase):
+    def test_mixed_prefill_phase_requires_map_declared_local_binding(self) -> None:
+        ops, layout, config = _two_layer_fixture()
+        plan = resolve_two_row_batch_contract(ops, layout, config)["full_layer_plan"]
+        attention = next(i for i, op in enumerate(ops) if op["op"] == "attn_sliding")
+        projection = next(i for i, op in enumerate(ops) if op["op"] == "q_proj")
+        declared = copy.deepcopy(ops)
+        declared[attention]["prefill_continuation"] = {"function": "prefill_attention"}
+        alternate = copy.deepcopy(declared)
+        alternate[attention]["function"] = "prefill_attention"
+        self.assertTrue(resolve_mixed_prefill_local_stages(declared, alternate, plan))
+        self.assertIn("ck_model_decode_batch2_mixed_prefill",
+                      emit_full_layer_batch_api(plan, prefill_phase=True))
+        self.assertIn("static int ck_model_decode_batch2_impl",
+                      emit_full_layer_batch_api(plan, prefill_phase=True))
+        self.assertFalse(resolve_mixed_prefill_local_stages(ops, alternate, plan))
+        changed_argument = copy.deepcopy(alternate)
+        changed_argument[attention]["args"][0]["expr"] = "wrong pointer"
+        self.assertFalse(resolve_mixed_prefill_local_stages(declared, changed_argument, plan))
+        changed_projection = copy.deepcopy(alternate)
+        changed_projection[projection]["function"] = "different projection"
+        self.assertFalse(resolve_mixed_prefill_local_stages(declared, changed_projection, plan))
+
     def test_q8_two_row_provider_preserves_compact_row_stride(self) -> None:
         for flags in ([], ["-mavx2", "-mfma"] if _avx2_available() else []):
             with self.subTest(flags=flags), tempfile.TemporaryDirectory() as directory:
@@ -631,6 +655,32 @@ int main(void) {
             )
             self.assertNotEqual(wrong_kv_owner, source_text)
             self.assertNotEqual(execute(wrong_kv_owner).returncode, 0)
+
+            # Compile and execute the new wrapper with distinct local-stage
+            # arithmetic. The generated row selector must change only the
+            # chosen staged row; the other row keeps ordinary decode.
+            prefill_stages = "\n".join(
+                f"static void ck_batch_prefill_stage_{index}(CKModel *model, int token) "
+                "{ " + ("g_active_sequence->kv[model->pos]=(uint8_t)(token+1);"
+                        if index == 2 else bodies.get(index, "(void)model; (void)token;"))
+                + " }"
+                for index, stage in enumerate(plan["stages"])
+                if stage["kind"] == "local"
+            )
+            phase_run = run.replace(
+                "ck_model_decode_batch2(rows,2,workspace,bytes)",
+                "ck_model_decode_batch2_mixed_prefill(rows,2,workspace,bytes,0)",
+            ).replace("kv[i][0]!=(uint8_t)(i?7:3)",
+                      "kv[i][0]!=(uint8_t)(i?7:4)")
+            self.assertNotEqual(phase_run, run)
+            phase_source = (prelude + stages + prefill_stages + kernels +
+                            emit_full_layer_batch_api(plan, prefill_phase=True) +
+                            phase_run)
+            self.assertEqual(execute(phase_source).returncode, 0)
+            wrong_row = phase_source.replace(
+                "ck_model_decode_batch2_mixed_prefill(rows,2,workspace,bytes,0)",
+                "ck_model_decode_batch2_mixed_prefill(rows,2,workspace,bytes,1)")
+            self.assertNotEqual(execute(wrong_row).returncode, 0)
 
     def test_in_place_liveness_ignores_argument_order(self) -> None:
         produced = {"args": [{"source": "output:x", "buffer_ref": "extra"}]}
