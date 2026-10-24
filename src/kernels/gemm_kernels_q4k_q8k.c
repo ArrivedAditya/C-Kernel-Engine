@@ -50,6 +50,11 @@ void gemv_q4_k_q8_k_sse(float *y,
                         const void *x_q8,
                         int M, int K);
 
+void gemv_q4_k_q8_k(float *y,
+                    const void *W,
+                    const void *x_q8,
+                    int M, int K);
+
 static inline int ck_nearest_int(float fval) {
     /* Bit-level round-to-nearest from llama.cpp (fast + deterministic). */
     float val = fval + 12582912.f;
@@ -483,15 +488,27 @@ void gemv_q4_k_q8_k_parallel(float *y,
         return;  /* This thread has no work */
     }
 
+    const int blocks_per_row = K / QK_K;
+
+#if defined(__ARM_NEON) || defined(__aarch64__)
+    /* ARM: route the row range through the dispatcher so multi-threaded
+     * decode (the CK_TARGET_ARM branch in ck_parallel_decode_v8.c) uses the
+     * same NEON/SDOT dot as the serial path instead of the scalar reference.
+     * Integer-exact either way; CK_DEBUG_Q4K_Q8_REF is honored inside the
+     * dispatcher. */
+    gemv_q4_k_q8_k(y + r0,
+                   (const char *)W + (size_t)r0 * (size_t)blocks_per_row * sizeof(block_q4_K),
+                   x_q8, r1 - r0, K);
+#else
     const block_q4_K *blocks = (const block_q4_K *)W;
     const block_q8_K *x = (const block_q8_K *)x_q8;
-    const int blocks_per_row = K / QK_K;
 
     /* Only process rows [r0, r1) */
     for (int row = r0; row < r1; ++row) {
         const block_q4_K *w_row = blocks + (size_t)row * (size_t)blocks_per_row;
         y[row] = dot_q4_k_q8_k_ref(w_row, x, K);
     }
+#endif
 }
 
 void gemv_q4_k_q8_k(float *y,

@@ -650,6 +650,7 @@ void quantize_batch_q8_0(const float *x, void *y, int num_rows, int k);
 
 // Q5_0 weights x Q8_0 activations
 void gemv_q5_0_q8_0(float *y, const void *W, const void *x_q8, int M, int K);
+const char *ck_q5_0_q8_0_provider_name(void);
 
 // Q8_0 weights x Q8_0 activations
 void gemv_q8_0_q8_0(float *y, const void *W, const void *x_q8, int M, int K);
