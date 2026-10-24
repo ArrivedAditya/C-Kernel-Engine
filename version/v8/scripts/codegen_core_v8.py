@@ -2388,9 +2388,10 @@ def emit_op(
     elif op_name == "geglu":
         out_expr = _hidden_raw(_hidden_arg("output", "out", "x", "y", "data"))
         if out_expr:
-            count_expr = _hidden_count("dim", "n", "intermediate_dim", default="INTERMEDIATE_DIM")
+            width_expr = _hidden_count("dim", "n", "intermediate_dim", default="INTERMEDIATE_DIM")
+            count_expr = _mul_expr(_hidden_token_count(), width_expr) or width_expr
             lines.append(f'    ck_debug_export_hidden(model, {layer}, "mlp_geglu", (const float*){out_expr}, {count_expr});')
-            _emit_hidden_export_last_row(out_expr, "mlp_geglu", count_expr)
+            _emit_hidden_export_last_row(out_expr, "mlp_geglu", width_expr)
     elif op_name == "mlp_up":
         out_expr = _hidden_raw(_hidden_arg("output", "out", "c", "y"))
         if out_expr:
