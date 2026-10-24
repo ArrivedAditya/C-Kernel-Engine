@@ -778,7 +778,7 @@ def _has_tool_support(
         and any(isinstance(value, str) and value.strip() for value in chat_templates.values())
     )
     return has_template and tool_protocol in {
-        "tagged_json", "bare_json", "qwen_xml", "qwen_code_xml", "qwen_code_xml_raw_v2", "gemma4_dsl_v1", "muse_atem_v1",
+        "tagged_json", "bare_json", "qwen_xml", "qwen_code_xml", "qwen_code_xml_raw_v2", "gemma4_dsl_v1", "muse_atem_v1", "nemotron_toolcall_v1",
     }
 
 
@@ -792,6 +792,7 @@ _TOOL_SYNTAX_QWEN_CODE_XML = "qwen_code_xml"
 _TOOL_SYNTAX_QWEN_CODE_XML_RAW_V2 = "qwen_code_xml_raw_v2"
 _TOOL_SYNTAX_GEMMA4_DSL_V1 = "gemma4_dsl_v1"
 _TOOL_SYNTAX_MUSE_ATEM_V1 = "muse_atem_v1"
+_TOOL_SYNTAX_NEMOTRON_TOOLCALL_V1 = "nemotron_toolcall_v1"
 _TOOL_SYNTAX_NONE = "none"
 
 
@@ -816,6 +817,8 @@ def _tool_syntax_for_protocol(protocol: str | None) -> str:
         return _TOOL_SYNTAX_GEMMA4_DSL_V1
     if protocol == "muse_atem_v1":
         return _TOOL_SYNTAX_MUSE_ATEM_V1
+    if protocol == "nemotron_toolcall_v1":
+        return _TOOL_SYNTAX_NEMOTRON_TOOLCALL_V1
     raise ValueError(f"unsupported tool protocol {protocol!r}")
 
 
@@ -920,8 +923,8 @@ def _render_with_chat_templates(
         # Publisher templates may access message.tool_calls directly, as the
         # Transformers renderer permits for this optional field.
         messages = [
-            {"tool_calls": [], **message} if message.get("role") == "assistant"
-            else message
+            {"tool_calls": [], **message}
+            if message.get("role") == "assistant" else message
             for message in messages
         ]
         tools = None
@@ -1137,6 +1140,19 @@ def _extract_tool_calls_from_text(
         def reject_constant(value: str) -> Any:
             raise ValueError(f"nonfinite JSON value {value}")
 
+        def bounded_float(value: str) -> float:
+            if len(value) > 1024:
+                raise ValueError("numeric tool argument is too long")
+            parsed = float(value)
+            if not math.isfinite(parsed):
+                raise ValueError("nonfinite numeric tool argument")
+            return parsed
+
+        def bounded_int(value: str) -> int:
+            if len(value) > 1024:
+                raise ValueError("numeric tool argument is too long")
+            return int(value)
+
         def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
             result: dict[str, Any] = {}
             for key, value in pairs:
@@ -1147,6 +1163,7 @@ def _extract_tool_calls_from_text(
 
         return json.loads(
             source, parse_constant=reject_constant,
+            parse_float=bounded_float, parse_int=bounded_int,
             object_pairs_hook=reject_duplicate_keys,
         )
 
@@ -1195,6 +1212,18 @@ def _extract_tool_calls_from_text(
     if tool_syntax == _TOOL_SYNTAX_QWEN_CODE_XML_RAW_V2 and stripped.startswith("<tool_call"):
         return [], "malformed", "qwen_code_xml_raw_v2 requires a function_calls envelope"
     candidates: list[str | dict[str, Any]] = []
+    if tool_syntax == _TOOL_SYNTAX_NEMOTRON_TOOLCALL_V1:
+        opening, closing = "<TOOLCALL>", "</TOOLCALL>"
+        opens, closes = text.count(opening), text.count(closing)
+        if opens != closes or opens > 1:
+            return [], "malformed", "malformed Nemotron tool-call envelope"
+        if opens:
+            start = text.index(opening) + len(opening)
+            end = text.index(closing, start)
+            payload = text[start:end].strip()
+            if not payload.startswith("[") or not payload.endswith("]"):
+                return [], "malformed", "Nemotron tool calls require a JSON array"
+            candidates = [payload]
     if tool_syntax == _TOOL_SYNTAX_GEMMA4_DSL_V1:
         try:
             candidates = parse_gemma_tool_calls(text)
@@ -1367,7 +1396,10 @@ def _extract_tool_calls_from_text(
             if args is None and isinstance(item.get("function"), dict):
                 args = item["function"].get("arguments")
             if isinstance(args, dict):
-                args_str = json.dumps(args, separators=(",", ":"))
+                try:
+                    args_str = json.dumps(args, separators=(",", ":"), allow_nan=False)
+                except (TypeError, ValueError, OverflowError) as exc:
+                    return [], "malformed", f"malformed tool call arguments: {exc}"
             elif isinstance(args, str):
                 if args.strip():
                     try:
@@ -1381,7 +1413,10 @@ def _extract_tool_calls_from_text(
                 return [], "malformed", "malformed tool call: invalid arguments"
             contract = (tool_parameters or {}).get(name)
             if isinstance(contract, dict):
-                parsed_args = strict_json_loads(args_str)
+                try:
+                    parsed_args = strict_json_loads(args_str)
+                except (json.JSONDecodeError, ValueError, OverflowError) as exc:
+                    return [], "malformed", f"malformed tool call arguments: {exc}"
                 if not isinstance(parsed_args, dict):
                     return [], "malformed", f"tool {name!r} arguments must be an object"
                 required = contract.get("required", [])
@@ -1432,6 +1467,8 @@ def _strip_tool_json_from_text(
             return stripped[:start].strip()
     if tool_syntax == _TOOL_SYNTAX_GEMMA4_DSL_V1:
         return ""
+    if tool_syntax == _TOOL_SYNTAX_NEMOTRON_TOOLCALL_V1:
+        return re.sub(r"<TOOLCALL>.*?</TOOLCALL>", "", text, flags=re.DOTALL).strip()
     if tool_syntax in {_TOOL_SYNTAX_TOOL_CALL_JSON, _TOOL_SYNTAX_QWEN_XML, _TOOL_SYNTAX_QWEN_CODE_XML}:
         remaining = re.sub(
             r"<tool_call>.*?</tool_call>", "", text, flags=re.DOTALL | re.IGNORECASE

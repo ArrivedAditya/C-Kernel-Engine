@@ -90,6 +90,24 @@ def test_nemotron_publisher_tool_prompt_bytes_without_tool_capability_claim() ->
     assert hashlib.sha256(prompt.encode()).hexdigest() == "f8b8eb646cce9b61a2adbdd6f36918c599c1d679bd32495f7334469c98e3d25f"
 
 
+def test_imported_cohere_default_template_does_not_render_function_tools() -> None:
+    """Its default GGUF template leaves tool use behind the document branch."""
+    source = (FIXTURES / CASES["cohere2"]["fixture"]).read_text()
+    messages = [{"role": "user", "content": "Read x"}]
+    plain = _render_with_chat_templates(
+        source, None, messages,
+        SimpleNamespace(tools=None, instructions=None, tool_choice="auto"),
+        renderer_tokens={}, tool_protocol="none",
+    )
+    supplied = _render_with_chat_templates(
+        source, None, messages,
+        SimpleNamespace(tools=[_ReadTool()], instructions=None, tool_choice="auto"),
+        renderer_tokens={}, tool_protocol="none",
+    )
+    assert supplied == plain
+    assert "read_file" not in supplied
+
+
 @pytest.mark.parametrize("family", CASES)
 @pytest.mark.parametrize("stream", [False, True])
 def test_chat_only_profile_rejects_tools_before_native_work(family: str, stream: bool) -> None:
