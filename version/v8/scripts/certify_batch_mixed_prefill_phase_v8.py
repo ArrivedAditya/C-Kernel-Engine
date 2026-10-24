@@ -27,6 +27,8 @@ def certify(bundle: Path, *, context_length: int, threads: int) -> dict:
                              num_threads=threads)
     try:
         batch = session.enable_batch2(1 << 30)
+        if session.batch2_phase_capabilities() != 3:
+            raise AssertionError("loaded model lacks both phase-aware staged entries")
         model = ctypes.CDLL(str(bundle / "libmodel.so"))
         required_symbol = "ck_model_decode_batch2_mixed_prefill"
         if not hasattr(model, required_symbol):
@@ -82,12 +84,35 @@ def certify(bundle: Path, *, context_length: int, threads: int) -> dict:
             batch.reset_slot(1)
 
         cases = {}
-        for length in (10, 12):
+        standalone_cases = {}
+        for length in (10, 12, 31):
             prompt = tuple(100 + index for index in range(length))
             survivor_prompt = (200, 201, 202)
             survivor_tokens = tuple(203 + index for index in range(length - 1))
             for prefill_slot in (0, 1):
                 decode_slot = prefill_slot ^ 1
+                # A prompt can also advance without a concurrent decode row.
+                # Every prefix must have the same arithmetic and stored state
+                # as the ordinary generated prefill, independently of timing.
+                reset()
+                solo_ticket = batch.begin_prefill(prefill_slot, length)
+                solo = []
+                for token in prompt:
+                    batch.append_prefill(prefill_slot, solo_ticket, (token,),
+                                         prefill_phase=True)
+                    solo.append(snapshot(prefill_slot, "standalone phase append"))
+                reset()
+                for prefix, actual in enumerate(solo, start=1):
+                    batch.prefill(prefill_slot, prompt[:prefix])
+                    if snapshot(prefill_slot, "ordinary standalone prefix") != actual:
+                        raise AssertionError(
+                            f"standalone phase append differs at length {length}, "
+                            f"slot {prefill_slot}, prefix {prefix}")
+                    batch.reset_slot(prefill_slot)
+                standalone_cases[f"length_{length}/prefill_slot_{prefill_slot}"] = {
+                    "prefixes": length,
+                    "full_logits_position_kv_exact": True,
+                }
                 reset()
                 decode_ticket, _ = batch.prefill(decode_slot, survivor_prompt)
                 prompt_ticket = batch.begin_prefill(prefill_slot, length)
@@ -108,6 +133,14 @@ def certify(bundle: Path, *, context_length: int, threads: int) -> dict:
                         raise AssertionError("mixed step failed to advance both rows")
                     staged.append(snapshot(prefill_slot, f"mixed prompt {index}"))
                     decoded.append(snapshot(decode_slot, f"mixed decode {index}"))
+                # Finishing prefill must leave the slot ready for ordinary
+                # generated decode, including its next KV write and position.
+                continuation_token = 300
+                continuation_tokens = [0, 0]
+                continuation_tokens[prefill_slot] = continuation_token
+                if batch.step(tuple(continuation_tokens))[0] != 3:
+                    raise AssertionError("completed prompt did not enter decode")
+                continued = snapshot(prefill_slot, "decode after mixed prefill")
                 reset()
 
                 # Ordinary prefill resets the tested slot for every prefix.
@@ -119,6 +152,13 @@ def certify(bundle: Path, *, context_length: int, threads: int) -> dict:
                             f"ordinary/mixed logits, position or KV differ at "
                             f"length {length}, slot {prefill_slot}, prefix {prefix}")
                     batch.reset_slot(prefill_slot)
+                batch.prefill(prefill_slot, prompt)
+                if batch.step(tuple(continuation_tokens))[0] != 1 << prefill_slot or \
+                        snapshot(prefill_slot, "isolated decode after prefill") != continued:
+                    raise AssertionError(
+                        f"decode after mixed prefill differs at length {length}, "
+                        f"slot {prefill_slot}")
+                batch.reset_slot(prefill_slot)
 
                 # Decode the other row alone from the same original prefix.
                 batch.prefill(decode_slot, survivor_prompt)
@@ -137,8 +177,47 @@ def certify(bundle: Path, *, context_length: int, threads: int) -> dict:
                 cases[f"length_{length}/prefill_slot_{prefill_slot}"] = {
                     "steps": length - 1,
                     "prompt_prefix_logits_position_kv_exact": True,
+                    "subsequent_decode_logits_position_kv_exact": True,
                     "survivor_logits_position_kv_exact": True,
                 }
+
+        # Deliberately take the original decode-phase path on the staged row.
+        # This must fail the numerical gate on the captured sensitive prompt;
+        # otherwise this certificate would not distinguish the two phases.
+        wrong_prompt = tuple(100 + index for index in range(12))
+        reset()
+        decode_ticket, _ = batch.prefill(1, (200, 201, 202))
+        staged_ticket = batch.begin_prefill(0, len(wrong_prompt))
+        batch.append_prefill(0, staged_ticket, wrong_prompt[:1])
+        wrong_phase = [snapshot(0, "wrong-phase initial row")]
+        for index, token in enumerate(wrong_prompt[1:], start=2):
+            mask, consumed, _ = batch.mixed_step(
+                (token, 202 + index), (staged_ticket, decode_ticket), 0,
+                prefill_phase=False)
+            if (mask, consumed) != (3, index):
+                raise AssertionError("wrong-phase control failed before numerical comparison")
+            wrong_phase.append(snapshot(0, f"wrong-phase prefix {index}"))
+        reset()
+        first_wrong_phase_difference = None
+        wrong_phase_components = None
+        for prefix, actual in enumerate(wrong_phase, start=1):
+            batch.prefill(0, wrong_prompt[:prefix])
+            expected = snapshot(0, f"wrong-phase ordinary prefix {prefix}")
+            if expected != actual:
+                first_wrong_phase_difference = prefix
+                wrong_phase_components = {
+                    "full_logits": actual[0] != expected[0],
+                    "position": actual[1] != expected[1],
+                    "complete_kv": actual[2] != expected[2],
+                }
+                break
+            batch.reset_slot(0)
+        if first_wrong_phase_difference is None:
+            raise AssertionError("wrong attention phase escaped the numerical gate")
+        if not (wrong_phase_components["full_logits"] or
+                wrong_phase_components["complete_kv"]):
+            raise AssertionError("wrong phase changed only the position check")
+        reset()
 
         # A cancelled staged row cannot advance the survivor. Retiring that
         # ticket and reusing the slot must not let stale cancellation reach a
@@ -184,7 +263,8 @@ def certify(bundle: Path, *, context_length: int, threads: int) -> dict:
         reset()
 
         return {
-            "status": "pass", "scope": "two-row phase-aware mixed native execution",
+            "status": "pass",
+            "scope": "one-row phase-aware append and two-row mixed native execution",
             "bundle": str(bundle), "loaded_sha256": loaded,
             "session_library_sha256": native["sha256"],
             "generated_source_sha256": embedded.decode(),
@@ -193,6 +273,12 @@ def certify(bundle: Path, *, context_length: int, threads: int) -> dict:
             "context_length": context_length, "threads": threads,
             "cpu": _cpu_identity(), "kv_bytes_per_sequence": kv_bytes.value,
             "cases": cases,
+            "standalone_phase_append": standalone_cases,
+            "wrong_phase_negative_control": {
+                "status": "detected",
+                "first_different_prefix": first_wrong_phase_difference,
+                "different_components": wrong_phase_components,
+            },
             "cancellation_reuse_survivor": "pass",
         }
     finally:

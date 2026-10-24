@@ -312,6 +312,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Experimental: pair one staged prompt token with one ready decode token in the same generated batch2 step; requires staged prefill",
     )
     parser.add_argument(
+        "--batch-http-prefill-phase", action="store_true",
+        help="Experimental: use map-resolved prefill-phase arithmetic for standalone and mixed staged rows; requires staged prefill and an artifact certified for this mode",
+    )
+    parser.add_argument(
         "--batch-http-delivery-consumers", type=int, default=4,
         help="Maximum admitted batch HTTP responses awaiting delivery",
     )
@@ -588,6 +592,8 @@ def main(argv: list[str] | None = None) -> int:
         raise ValueError("staged batch HTTP prefill requires --batch-http-extra-bytes")
     if args.batch_http_mixed_one_row and args.batch_http_decode_replay_chunk_tokens is None:
         raise ValueError("mixed batch HTTP execution requires --batch-http-decode-replay-chunk-tokens")
+    if args.batch_http_prefill_phase and args.batch_http_decode_replay_chunk_tokens is None:
+        raise ValueError("phase-aware batch HTTP prefill requires --batch-http-decode-replay-chunk-tokens")
     if args.batch_http_extra_bytes is not None:
         from server.batch_http import Batch2HTTPOwner
         if args.batch_http_extra_bytes <= 0 or args.batch_http_prompt_cap <= 0:
@@ -606,6 +612,7 @@ def main(argv: list[str] | None = None) -> int:
                 delivery_timeout=args.batch_http_delivery_timeout,
                 decode_replay_chunk_tokens=args.batch_http_decode_replay_chunk_tokens,
                 mixed_one_row=args.batch_http_mixed_one_row,
+                prefill_phase_staged=args.batch_http_prefill_phase,
             )
         except Exception:
             session.close()

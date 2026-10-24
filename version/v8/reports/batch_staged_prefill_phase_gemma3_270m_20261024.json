@@ -1,0 +1,100 @@
+{
+  "bundle": "/home/antshiv/.cache/cke-gemma-mixed-phase-20261023/bundle",
+  "cancellation_reuse_survivor": "pass",
+  "cases": {
+    "length_10/prefill_slot_0": {
+      "prompt_prefix_logits_position_kv_exact": true,
+      "steps": 9,
+      "subsequent_decode_logits_position_kv_exact": true,
+      "survivor_logits_position_kv_exact": true
+    },
+    "length_10/prefill_slot_1": {
+      "prompt_prefix_logits_position_kv_exact": true,
+      "steps": 9,
+      "subsequent_decode_logits_position_kv_exact": true,
+      "survivor_logits_position_kv_exact": true
+    },
+    "length_12/prefill_slot_0": {
+      "prompt_prefix_logits_position_kv_exact": true,
+      "steps": 11,
+      "subsequent_decode_logits_position_kv_exact": true,
+      "survivor_logits_position_kv_exact": true
+    },
+    "length_12/prefill_slot_1": {
+      "prompt_prefix_logits_position_kv_exact": true,
+      "steps": 11,
+      "subsequent_decode_logits_position_kv_exact": true,
+      "survivor_logits_position_kv_exact": true
+    },
+    "length_31/prefill_slot_0": {
+      "prompt_prefix_logits_position_kv_exact": true,
+      "steps": 30,
+      "subsequent_decode_logits_position_kv_exact": true,
+      "survivor_logits_position_kv_exact": true
+    },
+    "length_31/prefill_slot_1": {
+      "prompt_prefix_logits_position_kv_exact": true,
+      "steps": 30,
+      "subsequent_decode_logits_position_kv_exact": true,
+      "survivor_logits_position_kv_exact": true
+    }
+  },
+  "context_length": 128,
+  "cpu": {
+    "isa_flags": [
+      "avx",
+      "avx2",
+      "fma"
+    ],
+    "machine": "x86_64",
+    "model": "Intel(R) Core(TM) i7-14700T"
+  },
+  "generated_source_sha256": "bdfd895edf6c13524036843ca27e33becacdd599c469030b070bf9ac0a7aff45",
+  "kv_bytes_per_sequence": 4718592,
+  "loaded_sha256": {
+    "libckernel_engine.so": "a639b59f9817ebc5e93556c2e0360c50a5f48259725955ac4db0659cdddf7e0a",
+    "libmodel.so": "380d5f3d083b4ff146fddab0ce156d7f4b713ce7b465d49a757fad4a4094203c"
+  },
+  "scope": "one-row phase-aware append and two-row mixed native execution",
+  "session_library_sha256": "d1ca743bbc5bfb2e5644d50de547095d0b80b702117f2a40061ca2bc87d4739e",
+  "shared_layers": 18,
+  "shared_projection_groups": 72,
+  "standalone_phase_append": {
+    "length_10/prefill_slot_0": {
+      "full_logits_position_kv_exact": true,
+      "prefixes": 10
+    },
+    "length_10/prefill_slot_1": {
+      "full_logits_position_kv_exact": true,
+      "prefixes": 10
+    },
+    "length_12/prefill_slot_0": {
+      "full_logits_position_kv_exact": true,
+      "prefixes": 12
+    },
+    "length_12/prefill_slot_1": {
+      "full_logits_position_kv_exact": true,
+      "prefixes": 12
+    },
+    "length_31/prefill_slot_0": {
+      "full_logits_position_kv_exact": true,
+      "prefixes": 31
+    },
+    "length_31/prefill_slot_1": {
+      "full_logits_position_kv_exact": true,
+      "prefixes": 31
+    }
+  },
+  "status": "pass",
+  "threads": 4,
+  "weights_sha256": "dae6375dc5f6e04db7a373fc747df6eda4f9938f019bc0c0d1fdda4ec2443c40",
+  "wrong_phase_negative_control": {
+    "different_components": {
+      "complete_kv": true,
+      "full_logits": true,
+      "position": false
+    },
+    "first_different_prefix": 10,
+    "status": "detected"
+  }
+}

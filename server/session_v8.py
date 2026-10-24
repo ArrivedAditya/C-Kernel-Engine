@@ -343,16 +343,24 @@ class Batch2SessionV8:
         return ticket.value
 
     def append_prefill(self, slot: int, ticket: int,
-                       tokens: Sequence[int]) -> int:
+                       tokens: Sequence[int], *, prefill_phase: bool = False) -> int:
         if type(slot) is not int or slot not in (0, 1) or \
                 type(ticket) is not int or ticket <= 0 or not tokens or \
-                len(tokens) > 0x7FFFFFFF:
+                len(tokens) > 0x7FFFFFFF or type(prefill_phase) is not bool:
             raise ValueError("staged prefill requires a slot, ticket, and nonempty chunk")
         self._validate_tokens(tokens, len(tokens))
         token_values = (ctypes.c_int32 * len(tokens))(*tokens)
         consumed = ctypes.c_int32()
         _configure_staged_prefill_abi(self.parent.lib)
-        self._call("ck_session_v8_batch2_prefill_append", slot, ticket,
+        name = "ck_session_v8_batch2_prefill_append"
+        if prefill_phase:
+            name += "_phase"
+            function = getattr(self.parent.lib, name, None)
+            if function is None:
+                raise SessionError(-5, "loaded session library lacks phase-aware staged append")
+            function.argtypes, function.restype = _STAGED_PREFILL_ABI[
+                "ck_session_v8_batch2_prefill_append"]
+        self._call(name, slot, ticket,
                    token_values, len(tokens), self._logits[slot], ctypes.byref(consumed))
         return consumed.value
 
@@ -577,6 +585,22 @@ class SessionV8:
             if written != count:
                 raise SessionError(-7, "generated stop-token count changed")
             return tuple(int(output[i]) for i in range(count))
+
+    def batch2_phase_capabilities(self) -> int:
+        """Inspect opt-in staged-prefill support from the loaded native model."""
+        if self.session is None:
+            raise SessionError(-6, "session is closed")
+        with self._lock:
+            function = getattr(self.lib, "ck_session_v8_batch2_phase_capabilities", None)
+            if function is None:
+                raise SessionError(-5, "loaded session library lacks batch2 phase capability query")
+            function.argtypes = [ctypes.c_void_p]
+            function.restype = ctypes.c_int
+            result = function(self.session)
+            if result < 0:
+                _raise_native_error(self.lib, self.session,
+                                    "ck_session_v8_batch2_phase_capabilities", result)
+            return result
 
     def count_tokens(self, text: str) -> int:
         with self._lock:

@@ -4492,6 +4492,19 @@ static void _ck_profile_dump(void) {
                 function_name="ck_decode_prefill_continuation",
             )
         )
+        parts.append('''
+/* Optional one-row staged append with the map-resolved prefill phase. */
+CK_EXPORT int ck_model_decode_prefill_phase(int32_t token, float *output) {
+    if (!g_model || token < 0 || token >= VOCAB_SIZE ||
+        g_model->pos < 0 || g_model->pos >= MAX_SEQ_LEN) return -1;
+    if (ck_model_cancel_requested()) return -2;
+    g_ck_skip_decode_logits = 0;
+    ck_decode_prefill_continuation(g_model, token);
+    if (ck_model_cancel_requested()) return -2;
+    if (output) memcpy(output, g_model->logits, VOCAB_SIZE * sizeof(float));
+    return 0;
+}
+''')
     if prefill_tail_ops is not None:
         if len(prefill_tail_ops) != len(ops):
             raise RuntimeError("prefill tail must preserve the complete decode operation sequence")

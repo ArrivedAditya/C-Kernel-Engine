@@ -113,6 +113,11 @@ typedef int (*ck_model_decode_batch2_v8_fn)(const CKModelBatchDecodeRowV8 *rows,
 typedef int (*ck_model_decode_batch2_mixed_prefill_v8_fn)(
     const CKModelBatchDecodeRowV8 *rows, size_t count, void *workspace,
     size_t workspace_bytes, uint32_t prefill_row);
+/* Optional standalone staged append. The selected map-resolved continuation
+ * phase must be paired with a row-group value of one before external callers
+ * use it for arbitrary token chunk boundaries. */
+typedef int (*ck_model_decode_prefill_phase_v8_fn)(int32_t token, float *logits);
+typedef int (*ck_model_prefill_append_row_group_v8_fn)(void);
 
 #ifdef __cplusplus
 }

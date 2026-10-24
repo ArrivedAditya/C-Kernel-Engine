@@ -209,6 +209,16 @@ int ck_session_v8_batch2_prefill_append(CKSessionV8 *session, uint32_t slot,
                                        uint64_t ticket, const int32_t *tokens,
                                        int32_t count, float *scratch_logits,
                                        int32_t *consumed_out);
+/* Opt-in map-resolved prefill arithmetic for a standalone staged row.
+ * Requires an exported phase entry and ungrouped append contract; otherwise
+ * returns CAPABILITY before changing either sequence. */
+int ck_session_v8_batch2_prefill_append_phase(
+    CKSessionV8 *session, uint32_t slot, uint64_t ticket,
+    const int32_t *tokens, int32_t count, float *scratch_logits,
+    int32_t *consumed_out);
+/* Read-only loaded-model capability bits: 1 = standalone phase append,
+ * 2 = phase-aware mixed row. Negative values are session errors. */
+int ck_session_v8_batch2_phase_capabilities(CKSessionV8 *session);
 int ck_session_v8_batch2_step(CKSessionV8 *session, const int32_t tokens[2],
                              float *const logits[2], uint32_t *advanced_mask);
 /* Opt-in one-row mixed step: one ready decode slot and one staged prefill slot

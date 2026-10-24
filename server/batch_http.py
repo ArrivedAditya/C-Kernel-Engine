@@ -203,7 +203,8 @@ class Batch2HTTPOwner:
                  max_output_bytes: int = 1 << 20,
                  delivery_timeout: float = 30.0,
                  decode_replay_chunk_tokens: int | None = None,
-                 mixed_one_row: bool = False):
+                 mixed_one_row: bool = False,
+                 prefill_phase_staged: bool = False):
         if max_prompt_tokens <= 0 or session.context_length is None:
             raise ValueError("batch HTTP needs positive prompt and context limits")
         if min(max_delivery_consumers, max_output_tokens, max_output_bytes) <= 0 or delivery_timeout <= 0:
@@ -213,6 +214,10 @@ class Batch2HTTPOwner:
             raise ValueError("decode replay chunk budget must be positive")
         if type(mixed_one_row) is not bool or (mixed_one_row and decode_replay_chunk_tokens is None):
             raise ValueError("mixed one-row execution requires staged prefill")
+        if type(prefill_phase_staged) is not bool or (prefill_phase_staged and decode_replay_chunk_tokens is None):
+            raise ValueError("phase-aware staged prefill requires a chunk budget")
+        if prefill_phase_staged and loop is not None and getattr(loop, "prefill_phase_staged", None) is not True:
+            raise ValueError("injected staged loop does not declare phase-aware execution")
         self.session = session
         self.context_length = session.context_length
         self.max_prompt_tokens = max_prompt_tokens
@@ -222,6 +227,7 @@ class Batch2HTTPOwner:
         self.delivery_timeout = delivery_timeout
         self.decode_replay_chunk_tokens = decode_replay_chunk_tokens
         self.mixed_one_row = mixed_one_row
+        self.prefill_phase_staged = prefill_phase_staged
         self.stop_ids = tuple(stop_ids)
         if decode_replay_chunk_tokens is not None and loop is None:
             # Resolve the optional ABI before enabling native batch state.
@@ -230,8 +236,13 @@ class Batch2HTTPOwner:
             if mixed_one_row:
                 from .session_v8 import _configure_mixed_step_abi
                 _configure_mixed_step_abi(session.lib)
+            if prefill_phase_staged:
+                required = 3 if mixed_one_row else 1
+                if (session.batch2_phase_capabilities() & required) != required:
+                    raise SessionError(-5, "loaded model lacks phase-aware staged prefill capability")
         self.loop = loop if loop is not None else Batch2RequestLoop(
-            session.enable_batch2(max_extra_bytes))
+            session.enable_batch2(max_extra_bytes),
+            prefill_phase_staged=prefill_phase_staged)
         if decode_replay_chunk_tokens is not None:
             for method in ("begin_staged", "staged_tickets", "advance_prefill"):
                 if not callable(getattr(self.loop, method, None)):

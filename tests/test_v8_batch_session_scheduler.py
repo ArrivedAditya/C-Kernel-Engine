@@ -355,6 +355,12 @@ class BatchSessionSchedulerTests(unittest.TestCase):
                 self.assertEqual(outputs[0][0], 6)
                 self.assertEqual(step(1, 1), (0, 3))
                 self.assertEqual([outputs[0][0], outputs[1][0]], [7, 6])
+                # A completed staged prompt becomes a decode-ready slot.
+                # Its position must advance beyond the finished prefill count.
+                completed_position = ctypes.c_int32(-1)
+                self.assertEqual(session.ck_session_v8_batch2_position(
+                    handle, 0, ctypes.byref(completed_position)), 0)
+                self.assertEqual(completed_position.value, 4)
                 self.assertEqual(session.ck_session_v8_batch2_reset_slot(handle, 0), 0)
                 self.assertEqual(session.ck_session_v8_batch2_reset_slot(handle, 1), 0)
 

@@ -1,0 +1,121 @@
+{
+  "artifact_identity": "native certificate only; HTTP serving identity unavailable for this legacy bundle",
+  "baseline": [
+    {
+      "output_bytes": 358,
+      "output_sha256": "81c90ec188ae39c991e3de04077b7888b4dd58c3105ad926461ed02655f1823f",
+      "output_tokens": 64,
+      "status": "incomplete",
+      "stop_reason": "token_limit"
+    },
+    {
+      "output_bytes": 223,
+      "output_sha256": "e982aee0249efa106a0a95b4a57cc5f1fe1a16efe61076b096aeae77408e92b1",
+      "output_tokens": 64,
+      "status": "incomplete",
+      "stop_reason": "token_limit"
+    }
+  ],
+  "cancel_ack": "cancelled",
+  "cancel_stored_status": "cancelled",
+  "cancelled": {
+    "output_bytes": 7,
+    "output_sha256": "8cb5dbbbfcfa9a89c480479a3f34cf571052fd466cc4c0cc7cbba2dc2142fc8c",
+    "output_tokens": 2,
+    "status": "cancelled",
+    "stop_reason": "cancelled"
+  },
+  "followup": {
+    "output_bytes": 54,
+    "output_sha256": "eed20c63c7f4ee52bfb8aa61ff2816fe8a765bcd012ae934c489a69db56eb52a",
+    "output_tokens": 16,
+    "status": "incomplete",
+    "stop_reason": "token_limit"
+  },
+  "generated_source_sha256": "bdfd895edf6c13524036843ca27e33becacdd599c469030b070bf9ac0a7aff45",
+  "loaded_sha256_native_certificate": {
+    "libckernel_engine.so": "a639b59f9817ebc5e93556c2e0360c50a5f48259725955ac4db0659cdddf7e0a",
+    "libmodel.so": "380d5f3d083b4ff146fddab0ce156d7f4b713ce7b465d49a757fad4a4094203c"
+  },
+  "observation_after": {
+    "active_slots": 0,
+    "mixed_steps": 21,
+    "pending_requests": 0,
+    "poisoned": false,
+    "schema": "cke.batch2_observation.v1",
+    "server_instance_id": "b4d9d658e83941f4a5f853d75b71883c",
+    "shared_steps": 133
+  },
+  "observation_before": {
+    "active_slots": 0,
+    "mixed_steps": 11,
+    "pending_requests": 0,
+    "poisoned": false,
+    "schema": "cke.batch2_observation.v1",
+    "server_instance_id": "b4d9d658e83941f4a5f853d75b71883c",
+    "shared_steps": 74
+  },
+  "paired": [
+    {
+      "output_bytes": 358,
+      "output_sha256": "81c90ec188ae39c991e3de04077b7888b4dd58c3105ad926461ed02655f1823f",
+      "output_tokens": 64,
+      "status": "incomplete",
+      "stop_reason": "token_limit"
+    },
+    {
+      "output_bytes": 223,
+      "output_sha256": "e982aee0249efa106a0a95b4a57cc5f1fe1a16efe61076b096aeae77408e92b1",
+      "output_tokens": 64,
+      "status": "incomplete",
+      "stop_reason": "token_limit"
+    }
+  ],
+  "paired_observations": [
+    {
+      "mixed_peer_count": 1,
+      "mixed_steps": 10,
+      "native_done": true,
+      "shared_peer_count": 1,
+      "shared_steps": 59
+    },
+    {
+      "mixed_peer_count": 1,
+      "mixed_steps": 10,
+      "native_done": true,
+      "shared_peer_count": 1,
+      "shared_steps": 59
+    }
+  ],
+  "reproduction": "Launch isolated cks-v8-run serve with --batch-http-extra-bytes 1073741824 --batch-http-prompt-cap 64 --batch-http-decode-replay-chunk-tokens 1 --batch-http-mixed-one-row --batch-http-prefill-phase --request-output-cap 64; send stored Responses streams with listed prompts and temperature 0.",
+  "schema": "cke.batch2_phase_http_local.v1",
+  "scope": "isolated localhost raw-text Gemma transport; legacy bundle has no loaded serving attestation",
+  "server_instance_id": "b4d9d658e83941f4a5f853d75b71883c",
+  "session_library_sha256_native_certificate": "97f029027cc9751d168245465bb5c0702e8ce432a8786234a622f3824b5deaa3",
+  "settings": {
+    "max_output_tokens": 64,
+    "mixed_execution": "one_decode_plus_one_prefill_phase_row",
+    "model": "gemma3-270m-phase-test",
+    "prefill_chunk_tokens": 1,
+    "prefill_strategy": "prefill_phase_chunked",
+    "prompt_sha256": [
+      "536312feb04efbe2a4b5dcb893146994618cfd0efc129a832fe2664df8eda209",
+      "8850ac64addeba7912c87fe29b51949fe83fbda1da168d14d33fd5983e24a205"
+    ],
+    "prompts": [
+      "Hello there. Please describe a cedar tree.",
+      "Hello there. Please describe a blue circle."
+    ],
+    "temperature": 0
+  },
+  "status": "pass",
+  "survivor_after_cancel": {
+    "output_bytes": 223,
+    "output_sha256": "e982aee0249efa106a0a95b4a57cc5f1fe1a16efe61076b096aeae77408e92b1",
+    "output_tokens": 64,
+    "status": "incomplete",
+    "stop_reason": "token_limit"
+  },
+  "survivor_deltas_after_cancel": 64,
+  "weights_sha256": "dae6375dc5f6e04db7a373fc747df6eda4f9938f019bc0c0d1fdda4ec2443c40"
+}

@@ -73,8 +73,11 @@ class _PrefillRequest:
 class Batch2RequestLoop:
     """One serialized worker with two independent request policies."""
 
-    def __init__(self, batch: Batch2SessionV8):
+    def __init__(self, batch: Batch2SessionV8, *, prefill_phase_staged: bool = False):
+        if type(prefill_phase_staged) is not bool:
+            raise ValueError("prefill_phase_staged must be boolean")
         self.batch = batch
+        self.prefill_phase_staged = prefill_phase_staged
         self._operations = threading.Lock()
         self._state = threading.Lock()
         self._slots: dict[int, _Request] = {}
@@ -179,7 +182,11 @@ class Batch2RequestLoop:
                 return (self._retire(request, "cancelled"),)
             chunk = request.prompt_ids[request.offset:request.offset + max_tokens]
             try:
-                total_consumed = self.batch.append_prefill(request.slot, ticket, chunk)
+                if self.prefill_phase_staged:
+                    total_consumed = self.batch.append_prefill(
+                        request.slot, ticket, chunk, prefill_phase=True)
+                else:
+                    total_consumed = self.batch.append_prefill(request.slot, ticket, chunk)
                 if total_consumed != request.offset + len(chunk):
                     raise SessionError(-7, "native staged prefill reported unexpected progress")
                 request.offset = total_consumed
@@ -295,8 +302,13 @@ class Batch2RequestLoop:
                         tickets[decode_slot] = ready.ticket
                         tickets[staged.slot] = staged.ticket
                         try:
-                            advanced, consumed, _ = self.batch.mixed_step(
-                                tuple(decode_inputs), tuple(tickets), staged.slot)
+                            if self.prefill_phase_staged:
+                                advanced, consumed, _ = self.batch.mixed_step(
+                                    tuple(decode_inputs), tuple(tickets), staged.slot,
+                                    prefill_phase=True)
+                            else:
+                                advanced, consumed, _ = self.batch.mixed_step(
+                                    tuple(decode_inputs), tuple(tickets), staged.slot)
                         except SessionError as exc:
                             if exc.status != -9 or not (ready.cancel_requested.is_set() or
                                                          staged.cancel_requested.is_set()):
