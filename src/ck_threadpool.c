@@ -18,6 +18,7 @@
  */
 
 #include "ck_threadpool.h"
+#include "ck_topology.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -289,6 +290,8 @@ int ck_threadpool_bounded_capacity(int default_threads, int logical_threads)
     return capacity;
 }
 
+static void ck_threadpool_maybe_pin_big_cores(ck_threadpool_t *pool);
+
 ck_threadpool_t *ck_threadpool_create_capacity(int default_threads,
                                                 int capacity_threads)
 {
@@ -358,12 +361,50 @@ ck_threadpool_t *ck_threadpool_create_capacity(int default_threads,
                 pool->n_threads, pool->default_threads, pool->n_threads - 1);
     }
 
+    ck_threadpool_maybe_pin_big_cores(pool);
+
     return pool;
 }
 
 ck_threadpool_t *ck_threadpool_create(int n_threads)
 {
     return ck_threadpool_create_capacity(n_threads, n_threads);
+}
+
+/* Opt-in worker placement: CK_THREAD_AFFINITY=big-cores pins worker threads
+ * round-robin onto the discovered top-capacity CPUs within the process's
+ * allowed set (see ck_topology.c). Default (unset) keeps the scheduler's
+ * placement. Linux-only; a no-op on homogeneous or unknown topology, and it
+ * never targets CPUs outside the process affinity mask. */
+static void ck_threadpool_maybe_pin_big_cores(ck_threadpool_t *pool)
+{
+#ifdef __linux__
+    const char *env = getenv("CK_THREAD_AFFINITY");
+    if (!env || strcmp(env, "big-cores") != 0) return;
+    if (!ck_topology_heterogeneous()) return;
+
+    int big[CK_THREADPOOL_MAX_THREADS];
+    int n_big = ck_topology_big_cpus(big, CK_THREADPOOL_MAX_THREADS);
+    if (n_big <= 0) return;
+
+    int pinned = 0;
+    for (int i = 1; i < pool->n_threads; i++) {
+        cpu_set_t set;
+        CPU_ZERO(&set);
+        CPU_SET(big[(i - 1) % n_big], &set);
+        if (pthread_setaffinity_np(pool->workers[i].thread, sizeof(set),
+                                   &set) == 0) {
+            ++pinned;
+        }
+    }
+    if (pinned > 0) {
+        fprintf(stderr,
+                "[CK threadpool] CK_THREAD_AFFINITY=big-cores: pinned %d worker(s) onto %d top-capacity CPU(s)\n",
+                pinned, n_big);
+    }
+#else
+    (void)pool;
+#endif
 }
 
 void ck_threadpool_destroy(ck_threadpool_t *pool)

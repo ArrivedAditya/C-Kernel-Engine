@@ -31,6 +31,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdatomic.h>
 #include "ckernel_quant.h"
 #include "ck_features.h"
 
@@ -1675,12 +1676,17 @@ void gemm_nt_q5_0_q8_0_unroll_avx(
  */
 static int ck_q5_0_q8_0_force_ref(void)
 {
-    static int cached = -1;
-    if (cached < 0) {
+    /* Concurrent first use from parallel dispatch threads must not race on
+     * the lazy init: keep the cache in an atomic (idempotent value, relaxed
+     * ordering is sufficient). */
+    static atomic_int cached = -1;
+    int v = atomic_load_explicit(&cached, memory_order_relaxed);
+    if (v < 0) {
         const char *env = getenv("CK_DEBUG_Q5_0_Q8_0_REF");
-        cached = (env && env[0] && env[0] != '0') ? 1 : 0;
+        v = (env && env[0] && env[0] != '0') ? 1 : 0;
+        atomic_store_explicit(&cached, v, memory_order_relaxed);
     }
-    return cached;
+    return v;
 }
 
 void vec_dot_q5_0_q8_0(int n, float *s, const void *vx, const void *vy)
