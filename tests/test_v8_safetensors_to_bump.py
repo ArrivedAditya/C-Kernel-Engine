@@ -626,6 +626,26 @@ def test_normalized_added_token_with_normalizer_fails_conversion(
         converter.load_tokenizer_json(str(tmp_path / "tokenizer.json"), 2)
 
 
+@pytest.mark.parametrize("source", ["added_tokens", "added_tokens_decoder"])
+def test_normalized_added_token_with_empty_normalizer_is_exact(
+    tmp_path: Path, source: str
+) -> None:
+    converter = _load_converter()
+    row = {"id": 1, "content": "é", "normalized": True, "special": False}
+    doc = {"model": {"type": "BPE", "vocab": {"e": 0, "é": 1}, "merges": []},
+           "normalizer": {"type": "Sequence", "normalizers": []},
+           "added_tokens": [row] if source == "added_tokens" else []}
+    (tmp_path / "tokenizer.json").write_text(json.dumps(doc), encoding="utf-8")
+    if source == "added_tokens_decoder":
+        (tmp_path / "tokenizer_config.json").write_text(
+            json.dumps({"added_tokens_decoder": {"1": row}}), encoding="utf-8"
+        )
+    _offsets, _strings, _merges, _scores, types = converter.load_tokenizer_json(
+        str(tmp_path / "tokenizer.json"), 2
+    )
+    assert types == [1, 4]
+
+
 def test_imported_raw_added_tokens_match_native_and_publisher(tmp_path: Path) -> None:
     tokenizers = pytest.importorskip("tokenizers")
     converter = _load_converter()

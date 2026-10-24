@@ -1050,13 +1050,19 @@ def load_tokenizer_json(path: str, vocab_size: int) -> tuple[list[int], bytes, l
 
     added_tokens = data.get("added_tokens", [])
     exact_added_ids: set[int] = set()
+    normalizer = data.get("normalizer")
+    identity_normalizer = normalizer is None or (
+        isinstance(normalizer, dict)
+        and normalizer.get("type") == "Sequence"
+        and normalizer.get("normalizers") == []
+    )
     def validate_raw_added_token(row: dict, source: str) -> None:
         """Native type-4 matching is an exact raw substring, with no HF flags."""
         for flag in ("single_word", "lstrip", "rstrip"):
             if row.get(flag, False) is not False:
                 raise GGUFError(f"{source}: unsupported AddedToken {flag}={row.get(flag)!r}")
         # Normalization changes matching only when the publisher has a normalizer.
-        if row.get("normalized", False) is True and data.get("normalizer") is not None:
+        if row.get("normalized", False) is True and not identity_normalizer:
             raise GGUFError(f"{source}: normalized AddedToken requires unsupported normalization")
         if "normalized" in row and not isinstance(row["normalized"], bool):
             raise GGUFError(f"{source}: invalid AddedToken normalized flag")
