@@ -4,6 +4,7 @@
  */
 
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include <math.h>
 
@@ -11,6 +12,9 @@
 
 #if defined(__AVX2__)
 #include <immintrin.h>
+#endif
+#if defined(__ARM_NEON) || defined(__aarch64__)
+#include <arm_neon.h>
 #endif
 
 #define CK_Q51_STACK_Q8_BLOCKS 256
@@ -27,6 +31,18 @@ typedef struct {
     ck_half s;
     int8_t qs[QK8_1];
 } block_q8_1;
+
+/* Force-ref escape hatch (mirrors CK_DEBUG_Q5_0_Q8_0_REF): forces the scalar
+ * Q8_1 quantizer and the scalar Q5_1 x Q8_1 block dot. */
+static int ck_q5_1_q8_1_force_ref(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        const char *env = getenv("CK_DEBUG_Q5_1_Q8_1_REF");
+        cached = (env && env[0] && env[0] != '0') ? 1 : 0;
+    }
+    return cached;
+}
 
 #if defined(__AVX2__)
 static const uint32_t ck_q51_high_nibble_lut[16] = {
@@ -82,6 +98,84 @@ static void quantize_row_q8_1_scalar(const float *x, block_q8_1 *y, int k) {
         }
         y[b].s = CK_FP32_TO_FP16((float)sum * d);
     }
+}
+
+#if defined(__aarch64__)
+/* Q8_1 row quantizer, byte-exact against quantize_row_q8_1_scalar:
+ * - amax via IEEE max reduction (exact),
+ * - identical scalar d/id evaluation,
+ * - roundf(x*id) via fcvtas (vcvtaq_s32_f32): round-to-nearest with ties
+ *   away from zero, exactly roundf semantics for the in-range values here,
+ * - block sum recomputed from the stored int8 payload, integer-exact.
+ * AArch64-only because vcvtaq_s32_f32 has no armv7 NEON equivalent; armv7
+ * keeps the scalar path through the quantize_row_q8_1 dispatcher. */
+void quantize_row_q8_1_neon(const float *x, void *vy, int k) {
+    block_q8_1 *y = (block_q8_1 *)vy;
+    const int nb = k / QK8_1;
+    for (int b = 0; b < nb; ++b) {
+        const float *xb = x + (size_t)b * QK8_1;
+        float32x4_t amax_v = vdupq_n_f32(0.0f);
+        for (int j = 0; j < QK8_1; j += 16) {
+            const float32x4_t a0 = vabsq_f32(vld1q_f32(xb + j + 0));
+            const float32x4_t a1 = vabsq_f32(vld1q_f32(xb + j + 4));
+            const float32x4_t a2 = vabsq_f32(vld1q_f32(xb + j + 8));
+            const float32x4_t a3 = vabsq_f32(vld1q_f32(xb + j + 12));
+            amax_v = vmaxq_f32(amax_v,
+                               vmaxq_f32(vmaxq_f32(a0, a1), vmaxq_f32(a2, a3)));
+        }
+        float al[4];
+        vst1q_f32(al, amax_v);
+        const float amax = fmaxf(fmaxf(al[0], al[1]), fmaxf(al[2], al[3]));
+
+        const float d = amax / 127.0f;
+        const float id = (d != 0.0f) ? (1.0f / d) : 0.0f;
+        y[b].d = CK_FP32_TO_FP16(d);
+
+        const float32x4_t vid = vdupq_n_f32(id);
+        int32x4_t sum_v = vdupq_n_s32(0);
+        for (int j = 0; j < QK8_1; j += 16) {
+            const int32x4_t q0 = vcvtaq_s32_f32(vmulq_f32(vld1q_f32(xb + j + 0), vid));
+            const int32x4_t q1 = vcvtaq_s32_f32(vmulq_f32(vld1q_f32(xb + j + 4), vid));
+            const int32x4_t q2 = vcvtaq_s32_f32(vmulq_f32(vld1q_f32(xb + j + 8), vid));
+            const int32x4_t q3 = vcvtaq_s32_f32(vmulq_f32(vld1q_f32(xb + j + 12), vid));
+            sum_v = vaddq_s32(sum_v, vaddq_s32(vaddq_s32(q0, q1), vaddq_s32(q2, q3)));
+            const int16x8_t p0 = vcombine_s16(vmovn_s32(q0), vmovn_s32(q1));
+            const int16x8_t p1 = vcombine_s16(vmovn_s32(q2), vmovn_s32(q3));
+            vst1q_s8(&y[b].qs[j], vcombine_s8(vmovn_s16(p0), vmovn_s16(p1)));
+        }
+        int32_t sl[4];
+        vst1q_s32(sl, sum_v);
+        const int sum = sl[0] + sl[1] + sl[2] + sl[3];
+        y[b].s = CK_FP32_TO_FP16((float)sum * d);
+    }
+}
+#endif /* __aarch64__ */
+
+/* Q8_1 quantize dispatcher. The NEON path is byte-exact against the scalar
+ * one (Q8_1 bytes are part of the numerical contract on this path), so this
+ * only changes speed. CK_DEBUG_Q5_1_Q8_1_REF=1 forces the scalar path. */
+void quantize_row_q8_1(const float *x, void *vy, int k) {
+    if (ck_q5_1_q8_1_force_ref()) {
+        quantize_row_q8_1_scalar(x, (block_q8_1 *)vy, k);
+        return;
+    }
+#if defined(__aarch64__)
+    quantize_row_q8_1_neon(x, vy, k);
+#else
+    quantize_row_q8_1_scalar(x, (block_q8_1 *)vy, k);
+#endif
+}
+
+const char *ck_quantize_row_q8_1_provider_name(void)
+{
+    if (ck_q5_1_q8_1_force_ref()) {
+        return "q8_1_quantize_ref";
+    }
+#if defined(__aarch64__)
+    return "q8_1_quantize_neon";
+#else
+    return "q8_1_quantize_ref";
+#endif
 }
 
 #if defined(__AVX2__)
@@ -220,11 +314,69 @@ static inline void dot_q5_1_q8_1_block_m8_avx2(
 
 #endif
 
+#if defined(__ARM_FEATURE_DOTPROD)
+static inline int32_t ck_q51_hsum_s32x4(int32x4_t v)
+{
+    int32_t lanes[4];
+    vst1q_s32(lanes, v);
+    return lanes[0] + lanes[1] + lanes[2] + lanes[3];
+}
+
+/* Q5_1 x Q8_1 block dot using SDOT. Q5_1 codes are unsigned [0,31] (the min
+ * m is separate), valid non-negative int8 values for vdotq_s32, so the
+ * integer math is exact and the FP32 epilogue is the scalar one. The 5th-bit
+ * spread uses the vdup_lane/vtstq technique from the Q5_0 SDOT kernel: bit j
+ * of qh tests into byte lane j (weights 0-15, qh bytes 0-1) and bit j+16
+ * into lane j of the high half (weights 16-31, qh bytes 2-3). Only base-NEON
+ * intrinsics are used alongside vdotq_s32; baseline armv8-a builds (no SDOT)
+ * keep the scalar block dot. */
+static float dot_q5_1_q8_1_block_neon_sdot(const block_q5_1 *w,
+                                           const block_q8_1 *x) {
+    uint32_t qh32;
+    memcpy(&qh32, w->qh, sizeof(qh32));
+    const uint8x8_t qh8 = vcreate_u8((uint64_t)qh32);
+    const uint8x16_t bits = {1, 2, 4, 8, 16, 32, 64, 128,
+                             1, 2, 4, 8, 16, 32, 64, 128};
+    const uint8x16_t m4 = vdupq_n_u8(0x0F);
+    const uint8x16_t m16 = vdupq_n_u8(0x10);
+
+    const uint8x16_t hb_lo = vandq_u8(
+        vtstq_u8(vcombine_u8(vdup_lane_u8(qh8, 0), vdup_lane_u8(qh8, 1)),
+                 bits), m16);
+    const uint8x16_t hb_hi = vandq_u8(
+        vtstq_u8(vcombine_u8(vdup_lane_u8(qh8, 2), vdup_lane_u8(qh8, 3)),
+                 bits), m16);
+
+    const uint8x16_t qs = vld1q_u8(w->qs);
+    const int8x16_t q5_lo = vreinterpretq_s8_u8(vorrq_u8(vandq_u8(qs, m4), hb_lo));
+    const int8x16_t q5_hi = vreinterpretq_s8_u8(vorrq_u8(vshrq_n_u8(qs, 4), hb_hi));
+
+    int32x4_t acc = vdotq_s32(vdupq_n_s32(0), q5_lo, vld1q_s8(x->qs));
+    acc = vdotq_s32(acc, q5_hi, vld1q_s8(x->qs + 16));
+    const int32_t sumi = ck_q51_hsum_s32x4(acc);
+
+    const float wd = CK_FP16_TO_FP32(w->d);
+    const float wm = CK_FP16_TO_FP32(w->m);
+    const float xd = CK_FP16_TO_FP32(x->d);
+    const float xs = CK_FP16_TO_FP32(x->s);
+    return (wd * xd) * (float)sumi + wm * xs;
+}
+#endif /* __ARM_FEATURE_DOTPROD */
+
 /* One 32-element block dot: Q5_1(weights) x Q8_1(activations). */
 static float dot_q5_1_q8_1_block(const block_q5_1 *w, const block_q8_1 *x) {
 #if defined(__AVX2__)
-    return dot_q5_1_q8_1_block_avx2(w, x);
-#else
+    if (!ck_q5_1_q8_1_force_ref()) {
+        return dot_q5_1_q8_1_block_avx2(w, x);
+    }
+    /* fall through to scalar */
+#elif defined(__ARM_FEATURE_DOTPROD)
+    if (!ck_q5_1_q8_1_force_ref()) {
+        return dot_q5_1_q8_1_block_neon_sdot(w, x);
+    }
+    /* fall through to scalar */
+#endif
+    {
     uint32_t qh;
     memcpy(&qh, w->qh, sizeof(qh));
 
@@ -244,7 +396,7 @@ static float dot_q5_1_q8_1_block(const block_q5_1 *w, const block_q8_1 *x) {
     const float xd = CK_FP16_TO_FP32(x->d);
     const float xs = CK_FP16_TO_FP32(x->s);
     return (wd * xd) * (float)(sumi0 + sumi1) + wm * xs;
-#endif
+    }
 }
 
 void gemv_q5_1_q8_1_ref(float *y,
@@ -313,7 +465,7 @@ void gemv_q5_1_q8_1(float *y,
     }
 
     block_q8_1 x_q8[CK_Q51_STACK_Q8_BLOCKS];
-    quantize_row_q8_1_scalar(x, x_q8, K);
+    quantize_row_q8_1(x, x_q8, K);
     gemv_q5_1_q8_1_ref(y, W, x_q8, M, K);
 }
 
@@ -338,7 +490,7 @@ void gemm_nt_q5_1_q8_1(const float *A,
 
     for (int m = 0; m < M; ++m) {
         block_q8_1 a_q8[CK_Q51_STACK_Q8_BLOCKS];
-        quantize_row_q8_1_scalar(&A[m * K], a_q8, K);
+        quantize_row_q8_1(&A[m * K], a_q8, K);
         float *c_row = &C[(size_t)m * (size_t)N];
 
         int n = 0;
@@ -401,8 +553,8 @@ void gemm_nt_q5_1_q8_1_m2(const float *A, const void *B,
     const int blocks_per_row = K / QK5_1;
     if (blocks_per_row > CK_Q51_STACK_Q8_BLOCKS) return;
     block_q8_1 x[2][CK_Q51_STACK_Q8_BLOCKS];
-    quantize_row_q8_1_scalar(A, x[0], K);
-    quantize_row_q8_1_scalar(A + K, x[1], K);
+    quantize_row_q8_1(A, x[0], K);
+    quantize_row_q8_1(A + K, x[1], K);
     const block_q5_1 *weights = (const block_q5_1 *)B;
     for (int n = 0; n < N; ++n) {
         const block_q5_1 *w = weights + (size_t)n * (size_t)blocks_per_row;
@@ -448,7 +600,7 @@ void gemm_nt_q5_1_q8_1_m4(const float *A,
     for (; m + 3 < M; m += 4) {
         block_q8_1 activation_q8[4][CK_Q51_STACK_Q8_BLOCKS];
         for (int row = 0; row < 4; ++row) {
-            quantize_row_q8_1_scalar(
+            quantize_row_q8_1(
                 &A[(size_t)(m + row) * (size_t)K], activation_q8[row], K);
         }
 
@@ -509,7 +661,7 @@ void gemm_nt_q5_1_q8_1_m8(const float *A,
     for (; m + 7 < M; m += 8) {
         block_q8_1 activation_q8[8][CK_Q51_STACK_Q8_BLOCKS];
         for (int row = 0; row < 8; ++row) {
-            quantize_row_q8_1_scalar(
+            quantize_row_q8_1(
                 &A[(size_t)(m + row) * (size_t)K], activation_q8[row], K);
         }
 
@@ -544,5 +696,24 @@ void gemm_nt_q5_1_q8_1_m8(const float *A,
     }
 #else
     gemm_nt_q5_1_q8_1_m4(A, B, bias, C, M, N, K);
+#endif
+}
+
+/* Truthful provider-name helper (same pattern as ck_q4_k_q8_k_provider_name):
+ * reports the block-dot provider that gemv_q5_1_q8_1 / gemm_nt_q5_1_q8_1*
+ * actually use, including the CK_DEBUG_Q5_1_Q8_1_REF escape hatch. The Q8_1
+ * quantize provider is reported separately by
+ * ck_quantize_row_q8_1_provider_name. */
+const char *ck_q5_1_q8_1_provider_name(void)
+{
+    if (ck_q5_1_q8_1_force_ref()) {
+        return "q5_1_q8_1_ref";
+    }
+#if defined(__AVX2__)
+    return "q5_1_q8_1_avx2";
+#elif defined(__ARM_FEATURE_DOTPROD)
+    return "q5_1_q8_1_neon_sdot";
+#else
+    return "q5_1_q8_1_ref";
 #endif
 }

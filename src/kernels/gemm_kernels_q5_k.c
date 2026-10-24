@@ -40,6 +40,9 @@
 #if defined(__AVX512F__) || defined(__AVX2__) || defined(__AVX__) || defined(__SSE4_1__)
 #include <immintrin.h>
 #endif
+#if defined(__ARM_NEON) || defined(__aarch64__)
+#include <arm_neon.h>
+#endif
 
 /* Q5_K constants */
 #define QK_K 256
@@ -471,6 +474,128 @@ static void dot_q5_k_prepared_q8_k_m4_avx2(
 }
 #endif
 
+#if defined(__ARM_FEATURE_DOTPROD)
+static inline int32_t ck_q5k_hsum_s32x4(int32x4_t v)
+{
+    int32_t lanes[4];
+    vst1q_s32(lanes, v);
+    return lanes[0] + lanes[1] + lanes[2] + lanes[3];
+}
+
+/* Q5_K x Q8_K dot using the AArch64 dot-product extension (SDOT), following
+ * the same super-block structure as dot_q4_k_q8_k_neon. Q5 codes are in
+ * [0,31] - valid non-negative int8 values for vdotq_s32 - so the integer
+ * math is exact. The scalar contract keeps eight lane sums live across all
+ * blocks (see dot_q5_k_q8_k_row); this kernel does the same, but with lanes
+ * grouped by four CONSECUTIVE positions within each 32-value sub-block
+ * (vdotq lane granularity) instead of the scalar's strided positions, so
+ * tiny FP32 reassociation differences vs the generic path are possible while
+ * the eight-live-lanes-per-block reduction contract is preserved.
+ *
+ * 5th-bit spread mirrors llama.cpp's NEON Q5_K: sub-block sb's high bits are
+ * bit sb of each qh byte; the qh vectors are shifted right by 2 after each
+ * 64-weight group so AND+shift yields the 0x10 contribution. Only base-NEON
+ * intrinsics are used alongside vdotq_s32, so nothing here is AArch64-only
+ * beyond the dot-product gate itself. Baseline armv8-a builds (no SDOT) keep
+ * the generic scalar path, which the compiler already autovectorizes (Q4_K
+ * and Q5_0 finding: hand-written plain NEON loses to it). */
+static float dot_q5_k_q8_k_row_neon_sdot(const block_q5_K *w,
+                                         const block_q8_K *x, int nb) {
+    const uint8x16_t m4 = vdupq_n_u8(0x0F);
+    const uint8x16_t mone = vdupq_n_u8(1);
+    const uint8x16_t mtwo = vdupq_n_u8(2);
+
+    float32x4_t sums_lo = vdupq_n_f32(0.0f);  /* lanes 0-3 of the 8-lane contract */
+    float32x4_t sums_hi = vdupq_n_f32(0.0f);  /* lanes 4-7 */
+    float sumf = 0.0f;
+
+    for (int b = 0; b < nb; ++b) {
+        const block_q5_K *wb = &w[b];
+        const block_q8_K *xb = &x[b];
+
+        uint8_t sc[8], mins[8];
+        unpack_q5_k_scales(wb->scales, sc, mins);
+
+        /* min term: sumi = sum_j bsums[j] * mins[j/2], integer-exact */
+        int16_t mv[16];
+        for (int j = 0; j < 16; ++j) {
+            mv[j] = (int16_t)mins[j / 2];
+        }
+        const int16x8_t bsums0 = vld1q_s16(xb->bsums);
+        const int16x8_t bsums1 = vld1q_s16(xb->bsums + 8);
+        const int16x8_t mv0 = vld1q_s16(mv);
+        const int16x8_t mv1 = vld1q_s16(mv + 8);
+        int32x4_t sumi_v = vmull_s16(vget_low_s16(bsums0), vget_low_s16(mv0));
+        sumi_v = vmlal_s16(sumi_v, vget_high_s16(bsums0), vget_high_s16(mv0));
+        sumi_v = vmlal_s16(sumi_v, vget_low_s16(bsums1), vget_low_s16(mv1));
+        sumi_v = vmlal_s16(sumi_v, vget_high_s16(bsums1), vget_high_s16(mv1));
+        const int32_t sumi_mins = ck_q5k_hsum_s32x4(sumi_v);
+
+        uint8x16_t qh0 = vld1q_u8(wb->qh);
+        uint8x16_t qh1 = vld1q_u8(wb->qh + 16);
+        const uint8_t *q5 = wb->qs;
+        const int8_t *q8 = xb->qs;
+
+        int32x4_t aux_lo = vdupq_n_s32(0);
+        int32x4_t aux_hi = vdupq_n_s32(0);
+
+        for (int j = 0; j < QK_K / 64; ++j) {
+            const uint8x16_t q5bits0 = vld1q_u8(q5);
+            const uint8x16_t q5bits1 = vld1q_u8(q5 + 16);
+            q5 += 32;
+
+            /* sub-block 2j: low nibbles + bit 2j; sub-block 2j+1: high + bit 2j+1 */
+            const int8x16_t a0 = vreinterpretq_s8_u8(vorrq_u8(
+                vandq_u8(q5bits0, m4), vshlq_n_u8(vandq_u8(qh0, mone), 4)));
+            const int8x16_t a1 = vreinterpretq_s8_u8(vorrq_u8(
+                vandq_u8(q5bits1, m4), vshlq_n_u8(vandq_u8(qh1, mone), 4)));
+            const int8x16_t a2 = vreinterpretq_s8_u8(vorrq_u8(
+                vshrq_n_u8(q5bits0, 4), vshlq_n_u8(vandq_u8(qh0, mtwo), 3)));
+            const int8x16_t a3 = vreinterpretq_s8_u8(vorrq_u8(
+                vshrq_n_u8(q5bits1, 4), vshlq_n_u8(vandq_u8(qh1, mtwo), 3)));
+            qh0 = vshrq_n_u8(qh0, 2);
+            qh1 = vshrq_n_u8(qh1, 2);
+
+            /* Keep the two 16-byte halves in separate accumulators: each
+             * vdotq lane covers 4 consecutive positions, giving 8 live
+             * position lanes per sub-block (4 here, 4 in the other half). */
+            const int32x4_t acc_a = vdotq_s32(vdupq_n_s32(0), a0, vld1q_s8(q8));
+            const int32x4_t acc_b = vdotq_s32(vdupq_n_s32(0), a1, vld1q_s8(q8 + 16));
+            const int32x4_t acc_c = vdotq_s32(vdupq_n_s32(0), a2, vld1q_s8(q8 + 32));
+            const int32x4_t acc_d = vdotq_s32(vdupq_n_s32(0), a3, vld1q_s8(q8 + 48));
+            q8 += 64;
+
+            const int32x4_t sc_lo = vdupq_n_s32((int32_t)sc[2 * j]);
+            const int32x4_t sc_hi = vdupq_n_s32((int32_t)sc[2 * j + 1]);
+            aux_lo = vmlaq_s32(aux_lo, acc_a, sc_lo);
+            aux_hi = vmlaq_s32(aux_hi, acc_b, sc_lo);
+            aux_lo = vmlaq_s32(aux_lo, acc_c, sc_hi);
+            aux_hi = vmlaq_s32(aux_hi, acc_d, sc_hi);
+        }
+
+        const float d = CK_FP16_TO_FP32(wb->d) * xb->d;
+        const float32x4_t dv = vdupq_n_f32(d);
+        sums_lo = vmlaq_f32(sums_lo, dv, vcvtq_f32_s32(aux_lo));
+        sums_hi = vmlaq_f32(sums_hi, dv, vcvtq_f32_s32(aux_hi));
+
+        const float dmin = CK_FP16_TO_FP32(wb->dmin) * xb->d;
+        sumf -= dmin * (float)sumi_mins;
+    }
+
+    float lanes_lo[4];
+    float lanes_hi[4];
+    vst1q_f32(lanes_lo, sums_lo);
+    vst1q_f32(lanes_hi, sums_hi);
+    for (int l = 0; l < 4; ++l) {
+        sumf += lanes_lo[l];
+    }
+    for (int l = 0; l < 4; ++l) {
+        sumf += lanes_hi[l];
+    }
+    return sumf;
+}
+#endif /* __ARM_FEATURE_DOTPROD */
+
 /* Llama-compatible dot path: Q5_K weights x Q8_K activations for a full row.
  * Keep the eight lane sums live across all blocks, matching ggml's generic
  * Q5_K/Q8_K reduction order. Reducing each block to a scalar first is close,
@@ -479,6 +604,13 @@ static float dot_q5_k_q8_k_row(const block_q5_K *w, const block_q8_K *x, int nb)
 #if defined(__AVX2__)
     if (!ck_q5k_debug_generic_dot()) {
         return dot_q5_k_q8_k_row_avx2(w, x, nb);
+    }
+#elif defined(__ARM_FEATURE_DOTPROD)
+    /* SDOT NEON is integer-exact per block; the eight-live-lane reduction
+     * contract is preserved (consecutive-position lanes, see the kernel
+     * comment). CK_DEBUG_Q5K_GENERIC_DOT=1 still forces the generic path. */
+    if (!ck_q5k_debug_generic_dot()) {
+        return dot_q5_k_q8_k_row_neon_sdot(w, x, nb);
     }
 #endif
 
@@ -1045,5 +1177,25 @@ void gemm_nt_q5_k(const float *A,
     gemm_nt_q5_k_ref(A, B, bias, C, M, N, K);
 #else
     gemm_nt_q5_k_ref(A, B, bias, C, M, N, K);
+#endif
+}
+
+/* Truthful provider-name helper (same pattern as ck_q4_k_q8_k_provider_name):
+ * reports the dot provider that gemv_q5_k / gemv_q5_k_q8_k actually use,
+ * including the CK_DEBUG_Q5K_* escape hatches. */
+const char *ck_q5_k_provider_name(void)
+{
+    if (ck_q5k_debug_fp32_fallback()) {
+        return "q5_k_fp32_ref";
+    }
+    if (ck_q5k_debug_generic_dot()) {
+        return "q5_k_q8_k_ref";
+    }
+#if defined(__AVX2__)
+    return "q5_k_q8_k_avx2";
+#elif defined(__ARM_FEATURE_DOTPROD)
+    return "q5_k_q8_k_neon_sdot";
+#else
+    return "q5_k_q8_k_ref";
 #endif
 }

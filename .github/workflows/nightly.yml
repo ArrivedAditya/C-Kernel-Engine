@@ -51,7 +51,9 @@ jobs:
             unittest/test_q6k_q8k_neon_parity.py \
             unittest/test_q4k_q8k_neon_parity.py \
             unittest/test_q5_0_q8_0_neon_parity.py \
-            unittest/test_elementwise_neon_parity.py
+            unittest/test_elementwise_neon_parity.py \
+            unittest/test_q5_k_q8_k_neon_parity.py \
+            unittest/test_q5_1_q8_1_neon_parity.py
 
       - name: Rebuild engine with ARM dot-product ISA and rerun NEON parity
         # Baseline armv8-a builds keep the scalar Q4_K dot (no SDOT); this
@@ -71,11 +73,13 @@ jobs:
           make clean
           make CK_ARM_ARCH="armv8.2-a+dotprod" build/libckernel_engine.so
           ldd -r build/libckernel_engine.so
-          CK_REQUIRE_Q4K_NEON=1 CK_REQUIRE_Q5_0_NEON=1 python -m pytest -q -rs \
+          CK_REQUIRE_Q4K_NEON=1 CK_REQUIRE_Q5_0_NEON=1 CK_REQUIRE_Q5K_NEON=1 CK_REQUIRE_Q5_1_NEON=1 python -m pytest -q -rs \
             unittest/test_q6k_q8k_neon_parity.py \
             unittest/test_q4k_q8k_neon_parity.py \
             unittest/test_q5_0_q8_0_neon_parity.py \
-            unittest/test_elementwise_neon_parity.py
+            unittest/test_elementwise_neon_parity.py \
+            unittest/test_q5_k_q8_k_neon_parity.py \
+            unittest/test_q5_1_q8_1_neon_parity.py
 
       - name: Verify portable normalization fixture on native ARM64
         if: always()
