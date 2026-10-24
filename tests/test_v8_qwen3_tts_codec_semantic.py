@@ -29,6 +29,7 @@ from build_qwen3_tts_codec_first_block_circuit import build_circuit as build_fir
 from build_qwen3_tts_codec_pretransformer_circuit import build_circuit as build_pretransformer_circuit
 from build_qwen3_tts_codec_first_upsample_circuit import build_circuit as build_first_upsample_circuit
 from build_qwen3_tts_codec_depthwise_circuit import build_circuit as build_depthwise_circuit
+from build_qwen3_tts_codec_convnext_complete_circuit import build_circuit as build_convnext_complete_circuit
 
 TABLE = "codec.semantic.effective_embedding"
 PROJECTION = "codec.semantic.output_projection.weight"
@@ -48,18 +49,20 @@ def generated_entry(folder: Path, arrays: dict[str, np.ndarray], frames: int,
                     transformer_layers: int = 8,
                     first_decoder_upsample: bool = False,
                     first_decoder_depthwise: bool = False,
-                    depthwise_kernel: int = 7):
+                    depthwise_kernel: int = 7,
+                    first_convnext_complete: bool = False,
+                    convnext_expansion: int = 4):
     table, projection = arrays[TABLE], arrays[PROJECTION]
     dimensions = {"frames": frames, "vocabulary": table.shape[0],
                   "codebook_width": table.shape[1],
                   "output_width": projection.shape[0]}
     if (pre_conv or pre_transformer_qkv or pre_transformer_attention or
             pre_transformer_first_block or pre_transformer_complete or
-            first_decoder_upsample or first_decoder_depthwise):
+            first_decoder_upsample or first_decoder_depthwise or first_convnext_complete):
         dimensions["latent_width"] = arrays["codec.decoder.pre_conv.conv.weight"].shape[0]
     if (pre_transformer_qkv or pre_transformer_attention or
             pre_transformer_first_block or pre_transformer_complete or
-            first_decoder_upsample or first_decoder_depthwise):
+            first_decoder_upsample or first_decoder_depthwise or first_convnext_complete):
         dimensions.update({
             "hidden_width": arrays[
                 "codec.decoder.pre_transformer.input_proj.weight"].shape[0],
@@ -71,9 +74,13 @@ def generated_entry(folder: Path, arrays: dict[str, np.ndarray], frames: int,
             "intermediate_width": arrays[
                 "codec.decoder.pre_transformer.layers.0.mlp.gate_proj.weight"].shape[0],
             **dimensions,
-        } if (first_decoder_upsample or first_decoder_depthwise or pre_transformer_complete or
+        } if (first_decoder_upsample or first_decoder_depthwise or first_convnext_complete or pre_transformer_complete or
               pre_transformer_first_block) else None
-        if first_decoder_depthwise:
+        if first_convnext_complete:
+            graph = build_convnext_complete_circuit(
+                layers=transformer_layers, depthwise_kernel=depthwise_kernel,
+                expansion=convnext_expansion, **block_dimensions)
+        elif first_decoder_depthwise:
             graph = build_depthwise_circuit(
                 layers=transformer_layers, depthwise_kernel=depthwise_kernel,
                 **block_dimensions)
@@ -146,7 +153,7 @@ def generated_entry(folder: Path, arrays: dict[str, np.ndarray], frames: int,
                       str(ROOT / "src/kernels/audio_conv1d_checked.c")]
                      if pre_conv or pre_transformer_qkv or pre_transformer_attention or
                      pre_transformer_first_block or pre_transformer_complete or
-                     first_decoder_upsample or first_decoder_depthwise else [])
+                     first_decoder_upsample or first_decoder_depthwise or first_convnext_complete else [])
     subprocess.run([
         "cc", "-std=gnu11", "-O2", "-w", "-fopenmp",
         "-shared", "-fPIC", "-ffunction-sections", "-fdata-sections",
@@ -161,15 +168,21 @@ def generated_entry(folder: Path, arrays: dict[str, np.ndarray], frames: int,
         str(ROOT / "src/kernels/softmax_kernels.c"),
         str(ROOT / "src/kernels/attention_flash_true.c"),
         *([str(ROOT / "src/kernels/audio_conv_transpose_dense_checked.c")]
-          if first_decoder_upsample or first_decoder_depthwise else []),
+          if first_decoder_upsample or first_decoder_depthwise or first_convnext_complete else []),
         *([str(ROOT / "src/kernels/audio_conv1d_depthwise_checked.c")]
-          if first_decoder_depthwise else []),
+          if first_decoder_depthwise or first_convnext_complete else []),
+        *([str(ROOT / "src/kernels/layernorm_rows_checked.c"),
+           str(ROOT / "src/kernels/layernorm_kernels.c"),
+           str(ROOT / "src/kernels/gelu_rows_erf_checked.c"),
+           str(ROOT / "src/kernels/gelu_kernels.c")]
+          if first_convnext_complete else []),
         str(ROOT / "src/ck_threadpool.c"),
         str(ROOT / "src/ckernel_strict.c"),
         "-I", str(ROOT / "include"), "-lm", "-ldl", "-lpthread",
         "-o", str(so_path),
     ], check=True, capture_output=True, text=True)
-    symbol = ("ck_qwen3_tts_codec_depthwise_bounded" if first_decoder_depthwise else
+    symbol = ("ck_qwen3_tts_codec_convnext_complete_bounded" if first_convnext_complete else
+              "ck_qwen3_tts_codec_depthwise_bounded" if first_decoder_depthwise else
               "ck_qwen3_tts_codec_first_upsample_bounded" if first_decoder_upsample else
               "ck_qwen3_tts_codec_pretransformer_bounded" if pre_transformer_complete else
               "ck_qwen3_tts_codec_first_block_bounded" if pre_transformer_first_block else
