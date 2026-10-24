@@ -18,7 +18,6 @@
  */
 
 #include "ck_threadpool.h"
-#include "ck_topology.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -375,12 +374,25 @@ ck_threadpool_t *ck_threadpool_create(int n_threads)
  * round-robin onto the discovered top-capacity CPUs within the process's
  * allowed set (see ck_topology.c). Default (unset) keeps the scheduler's
  * placement. Linux-only; a no-op on homogeneous or unknown topology, and it
- * never targets CPUs outside the process affinity mask. */
+ * never targets CPUs outside the process affinity mask.
+ *
+ * The topology functions are weak ELF references on purpose: standalone
+ * parity/test libraries (libck_parity.so, the LIB_* kernel libs, ad-hoc
+ * test harnesses) compile ck_threadpool.c WITHOUT ck_topology.c, and an
+ * undefined weak symbol legally resolves to NULL there, disabling the
+ * opt-in pinning. The engine library links ck_topology.c, so its strong
+ * definitions win (both are compiled directly into the shared object, so
+ * there is no static-archive GC hazard). */
+#ifdef __linux__
+__attribute__((weak)) int ck_topology_heterogeneous(void);
+__attribute__((weak)) int ck_topology_big_cpus(int *cpus, int max_cpus);
+#endif
 static void ck_threadpool_maybe_pin_big_cores(ck_threadpool_t *pool)
 {
 #ifdef __linux__
     const char *env = getenv("CK_THREAD_AFFINITY");
     if (!env || strcmp(env, "big-cores") != 0) return;
+    if (!ck_topology_heterogeneous || !ck_topology_big_cpus) return;
     if (!ck_topology_heterogeneous()) return;
 
     int big[CK_THREADPOOL_MAX_THREADS];
