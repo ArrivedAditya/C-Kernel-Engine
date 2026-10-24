@@ -28,6 +28,7 @@ from build_ir_v8 import (  # type: ignore
     _generate_tokenizer_c_code,
     _apply_circuit_runtime_defaults,
     _load_builtin_template_doc,
+    _resolve_tokenizer_contract,
     apply_layer_attention_dims,
     _validate_lowered_activation_memory,
     build_activation_specs,
@@ -38,6 +39,20 @@ from run_multimodal_bridge_v8 import _resolve_bridge_execution_policy  # type: i
 
 
 class Gemma3RopeMetadataTests(unittest.TestCase):
+    def test_gemma4_tokenizer_contract_matches_imported_bpe(self):
+        for family in ("gemma4", "gemma4_assistant"):
+            with self.subTest(family=family):
+                template = _load_builtin_template_doc(family)
+                self.assertEqual(template["flags"]["tokenizer"], "bpe")
+                imported = {"tokenizer_contract": {"tokenizer_type": "bpe"}}
+                self.assertEqual(
+                    _resolve_tokenizer_contract(template, {}, imported)["tokenizer_type"],
+                    "bpe",
+                )
+                incompatible = {"tokenizer_contract": {"tokenizer_type": "sentencepiece"}}
+                with self.assertRaisesRegex(ValueError, "tokenizer type mismatch"):
+                    _resolve_tokenizer_contract(template, {}, incompatible)
+
     def test_gemma4_bridge_uses_persistent_cache_after_mixed_prefill(self):
         bridge = _load_builtin_template_doc("gemma4")["contract"]["multimodal_bridge"]
         self.assertEqual(bridge["cache_policy"], "persistent_decoder_kv")

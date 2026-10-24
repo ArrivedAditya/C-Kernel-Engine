@@ -10,7 +10,7 @@
     "use_qkv_bias": false,
     "activation": "gelu_pytorch_tanh",
     "rope": "rope",
-    "tokenizer": "sentencepiece",
+    "tokenizer": "bpe",
     "scale_embeddings_sqrt_dim": true,
     "has_qk_norm": true,
     "attention": "q_only_k_eq_v_hybrid_sliding_window",
@@ -18,7 +18,7 @@
   },
   "contract": {
     "tokenizer_contract": {
-      "tokenizer_type": "sentencepiece",
+      "tokenizer_type": "bpe",
       "bos_policy": "model_defined",
       "eos_policy": "model_defined",
       "special_tokens": {
