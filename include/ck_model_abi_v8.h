@@ -107,6 +107,12 @@ typedef int (*ck_model_batch_decode_shared_layers_v8_fn)(void);
 typedef int (*ck_model_decode_batch2_v8_fn)(const CKModelBatchDecodeRowV8 *rows,
                                              size_t count, void *workspace,
                                              size_t workspace_bytes);
+/* Optional phase-aware variant. The selected prefill row uses map-resolved
+ * prefill continuation arithmetic in local stages; shared projections retain
+ * the same checked two-row provider. Unsupported graphs omit this symbol. */
+typedef int (*ck_model_decode_batch2_mixed_prefill_v8_fn)(
+    const CKModelBatchDecodeRowV8 *rows, size_t count, void *workspace,
+    size_t workspace_bytes, uint32_t prefill_row);
 
 #ifdef __cplusplus
 }

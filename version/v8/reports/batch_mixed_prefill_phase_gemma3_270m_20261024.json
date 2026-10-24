@@ -1,0 +1,49 @@
+{
+  "bundle": "Gemma3-270M Q5_K_M copied and rebuilt bundle",
+  "cancellation_reuse_survivor": "pass",
+  "cases": {
+    "length_10/prefill_slot_0": {
+      "prompt_prefix_logits_position_kv_exact": true,
+      "steps": 9,
+      "survivor_logits_position_kv_exact": true
+    },
+    "length_10/prefill_slot_1": {
+      "prompt_prefix_logits_position_kv_exact": true,
+      "steps": 9,
+      "survivor_logits_position_kv_exact": true
+    },
+    "length_12/prefill_slot_0": {
+      "prompt_prefix_logits_position_kv_exact": true,
+      "steps": 11,
+      "survivor_logits_position_kv_exact": true
+    },
+    "length_12/prefill_slot_1": {
+      "prompt_prefix_logits_position_kv_exact": true,
+      "steps": 11,
+      "survivor_logits_position_kv_exact": true
+    }
+  },
+  "context_length": 32,
+  "cpu": {
+    "isa_flags": [
+      "avx",
+      "avx2",
+      "fma"
+    ],
+    "machine": "x86_64",
+    "model": "Intel(R) Core(TM) i7-14700T"
+  },
+  "generated_source_sha256": "eb0926bd99fc76d2f673d687b05bd00791ff66e188b500afdae1e36977a5fd36",
+  "kv_bytes_per_sequence": 4718592,
+  "loaded_sha256": {
+    "libckernel_engine.so": "a639b59f9817ebc5e93556c2e0360c50a5f48259725955ac4db0659cdddf7e0a",
+    "libmodel.so": "4ec0eea4d3ea4c88307532b18ab2d8883cfef763542a1120abcde3052c2bf394"
+  },
+  "scope": "two-row phase-aware mixed native execution",
+  "session_library_sha256": "a61fae0d9b1cfd8b8dda70b4f29c554c351621d6e61728b642093f19e4dde188",
+  "shared_layers": 18,
+  "shared_projection_groups": 72,
+  "status": "pass",
+  "threads": 4,
+  "weights_sha256": "dae6375dc5f6e04db7a373fc747df6eda4f9938f019bc0c0d1fdda4ec2443c40"
+}

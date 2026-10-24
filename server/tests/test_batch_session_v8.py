@@ -424,8 +424,7 @@ def test_staged_prefill_binding_tracks_progress_and_cancel(tmp_path):
         batch = session.enable_batch2(320)
         ticket = batch.begin_prefill(0, 3)
         assert batch.append_prefill(0, ticket, [1, 2]) == 2
-        with pytest.raises(session_v8.SessionError, match="capability"):
-            batch.position(0)
+        assert batch.position(0) == 2
         with pytest.raises(ValueError, match="token IDs"):
             batch.append_prefill(0, ticket, [16])
         assert batch.append_prefill(0, ticket, [3]) == 3
@@ -474,8 +473,7 @@ def test_mixed_step_shares_generated_call_and_preserves_both_positions(tmp_path)
         assert (logits[0][0], logits[1][0]) == (7, 5)
         assert model.ck_fake_batch_calls() == before + 1
         assert batch.position(0) == 3
-        with pytest.raises(session_v8.SessionError, match="capability"):
-            batch.position(1)
+        assert batch.position(1) == 1
         mask, consumed, logits = batch.mixed_step((1, 6), (ready, staged), 1)
         assert (mask, consumed) == (3, 2)
         assert (logits[0][0], logits[1][0]) == (8, 11)

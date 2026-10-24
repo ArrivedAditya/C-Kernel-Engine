@@ -228,6 +228,14 @@ int ck_session_v8_batch2_mixed_step(CKSessionV8 *session,
                                     float *const logits[2],
                                     uint32_t *advanced_mask,
                                     int32_t *consumed_out);
+/* Separate opt-in semantics: the staged row uses the generated prefill-phase
+ * local stages. An older model without the matching entry returns CAPABILITY
+ * before either sequence advances. The decode-replay ABI above is unchanged. */
+int ck_session_v8_batch2_mixed_step_prefill_phase(
+    CKSessionV8 *session, const int32_t tokens[2],
+    const uint64_t tickets[2], uint32_t prefill_slot,
+    float *const logits[2], uint32_t *advanced_mask,
+    int32_t *consumed_out);
 int ck_session_v8_batch2_reset_slot(CKSessionV8 *session, uint32_t slot);
 int ck_session_v8_batch2_position(CKSessionV8 *session, uint32_t slot,
                                  int32_t *position_out);

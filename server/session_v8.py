@@ -373,19 +373,30 @@ class Batch2SessionV8:
         return advanced.value, self._logits
 
     def mixed_step(self, tokens: tuple[int, int], tickets: tuple[int, int],
-                   prefill_slot: int) -> tuple[int, int, tuple[Any, Any]]:
-        """Advance one ready decode row and one staged prompt row together."""
+                   prefill_slot: int, *, prefill_phase: bool = False
+                   ) -> tuple[int, int, tuple[Any, Any]]:
+        """Advance two rows; optionally select the staged row's prefill phase."""
         if len(tokens) != 2 or len(tickets) != 2 or \
                 type(prefill_slot) is not int or prefill_slot not in (0, 1) or \
-                any(type(ticket) is not int or ticket <= 0 for ticket in tickets):
+                any(type(ticket) is not int or ticket <= 0 for ticket in tickets) or \
+                type(prefill_phase) is not bool:
             raise ValueError("mixed step requires two tokens, live tickets and a prefill slot")
         self._validate_tokens(tokens, 2)
         inputs = (ctypes.c_int32 * 2)(*tokens)
         ticket_values = (ctypes.c_uint64 * 2)(*tickets)
         advanced = ctypes.c_uint32()
         consumed = ctypes.c_int32()
-        _configure_mixed_step_abi(self.parent.lib)
-        self._call("ck_session_v8_batch2_mixed_step", inputs, ticket_values,
+        name = "ck_session_v8_batch2_mixed_step"
+        if prefill_phase:
+            name += "_prefill_phase"
+            function = getattr(self.parent.lib, name, None)
+            if function is None:
+                raise SessionError(-5, "loaded session library lacks phase-aware mixed step")
+            function.argtypes, function.restype = _MIXED_STEP_ABI[
+                "ck_session_v8_batch2_mixed_step"]
+        else:
+            _configure_mixed_step_abi(self.parent.lib)
+        self._call(name, inputs, ticket_values,
                    prefill_slot, self._outputs, ctypes.byref(advanced),
                    ctypes.byref(consumed))
         return advanced.value, consumed.value, self._logits

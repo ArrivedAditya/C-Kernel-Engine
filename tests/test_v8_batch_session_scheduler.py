@@ -232,6 +232,11 @@ class BatchSessionSchedulerTests(unittest.TestCase):
                 ctypes.c_void_p, ctypes.POINTER(ctypes.c_int32),
                 ctypes.POINTER(ctypes.POINTER(ctypes.c_float)),
                 ctypes.POINTER(ctypes.c_uint32)]
+            session.ck_session_v8_batch2_mixed_step_prefill_phase.argtypes = [
+                ctypes.c_void_p, ctypes.POINTER(ctypes.c_int32),
+                ctypes.POINTER(ctypes.c_uint64), ctypes.c_uint32,
+                ctypes.POINTER(ctypes.POINTER(ctypes.c_float)),
+                ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_int32)]
             session.ck_session_v8_batch2_reset_slot.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
             session.ck_session_v8_batch2_position.argtypes = [
                 ctypes.c_void_p, ctypes.c_uint32, ctypes.POINTER(ctypes.c_int32)]
@@ -324,12 +329,28 @@ class BatchSessionSchedulerTests(unittest.TestCase):
                 ticket_b = prefill(1, [3])
                 self.assertEqual(append(0, staged_a, [1]), (0, 1))
                 self.assertEqual(outputs[0][0], 1)
+                partial_position = ctypes.c_int32(-1)
+                self.assertEqual(session.ck_session_v8_batch2_position(
+                    handle, 0, ctypes.byref(partial_position)), 0)
+                self.assertEqual(partial_position.value, 1)
                 self.assertEqual(step(0, 2), (0, 2))
                 self.assertEqual(outputs[1][0], 5)
                 before = model.ck_fake_mutation_calls()
                 self.assertEqual(append(0, staged_a, [16]), (-1, -1))
                 self.assertEqual(model.ck_fake_mutation_calls(), before)
                 self.assertEqual(append(0, staged_a, [2, 3, 4]), (-1, -1))
+                # The fake model has only ordinary batch decode. The new ABI
+                # rejects before either slot or output can advance.
+                advanced = ctypes.c_uint32(99)
+                consumed = ctypes.c_int32(99)
+                before = model.ck_fake_mutation_calls()
+                self.assertEqual(session.ck_session_v8_batch2_mixed_step_prefill_phase(
+                    handle, (ctypes.c_int32 * 2)(2, 4),
+                    (ctypes.c_uint64 * 2)(staged_a, ticket_b), 0,
+                    output_ptrs, ctypes.byref(advanced),
+                    ctypes.byref(consumed)), -5)
+                self.assertEqual((advanced.value, consumed.value), (0, 0))
+                self.assertEqual(model.ck_fake_mutation_calls(), before)
                 self.assertEqual(append(0, staged_a, [2, 3]), (0, 3))
                 self.assertEqual(outputs[0][0], 6)
                 self.assertEqual(step(1, 1), (0, 3))
