@@ -813,6 +813,11 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_qwen3_tts_codec_decoder_ingress.py",
         timeout_sec=300,
     ),
+    "tts_qwen3_customvoice_codec_snake_beta": TestSuite(
+        "Qwen3-TTS Generated Codec First SnakeBeta", "inference",
+        ROOT / "tests" / "test_v8_qwen3_tts_codec_snake_beta.py",
+        timeout_sec=300,
+    ),
     "tts_audio_sliding_attention_oracle": TestSuite(
         "Checked Sliding Attention Independent Oracle", "kernels",
         ROOT / "tests" / "test_v8_attention_sliding_bounded_oracle.py",
@@ -1221,6 +1226,14 @@ TEST_SUITES = {
     "tts_audio_snake_generated": TestSuite(
         "Checked Channelwise Snake Normal-Compiler Generated Graph", "inference",
         ROOT / "tests" / "test_v8_audio_snake_generated.py",
+    ),
+    "tts_audio_snake_beta_checked": TestSuite(
+        "Checked Two-Parameter SnakeBeta Independent Oracle", "kernels",
+        ROOT / "tests" / "test_v8_audio_snake_beta_checked.py",
+    ),
+    "tts_audio_snake_beta_generated": TestSuite(
+        "Checked Two-Parameter SnakeBeta Generated Graph", "inference",
+        ROOT / "tests" / "test_v8_audio_snake_beta_generated.py",
     ),
     "tts_audio_dilated_conv": TestSuite(
         "Checked Dilated Conv1D PyTorch Oracles", "kernels",

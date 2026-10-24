@@ -115,6 +115,7 @@
             "audio_harmonic_source_checked",
             "tanh",
             "snake",
+            "snake_beta",
             "layout_transform",
             "multimodal_position_builder",
             "multimodal_prefix_insert",
