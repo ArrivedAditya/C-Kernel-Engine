@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -10,17 +11,27 @@ from fastapi.testclient import TestClient
 
 from server.live import _extract_tool_calls_from_text, create_app
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "version" / "v8" / "scripts"))
+from ck_serve_v8 import create_app as create_chat_app
+
 
 TEMPLATE = (Path(__file__).parent / "fixtures/nemotron_nano_9b_v2_publisher_chat_template.jinja").read_text()
 TOOL = {"type": "function", "name": "read_file", "description": "Read a file",
         "parameters": {"type": "object", "properties": {"path": {"type": "string"}},
                        "required": ["path"]}}
 CALL = '<TOOLCALL>[{"name":"read_file","arguments":{"path":"x"}}]</TOOLCALL>'
+REASONING_CALL = "I should use cat 'note.txt' to read the file.\n</think>\n\n" + CALL
+EXPLANATORY_CALL = (
+    "The `add` function returns `a - b`. For example, `add(2, 3)` is -1.\n\n"
+    "Let me execute the corrected command:\n\n" + CALL
+)
 
 
 @pytest.mark.parametrize("text,expected", [
     (CALL, 1),
     ("</think>\n" + CALL, 1),
+    (REASONING_CALL, 1),
+    (EXPLANATORY_CALL, 1),
     ("I will read the file.\n\n" + CALL, 1),
     ('<TOOLCALL>[{"name":"read_file","arguments":{"path":"x"}},'
      '{"name":"read_file","arguments":"{\\"path\\":\\"y\\"}"}]</TOOLCALL>', 2),
@@ -44,10 +55,12 @@ def test_publisher_envelope_preserves_calls(text: str, expected: int) -> None:
     ("</TOOLCALL><TOOLCALL>[]", "malformed"),
     ("Example only:\n```xml\n" + CALL + "\n```", "malformed"),
     ("Example only:\n\n" + CALL, "malformed"),
+    ("Here is a closed fence:\n```xml\n<TOOLCALL>[]</TOOLCALL>\n```\n\n" + CALL, "malformed"),
     ("    " + CALL, "malformed"),
     ("> " + CALL, "malformed"),
     ("The example is \"" + CALL + "\"", "malformed"),
     ("<think>Example: " + CALL + "</think>", "malformed"),
+    ("I should read the file.\n</think>\n</think>\n" + CALL, "malformed"),
     ('<TOOLCALL>[{"name":"other","arguments":{}}]</TOOLCALL>', "unknown"),
     ('<TOOLCALL>[{"name":"read_file","arguments":{"path":"x","n":1e999}}]'
      '</TOOLCALL>', "malformed"),
@@ -82,10 +95,17 @@ class _Session:
     def cancel(self):
         pass
 
+    def count_tokens(self, prompt):
+        return len(prompt.split())
+
+    def close(self):
+        pass
+
 
 @pytest.mark.parametrize("stream", [False, True])
-def test_http_call_result_and_continuation(stream: bool) -> None:
-    session = _Session([CALL, "The file says cobalt."])
+@pytest.mark.parametrize("first_output", [CALL, REASONING_CALL, EXPLANATORY_CALL])
+def test_http_call_result_and_continuation(stream: bool, first_output: str) -> None:
+    session = _Session([first_output, "The file says cobalt."])
     client = TestClient(create_app(
         session, model="nemotron-test", chat_template=TEMPLATE,
         tool_protocol="nemotron_toolcall_v1",
@@ -117,6 +137,36 @@ def test_http_call_result_and_continuation(stream: bool) -> None:
     })
     assert second.status_code == 200, second.text
     assert second.json()["output_text"] == "The file says cobalt."
+    assert '<TOOL_RESPONSE>[cobalt]</TOOL_RESPONSE>' in session.prompts[1]
+
+
+@pytest.mark.parametrize("first_output", [REASONING_CALL, EXPLANATORY_CALL])
+def test_chat_completions_publisher_reasoning_call_and_result(first_output: str) -> None:
+    session = _Session([first_output, "The file says cobalt."])
+    client = TestClient(create_chat_app(
+        session, model="nemotron-test", chat_template=TEMPLATE,
+        tool_protocol="nemotron_toolcall_v1", viz=False,
+    ))
+    tool = {"type": "function", "function": {
+        "name": TOOL["name"], "description": TOOL["description"],
+        "parameters": TOOL["parameters"],
+    }}
+    first = client.post("/v1/chat/completions", json={
+        "model": "nemotron-test", "messages": [{"role": "user", "content": "Read x"}],
+        "tools": [tool],
+    })
+    assert first.status_code == 200, first.text
+    call = first.json()["choices"][0]["message"]["tool_calls"][0]
+    assert json.loads(call["function"]["arguments"]) == {"path": "x"}
+    second = client.post("/v1/chat/completions", json={
+        "model": "nemotron-test", "messages": [
+            {"role": "user", "content": "Read x"},
+            {"role": "assistant", "content": None, "tool_calls": [call]},
+            {"role": "tool", "tool_call_id": call["id"], "content": "cobalt"},
+        ], "tools": [tool],
+    })
+    assert second.status_code == 200, second.text
+    assert second.json()["choices"][0]["message"]["content"] == "The file says cobalt."
     assert '<TOOL_RESPONSE>[cobalt]</TOOL_RESPONSE>' in session.prompts[1]
 
 

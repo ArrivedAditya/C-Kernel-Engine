@@ -1226,25 +1226,29 @@ def _extract_tool_calls_from_text(
             if " " in leading or "\t" in leading:
                 return [], "malformed", "Nemotron tool call cannot be indented quoted text"
             preamble = stripped[:start]
-            # The publisher template starts generation after <think> or
-            # <think></think>. The model may close reasoning before its final
-            # answer; never treat a call inside reasoning as executable.
-            if preamble.startswith("<think>"):
-                thought_end = preamble.find("</think>")
-                if thought_end < 0:
-                    return [], "malformed", "Nemotron tool call is inside reasoning"
-                preamble = preamble[thought_end + len("</think>"):]
-            elif preamble.startswith("</think>"):
-                preamble = preamble[len("</think>"):]
+            # The publisher template opens <think> in the prompt. The generated
+            # text can therefore begin with reasoning prose and only contain
+            # </think>. A call is executable only after that single phase close.
+            if "</think>" in preamble:
+                if preamble.count("</think>") != 1:
+                    return [], "malformed", "Nemotron reasoning has multiple closing delimiters"
+                thought, preamble = preamble.split("</think>", 1)
+                if "<think>" in thought and not thought.startswith("<think>"):
+                    return [], "malformed", "Nemotron reasoning has invalid opening delimiter"
+                if thought.count("<think>") > 1:
+                    return [], "malformed", "Nemotron reasoning has multiple opening delimiters"
+            elif "<think>" in preamble:
+                return [], "malformed", "Nemotron tool call is inside reasoning"
             preamble_text = preamble.strip()
+            final_paragraph = preamble_text.split("\n\n")[-1]
             if preamble_text and (
                 not preamble.endswith("\n\n")
                 or len(preamble) > 1024
-                or any(char in preamble for char in "<>`\"'|")
-                or preamble_text[-1] not in ".!?"
+                or any(char in preamble for char in "<>|")
+                or "```" in preamble
                 or re.search(
                     r"\b(?:example|sample|quoted?|syntax|format)\b",
-                    preamble_text, re.IGNORECASE,
+                    final_paragraph, re.IGNORECASE,
                 )
             ):
                 return [], "malformed", "Nemotron tool call has invalid outer framing"
