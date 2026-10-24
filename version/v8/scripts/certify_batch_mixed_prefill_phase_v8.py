@@ -27,6 +27,8 @@ def certify(bundle: Path, *, context_length: int, threads: int) -> dict:
                              num_threads=threads)
     try:
         batch = session.enable_batch2(1 << 30)
+        if session.batch2_phase_capabilities() != 3:
+            raise AssertionError("loaded model lacks both phase-aware staged entries")
         model = ctypes.CDLL(str(bundle / "libmodel.so"))
         required_symbol = "ck_model_decode_batch2_mixed_prefill"
         if not hasattr(model, required_symbol):
@@ -82,12 +84,35 @@ def certify(bundle: Path, *, context_length: int, threads: int) -> dict:
             batch.reset_slot(1)
 
         cases = {}
+        standalone_cases = {}
         for length in (10, 12):
             prompt = tuple(100 + index for index in range(length))
             survivor_prompt = (200, 201, 202)
             survivor_tokens = tuple(203 + index for index in range(length - 1))
             for prefill_slot in (0, 1):
                 decode_slot = prefill_slot ^ 1
+                # A prompt can also advance without a concurrent decode row.
+                # Every prefix must have the same arithmetic and stored state
+                # as the ordinary generated prefill, independently of timing.
+                reset()
+                solo_ticket = batch.begin_prefill(prefill_slot, length)
+                solo = []
+                for token in prompt:
+                    batch.append_prefill(prefill_slot, solo_ticket, (token,),
+                                         prefill_phase=True)
+                    solo.append(snapshot(prefill_slot, "standalone phase append"))
+                reset()
+                for prefix, actual in enumerate(solo, start=1):
+                    batch.prefill(prefill_slot, prompt[:prefix])
+                    if snapshot(prefill_slot, "ordinary standalone prefix") != actual:
+                        raise AssertionError(
+                            f"standalone phase append differs at length {length}, "
+                            f"slot {prefill_slot}, prefix {prefix}")
+                    batch.reset_slot(prefill_slot)
+                standalone_cases[f"length_{length}/prefill_slot_{prefill_slot}"] = {
+                    "prefixes": length,
+                    "full_logits_position_kv_exact": True,
+                }
                 reset()
                 decode_ticket, _ = batch.prefill(decode_slot, survivor_prompt)
                 prompt_ticket = batch.begin_prefill(prefill_slot, length)
@@ -184,7 +209,8 @@ def certify(bundle: Path, *, context_length: int, threads: int) -> dict:
         reset()
 
         return {
-            "status": "pass", "scope": "two-row phase-aware mixed native execution",
+            "status": "pass",
+            "scope": "one-row phase-aware append and two-row mixed native execution",
             "bundle": str(bundle), "loaded_sha256": loaded,
             "session_library_sha256": native["sha256"],
             "generated_source_sha256": embedded.decode(),
@@ -193,6 +219,7 @@ def certify(bundle: Path, *, context_length: int, threads: int) -> dict:
             "context_length": context_length, "threads": threads,
             "cpu": _cpu_identity(), "kv_bytes_per_sequence": kv_bytes.value,
             "cases": cases,
+            "standalone_phase_append": standalone_cases,
             "cancellation_reuse_survivor": "pass",
         }
     finally:

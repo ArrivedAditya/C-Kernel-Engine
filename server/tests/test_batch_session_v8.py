@@ -421,8 +421,12 @@ def test_staged_prefill_binding_tracks_progress_and_cancel(tmp_path):
     (tmp_path / "weights_manifest.map").write_text("")
     session = session_v8.SessionV8.open(tmp_path, context_length=16, num_threads=1)
     try:
+        assert session.batch2_phase_capabilities() == 0
         batch = session.enable_batch2(320)
         ticket = batch.begin_prefill(0, 3)
+        with pytest.raises(session_v8.SessionError, match="capability"):
+            batch.append_prefill(0, ticket, [1], prefill_phase=True)
+        assert batch.position(0) == 0
         assert batch.append_prefill(0, ticket, [1, 2]) == 2
         assert batch.position(0) == 2
         with pytest.raises(ValueError, match="token IDs"):
@@ -442,6 +446,32 @@ def test_staged_prefill_binding_tracks_progress_and_cancel(tmp_path):
         batch.request_cancel(interrupted)
         assert batch.append_prefill(0, fresh, [7]) == 1
         assert batch.staged_logits(0)[0] == 7
+    finally:
+        session.close()
+
+
+def test_phase_append_rejects_grouped_row_contract_before_mutation(tmp_path):
+    source = tmp_path / "fake_grouped_model.c"
+    source.write_text(MODEL_SOURCE + "\n"
+                      "int ck_model_decode_prefill_phase(int32_t token, float *out) { "
+                      "return ck_model_decode(token, out); }\n"
+                      "int ck_model_prefill_append_row_group(void) { return 4; }\n")
+    subprocess.run([
+        "cc", "-shared", "-fPIC", "-I", str(session_v8.PROJECT_ROOT / "include"),
+        "-I", str(session_v8.PROJECT_ROOT / "version/v8/src"),
+        str(source), "-o", str(tmp_path / "libmodel.so"),
+    ], check=True)
+    (tmp_path / "weights.bump").write_bytes(b"")
+    (tmp_path / "weights_manifest.map").write_text("")
+    session = session_v8.SessionV8.open(tmp_path, context_length=16, num_threads=1)
+    try:
+        assert session.batch2_phase_capabilities() == 0
+        batch = session.enable_batch2(320)
+        ticket = batch.begin_prefill(0, 2)
+        with pytest.raises(session_v8.SessionError, match="capability"):
+            batch.append_prefill(0, ticket, [1], prefill_phase=True)
+        assert batch.position(0) == 0
+        assert batch.append_prefill(0, ticket, [1, 2]) == 2
     finally:
         session.close()
 

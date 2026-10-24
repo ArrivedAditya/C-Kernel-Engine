@@ -169,6 +169,8 @@ typedef struct {
     kv_enable_t kv_enable;
     kv_reset_t kv_reset;
     decode_t decode;
+    ck_model_decode_prefill_phase_v8_fn decode_prefill_phase;
+    ck_model_prefill_append_row_group_v8_fn prefill_append_row_group;
     prefill_t prefill;  /* ck_prefill for batched prefill (optional) */
     write_embeddings_t write_embeddings;
     embed_tokens_at_t embed_tokens_at;
@@ -1835,6 +1837,10 @@ static bool load_model_api(const char *lib_path, ModelAPI *api) {
     resolve_symbol(api->handle, "ck_model_decode_batch2", (void **)&api->decode_batch2, false);
     resolve_symbol(api->handle, "ck_model_decode_batch2_mixed_prefill",
                    (void **)&api->decode_batch2_mixed_prefill, false);
+    resolve_symbol(api->handle, "ck_model_decode_prefill_phase",
+                   (void **)&api->decode_prefill_phase, false);
+    resolve_symbol(api->handle, "ck_model_prefill_append_row_group",
+                   (void **)&api->prefill_append_row_group, false);
     /* ck_prefill - optional, only present when prefill IR was generated */
     resolve_symbol(api->handle, "ck_prefill", (void **)&api->prefill, false);
     resolve_symbol(api->handle, "ck_model_write_embeddings", (void **)&api->write_embeddings, false);
@@ -6166,10 +6172,11 @@ done:
     return status;
 }
 
-int ck_session_v8_batch2_prefill_append(CKSessionV8 *session, uint32_t slot,
-                                       uint64_t ticket, const int32_t *tokens,
-                                       int32_t count, float *scratch_logits,
-                                       int32_t *consumed_out) {
+static int batch2_prefill_append_impl(CKSessionV8 *session, uint32_t slot,
+                                      uint64_t ticket, const int32_t *tokens,
+                                      int32_t count, float *scratch_logits,
+                                      int32_t *consumed_out,
+                                      int prefill_phase) {
     if (!session || slot >= 2 || !ticket || !tokens || count <= 0 ||
         !scratch_logits || !consumed_out)
         return CK_SESSION_V8_ERROR_INVALID_ARGUMENT;
@@ -6177,6 +6184,12 @@ int ck_session_v8_batch2_prefill_append(CKSessionV8 *session, uint32_t slot,
     if (status != CK_SESSION_V8_OK) return status;
     if (!session->batch_enabled || session->batch_poisoned) {
         status = CK_SESSION_V8_ERROR_BUSY;
+        goto done;
+    }
+    if (prefill_phase && (!session->api.decode_prefill_phase ||
+        !session->api.prefill_append_row_group ||
+        session->api.prefill_append_row_group() != 1)) {
+        status = CK_SESSION_V8_ERROR_CAPABILITY;
         goto done;
     }
     const uint_fast64_t state = atomic_load_explicit(
@@ -6218,7 +6231,10 @@ int ck_session_v8_batch2_prefill_append(CKSessionV8 *session, uint32_t slot,
             status = CK_SESSION_V8_ERROR_CANCELLED;
             goto done;
         }
-        if (session->api.decode(tokens[i], scratch_logits) != 0 ||
+        const int decode_status = prefill_phase
+            ? session->api.decode_prefill_phase(tokens[i], scratch_logits)
+            : session->api.decode(tokens[i], scratch_logits);
+        if (decode_status != 0 ||
             session->api.get_active_tokens() !=
                 session->batch_slot[slot].prefill_done + 1) {
             status = CK_SESSION_V8_ERROR_RUNTIME;
@@ -6243,6 +6259,36 @@ poison:
 done:
     pthread_mutex_unlock(&session->generation_lock);
     return status;
+}
+
+int ck_session_v8_batch2_prefill_append(CKSessionV8 *session, uint32_t slot,
+                                       uint64_t ticket, const int32_t *tokens,
+                                       int32_t count, float *scratch_logits,
+                                       int32_t *consumed_out) {
+    return batch2_prefill_append_impl(session, slot, ticket, tokens, count,
+                                      scratch_logits, consumed_out, 0);
+}
+
+int ck_session_v8_batch2_prefill_append_phase(
+    CKSessionV8 *session, uint32_t slot, uint64_t ticket,
+    const int32_t *tokens, int32_t count, float *scratch_logits,
+    int32_t *consumed_out) {
+    return batch2_prefill_append_impl(session, slot, ticket, tokens, count,
+                                      scratch_logits, consumed_out, 1);
+}
+
+int ck_session_v8_batch2_phase_capabilities(CKSessionV8 *session) {
+    int status = batch2_lock(session);
+    if (status != CK_SESSION_V8_OK) return status;
+    int capabilities = 0;
+    if (session->api.decode_prefill_phase &&
+        session->api.prefill_append_row_group &&
+        session->api.prefill_append_row_group() == 1)
+        capabilities |= 1;
+    if (session->api.decode_batch2_mixed_prefill)
+        capabilities |= 2;
+    pthread_mutex_unlock(&session->generation_lock);
+    return capabilities;
 }
 
 int ck_session_v8_batch2_step(CKSessionV8 *session, const int32_t tokens[2],

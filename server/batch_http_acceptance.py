@@ -42,16 +42,20 @@ def _digest(response: dict) -> dict:
 
 
 def _preflight(identity: dict, observation: dict, *, model: str,
-               serving_sha: str, session_sha: str) -> None:
+               serving_sha: str, session_sha: str,
+               prefill_strategy: str = "decode_replay_chunked") -> None:
     for key, expected in (("model", model), ("serving_identity", serving_sha),
                           ("session_library_sha256", session_sha)):
         if identity.get(key) != expected:
             raise ValueError(f"loaded {key} does not match required artifact")
+    mixed_execution = ("one_decode_plus_one_prefill_phase_row"
+                       if prefill_strategy == "prefill_phase_chunked"
+                       else "one_decode_plus_one_prefill_row")
     if (identity.get("schema") != "cke.loaded_serving_identity.v1"
             or not identity.get("server_instance_id")
             or identity.get("effective_serving", {}).get("execution_mode") != "experimental_batch2_http"
-            or identity["effective_serving"].get("mixed_execution") != "one_decode_plus_one_prefill_row"
-            or identity["effective_serving"].get("prefill_strategy") != "decode_replay_chunked"):
+            or identity["effective_serving"].get("mixed_execution") != mixed_execution
+            or identity["effective_serving"].get("prefill_strategy") != prefill_strategy):
         raise ValueError("loaded artifact is not the resolved mixed-row serving path")
     if (observation.get("schema") != "cke.batch2_observation.v1"
             or observation.get("server_instance_id") != identity["server_instance_id"]
@@ -222,7 +226,9 @@ def _run(args: argparse.Namespace, evidence: dict) -> dict:
             counters_before = _get(client, endpoint, "/cke/batch-observation")
             _preflight(before, counters_before, model=args.model,
                        serving_sha=args.expected_serving_identity,
-                       session_sha=args.expected_session_library_sha256)
+                       session_sha=args.expected_session_library_sha256,
+                       prefill_strategy=getattr(args, "expected_prefill_strategy",
+                                                "decode_replay_chunked"))
 
             nonce = args.nonce or secrets.token_hex(4)
             prompt_a = f"Write a long list of words about cedar trees. Marker {nonce}A."
@@ -371,6 +377,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model", required=True)
     parser.add_argument("--expected-serving-identity", required=True)
     parser.add_argument("--expected-session-library-sha256", required=True)
+    parser.add_argument("--expected-prefill-strategy",
+                        choices=("decode_replay_chunked", "prefill_phase_chunked"),
+                        default="decode_replay_chunked")
     parser.add_argument("--max-output-tokens", type=int, default=32)
     parser.add_argument("--timeout-seconds", type=float, default=120)
     parser.add_argument("--nonce", help="Fixed synthetic prompt marker for replay")

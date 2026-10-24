@@ -10,6 +10,7 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
 from fastapi.testclient import TestClient
+import pytest
 import uvicorn
 
 from server.batch_decode import BatchTick, CompletionEvent, TokenEvent
@@ -29,6 +30,14 @@ class FakeSession:
 
     def decode_ids(self, ids):
         return bytes(ids)
+
+
+def test_injected_loop_cannot_advertise_unselected_phase_mode():
+    with pytest.raises(ValueError, match="does not declare phase-aware"):
+        Batch2HTTPOwner(FakeSession(), max_extra_bytes=1,
+                        max_prompt_tokens=8, loop=FakeLoop(),
+                        decode_replay_chunk_tokens=1,
+                        prefill_phase_staged=True)
 
 
 class FullPromptSession(FakeSession):
@@ -278,6 +287,26 @@ class MixedHTTPTestLoop(StagedHTTPTestLoop):
                 del self.staged[staged]
         return BatchTick(tick.tokens, tick.completed,
                          tick.advanced_mask | (1 << state[0]), staged, progress)
+
+
+def test_phase_aware_http_identity_reports_selected_execution():
+    loop = MixedHTTPTestLoop()
+    loop.prefill_phase_staged = True
+    owner = Batch2HTTPOwner(
+        FullPromptSession(), max_extra_bytes=1, max_prompt_tokens=16,
+        loop=loop, decode_replay_chunk_tokens=1, mixed_one_row=True,
+        prefill_phase_staged=True)
+    try:
+        app = create_app(
+            FullPromptSession(), model="m", context_length=128,
+            chat_template="{{ messages[0].content }}", batch_http=owner,
+            loaded_identity={"schema": "cke.loaded_serving_identity.v1"})
+        effective = TestClient(app).get(
+            "/v1/cke/loaded-identity").json()["effective_serving"]
+        assert effective["prefill_strategy"] == "prefill_phase_chunked"
+        assert effective["mixed_execution"] == "one_decode_plus_one_prefill_phase_row"
+    finally:
+        owner.close()
 
 
 def test_mixed_http_routes_two_outputs_and_records_shared_prompt_work():

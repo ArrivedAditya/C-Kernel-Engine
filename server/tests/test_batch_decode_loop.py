@@ -396,6 +396,53 @@ def test_staged_prefill_is_bounded_cancelled_and_reusable():
     assert not loop.request_cancel(second)
 
 
+def test_phase_aware_loop_selects_both_standalone_and_mixed_entries():
+    class PhaseBatch(_StagedBatch):
+        def __init__(self):
+            super().__init__()
+            self.phase_calls = []
+
+        def append_prefill(self, slot, ticket, tokens, *, prefill_phase=False):
+            self.phase_calls.append(("append", prefill_phase))
+            return super().append_prefill(slot, ticket, tokens)
+
+        def mixed_step(self, tokens, tickets, prefill_slot, *, prefill_phase=False):
+            self.phase_calls.append(("mixed", prefill_phase))
+            state = self.prefills[prefill_slot]
+            assert state[0] == tickets[prefill_slot]
+            state[2] += 1
+            if state[2] == state[1]:
+                self.slots[prefill_slot] = (
+                    state[0], (ctypes.c_float * 4)(0, 0, 0, 0))
+                del self.prefills[prefill_slot]
+            return 3, state[2], (self.slots[0][1], self.slots[prefill_slot][1]
+                                  if prefill_slot in self.slots else None)
+
+    batch = PhaseBatch()
+    loop = Batch2RequestLoop(batch, prefill_phase_staged=True)
+    loop.submit(0, [1], max_tokens=3)
+    staged = loop.begin_staged(1, [2, 3], max_tokens=2)
+    assert loop.advance_prefill(staged, 1) == ()
+    tick = loop.advance(mix_staged=True)
+    assert (tick.mixed_prefill_ticket, tick.mixed_prefill_consumed) == (staged, 2)
+    assert batch.phase_calls == [("append", True), ("mixed", True)]
+
+
+def test_phase_aware_http_rejects_unsupported_model_before_batch_enable(fake_bundle):
+    from server.batch_http import Batch2HTTPOwner
+
+    session = SessionV8.open(fake_bundle, context_length=16, num_threads=1)
+    try:
+        with pytest.raises(SessionError, match="phase-aware staged prefill capability"):
+            Batch2HTTPOwner(
+                session, max_extra_bytes=320, max_prompt_tokens=8,
+                decode_replay_chunk_tokens=1, mixed_one_row=True,
+                prefill_phase_staged=True)
+        assert session._batch2 is None
+    finally:
+        session.close()
+
+
 def test_staged_prefill_native_failure_settles_ready_and_pending():
     batch = _StagedBatch()
     loop = Batch2RequestLoop(batch)

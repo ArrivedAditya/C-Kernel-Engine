@@ -52,6 +52,20 @@ def test_preflight_fails_closed(change):
                          serving_sha="a" * 64, session_sha="b" * 64)
 
 
+def test_phase_aware_probe_requires_matching_effective_serving_mode():
+    identity = _identity()
+    with pytest.raises(ValueError, match="mixed-row"):
+        probe._preflight(identity, _observation(), model="gemma3",
+                         serving_sha="a" * 64, session_sha="b" * 64,
+                         prefill_strategy="prefill_phase_chunked")
+    identity["effective_serving"].update(
+        prefill_strategy="prefill_phase_chunked",
+        mixed_execution="one_decode_plus_one_prefill_phase_row")
+    probe._preflight(identity, _observation(), model="gemma3",
+                     serving_sha="a" * 64, session_sha="b" * 64,
+                     prefill_strategy="prefill_phase_chunked")
+
+
 def test_wrong_session_hash_prevents_generation(tmp_path):
     calls = []
 
