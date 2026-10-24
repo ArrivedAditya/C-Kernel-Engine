@@ -271,7 +271,10 @@ def resolved_renderer_tokens(
                     if value is not None and value != loaded_value:
                         raise ValueError(f"loaded tokenizer disagrees with bundled {name} token")
                     value = loaded_value
-                if value is not None:
+                # Display detokenization can suppress a control token. Its ID
+                # remains valid, but an empty rendering cannot supply a Jinja
+                # variable; templates that need it fail under StrictUndefined.
+                if value:
                     bind(f"{name}_token", value)
     return variables
 
