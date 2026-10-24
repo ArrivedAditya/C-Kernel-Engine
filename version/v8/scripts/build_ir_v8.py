@@ -3072,6 +3072,12 @@ def _resolve_tokenizer_contract(
 ) -> Dict[str, Any]:
     flags = template.get("flags", {}) if isinstance(template.get("flags"), dict) else {}
     template_type = str(flags.get("tokenizer") or "").strip().lower()
+    template_contract = template.get("contract")
+    if template_contract is not None and not isinstance(template_contract, dict):
+        raise ValueError("invalid circuit contract")
+    circuit_contract = (template_contract or {}).get("tokenizer_contract", {})
+    if not isinstance(circuit_contract, dict):
+        raise ValueError("invalid circuit tokenizer_contract")
 
     explicit_contract = None
     for doc in (manifest, config):
@@ -3091,18 +3097,32 @@ def _resolve_tokenizer_contract(
     if isinstance(explicit_contract, dict):
         explicit_type = str(explicit_contract.get("tokenizer_type") or "").strip().lower()
         if explicit_type:
-            return copy.deepcopy(explicit_contract)
+            circuit_type = str(circuit_contract.get("tokenizer_type") or "").strip().lower()
+            if circuit_type and circuit_type != explicit_type:
+                raise ValueError("circuit/imported tokenizer type mismatch")
+            resolved = copy.deepcopy(explicit_contract)
+            if "bos_policy" in circuit_contract:
+                resolved["bos_policy"] = circuit_contract["bos_policy"]
+            return resolved
 
     special_tokens = manifest.get("special_tokens", {}) if isinstance(manifest.get("special_tokens"), dict) else {}
     tok_model = str(special_tokens.get("tokenizer_model") or "").strip().lower()
+    fallback_type = None
     if tok_model in {"bpe", "gpt2"}:
-        return {"tokenizer_type": "bpe"}
-    if tok_model in {"wordpiece"}:
-        return {"tokenizer_type": "wordpiece"}
-    if tok_model in {"llama", "sentencepiece", "spm"}:
-        return {"tokenizer_type": "sentencepiece"}
-
-    return {"tokenizer_type": template_type} if template_type else {}
+        fallback_type = "bpe"
+    elif tok_model == "wordpiece":
+        fallback_type = "wordpiece"
+    elif tok_model in {"llama", "sentencepiece", "spm"}:
+        fallback_type = "sentencepiece"
+    else:
+        fallback_type = template_type
+    circuit_type = str(circuit_contract.get("tokenizer_type") or "").strip().lower()
+    if fallback_type and circuit_type and fallback_type != circuit_type:
+        raise ValueError("circuit/imported tokenizer type mismatch")
+    resolved = {"tokenizer_type": fallback_type or circuit_type} if (fallback_type or circuit_type) else {}
+    if "bos_policy" in circuit_contract:
+        resolved["bos_policy"] = circuit_contract["bos_policy"]
+    return resolved
 
 
 def _resolve_tokenizer_type(
@@ -3147,6 +3167,15 @@ def _generate_tokenizer_c_code(tokenizer_type: str, vocab_size: int, num_merges:
             bos_id = special_tokens.get("bos_token_id")
             eos_id = special_tokens.get("eos_token_id")
             pad_id = special_tokens.get("pad_token_id")
+        bos_policy = (tokenizer_contract or {}).get("bos_policy", "model_defined")
+        if bos_policy == "publisher_template_no_implicit_bos":
+            # Transformers applies a publisher chat template and encodes its
+            # rendered bytes without adding another BOS. A GGUF tokenizer may
+            # still advertise automatic BOS for raw prompt use; the circuit
+            # explicitly selects the publisher prompt contract here.
+            add_bos = False
+        elif bos_policy != "model_defined":
+            raise ValueError(f"unsupported BPE bos_policy: {bos_policy}")
 
         bpe_contract_lines = []
         if any(v is not None for v in [unk_id, bos_id, eos_id, pad_id]):

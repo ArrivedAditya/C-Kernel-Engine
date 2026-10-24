@@ -12,7 +12,7 @@ import sys
 import pytest
 from fastapi.testclient import TestClient
 
-from server.live import create_app
+from server.live import _render_with_chat_templates, create_app
 from server.runtime import load_manifest_templates, load_tool_protocol
 from server.serving_bundle import (
     contract_identity, load_resolved_serving, loaded_serving_identity, resolved_renderer_tokens,
@@ -506,6 +506,20 @@ def test_loaded_special_token_lookup_uses_raw_vocabulary_not_display_decode(tmp_
     assert lookup("<bos>") == 2
     assert lookup("<eos>") == 3
     assert lookup("<wrong>") == -1
+
+
+def test_suppressed_optional_control_token_does_not_block_startup(tmp_path):
+    (tmp_path / "weights_manifest.json").write_text(json.dumps({
+        "special_tokens": {"bos_token_id": 1, "eos_token_id": 12},
+    }))
+    doc = {"assets": {"weights_manifest.json": {"path": "weights_manifest.json"}}}
+    tokens = resolved_renderer_tokens(tmp_path, doc, decode_ids=lambda _ids: "")
+    assert tokens == {}
+    assert _render_with_chat_templates(
+        "{% for message in messages %}{{ message.content }}{% endfor %}",
+        None, [{"role": "user", "content": "Hello"}], None,
+        renderer_tokens=tokens,
+    ) == "Hello"
 
 
 def test_gguf_manifest_ids_without_tokenizer_json_use_loaded_decoder(setup, monkeypatch):

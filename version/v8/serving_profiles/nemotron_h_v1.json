@@ -1,0 +1,20 @@
+{
+  "schema": "cke.serving_profile.v1",
+  "id": "nemotron-h-v1",
+  "renderer": "jinja-chat-v1",
+  "input_modalities": ["text"],
+  "variants": {
+    "chat": {
+      "chat": {"source": "publisher", "variant": "default"},
+      "tools": {"source": "publisher", "variant": "default"},
+      "output_protocol": "none",
+      "stop_text": ["<SPECIAL_12>"]
+    },
+    "tools": {
+      "chat": {"source": "publisher", "variant": "default"},
+      "tools": {"source": "publisher", "variant": "default"},
+      "output_protocol": "nemotron_toolcall_v1",
+      "stop_text": ["<SPECIAL_12>"]
+    }
+  }
+}

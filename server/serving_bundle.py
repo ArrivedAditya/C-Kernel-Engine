@@ -9,7 +9,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-PROTOCOLS = frozenset({"none", "tagged_json", "bare_json", "qwen_xml", "qwen_code_xml", "qwen_code_xml_raw_v2", "gemma4_dsl_v1", "muse_atem_v1"})
+PROTOCOLS = frozenset({"none", "tagged_json", "bare_json", "qwen_xml", "qwen_code_xml", "qwen_code_xml_raw_v2", "gemma4_dsl_v1", "muse_atem_v1", "nemotron_toolcall_v1"})
 SCHEMA = "cke.resolved_serving.v1"
 RUNTIME_DEPENDENCIES = frozenset({"sleef_expf16_u10"})
 
@@ -271,7 +271,10 @@ def resolved_renderer_tokens(
                     if value is not None and value != loaded_value:
                         raise ValueError(f"loaded tokenizer disagrees with bundled {name} token")
                     value = loaded_value
-                if value is not None:
+                # Display detokenization can suppress a control token. Its ID
+                # remains valid, but an empty rendering cannot supply a Jinja
+                # variable; templates that need it fail under StrictUndefined.
+                if value:
                     bind(f"{name}_token", value)
     return variables
 
