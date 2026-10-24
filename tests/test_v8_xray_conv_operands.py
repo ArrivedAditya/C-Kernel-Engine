@@ -86,6 +86,47 @@ class ConvOperandTests(unittest.TestCase):
         self.assertFalse(report["identical_input_replay_ready"])
         self.assertEqual(report["local_arithmetic"], "NOT_ISOLATED")
 
+    def test_fp16_im2col_rounding_amplification_is_not_local_provider_failure(self):
+        image = np.array([[[[1.0007]]]], dtype=np.float32)
+        cke_patch = image.reshape(1, 1, 1, 1).copy()
+        oracle_patch = cke_patch.astype(np.float16)
+        weight = np.array([[1000.0]], dtype=np.float32)
+        self.assertNotEqual(float(cke_patch[0, 0, 0, 0]),
+                            float(oracle_patch[0, 0, 0, 0]))
+
+        def make_packet(name, patch, storage):
+            result = np.array([[float(patch[0, 0, 0, 0]) * 1000.0]], dtype=np.float32)
+            return write_bundle(
+                self.root / name, operation="conv_patch_projection", provider=name,
+                contract="synthetic_conv", runtime=self.runtime,
+                context={"capture_kind": "observed_graph_edges"},
+                tensors={
+                    "conv_image": (image, "fp32", ("batch", "channel", "height", "width")),
+                    "conv_im2col": (patch, storage,
+                                    ("batch", "out_height", "out_width", "reduction")),
+                    "conv_weight": (weight, "fp32", ("out_channel", "reduction")),
+                    "conv_result": (result, "fp32", ("row", "out_channel")),
+                },
+            )
+
+        cke = make_packet("cke_fp32_patch", cke_patch, "fp32")
+        oracle = make_packet("oracle_fp16_patch", oracle_patch, "fp16")
+        report = compare_packets(cke, oracle, 0.01)
+        self.assertEqual(report["gates"]["conv_image"]["status"], "PASS")
+        self.assertEqual(report["gates"]["conv_weight"]["status"], "PASS")
+        self.assertEqual(report["gates"]["conv_im2col"]["status"], "ALIGNMENT_UNRESOLVED")
+        self.assertEqual(report["gates"]["conv_result"]["status"], "FAIL")
+        self.assertEqual(report["first_observed_failure"], "conv_im2col")
+        self.assertIsNone(report["first_proven_local_failure"])
+        self.assertEqual(report["local_arithmetic"], "NOT_ISOLATED")
+        self.assertEqual(report["status"], "INCOMPLETE")
+
+        converted_cke = make_packet("cke_explicit_fp16_conversion", oracle_patch, "fp16")
+        converted_report = compare_packets(converted_cke, oracle, 0.0)
+        self.assertEqual(converted_report["status"], "PASS")
+        self.assertTrue(converted_report["identical_input_replay_ready"])
+        self.assertEqual(converted_report["local_arithmetic"], "PASS")
+
     def test_missing_wrong_layout_and_stale_bytes_fail_closed(self):
         cke = self.packet("cke")
         missing = self.packet("missing", omit="conv_im2col")
