@@ -916,6 +916,14 @@ def _render_with_chat_templates(
                 {**message, "role": role_map.get(message.get("role"), message.get("role"))}
                 for message in messages
             ]
+        # OpenAI chat messages omit tool_calls on ordinary assistant turns.
+        # Publisher templates may access message.tool_calls directly, as the
+        # Transformers renderer permits for this optional field.
+        messages = [
+            {"tool_calls": [], **message} if message.get("role") == "assistant"
+            else message
+            for message in messages
+        ]
         tools = None
         namespace_descriptions = {}
         if body is not None and getattr(body, "tools", None):
@@ -934,6 +942,7 @@ def _render_with_chat_templates(
 
         env = jinja2.sandbox.SandboxedEnvironment(
             undefined=jinja2.StrictUndefined, autoescape=False,
+            extensions=["jinja2.ext.loopcontrols"],
             # Match the reference chat-template rendering semantics
             # (transformers' apply_chat_template): block tags consume their
             # surrounding whitespace, so e.g. a comment line before
@@ -954,6 +963,9 @@ def _render_with_chat_templates(
             tmpl.render(
                 messages=messages,
                 tools=tools,
+                documents=None,
+                enable_citations=False,
+                continue_final_message=False,
                 tool_choice=getattr(body, "tool_choice", None)
                 if body is not None
                 else None,

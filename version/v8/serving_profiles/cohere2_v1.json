@@ -1,0 +1,14 @@
+{
+  "schema": "cke.serving_profile.v1",
+  "id": "cohere2-v1",
+  "renderer": "jinja-chat-v1",
+  "input_modalities": ["text"],
+  "variants": {
+    "chat": {
+      "chat": {"source": "publisher", "variant": "default"},
+      "tools": {"source": "publisher", "variant": "default"},
+      "output_protocol": "none",
+      "stop_text": ["<|END_RESPONSE|>", "<|END_OF_TURN_TOKEN|>"]
+    }
+  }
+}

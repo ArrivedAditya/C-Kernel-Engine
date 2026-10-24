@@ -2,6 +2,11 @@
   "version": 2,
   "name": "nemotron_h",
   "family": "nemotron_h",
+  "serving": {
+    "schema": "cke.circuit_serving.v1",
+    "profile_ref": "serving_profiles/nemotron_h_v1.json",
+    "default_variant": "chat"
+  },
   "projection_inputs": {
     "mamba_in_proj": {"A": "main_stream_q8"},
     "q_proj": {"A": "main_stream_q8"},
@@ -24,7 +29,7 @@
   "contract": {
     "tokenizer_contract": {
       "tokenizer_type": "bpe",
-      "bos_policy": "model_defined",
+      "bos_policy": "publisher_template_no_implicit_bos",
       "eos_policy": "model_defined",
       "special_tokens": {
         "source": "manifest_or_hf"

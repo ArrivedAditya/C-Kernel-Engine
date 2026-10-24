@@ -2,6 +2,11 @@
   "version": 2,
   "name": "cohere2",
   "family": "cohere2",
+  "serving": {
+    "schema": "cke.circuit_serving.v1",
+    "profile_ref": "serving_profiles/cohere2_v1.json",
+    "default_variant": "chat"
+  },
   "projection_inputs": {"q_proj":{"x":"main_stream_q8"},"k_proj":{"x":"main_stream_q8"},"v_proj":{"x":"main_stream_q8"}},
   "flags": {
     "activation": "swiglu",
@@ -27,7 +32,7 @@
   "contract": {
     "tokenizer_contract": {
       "tokenizer_type": "bpe",
-      "bos_policy": "model_defined",
+      "bos_policy": "publisher_template_no_implicit_bos",
       "eos_policy": "model_defined",
       "special_tokens": {"source": "manifest_or_gguf"}
     },
