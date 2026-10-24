@@ -50,6 +50,81 @@ def _arg(name: str, expr: str) -> dict[str, str]:
 
 
 class HiddenExportExtentTests(unittest.TestCase):
+    def test_geglu_capture_executes_full_grid_and_last_row(self) -> None:
+        compiler = shutil.which("cc")
+        if compiler is None:
+            self.skipTest("C compiler unavailable")
+        source_head = r'''
+#include <stddef.h>
+#include <string.h>
+static float captured[12], captured_last[4];
+static int full_seen, last_seen, invalid_capture;
+static void geglu_forward_quick_fp16_table(const float *x, float *out, int tokens, int dim) {
+    for (int row = 0; row < tokens; ++row)
+        for (int col = 0; col < dim; ++col)
+            out[row * dim + col] = x[row * 2 * dim + col] + x[row * 2 * dim + dim + col];
+}
+static void ck_debug_export_hidden(void *model, int layer, const char *name,
+        const float *src, size_t count) {
+    (void)model;
+    if (layer != 0) { invalid_capture = 1; return; }
+    if (strcmp(name, "mlp_geglu") == 0 && count == 12) {
+        memcpy(captured, src, count * sizeof(float));
+        full_seen++;
+    } else if (strcmp(name, "mlp_geglu_last") == 0 && count == 4) {
+        memcpy(captured_last, src, count * sizeof(float));
+        last_seen++;
+    } else invalid_capture = 1;
+}
+int main(void) {
+    float input[26], separate[14];
+    void *model = NULL;
+    for (int alias = 0; alias < 2; ++alias) {
+        for (int row = 0; row < 3; ++row)
+            for (int col = 0; col < 8; ++col)
+                input[row * 8 + col] = (float)(row * 100 + col);
+        input[24] = 12345.0f;
+        input[25] = -12345.0f;
+        separate[12] = 23456.0f;
+        separate[13] = -23456.0f;
+        full_seen = last_seen = invalid_capture = 0;
+        float *output = alias ? input : separate;
+'''
+        source_tail = r'''
+        if (invalid_capture || full_seen != 1 || last_seen != 1) return 1;
+        if (input[24] != 12345.0f || input[25] != -12345.0f ||
+                separate[12] != 23456.0f || separate[13] != -23456.0f) return 2;
+        for (int row = 0; row < 3; ++row)
+            for (int col = 0; col < 4; ++col) {
+                float expected = (float)(row * 200 + 4 + 2 * col);
+                int index = row * 4 + col;
+                if (output[index] != expected || captured[index] != expected) return 3;
+                if (row == 2 && captured_last[col] != expected) return 4;
+            }
+    }
+    return 0;
+}
+'''
+        emitted = codegen.emit_op({
+            "op": "geglu",
+            "function": "geglu_forward_quick_fp16_table",
+            "layer": 0,
+            "args": [
+                _arg("x", "input"),
+                _arg("out", "output"),
+                _arg("tokens", "3"),
+                _arg("dim", "4"),
+            ],
+        })
+        with tempfile.TemporaryDirectory(prefix="geglu_grid_capture_") as tmpdir:
+            path = Path(tmpdir)
+            (path / "fixture.c").write_text(source_head + emitted + source_tail, encoding="utf-8")
+            subprocess.run(
+                [compiler, "-std=c11", str(path / "fixture.c"), "-o", str(path / "fixture")],
+                check=True, capture_output=True,
+            )
+            subprocess.run([str(path / "fixture")], check=True, capture_output=True)
+
     def test_spatial_merge_exports_only_written_elements(self) -> None:
         compiler = shutil.which("cc")
         if compiler is None:
