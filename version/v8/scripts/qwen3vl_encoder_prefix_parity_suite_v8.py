@@ -165,6 +165,7 @@ def _sample_from_report(spec: dict[str, str], report_path: Path, embed_dim: int)
         "preprocess_evidence": report.get("preprocess_evidence"),
         "source_image_sha256": report.get("source_image_sha256"),
         "gguf": report.get("gguf"),
+        "llama_flash_attn_mode": report.get("llama_flash_attn_mode"),
         "grid": report.get("merged_grid"),
         "height": report.get("height"),
         "width": report.get("width"),
@@ -262,6 +263,8 @@ def _run_one(
             str(args.threads),
             "--ck-threads",
             str(args.ck_threads),
+            "--llama-flash-attn",
+            getattr(args, "llama_flash_attn", "enabled"),
             "--report",
             str(report_path),
             "--invocation-id",
@@ -320,6 +323,8 @@ def _run_one(
                 sample["evidence_error"] = "report image path does not match the current case"
             elif sample.get("source_image_sha256") != expected_hash:
                 sample["evidence_error"] = "source image hash does not match the current case"
+            elif sample.get("llama_flash_attn_mode") != getattr(args, "llama_flash_attn", "enabled"):
+                sample["evidence_error"] = "report oracle flash-attention mode differs from the selected contract"
             elif getattr(args, "independent_preprocess", False) and sample.get("input_provenance") != "independently_preprocessed_from_shared_decoded_rgb8":
                 sample["evidence_error"] = "report did not execute independent preprocessing"
             elif str(sample.get("gguf")) != str(args.gguf):
@@ -387,6 +392,7 @@ def _write_markdown(path: Path, summary: dict[str, Any]) -> None:
         f"- passing: {summary['passing_count']}",
         f"- threads: {summary['threads']}",
         f"- image_max_tokens: {summary.get('image_max_tokens')}",
+        f"- llama_flash_attn_mode: {summary['llama_flash_attn_mode']}",
         f"- input_provenance: {'independent_preprocessing' if summary.get('independent_preprocess') else 'shared_processed_tensor'}",
         f"- min_cosine: {shown(summary['aggregate']['min_cosine'], 9)}",
         f"- max_rmse: {shown(summary['aggregate']['max_rmse'], 6)}",
@@ -439,6 +445,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--image-max-tokens", type=int, default=1024)
     parser.add_argument("--threads", type=int, default=int(os.environ.get("CK_NUM_THREADS", "20") or "20"))
     parser.add_argument("--ck-threads", type=int, default=None)
+    parser.add_argument("--llama-flash-attn", choices=("enabled", "disabled"), default="enabled",
+                        help="Pinned llama.cpp vision attention mode; production parity uses enabled")
     parser.add_argument("--embed-dim", type=int, default=16384)
     parser.add_argument("--min-cosine", type=float, default=0.99)
     parser.add_argument("--max-rmse", type=float, default=0.03)
@@ -543,6 +551,7 @@ def main(argv: list[str] | None = None) -> int:
         "ck_threads": args.ck_threads,
         "image_min_tokens": args.image_min_tokens,
         "image_max_tokens": args.image_max_tokens,
+        "llama_flash_attn_mode": args.llama_flash_attn,
         "embed_dim": args.embed_dim,
         "thresholds": {
             "min_cosine": args.min_cosine,

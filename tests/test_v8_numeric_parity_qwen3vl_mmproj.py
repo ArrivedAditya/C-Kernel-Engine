@@ -493,6 +493,7 @@ class NumericParityQwen3VLMmprojV8Tests(unittest.TestCase):
             "status": "fail", "selected_count": 1, "completed_count": 1,
             "passing_count": 0, "failure_count": 1,
             "llama_commit": "b" * 40, "independent_preprocess": True,
+            "llama_flash_attn_mode": "enabled",
             "aggregate": {"min_cosine": 0.98, "max_rmse": 0.04, "max_abs": 1.0},
             "failures": [f"{sentinel}: OCR output mismatch"],
             "samples": [{
@@ -500,6 +501,7 @@ class NumericParityQwen3VLMmprojV8Tests(unittest.TestCase):
                 "source_image_sha256": sentinel, "ocr_text": sentinel,
                 "prompt": sentinel, "token_ids": [123], "tensor_capture": sentinel,
                 "suite_elapsed_sec": 1.25, "artifact_identity": artifacts,
+                "llama_flash_attn_mode": "enabled",
             }],
         }
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -521,7 +523,19 @@ class NumericParityQwen3VLMmprojV8Tests(unittest.TestCase):
             self.assertEqual(public["selected_count"], 1)
             self.assertEqual(public["passing_count"], 0)
             self.assertEqual(public["failure_count"], 1)
+            self.assertEqual(public["llama_flash_attn_mode"], "enabled")
             self.assertEqual(public["bridge_reported_artifact_sha256"]["ck_model_library"], ["a" * 64])
+
+            for broken in (
+                {**private, "llama_flash_attn_mode": "disabled"},
+                {**private, "llama_flash_attn_mode": "auto",
+                 "samples": [{**private["samples"][0], "llama_flash_attn_mode": "auto"}]},
+                {**private, "samples": [{**private["samples"][0], "llama_flash_attn_mode": "disabled"}]},
+                {key: value for key, value in private.items() if key != "llama_flash_attn_mode"},
+            ):
+                with self.subTest(broken=broken.get("llama_flash_attn_mode")):
+                    with self.assertRaisesRegex(ValueError, "oracle flash-attention mode"):
+                        public_summary.build_count_free_public_summary(broken)
 
             broken = dict(private, status="pass", passing_count=1)
             with self.assertRaisesRegex(ValueError, "inconsistent overall verdict"):
@@ -577,10 +591,13 @@ class NumericParityQwen3VLMmprojV8Tests(unittest.TestCase):
             "status": "pass", "selected_count": 2, "completed_count": 2,
             "passing_count": 2, "llama_commit": "d" * 40,
             "independent_preprocess": True, "failures": [],
+            "llama_flash_attn_mode": "enabled",
             "aggregate": {"min_cosine": 0.99, "max_rmse": 0.01, "max_abs": 0.2},
             "samples": [
-                {"suite_elapsed_sec": 1.0, "artifact_identity": common, "status": "complete"},
-                {"suite_elapsed_sec": 2.0, "artifact_identity": varied, "status": "complete"},
+                {"suite_elapsed_sec": 1.0, "artifact_identity": common, "status": "complete",
+                 "llama_flash_attn_mode": "enabled"},
+                {"suite_elapsed_sec": 2.0, "artifact_identity": varied, "status": "complete",
+                 "llama_flash_attn_mode": "enabled"},
             ],
         }
         public = public_summary.build_public_summary(private, "ocr40-v1")
@@ -588,8 +605,12 @@ class NumericParityQwen3VLMmprojV8Tests(unittest.TestCase):
         self.assertEqual(public["bridge_reported_artifact_sha256"]["ck_model_library"], ["a" * 64, "c" * 64])
         self.assertEqual(public["bridge_reported_artifact_sha256"]["ck_engine_library"], ["a" * 64])
         self.assertEqual(public_summary.build_count_free_public_summary(private), {
-            "schema_version": 1, "lane": "independent_encoder_prefix", "status": "pass",
+            "schema_version": 1, "lane": "independent_encoder_prefix", "status": "incomplete",
         })
+        bounded = {**private, "thresholds": {"max_abs": 0.3}}
+        self.assertEqual(public_summary.build_count_free_public_summary(bounded)["status"], "pass")
+        with self.assertRaisesRegex(ValueError, "maximum-error contract"):
+            public_summary.build_count_free_public_summary({**private, "thresholds": {"max_abs": 0.1}})
 
     def test_encoder_prefix_suite_thresholds_shape_and_metrics(self) -> None:
         values = 36 * 28 * 16384
@@ -667,14 +688,17 @@ class NumericParityQwen3VLMmprojV8Tests(unittest.TestCase):
                 gguf=gguf, output_dir=root, runtime_dir=runtime,
                 threads=1, ck_threads=1, image_min_tokens=None, image_max_tokens=8,
                 embed_dim=4, reuse_reports=False, independent_preprocess=True,
+                llama_flash_attn="enabled",
             )
             spec = {"id": "image", "image": str(image)}
             report_path = root / "reports" / "01_image.json"
 
             def write_report(cmd, **_kwargs):
                 invocation = cmd[cmd.index("--invocation-id") + 1]
+                self.assertEqual(cmd[cmd.index("--llama-flash-attn") + 1], "enabled")
                 report_path.write_text(json.dumps({
                     "status": "complete", "invocation_id": invocation,
+                    "llama_flash_attn_mode": "enabled",
                     "gguf": str(gguf), "image_path": str(image),
                     "source_image_sha256": prefix_suite.hashlib.sha256(image.read_bytes()).hexdigest(),
                     "input_provenance": "independently_preprocessed_from_shared_decoded_rgb8",
@@ -695,6 +719,26 @@ class NumericParityQwen3VLMmprojV8Tests(unittest.TestCase):
             with mock.patch.object(prefix_suite.subprocess, "run", side_effect=write_report):
                 valid = prefix_suite._run_one(spec=spec, index=1, args=args, env=env)
             self.assertNotIn("evidence_error", valid)
+
+            makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+            self.assertIn("V8_QWEN3VL_ENCODER_PARITY_LLAMA_FLASH_ATTN ?= enabled", makefile)
+            self.assertIn("--llama-flash-attn $(V8_QWEN3VL_ENCODER_PARITY_LLAMA_FLASH_ATTN)", makefile)
+
+            for mode in ("disabled", None):
+                with self.subTest(mode=mode):
+                    def wrong_mode_report(cmd, **kwargs):
+                        result = write_report(cmd, **kwargs)
+                        payload = json.loads(report_path.read_text(encoding="utf-8"))
+                        if mode is None:
+                            payload.pop("llama_flash_attn_mode")
+                        else:
+                            payload["llama_flash_attn_mode"] = mode
+                        report_path.write_text(json.dumps(payload), encoding="utf-8")
+                        return result
+
+                    with mock.patch.object(prefix_suite.subprocess, "run", side_effect=wrong_mode_report):
+                        mismatch = prefix_suite._run_one(spec=spec, index=1, args=args, env=env)
+                    self.assertIn("oracle flash-attention mode differs", mismatch["evidence_error"])
 
             def stale_report(cmd, **kwargs):
                 result = write_report(cmd, **kwargs)

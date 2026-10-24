@@ -1734,6 +1734,7 @@ def main(argv: list[str] | None = None) -> int:
         "width": width,
         "image_min_tokens": args.image_min_tokens,
         "image_max_tokens": args.image_max_tokens,
+        "llama_flash_attn_mode": args.llama_flash_attn,
         "merged_grid": [int(config.get("merged_grid_x", 0) or 0), int(config.get("merged_grid_y", 0) or 0)],
         "threads": {
             "llama_cpp": args.threads,

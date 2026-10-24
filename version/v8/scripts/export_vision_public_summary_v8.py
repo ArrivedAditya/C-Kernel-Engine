@@ -73,10 +73,22 @@ def _build_encoder_public_summary(private: dict[str, Any], corpus_alias: str) ->
     oracle_commit = private.get("llama_commit")
     if not isinstance(oracle_commit, str) or not re.fullmatch(r"[0-9a-f]{40}", oracle_commit):
         raise ValueError("missing oracle source revision")
+    oracle_mode = private.get("llama_flash_attn_mode")
+    if oracle_mode not in ("enabled", "disabled") or any(
+        sample.get("llama_flash_attn_mode") != oracle_mode for sample in samples
+    ):
+        raise ValueError("missing or inconsistent encoder oracle flash-attention mode")
     metrics = {
         name: _number(aggregate.get(name), name)
         for name in ("min_cosine", "max_rmse", "max_abs")
     }
+    thresholds = private.get("thresholds")
+    max_abs_limit = thresholds.get("max_abs") if isinstance(thresholds, dict) else None
+    if max_abs_limit is not None:
+        max_abs_limit = _number(max_abs_limit, "maximum-error limit")
+        if max_abs_limit <= 0 or (status == "pass" and metrics["max_abs"] > max_abs_limit):
+            raise ValueError("inconsistent encoder maximum-error contract")
+    public_status = "incomplete" if status == "pass" and max_abs_limit is None else status
     elapsed = sum(_number(sample.get("suite_elapsed_sec"), "elapsed time") for sample in samples)
     if elapsed < 0:
         raise ValueError("invalid elapsed time")
@@ -84,12 +96,13 @@ def _build_encoder_public_summary(private: dict[str, Any], corpus_alias: str) ->
         "schema_version": 1,
         "lane": "independent_encoder_prefix" if private.get("independent_preprocess") is True else "shared_input_encoder_prefix",
         "corpus_alias": corpus_alias,
-        "status": status,
+        "status": public_status,
         "selected_count": selected,
         "completed_count": completed,
         "passing_count": passing,
         "failure_count": len(failures),
         "independent_preprocess": private.get("independent_preprocess") is True,
+        "llama_flash_attn_mode": oracle_mode,
         "aggregate": metrics,
         "total_elapsed_sec": elapsed,
         "oracle_source_commit": oracle_commit,
