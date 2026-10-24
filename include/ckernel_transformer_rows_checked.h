@@ -37,6 +37,14 @@ int attention_causal_bounded_checked_f32(
     float *work, size_t work_elements,
     float *output, size_t output_elements,
     size_t heads, size_t kv_heads, size_t tokens, size_t head_dim);
+int attention_sliding_bounded_checked_f32(
+    const float *q, size_t q_elements,
+    const float *k, size_t k_elements,
+    const float *v, size_t v_elements,
+    float *work, size_t work_elements,
+    float *output, size_t output_elements,
+    size_t heads, size_t kv_heads, size_t tokens, size_t head_dim,
+    size_t sliding_window);
 
 #ifdef __cplusplus
 }

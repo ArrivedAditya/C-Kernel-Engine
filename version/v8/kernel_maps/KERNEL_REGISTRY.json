@@ -5,7 +5,7 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "version/v8/kernel_maps",
     "counts": {
-      "total": 447,
+      "total": 448,
       "by_op": {
         "add_backward": 1,
         "add_rows_checked": 1,
@@ -16,6 +16,7 @@
         "attention_full_token_major_checked": 1,
         "attention_projection": 1,
         "attention_sliding": 13,
+        "attention_sliding_bounded": 1,
         "attn_gate_sigmoid_mul": 2,
         "attn_gate_sigmoid_mul_backward": 1,
         "attn_gate_softplus_mul": 1,
@@ -12086,6 +12087,299 @@
       "notes": "Inference-only full attention for token-major FP32 inputs. The pinned standalone Kokoro encoder fixture forces PyTorch eager attention; the pinned full KModel defaults to SDPA and has a separate numerical reference. At 36 tokens their final encoder features differ by 1.49e-5 maximum on the pinned PyTorch 2.8 CPU capture. This provider does not claim SDPA reduction-order parity; an alternative must have its own provider and numerical contract. No causal mask, key padding, dropout, output projection, or residual/LayerNorm. Kokoro's fixed 36-token fixture has no padding; other mask semantics require a separate contract.",
       "name": "attention_full_token_major_f32_checked",
       "_source_file": "attention_full_token_major_f32_checked.json"
+    },
+    {
+      "id": "attention_sliding_head_major_bounded_f32",
+      "op": "attention_sliding_bounded",
+      "operation_interface": "attention.bounded_sliding_gqa.fp32.v1",
+      "variant": "bounded_sliding_gqa_fp32_online_serial",
+      "selection": {
+        "status": "candidate",
+        "priority": 100,
+        "equivalence_group": "attention.bounded_sliding_gqa.fp32.v1",
+        "phases": [
+          "prefill"
+        ]
+      },
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "layout": "head_major_contiguous",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        },
+        {
+          "name": "k",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "T",
+            "D"
+          ],
+          "layout": "head_major_contiguous",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        },
+        {
+          "name": "v",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "T",
+            "D"
+          ],
+          "layout": "head_major_contiguous",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "work",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "layout": "head_major_contiguous",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        },
+        {
+          "name": "out",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "layout": "head_major_contiguous",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "H",
+        "KV",
+        "T",
+        "D",
+        "W"
+      ],
+      "impl": {
+        "function": "attention_sliding_bounded_checked_f32",
+        "c_declaration": "int attention_sliding_bounded_checked_f32(const float *q, size_t q_elements, const float *k, size_t k_elements, const float *v, size_t v_elements, float *work, size_t work_elements, float *output, size_t output_elements, size_t heads, size_t kv_heads, size_t tokens, size_t head_dim, size_t sliding_window);",
+        "sources": [
+          "src/kernels/transformer_rows_checked.c",
+          "src/kernels/attention_kernels.c",
+          "src/kernels/softmax_kernels.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "q",
+            "source": "activation:q",
+            "cast": "const float*",
+            "ports": [
+              "input:q"
+            ]
+          },
+          {
+            "name": "q_elements",
+            "source": "runtime:q_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "k",
+            "source": "activation:k",
+            "cast": "const float*",
+            "ports": [
+              "input:k"
+            ]
+          },
+          {
+            "name": "k_elements",
+            "source": "runtime:k_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "v",
+            "source": "activation:v",
+            "cast": "const float*",
+            "ports": [
+              "input:v"
+            ]
+          },
+          {
+            "name": "v_elements",
+            "source": "runtime:v_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "work",
+            "source": "output:work",
+            "cast": "float*",
+            "ports": [
+              "output:work"
+            ]
+          },
+          {
+            "name": "work_elements",
+            "source": "runtime:work_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output",
+            "source": "output:out",
+            "cast": "float*",
+            "ports": [
+              "output:out"
+            ]
+          },
+          {
+            "name": "output_elements",
+            "source": "runtime:output_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "heads",
+            "source": "runtime:heads",
+            "value_type": "size_t"
+          },
+          {
+            "name": "kv_heads",
+            "source": "runtime:kv_heads",
+            "value_type": "size_t"
+          },
+          {
+            "name": "tokens",
+            "source": "runtime:tokens",
+            "value_type": "size_t"
+          },
+          {
+            "name": "head_dim",
+            "source": "runtime:head_dim",
+            "value_type": "size_t"
+          },
+          {
+            "name": "sliding_window",
+            "source": "runtime:sliding_window",
+            "value_type": "size_t"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "tests/test_v8_attention_sliding_bounded_oracle.py",
+          "tests/test_v8_qwen3_tts_codec_attention.py"
+        ],
+        "oracle": "Independent NumPy sliding causal softmax and pinned official Qwen3-TTS first-layer attention operation replay; connected codec test includes 46 frames and synthetic beyond-window coverage"
+      },
+      "notes": "Checked scalar FP32 online-softmax causal sliding attention. Each query sees max(0, row + 1 - sliding_window) through row. Caller owns work and output; rejected calls leave final output unchanged. No cache history, allocation, or environment-controlled non-sliding fallback. Inference only.",
+      "call_constant_contract": {
+        "shape_symbols": {
+          "H": "heads",
+          "KV": "kv_heads",
+          "T": "tokens",
+          "D": "head_dim"
+        },
+        "buffer_spans": [
+          {
+            "pointer": "q",
+            "elements": "q_elements",
+            "rows": 1,
+            "width": "q_elements",
+            "element_bytes": 4,
+            "exact_elements_product": [
+              "heads",
+              "tokens",
+              "head_dim"
+            ]
+          },
+          {
+            "pointer": "k",
+            "elements": "k_elements",
+            "rows": 1,
+            "width": "k_elements",
+            "element_bytes": 4,
+            "exact_elements_product": [
+              "kv_heads",
+              "tokens",
+              "head_dim"
+            ]
+          },
+          {
+            "pointer": "v",
+            "elements": "v_elements",
+            "rows": 1,
+            "width": "v_elements",
+            "element_bytes": 4,
+            "exact_elements_product": [
+              "kv_heads",
+              "tokens",
+              "head_dim"
+            ]
+          },
+          {
+            "pointer": "work",
+            "elements": "work_elements",
+            "rows": 1,
+            "width": "work_elements",
+            "element_bytes": 4,
+            "exact_elements_product": [
+              "heads",
+              "tokens",
+              "head_dim"
+            ]
+          },
+          {
+            "pointer": "output",
+            "elements": "output_elements",
+            "rows": 1,
+            "width": "output_elements",
+            "element_bytes": 4,
+            "exact_elements_product": [
+              "heads",
+              "tokens",
+              "head_dim"
+            ]
+          }
+        ]
+      },
+      "numerical_capabilities": {
+        "input_dtype": "fp32",
+        "score_accumulation_dtype": "fp32",
+        "softmax_accumulation_dtype": "fp32",
+        "reduction_order": "fp32_online_causal_sliding_query_order",
+        "output_dtype": "fp32"
+      },
+      "name": "attention_sliding_head_major_bounded_f32",
+      "_source_file": "attention_sliding_head_major_bounded_f32.json"
     },
     {
       "id": "attn_gate_sigmoid_mul_backward_f32",
