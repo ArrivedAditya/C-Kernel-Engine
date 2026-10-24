@@ -1534,6 +1534,9 @@ make test-native-session-v8</pre>
         <code>/no_think</code> control. This is a bounded 2,048-token tool round trip;
         a coding harness task, repeated recovery, longer prompts, and full-model
         numerical certification remain untested.
+        A fresh P3 Cohere bundle completed short Chat Completions and streaming
+        Responses, both answering <code>Hello!</code>. Its undeclared tool request
+        returned 501, and the next chat request succeeded on the same server.
         The imported Cohere GGUF default template does not render supplied function
         tools, so its profile remains chat-only. A usable Cohere tool harness requires
         a verified publisher tool variant and an independently tested output parser.
