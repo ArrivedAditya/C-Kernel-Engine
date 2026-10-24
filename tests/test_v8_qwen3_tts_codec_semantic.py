@@ -24,6 +24,7 @@ from build_qwen3_tts_codec_semantic_circuit import build_circuit
 from build_qwen3_tts_codec_rvq_circuit import build_circuit as build_rvq_circuit
 from build_qwen3_tts_codec_preconv_circuit import build_circuit as build_preconv_circuit
 from build_qwen3_tts_codec_qkv_circuit import build_circuit as build_qkv_circuit
+from build_qwen3_tts_codec_attention_circuit import build_circuit as build_attention_circuit
 
 TABLE = "codec.semantic.effective_embedding"
 PROJECTION = "codec.semantic.output_projection.weight"
@@ -35,21 +36,27 @@ MODEL = (ROOT / "tests/fixtures/tts/qwen3_tts_0b6_customvoice"
 def generated_entry(folder: Path, arrays: dict[str, np.ndarray], frames: int,
                     *, acoustic_codebooks: int = 0, pre_conv: bool = False,
                     pre_transformer_qkv: bool = False,
-                    qkv_heads: int = 16, qkv_head_dim: int = 64):
+                    qkv_heads: int = 16, qkv_head_dim: int = 64,
+                    pre_transformer_attention: bool = False,
+                    sliding_window: int = 72):
     table, projection = arrays[TABLE], arrays[PROJECTION]
     dimensions = {"frames": frames, "vocabulary": table.shape[0],
                   "codebook_width": table.shape[1],
                   "output_width": projection.shape[0]}
-    if pre_conv or pre_transformer_qkv:
+    if pre_conv or pre_transformer_qkv or pre_transformer_attention:
         dimensions["latent_width"] = arrays["codec.decoder.pre_conv.conv.weight"].shape[0]
-    if pre_transformer_qkv:
+    if pre_transformer_qkv or pre_transformer_attention:
         dimensions.update({
             "hidden_width": arrays[
                 "codec.decoder.pre_transformer.input_proj.weight"].shape[0],
             "heads": qkv_heads, "head_dim": qkv_head_dim,
         })
-        graph = build_qkv_circuit(acoustic_codebooks=acoustic_codebooks,
-                                  **dimensions)
+        graph = (build_attention_circuit(
+            acoustic_codebooks=acoustic_codebooks,
+            sliding_window=sliding_window, **dimensions)
+            if pre_transformer_attention else
+            build_qkv_circuit(acoustic_codebooks=acoustic_codebooks,
+                              **dimensions))
     elif pre_conv:
         graph = build_preconv_circuit(acoustic_codebooks=acoustic_codebooks,
                                       **dimensions)
@@ -102,7 +109,7 @@ def generated_entry(folder: Path, arrays: dict[str, np.ndarray], frames: int,
     ], check=True, capture_output=True, text=True)
     extra_sources = ([str(ROOT / "src/kernels/audio_zero_pad_checked.c"),
                       str(ROOT / "src/kernels/audio_conv1d_checked.c")]
-                     if pre_conv or pre_transformer_qkv else [])
+                     if pre_conv or pre_transformer_qkv or pre_transformer_attention else [])
     subprocess.run([
         "cc", "-std=gnu11", "-O2", "-w", "-fopenmp",
         "-shared", "-fPIC", "-ffunction-sections", "-fdata-sections",
@@ -121,7 +128,8 @@ def generated_entry(folder: Path, arrays: dict[str, np.ndarray], frames: int,
         "-I", str(ROOT / "include"), "-lm", "-ldl", "-lpthread",
         "-o", str(so_path),
     ], check=True, capture_output=True, text=True)
-    symbol = ("ck_qwen3_tts_codec_qkv_bounded" if pre_transformer_qkv else
+    symbol = ("ck_qwen3_tts_codec_attention_bounded" if pre_transformer_attention else
+              "ck_qwen3_tts_codec_qkv_bounded" if pre_transformer_qkv else
               "ck_qwen3_tts_codec_preconv_bounded" if pre_conv else
               "ck_qwen3_tts_codec_rvq_bounded" if acoustic_codebooks else
               "ck_qwen3_tts_codec_semantic_bounded")

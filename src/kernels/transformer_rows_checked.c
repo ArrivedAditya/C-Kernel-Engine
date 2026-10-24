@@ -197,3 +197,84 @@ int attention_causal_bounded_checked_f32(
     memcpy(output, work, nq * sizeof(float));
     return 0;
 }
+
+int attention_sliding_bounded_checked_f32(
+    const float *q, size_t q_elements,
+    const float *k, size_t k_elements,
+    const float *v, size_t v_elements,
+    float *work, size_t work_elements,
+    float *output, size_t output_elements,
+    size_t heads, size_t kv_heads, size_t tokens, size_t head_dim,
+    size_t sliding_window)
+{
+    if (!heads || !kv_heads || heads < kv_heads || heads % kv_heads ||
+        !tokens || !head_dim || !sliding_window ||
+        heads > INT_MAX || kv_heads > INT_MAX || tokens > INT_MAX ||
+        head_dim > INT_MAX || sliding_window > INT_MAX ||
+        heads > SIZE_MAX / tokens || kv_heads > SIZE_MAX / tokens ||
+        heads * tokens > SIZE_MAX / head_dim ||
+        kv_heads * tokens > SIZE_MAX / head_dim)
+        return -2;
+    const size_t nq = heads * tokens * head_dim;
+    const size_t nk = kv_heads * tokens * head_dim;
+    if (q_elements < nq || k_elements < nk || v_elements < nk ||
+        work_elements < nq || output_elements < nq) return -2;
+    if (!ck_checked_region(q, nq) || !ck_checked_region(k, nk) ||
+        !ck_checked_region(v, nk) || !ck_checked_region(work, nq) ||
+        !ck_checked_region(output, nq) ||
+        ck_checked_overlap(q, nq, work, nq) ||
+        ck_checked_overlap(k, nk, work, nq) ||
+        ck_checked_overlap(v, nk, work, nq) ||
+        ck_checked_overlap(work, nq, output, nq) ||
+        ck_checked_overlap(q, nq, output, nq) ||
+        ck_checked_overlap(k, nk, output, nq) ||
+        ck_checked_overlap(v, nk, output, nq)) return -1;
+    if (!ck_checked_finite(q, nq) || !ck_checked_finite(k, nk) ||
+        !ck_checked_finite(v, nk)) return -3;
+
+    const size_t group = heads / kv_heads;
+    const float scale = 1.0f / sqrtf((float)head_dim);
+    for (size_t head = 0; head < heads; ++head) {
+        const size_t kv_head = head / group;
+        for (size_t row = 0; row < tokens; ++row) {
+            const float *query = q + (head * tokens + row) * head_dim;
+            float *acc = work + (head * tokens + row) * head_dim;
+            memset(acc, 0, head_dim * sizeof(float));
+            float maximum = -INFINITY;
+            float sum = 0.0f;
+            const size_t begin = row + 1 > sliding_window
+                ? row + 1 - sliding_window : 0;
+            for (size_t col = begin; col <= row; ++col) {
+                const float *key = k + (kv_head * tokens + col) * head_dim;
+                const float *value = v + (kv_head * tokens + col) * head_dim;
+                float score = 0.0f;
+                for (size_t dim = 0; dim < head_dim; ++dim)
+                    score += query[dim] * key[dim];
+                score *= scale;
+                if (!isfinite(score)) return -3;
+                if (score > maximum) {
+                    const float factor = maximum == -INFINITY
+                        ? 0.0f : expf(maximum - score);
+                    sum = sum * factor + 1.0f;
+                    for (size_t dim = 0; dim < head_dim; ++dim)
+                        acc[dim] = acc[dim] * factor + value[dim];
+                    maximum = score;
+                } else {
+                    const float factor = expf(score - maximum);
+                    sum += factor;
+                    for (size_t dim = 0; dim < head_dim; ++dim)
+                        acc[dim] += factor * value[dim];
+                }
+                if (!isfinite(sum) || !ck_checked_finite(acc, head_dim))
+                    return -3;
+            }
+            if (sum <= 0.0f || !isfinite(sum)) return -3;
+            const float inv_sum = 1.0f / sum;
+            for (size_t dim = 0; dim < head_dim; ++dim)
+                acc[dim] *= inv_sum;
+            if (!ck_checked_finite(acc, head_dim)) return -3;
+        }
+    }
+    memcpy(output, work, nq * sizeof(float));
+    return 0;
+}

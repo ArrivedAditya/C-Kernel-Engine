@@ -1986,6 +1986,10 @@ OP_DATAFLOW = {
         "inputs": {"q": "external:q", "k": "external:k", "v": "external:v"},
         "outputs": {"out": {"slot": "attention_output", "dtype": "fp32"}},
     },
+    "attention_sliding_bounded": {
+        "inputs": {"q": "external:q", "k": "external:k", "v": "external:v"},
+        "outputs": {"out": {"slot": "attention_output", "dtype": "fp32"}},
+    },
     "feature_concat_broadcast_rows": {
         "inputs": {"input": "external:features", "feature": "external:feature"},
         "outputs": {"output": {"slot": "broadcast_concat", "dtype": "fp32"}},
@@ -4839,6 +4843,7 @@ TEMPLATE_TO_KERNEL_OP = {
     "silu_mul_rows_checked": "silu_mul_rows_checked",
     "rope_qk_bounded": "rope_qk_bounded",
     "attention_causal_bounded": "attention_causal_bounded",
+    "attention_sliding_bounded": "attention_sliding_bounded",
     "feature_concat_broadcast_rows": "feature_concat_broadcast_rows",
     "audio_lstm_bidirectional_scan": "audio_lstm",
     "audio_adaptive_layer_norm": "audio_adaptive_layer_norm",
