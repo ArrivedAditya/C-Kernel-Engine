@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from fastapi.testclient import TestClient
 
-from server.live import _render_with_chat_templates
+from server.live import _render_with_chat_templates, create_app
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -65,3 +67,68 @@ def test_publisher_chat_prompt_bytes(family: str) -> None:
         )
         assert prompt is not None
         assert hashlib.sha256(prompt.encode()).hexdigest() == case[f"{label}_sha"]
+
+
+@pytest.mark.parametrize("family", CASES)
+@pytest.mark.parametrize("stream", [False, True])
+def test_chat_only_profile_rejects_tools_before_native_work(family: str, stream: bool) -> None:
+    class Session:
+        def generate(self, *args, **kwargs):
+            raise AssertionError("generation must not start for undeclared tools")
+
+        def cancel(self):
+            pass
+
+    source = (FIXTURES / CASES[family]["fixture"]).read_text()
+    client = TestClient(create_app(
+        Session(), model=family, chat_template=source,
+        tool_protocol="none", renderer_tokens={},
+    ))
+    result = client.post("/v1/responses", json={
+        "model": family, "input": "Read the file", "stream": stream,
+        "tools": [{"type": "function", "name": "read_file", "parameters": {
+            "type": "object", "properties": {"path": {"type": "string"}},
+            "required": ["path"],
+        }}],
+    })
+    assert result.status_code == 501
+    assert result.json()["error"]["code"] == "tool_protocol_undeclared"
+
+
+@pytest.mark.parametrize("family", CASES)
+def test_pinned_artifact_token_ids_when_configured(family: str) -> None:
+    """Asset-backed lane; an absent artifact is explicitly NOT_TESTED in CI."""
+    env_name = "CKE_NEMOTRON_RUN" if family == "nemotron_h" else "CKE_COHERE_R7B_RUN"
+    run_dir = os.environ.get(env_name)
+    if not run_dir:
+        pytest.skip(f"NOT_TESTED: set {env_name} to a freshly built run directory")
+    from server.session_v8 import SessionV8
+
+    cases = [
+        ([{"role": "user", "content": "Hello."}],
+         [10, 6775, 1267, 11, 4019, 1010, 22177, 1626, 11, 102897, 1010, 49250, 2077, 1561]
+         if family == "nemotron_h" else
+         [255000, 255008, 255001, 255000, 255006, 28339, 21, 255001,
+          255000, 255007, 255021]),
+    ]
+    if family == "nemotron_h":
+        cases.append(([
+            {"role": "user", "content": "A"},
+            {"role": "assistant", "content": "B"},
+            {"role": "user", "content": "C"},
+        ], [10, 6775, 1267, 11, 4019, 1010, 1065, 1010, 11, 102897,
+            1010, 1066, 1010, 12, 1010, 11, 4019, 1010, 1067, 1010,
+            11, 102897, 1010, 49250, 2077, 1561]))
+    session = SessionV8.open(Path(run_dir), context_length=2048, num_threads=2)
+    try:
+        template = (Path(run_dir) / "chat_template.jinja").read_text()
+        assert hashlib.sha256(template.encode()).hexdigest() == CASES[family]["template_sha"]
+        body = SimpleNamespace(tools=None, instructions=None, tool_choice="auto")
+        for messages, expected in cases:
+            prompt = _render_with_chat_templates(
+                template, None, messages, body, renderer_tokens={}, tool_protocol="none",
+            )
+            assert prompt is not None
+            assert session.encode_ids(prompt) == expected
+    finally:
+        session.close()
