@@ -5,7 +5,7 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "version/v8/kernel_maps",
     "counts": {
-      "total": 449,
+      "total": 451,
       "by_op": {
         "add_backward": 1,
         "add_rows_checked": 1,
@@ -27,6 +27,7 @@
         "audio_concat_channels_checked": 1,
         "audio_conv1d": 2,
         "audio_conv1d_checked": 4,
+        "audio_conv1d_depthwise_checked": 1,
         "audio_conv1d_dilated_checked": 4,
         "audio_conv2d": 1,
         "audio_conv_transpose1d_dense_checked": 1,
@@ -85,7 +86,7 @@
         "gated_deltanet": 7,
         "gated_shared_swiglu_expert_mlp": 4,
         "geglu": 7,
-        "gelu": 9,
+        "gelu": 10,
         "gemm": 24,
         "gemm_backward": 1,
         "gemma4_per_layer_embed": 1,
@@ -16342,6 +16343,330 @@
       },
       "name": "audio_conv1d_checked_channel_major_f32_hwfma",
       "_source_file": "audio_conv1d_checked_channel_major_f32_hwfma.json"
+    },
+    {
+      "id": "audio_conv1d_depthwise_channel_major_f32_checked",
+      "op": "audio_conv1d_depthwise_checked",
+      "operation_interface": "audio.conv1d.depthwise.checked.channel_major.fp32.v1",
+      "variant": "checked_scalar_fma_depthwise_valid",
+      "selection": {
+        "status": "candidate",
+        "priority": 100,
+        "equivalence_group": "audio_conv1d_depthwise_channel_major_f32_checked",
+        "phases": [
+          "prefill"
+        ]
+      },
+      "quant": {
+        "weight": "fp32",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "input",
+          "dtype": "fp32",
+          "shape": [
+            "C",
+            "T"
+          ],
+          "layout": "channel_major_input_stride",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "weights": [
+        {
+          "name": "weight",
+          "dtype": "fp32",
+          "shape": [
+            "C",
+            1,
+            "K"
+          ],
+          "layout": "depthwise_channel_kernel",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "weight",
+          "consumption": "required"
+        },
+        {
+          "name": "bias",
+          "dtype": "fp32",
+          "shape": [
+            "C"
+          ],
+          "layout": "contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "weight",
+          "consumption": "required"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "C",
+            "U"
+          ],
+          "layout": "channel_major_output_stride",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "scratch": [
+        {
+          "name": "scratch",
+          "dtype": "fp32",
+          "shape": [
+            "Q"
+          ],
+          "layout": "contiguous",
+          "placement": "local",
+          "access": "read_write",
+          "storage_class": "scratch",
+          "consumption": "required",
+          "lifetime": "kernel_call",
+          "alignment": 4,
+          "size_bytes": "4 * Q",
+          "size_resolution": "required"
+        }
+      ],
+      "dims": [
+        "input_elements",
+        "input_stride",
+        "weight_elements",
+        "bias_elements",
+        "output_elements",
+        "output_stride",
+        "scratch_elements",
+        "channels",
+        "input_frames",
+        "kernel_size",
+        "stride",
+        "output_frames"
+      ],
+      "impl": {
+        "function": "audio_conv1d_depthwise_channel_major_f32_checked",
+        "c_declaration": "int audio_conv1d_depthwise_channel_major_f32_checked(const float *input, size_t input_elements, size_t input_stride, const float *weight, size_t weight_elements, const float *bias, size_t bias_elements, float *output, size_t output_elements, size_t output_stride, float *scratch, size_t scratch_elements, size_t channels, size_t input_frames, size_t kernel_size, size_t stride, size_t output_frames);",
+        "sources": [
+          "src/kernels/audio_conv1d_depthwise_checked.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "audio_conv1d_depthwise_scalar_fma_fp32",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "audio_conv1d_depthwise_channel_major_f32_checked",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "contract_defined"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp32",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "serial"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "input",
+            "source": "activation:input",
+            "cast": "const float*",
+            "ports": [
+              "input:input"
+            ]
+          },
+          {
+            "name": "input_elements",
+            "source": "runtime:conv_input_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "input_stride",
+            "source": "runtime:conv_input_stride",
+            "value_type": "size_t"
+          },
+          {
+            "name": "weight",
+            "source": "weight:weight",
+            "cast": "const float*",
+            "ports": [
+              "weight:weight"
+            ]
+          },
+          {
+            "name": "weight_elements",
+            "source": "runtime:conv_weight_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "bias",
+            "source": "weight:bias",
+            "cast": "const float*",
+            "ports": [
+              "weight:bias"
+            ]
+          },
+          {
+            "name": "bias_elements",
+            "source": "runtime:conv_bias_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output",
+            "source": "output:output",
+            "cast": "float*",
+            "ports": [
+              "output:output"
+            ]
+          },
+          {
+            "name": "output_elements",
+            "source": "runtime:conv_output_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output_stride",
+            "source": "runtime:conv_output_stride",
+            "value_type": "size_t"
+          },
+          {
+            "name": "scratch",
+            "source": "scratch:scratch",
+            "cast": "float*"
+          },
+          {
+            "name": "scratch_elements",
+            "source": "runtime:conv_scratch_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "channels",
+            "source": "runtime:conv_channels",
+            "value_type": "size_t"
+          },
+          {
+            "name": "input_frames",
+            "source": "runtime:conv_input_frames",
+            "value_type": "size_t"
+          },
+          {
+            "name": "kernel_size",
+            "source": "runtime:conv_kernel_size",
+            "value_type": "size_t"
+          },
+          {
+            "name": "stride",
+            "source": "runtime:conv_stride",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output_frames",
+            "source": "runtime:conv_output_frames",
+            "value_type": "size_t"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "tests/test_v8_qwen3_tts_codec_depthwise.py"
+        ],
+        "oracle": "PyTorch conv1d groups=channels on identical inputs and direct pinned full decoder hook"
+      },
+      "notes": "Checked depthwise valid convolution. Causal left padding is a separate declared graph operation. FP32 ascending tap FMA; caller-owned staged output; rejection leaves output unchanged.",
+      "call_constant_contract": {
+        "shape_symbols": {
+          "C": "conv_channels",
+          "T": "conv_input_frames",
+          "K": "conv_kernel_size",
+          "U": "conv_output_frames",
+          "Q": "conv_scratch_elements"
+        },
+        "buffer_spans": [
+          {
+            "pointer": "input",
+            "elements": "conv_input_elements",
+            "rows": "conv_channels",
+            "width": "conv_input_frames",
+            "element_bytes": 4,
+            "stride": "conv_input_stride",
+            "physical_row_stride": true
+          },
+          {
+            "pointer": "weight",
+            "elements": "conv_weight_elements",
+            "rows": 1,
+            "width": "conv_weight_elements",
+            "element_bytes": 4,
+            "exact_elements_product": [
+              "conv_channels",
+              "conv_kernel_size"
+            ]
+          },
+          {
+            "pointer": "bias",
+            "elements": "conv_bias_elements",
+            "rows": "conv_channels",
+            "width": 1,
+            "element_bytes": 4,
+            "exact_elements_product": [
+              "conv_channels"
+            ]
+          },
+          {
+            "pointer": "output",
+            "elements": "conv_output_elements",
+            "rows": "conv_channels",
+            "width": "conv_output_frames",
+            "element_bytes": 4,
+            "stride": "conv_output_stride",
+            "physical_row_stride": true
+          },
+          {
+            "pointer": "scratch",
+            "elements": "conv_scratch_elements",
+            "rows": "conv_channels",
+            "width": "conv_output_frames",
+            "element_bytes": 4,
+            "exact_elements_product": [
+              "conv_channels",
+              "conv_output_frames"
+            ]
+          }
+        ]
+      },
+      "name": "audio_conv1d_depthwise_channel_major_f32_checked",
+      "_source_file": "audio_conv1d_depthwise_channel_major_f32_checked.json"
     },
     {
       "id": "audio_conv1d_dilated_checked_channel_major_f32",
@@ -36816,6 +37141,236 @@
       },
       "name": "gelu_pytorch_tanh_bf16_storage",
       "_source_file": "gelu_pytorch_tanh_bf16_storage.json"
+    },
+    {
+      "id": "gelu_rows_erf_checked_f32",
+      "op": "gelu",
+      "operation_interface": "activation.gelu.erf.rows.checked.fp32.v1",
+      "variant": "checked_scalar_fp64_erf_fp32_storage",
+      "selection": {
+        "status": "candidate",
+        "priority": 100,
+        "equivalence_group": "gelu_rows_erf_checked_f32",
+        "phases": [
+          "prefill"
+        ]
+      },
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "input",
+          "dtype": "fp32",
+          "shape": [
+            "M",
+            "C"
+          ],
+          "layout": "row_major_strided",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "M",
+            "C"
+          ],
+          "layout": "row_major_strided",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "scratch": [
+        {
+          "name": "scratch",
+          "dtype": "fp32",
+          "shape": [
+            "Q"
+          ],
+          "layout": "contiguous",
+          "placement": "local",
+          "access": "read_write",
+          "storage_class": "scratch",
+          "consumption": "required",
+          "lifetime": "kernel_call",
+          "alignment": 4,
+          "desc": "Caller-owned staged output; Q must cover rows*channels.",
+          "size_bytes": "4 * Q",
+          "size_resolution": "required"
+        }
+      ],
+      "dims": [
+        "input_elements",
+        "input_stride",
+        "output_elements",
+        "output_stride",
+        "scratch_elements",
+        "rows",
+        "channels"
+      ],
+      "constraints": {
+        "notes": "Positive rows/channels, checked physical spans and capacities; no aliasing of output/scratch with accessed read buffers. Input row padding is ignored; output padding unchanged. All valid inputs/results finite. Rejection leaves output unchanged. No internal allocation."
+      },
+      "impl": {
+        "function": "gelu_rows_erf_checked_f32",
+        "c_declaration": "int gelu_rows_erf_checked_f32(const float *input, size_t input_elements, size_t input_stride, float *output, size_t output_elements, size_t output_stride, float *scratch, size_t scratch_elements, size_t rows, size_t channels);",
+        "sources": [
+          "src/kernels/gelu_rows_erf_checked.c",
+          "src/kernels/gelu_kernels.c",
+          "src/ck_threadpool.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "call_constant_contract": {
+        "shape_symbols": {
+          "M": "gelu_rows",
+          "C": "gelu_channels",
+          "Q": "gelu_scratch_elements"
+        },
+        "buffer_spans": [
+          {
+            "pointer": "input",
+            "elements": "gelu_input_elements",
+            "stride": "gelu_input_stride",
+            "physical_row_stride": true,
+            "rows": "gelu_rows",
+            "width": "gelu_channels",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "output",
+            "elements": "gelu_output_elements",
+            "stride": "gelu_output_stride",
+            "physical_row_stride": true,
+            "rows": "gelu_rows",
+            "width": "gelu_channels",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "scratch",
+            "elements": "gelu_scratch_elements",
+            "rows": "gelu_scratch_elements",
+            "width": 1,
+            "element_bytes": 4
+          }
+        ]
+      },
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "input",
+            "source": "activation:input",
+            "cast": "const float*",
+            "ports": [
+              "input:input"
+            ]
+          },
+          {
+            "name": "input_elements",
+            "source": "runtime:gelu_input_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "input_stride",
+            "source": "runtime:gelu_input_stride",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output",
+            "source": "output:output",
+            "cast": "float*",
+            "ports": [
+              "output:output"
+            ]
+          },
+          {
+            "name": "output_elements",
+            "source": "runtime:gelu_output_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output_stride",
+            "source": "runtime:gelu_output_stride",
+            "value_type": "size_t"
+          },
+          {
+            "name": "scratch",
+            "source": "scratch:scratch",
+            "cast": "float*"
+          },
+          {
+            "name": "scratch_elements",
+            "source": "runtime:gelu_scratch_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "rows",
+            "source": "runtime:gelu_rows",
+            "value_type": "size_t"
+          },
+          {
+            "name": "channels",
+            "source": "runtime:gelu_channels",
+            "value_type": "size_t"
+          }
+        ]
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "gelu_erf_fp64_rows_checked_fp32_storage",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "gelu_rows_erf_checked_f32",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "none",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "serial"
+          }
+        }
+      ],
+      "tests": {
+        "unit": [
+          "tests/test_v8_qwen3_tts_codec_convnext_complete.py"
+        ],
+        "oracle": "Pinned PyTorch GELU approximate=none and independent checked row cases"
+      },
+      "notes": "Checked rows reuse existing FP64-erf GELU arithmetic with FP32 storage. Caller-owned staging, finite inputs/results, unchanged output on rejection; distinct from tanh GELU.",
+      "name": "gelu_rows_erf_checked_f32",
+      "_source_file": "gelu_rows_erf_checked_f32.json"
     },
     {
       "id": "gelu_rows_tanh_checked_f32",
