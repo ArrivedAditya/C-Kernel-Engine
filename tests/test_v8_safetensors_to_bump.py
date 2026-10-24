@@ -419,6 +419,47 @@ def test_tokenizer_contract_preserves_unicode_isolated_split_profile(tmp_path: P
     assert contract["pretokenizer"] == "unicode_split_isolated"
 
 
+def test_tokenizer_contract_preserves_four_stage_unicode_split_profile(tmp_path: Path) -> None:
+    converter = _load_converter()
+    checkpoint = tmp_path / "four_stage_tokenizer"
+    checkpoint.mkdir()
+    _write_tiny_bpe_tokenizer(checkpoint, vocab_size=32)
+    path = checkpoint / "tokenizer.json"
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    unicode_words = (
+        r'''[!"#$%&'()*+,\-./:;<=>?@\[\\\]^_`{|}~][A-Za-z]+'''
+        r'''|[^\r\n\p{L}\p{P}\p{S}]?[\p{L}\p{M}]+'''
+        r'''| ?[\p{P}\p{S}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+'''
+    ).replace(r"\r", "\r").replace(r"\n", "\n")
+    doc["pre_tokenizer"] = {
+        "type": "Sequence",
+        "pretokenizers": [
+            {"type": "Split", "pattern": {"Regex": r"\p{N}{1,3}"},
+             "behavior": "Isolated", "invert": False},
+            {"type": "Split", "pattern": {"Regex": r"[一-龥぀-ゟ゠-ヿ]+"},
+             "behavior": "Isolated", "invert": False},
+            {"type": "Split", "pattern": {"Regex": unicode_words},
+             "behavior": "Isolated", "invert": False},
+            {"type": "ByteLevel", "add_prefix_space": False,
+             "trim_offsets": True, "use_regex": False},
+        ],
+    }
+    path.write_text(json.dumps(doc) + "\n", encoding="utf-8")
+    payloads, contract, _special = converter._tokenizer_payloads_from_json(checkpoint, 32)
+    assert payloads
+    assert contract["pretokenizer"] == "unicode_split_isolated"
+
+    altered = json.loads(path.read_text(encoding="utf-8"))
+    altered["pre_tokenizer"]["pretokenizers"][3]["use_regex"] = True
+    path.write_text(json.dumps(altered) + "\n", encoding="utf-8")
+    assert converter.inspect_tokenizer_json(str(path))["pretokenizer"] is None
+
+    altered = json.loads(json.dumps(doc))
+    altered["pre_tokenizer"]["pretokenizers"][2]["pattern"]["Regex"] += "x"
+    path.write_text(json.dumps(altered) + "\n", encoding="utf-8")
+    assert converter.inspect_tokenizer_json(str(path))["pretokenizer"] is None
+
+
 def test_safetensors_import_preserves_publisher_special_token_types(tmp_path: Path) -> None:
     converter = _load_converter()
     checkpoint = tmp_path / "typed_tokens"
@@ -583,6 +624,26 @@ def test_normalized_added_token_with_normalizer_fails_conversion(
         )
     with pytest.raises(converter.load_tokenizer_json.__globals__["GGUFError"], match="normalization"):
         converter.load_tokenizer_json(str(tmp_path / "tokenizer.json"), 2)
+
+
+@pytest.mark.parametrize("source", ["added_tokens", "added_tokens_decoder"])
+def test_normalized_added_token_with_empty_normalizer_is_exact(
+    tmp_path: Path, source: str
+) -> None:
+    converter = _load_converter()
+    row = {"id": 1, "content": "é", "normalized": True, "special": False}
+    doc = {"model": {"type": "BPE", "vocab": {"e": 0, "é": 1}, "merges": []},
+           "normalizer": {"type": "Sequence", "normalizers": []},
+           "added_tokens": [row] if source == "added_tokens" else []}
+    (tmp_path / "tokenizer.json").write_text(json.dumps(doc), encoding="utf-8")
+    if source == "added_tokens_decoder":
+        (tmp_path / "tokenizer_config.json").write_text(
+            json.dumps({"added_tokens_decoder": {"1": row}}), encoding="utf-8"
+        )
+    _offsets, _strings, _merges, _scores, types = converter.load_tokenizer_json(
+        str(tmp_path / "tokenizer.json"), 2
+    )
+    assert types == [1, 4]
 
 
 def test_imported_raw_added_tokens_match_native_and_publisher(tmp_path: Path) -> None:
