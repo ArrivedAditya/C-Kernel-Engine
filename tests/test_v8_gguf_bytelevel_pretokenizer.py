@@ -25,6 +25,7 @@ class Config(ctypes.Structure):
 
 
 def test_gguf_tag_selects_declared_generated_policy() -> None:
+    assert converter._GGUF_PRETOKENIZER_KEY in converter._GGUF_TOKENIZER_METADATA_KEYS
     assert converter._gguf_pretokenizer_profile({"tokenizer.ggml.pre": "command-r"}) == "bytelevel_simple"
     assert converter._gguf_pretokenizer_profile({"tokenizer.ggml.pre": "other"}) is None
     generated = build_ir_v8._generate_tokenizer_c_code(
