@@ -1,0 +1,88 @@
+{
+  "schema": "cke.instella.farskip_bf16_candidate.v1",
+  "status": "candidate_same_input_pass_default_unchanged_full_model_fail",
+  "source_base_commit": "e3a2ef861",
+  "remote_build_base": "de5e5a0e1 plus merged routed-expert and FarSkip candidate source overlay",
+  "checkpoint": "/data/cke/catalog/models/amd--Instella-MoE-16B-A3B-Think",
+  "token_ids": [
+    1
+  ],
+  "context_capacity": 32768,
+  "cpu": "AMD Ryzen 9 9950X3D 16-Core Processor",
+  "threads": 8,
+  "artifact_files_sha256": {
+    "weights.bump": "aa65a6af8e1c1ba2464b2e3955cfca4353a13e6427ac446cdab6680236a77e84",
+    "weights_manifest.json": "a6d7e13e5770934cb24ccb151d07612a71b9a8e1170d0a88038bd31e16a62cfc",
+    "model_v8.c": "95bcdc6b0b391d996a5004d38a0f05d9657cbe0ac601a5d05df9a96b3a3150bd",
+    "libmodel.so": "036df928ae34b2261f49b2c74bedfcc2c32b82be2a66055a6d0f72a99c4da89e",
+    "libckernel_engine.so": "21a508dcd2756ff2eb00f5037555f5d479dba07dd9d912b5f8ddd5b7d5e3b111",
+    "libckernel_tokenizer.so": "ac94e41160f7f441c3aa1f11a2a26b23e3f8bf4495aa82faf92f496057c8cbe5"
+  },
+  "selected_provider": "farskip_swiglu_shared_combine_pytorch_bf16_storage",
+  "prior_routed_only_candidate": {
+    "xray_report": "/data/cke/runs/longcontext-parity-20261024/instella-xray-moe-new-optimized-token1/xray_summary.json",
+    "layer1_routed_free_exact": 0,
+    "layer1_routed_free_total": 2048,
+    "layer1_main_exact": 0,
+    "layer1_main_total": 2048,
+    "full_logit_rmse": 1.2353121622059102,
+    "full_logit_max_abs": 1.783294677734375,
+    "top1_match": true
+  },
+  "farskip_candidate": {
+    "xray_report": "/data/cke/runs/longcontext-parity-20261024/instella-xray-farskip-bf16-token1-sleef/xray_summary.json",
+    "layer1_routed_free_exact": 2048,
+    "layer1_routed_free_total": 2048,
+    "layer1_main_exact": 2048,
+    "layer1_main_total": 2048,
+    "same_input_replay_exact": {
+      "layers": [
+        1,
+        2,
+        7
+      ],
+      "routed_free_each": 2048,
+      "main_each": 2048
+    },
+    "first_non_exact": "decoder.layer.2.layer_out: 2044/2048 exact, RMSE 3.14568e-5",
+    "first_material": "decoder.layer.7.layer_out: RMSE 0.0473315",
+    "first_observed_inputs": {
+      "layer1.q_proj": "channel 786: CKE 0.119140625, reference 0.11865234375; did not alter layer1 output",
+      "layer2.out_proj": "channel 1708: CKE 0.00151824951171875, reference 0.0015106201171875",
+      "layer2.routed_weights": "small FP32 differences before BF16 weighted expert accumulation"
+    },
+    "layer7_selected_experts": {
+      "cke": [
+        21,
+        23,
+        33,
+        35,
+        39,
+        50
+      ],
+      "reference": [
+        18,
+        21,
+        23,
+        35,
+        39,
+        50
+      ]
+    },
+    "full_logit_rmse": 13.327738715479649,
+    "full_logit_max_abs": 23.948384761810303,
+    "top1_match": true,
+    "top16_overlap": 5,
+    "build_note": "An isolated circuit overlay explicitly selected the candidate; current main retains the FP32-intermediate provider."
+  },
+  "negative_control": "The asset-free fixture rejects the old FP32-intermediate provider against the independent BF16-stage reference.",
+  "limits": [
+    "The candidate is not selected by the committed Instella circuit because its full-model trajectory is worse on the retained token.",
+    "Full-model numerical parity remains FAIL and is worse than the prior candidate on this token due to downstream routing sensitivity.",
+    "Identical-input FarSkip replay passes at layers 1, 2 and 7; the later observed difference enters this provider from earlier projection/router computations.",
+    "The file hashes identify the built artifacts; this diagnostic did not separately verify dynamic-loader backing mappings.",
+    "This result does not certify chat quality, tool use, context capacity beyond one token, or model throughput.",
+    "The first replay without CK_SLEEF_LIBRARY aborted before numerical comparison; the retained successful replay sets it explicitly."
+  ],
+  "default_circuit_provider": "farskip_swiglu_shared_combine_bf16"
+}

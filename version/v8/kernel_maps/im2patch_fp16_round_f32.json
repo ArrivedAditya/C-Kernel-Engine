@@ -1,6 +1,7 @@
 {
   "id": "im2patch_fp16_round_f32",
   "op": "vision_patchify",
+  "operation_interface": "vision.patchify.fp16_roundtrip.fp32.v1",
   "variant": "fp16_im2col_roundtrip",
   "quant": {
     "weight": "none",
@@ -34,8 +35,8 @@
   "call_abi": {
     "version": 1,
     "params": [
-      {"name": "image", "source": "activation:image", "cast": "const float*"},
-      {"name": "patches", "source": "output:patches", "cast": "float*"},
+      {"name": "image", "source": "activation:image", "cast": "const float*", "ports": ["input:image"]},
+      {"name": "patches", "source": "output:patches", "cast": "float*", "ports": ["output:patches"]},
       {"name": "C", "source": "param:vision_channels"},
       {"name": "H", "source": "param:image_height"},
       {"name": "W", "source": "param:image_width"},
