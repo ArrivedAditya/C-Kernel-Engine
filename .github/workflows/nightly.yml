@@ -44,6 +44,7 @@ jobs:
           ldd -r build/libckernel_engine.so
           python -m pytest -q \
             unittest/test_bump_alloc_mixed.py \
+            unittest/test_parallel_dispatch_concurrency.py \
             unittest/test_v8_arm_q4k_oracle.py \
             unittest/test_hyper_connection_quantized.py \
             unittest/test_moe_swiglu_q4k_q5k.py \

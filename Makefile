@@ -555,6 +555,7 @@ SRCS    := src/backend_native.c \
 	           version/v8/src/ck_parallel_decode_v8.c \
 	           version/v8/src/ck_parallel_prefill_v8.c \
 	           src/ck_threadpool.c \
+	           src/ck_topology.c \
            src/ck_parallel_train.c
 
 X86_ONLY_SRCS := src/kernels/gemm_kernels_q5_0_sse_v2.c \
@@ -601,7 +602,8 @@ QUANT_COMMON_SRCS := src/kernels/dequant_kernels.c \
 	src/kernels/gemm_kernels_q8_0_q8_0_contract.c \
 	src/kernels/gemm_kernels_f16.c \
 	src/ckernel_strict.c \
-	src/ck_threadpool.c
+	src/ck_threadpool.c \
+	src/ck_topology.c
 
 QUANT_X86_SRCS := src/kernels/gemm_kernels_q5_0_sse_v2.c \
 	src/kernels/gemm_kernels_q4k_sse.c \
