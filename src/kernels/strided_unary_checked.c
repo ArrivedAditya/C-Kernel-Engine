@@ -67,6 +67,29 @@ int tanh_strided_f32_checked(
     return 0;
 }
 
+int clip_strided_f32_checked(
+    const float *input, size_t input_elements, size_t input_stride,
+    float *output, size_t output_elements, size_t output_stride,
+    size_t rows, size_t columns, float minimum, float maximum) {
+    size_t ni, no;
+    if (!ck_checked_span(rows, columns, input_stride, &ni) ||
+        !ck_checked_span(rows, columns, output_stride, &no) ||
+        input_elements < ni || output_elements < no)
+        return -2;
+    if (!isfinite(minimum) || !isfinite(maximum) || minimum > maximum ||
+        !ck_checked_region(input, ni) || !ck_checked_region(output, no) ||
+        ck_checked_overlap(input, ni, output, no)) return -1;
+    for (size_t row = 0; row < rows; ++row)
+        if (!ck_checked_finite(input + row * input_stride, columns)) return -3;
+    for (size_t row = 0; row < rows; ++row)
+        for (size_t column = 0; column < columns; ++column) {
+            const float value = input[row * input_stride + column];
+            output[row * output_stride + column] =
+                value < minimum ? minimum : value > maximum ? maximum : value;
+        }
+    return 0;
+}
+
 int silu_strided_f32_checked(
     const float *input, size_t input_elements, size_t input_stride,
     float *output, size_t output_elements, size_t output_stride,
