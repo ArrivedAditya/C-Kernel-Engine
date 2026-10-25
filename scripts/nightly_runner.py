@@ -1576,6 +1576,12 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_instella_pointwise_bf16.py",
         timeout_sec=300,
     ),
+    "v8_moe_bf16_stage_storage": TestSuite(
+        "Routed MoE BF16 Stage Storage",
+        "inference",
+        ROOT / "tests" / "test_v8_moe_bf16_stage_storage.py",
+        timeout_sec=300,
+    ),
     "pytorch_onednn_oracle_contract_bf16": TestSuite(
         "PyTorch/oneDNN Oracle Contract BF16",
         "bf16",

@@ -283,7 +283,7 @@
     "silu_mul": "swiglu_forward_pytorch_bf16_storage",
     "moe_router": "gemm_nt_fp32_exact",
     "group_limited_topk_router": "group_limited_topk_router_sigmoid_f32",
-    "moe_swiglu_expert": "moe_swiglu_expert_forward_bf16",
+    "moe_swiglu_expert_mlp": "moe_swiglu_expert_forward_pytorch_bf16_storage",
     "farskip_routed_shared_combine": "farskip_swiglu_shared_combine_bf16"
   },
   "sequence": ["decoder"],
