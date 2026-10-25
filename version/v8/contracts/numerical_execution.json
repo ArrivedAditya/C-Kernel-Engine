@@ -3951,6 +3951,40 @@
       },
       "description": "Assembles packed MLA Q/K heads and applies pairwise-interleaved RoPE with the staged BF16-RNE arithmetic used by PyTorch CPU. Inputs and outputs are BF16 values carried in FP32 buffers."
     },
+    "farskip_shared_swiglu_pytorch_bf16_storage_two_stream": {
+      "operator_family": "farskip_shared_swiglu",
+      "status": "observed",
+      "storage": {
+        "input": "bf16",
+        "weight": "bf16",
+        "output": "bf16"
+      },
+      "compute": {
+        "input": "bf16",
+        "weight": "bf16",
+        "accumulator": "fp32",
+        "contraction": "disabled",
+        "evaluation_order": "ascending_hidden_gate_and_up_dot_products_then_bf16_silu_and_product_then_ascending_intermediate_down_dot_product_then_bf16_routed_plus_shared_then_bf16_residual_plus_mlp_and_residual_plus_shared"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": ["input_load", "reduction_update", "activation_intermediate_store", "pointwise_product", "pointwise_sum", "output_store"]
+      },
+      "reduction": {
+        "kind": "composite",
+        "order": "stage_ordered",
+        "partial_accumulator": "fp32",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "independent_rows",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Publisher BF16 storage at shared SwiGLU stages and at each two-stream FarSkip addition. The ABI carries BF16-stored values in FP32 buffers. Full-model certification remains separate."
+    },
     "instella_farskip_bf16_shared_swiglu_fp32_two_stream": {
       "operator_family": "farskip_shared_swiglu",
       "status": "observed",

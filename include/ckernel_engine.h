@@ -4292,6 +4292,24 @@ void farskip_swiglu_shared_combine_bf16_parallel_dispatch(
     const uint16_t *shared_up, const uint16_t *shared_down,
     float *main_output, float *routed_free_output, int rows,
     int hidden_dim, int intermediate_dim);
+void farskip_swiglu_shared_combine_pytorch_bf16_storage(
+    const float *hidden, const float *routed,
+    const float *post_attn_residual, const uint16_t *shared_gate,
+    const uint16_t *shared_up, const uint16_t *shared_down,
+    float *main_output, float *routed_free_output, int rows,
+    int hidden_dim, int intermediate_dim);
+void farskip_swiglu_shared_combine_pytorch_bf16_storage_row_range(
+    const float *hidden, const float *routed,
+    const float *post_attn_residual, const uint16_t *shared_gate,
+    const uint16_t *shared_up, const uint16_t *shared_down,
+    float *main_output, float *routed_free_output, int rows,
+    int hidden_dim, int intermediate_dim, int row_begin, int row_end);
+void farskip_swiglu_shared_combine_pytorch_bf16_storage_parallel_dispatch(
+    const float *hidden, const float *routed,
+    const float *post_attn_residual, const uint16_t *shared_gate,
+    const uint16_t *shared_up, const uint16_t *shared_down,
+    float *main_output, float *routed_free_output, int rows,
+    int hidden_dim, int intermediate_dim);
 
 void group_limited_topk_router_sigmoid_f32(const float *logits,
                                            const float *correction_bias,

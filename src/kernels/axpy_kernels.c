@@ -3487,6 +3487,93 @@ void farskip_swiglu_shared_combine_bf16(const float *hidden,
         0, rows);
 }
 
+/* Publisher BF16 storage semantics for a shared SwiGLU and two FarSkip
+ * residual streams.  The existing FP32-intermediate provider remains a
+ * separate numerical contract. */
+void farskip_swiglu_shared_combine_pytorch_bf16_storage_row_range(
+    const float *hidden,
+    const float *routed,
+    const float *post_attn_residual,
+    const uint16_t *shared_gate,
+    const uint16_t *shared_up,
+    const uint16_t *shared_down,
+    float *main_output,
+    float *routed_free_output,
+    int rows,
+    int hidden_dim,
+    int intermediate_dim,
+    int row_begin,
+    int row_end)
+{
+    if (!hidden || !routed || !post_attn_residual || !shared_gate ||
+        !shared_up || !shared_down || !main_output || !routed_free_output ||
+        rows <= 0 || hidden_dim <= 0 || intermediate_dim <= 0 ||
+        row_begin < 0 || row_begin >= row_end || row_end > rows) {
+        return;
+    }
+
+    float x_stored[hidden_dim];
+    float activation[intermediate_dim];
+    for (int row = row_begin; row < row_end; ++row) {
+        const float *x = hidden + (size_t)row * (size_t)hidden_dim;
+        const float *route = routed + (size_t)row * (size_t)hidden_dim;
+        const float *residual =
+            post_attn_residual + (size_t)row * (size_t)hidden_dim;
+        float *main = main_output + (size_t)row * (size_t)hidden_dim;
+        float *routed_free =
+            routed_free_output + (size_t)row * (size_t)hidden_dim;
+
+        for (int h = 0; h < hidden_dim; ++h) {
+            x_stored[h] = ck_moe_bf16_round(x[h]);
+        }
+        for (int i = 0; i < intermediate_dim; ++i) {
+            float gate_sum = 0.0f;
+            float up_sum = 0.0f;
+            const size_t base = (size_t)i * (size_t)hidden_dim;
+            for (int h = 0; h < hidden_dim; ++h) {
+                gate_sum += bf16_to_float(shared_gate[base + (size_t)h]) *
+                    x_stored[h];
+                up_sum += bf16_to_float(shared_up[base + (size_t)h]) *
+                    x_stored[h];
+            }
+            const float gate = ck_moe_bf16_round(gate_sum);
+            const float up = ck_moe_bf16_round(up_sum);
+            const float silu = ck_moe_bf16_round(ck_moe_silu_f32(gate));
+            activation[i] = ck_moe_bf16_round(silu * up);
+        }
+        for (int h = 0; h < hidden_dim; ++h) {
+            float down_sum = 0.0f;
+            const size_t base = (size_t)h * (size_t)intermediate_dim;
+            for (int i = 0; i < intermediate_dim; ++i) {
+                down_sum += bf16_to_float(shared_down[base + (size_t)i]) *
+                    activation[i];
+            }
+            const float shared = ck_moe_bf16_round(down_sum);
+            const float routed_value = ck_moe_bf16_round(route[h]);
+            const float residual_value = ck_moe_bf16_round(residual[h]);
+            const float mlp_output =
+                ck_moe_bf16_round(routed_value + shared);
+            routed_free[h] =
+                ck_moe_bf16_round(residual_value + shared);
+            main[h] = ck_moe_bf16_round(residual_value + mlp_output);
+        }
+    }
+}
+
+void farskip_swiglu_shared_combine_pytorch_bf16_storage(
+    const float *hidden, const float *routed,
+    const float *post_attn_residual, const uint16_t *shared_gate,
+    const uint16_t *shared_up, const uint16_t *shared_down,
+    float *main_output, float *routed_free_output, int rows,
+    int hidden_dim, int intermediate_dim)
+{
+    if (rows <= 0) return;
+    farskip_swiglu_shared_combine_pytorch_bf16_storage_row_range(
+        hidden, routed, post_attn_residual, shared_gate, shared_up,
+        shared_down, main_output, routed_free_output, rows, hidden_dim,
+        intermediate_dim, 0, rows);
+}
+
 void moe_swiglu_shared_backward_f32(const float *d_output,
                                     const float *hidden,
                                     const float *shared_gate,

@@ -101,6 +101,13 @@ extern void farskip_swiglu_shared_combine_bf16_row_range(
     const float *, const float *, const float *, const uint16_t *,
     const uint16_t *, const uint16_t *, float *, float *, int, int, int,
     int, int);
+extern void farskip_swiglu_shared_combine_pytorch_bf16_storage(
+    const float *, const float *, const float *, const uint16_t *,
+    const uint16_t *, const uint16_t *, float *, float *, int, int, int);
+extern void farskip_swiglu_shared_combine_pytorch_bf16_storage_row_range(
+    const float *, const float *, const float *, const uint16_t *,
+    const uint16_t *, const uint16_t *, float *, float *, int, int, int,
+    int, int);
 
 enum {
     CK_GEMM_ROUTE_OUTPUT_TILES = 1 << 0,
@@ -894,6 +901,46 @@ void farskip_swiglu_shared_combine_bf16_parallel_dispatch(
     if (grain < 1) grain = 1;
     ck_threadpool_parallel_for_n(
         pool, active, 0, rows, grain, work_bf16_farskip_shared_rows, &args);
+}
+
+static void work_pytorch_bf16_farskip_shared_rows(
+    int begin, int end, void *userdata)
+{
+    const bf16_farskip_shared_args_t *args =
+        (const bf16_farskip_shared_args_t *)userdata;
+    farskip_swiglu_shared_combine_pytorch_bf16_storage_row_range(
+        args->hidden, args->routed, args->post_attn_residual,
+        args->shared_gate, args->shared_up, args->shared_down,
+        args->main_output, args->routed_free_output, args->rows,
+        args->hidden_dim, args->intermediate_dim, begin, end);
+}
+
+void farskip_swiglu_shared_combine_pytorch_bf16_storage_parallel_dispatch(
+    const float *hidden, const float *routed,
+    const float *post_attn_residual, const uint16_t *shared_gate,
+    const uint16_t *shared_up, const uint16_t *shared_down,
+    float *main_output, float *routed_free_output, int rows,
+    int hidden_dim, int intermediate_dim)
+{
+    ck_threadpool_t *pool = ck_threadpool_global();
+    if (ck_env_enabled("CK_DISABLE_BF16_MOE_PARALLEL_PREFILL") ||
+        !pool || ck_threadpool_n_threads(pool) <= 1 || rows < 2) {
+        farskip_swiglu_shared_combine_pytorch_bf16_storage(
+            hidden, routed, post_attn_residual, shared_gate, shared_up,
+            shared_down, main_output, routed_free_output, rows, hidden_dim,
+            intermediate_dim);
+        return;
+    }
+
+    bf16_farskip_shared_args_t args = {
+        hidden, routed, post_attn_residual, shared_gate, shared_up, shared_down,
+        main_output, routed_free_output, rows, hidden_dim, intermediate_dim,
+    };
+    const int active = ck_independent_row_active_threads(pool, rows, 1);
+    int grain = rows / (active * 4);
+    if (grain < 1) grain = 1;
+    ck_threadpool_parallel_for_n(pool, active, 0, rows, grain,
+                                 work_pytorch_bf16_farskip_shared_rows, &args);
 }
 
 static void work_quantize_q8_k_rows(int begin, int end, void *userdata)
