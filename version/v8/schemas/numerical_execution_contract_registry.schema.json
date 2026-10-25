@@ -115,6 +115,7 @@
             "audio_harmonic_source_checked",
             "tanh",
             "clip",
+            "indexed_sum_rows",
             "snake",
             "snake_beta",
             "layout_transform",
