@@ -1626,6 +1626,11 @@ TEST_SUITES = {
         "parity",
         ROOT / "tests" / "test_v8_numeric_parity_qwen3vl_mmproj.py",
     ),
+    "mtmd_capture_layout": TestSuite(
+        "MTMD Strided Capture Layout",
+        "parity",
+        ROOT / "tests" / "test_v8_mtmd_capture_layout.py",
+    ),
     "gemma4_vision_resize_contract": TestSuite(
         "Gemma4 Vision Resize Contract",
         "parity",

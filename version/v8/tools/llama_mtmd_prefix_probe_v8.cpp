@@ -12,6 +12,7 @@
 #include "llama.h"
 #include "mtmd.h"
 #include "mtmd-helper.h"
+#include "mtmd_capture_layout_v8.h"
 
 struct CaptureStage {
     std::string name;
@@ -31,20 +32,32 @@ static bool capture_stage(ggml_tensor * tensor, bool ask, void * opaque) {
         return true;
     }
     const int64_t count = ggml_nelements(tensor);
-    if (count <= 0 || count > 64 * 1024 * 1024 || !ggml_is_contiguous(tensor) ||
+    if (count <= 0 || count > 64 * 1024 * 1024 ||
         (tensor->type != GGML_TYPE_F32 && tensor->type != GGML_TYPE_F16)) {
         capture.error = "selected MTMD stage has unsupported geometry, layout, or dtype";
         return true;
     }
-    std::vector<uint8_t> storage(ggml_nbytes(tensor));
+    const size_t physical_bytes = ggml_nbytes(tensor);
+    if (physical_bytes > 512u * 1024u * 1024u) {
+        capture.error = "selected MTMD stage exceeds physical capture capacity";
+        return true;
+    }
+    std::vector<uint8_t> storage(physical_bytes);
     ggml_backend_tensor_get(tensor, storage.data(), 0, storage.size());
+    std::vector<uint8_t> dense;
+    const size_t element_bytes = tensor->type == GGML_TYPE_F32 ? sizeof(float) : sizeof(ggml_fp16_t);
+    if (!ck_mtmd_gather_strided_elements(storage.data(), storage.size(),
+                                         tensor->ne, tensor->nb, element_bytes, dense)) {
+        capture.error = "selected MTMD stage has invalid physical layout";
+        return true;
+    }
     std::vector<float> values(static_cast<size_t>(count));
     if (tensor->type == GGML_TYPE_F32) {
-        std::memcpy(values.data(), storage.data(), storage.size());
+        std::memcpy(values.data(), dense.data(), dense.size());
     } else {
         for (int64_t i = 0; i < count; ++i) {
             ggml_fp16_t half;
-            std::memcpy(&half, storage.data() + static_cast<size_t>(i) * sizeof(half), sizeof(half));
+            std::memcpy(&half, dense.data() + static_cast<size_t>(i) * sizeof(half), sizeof(half));
             values[i] = ggml_fp16_to_fp32(half);
         }
     }
