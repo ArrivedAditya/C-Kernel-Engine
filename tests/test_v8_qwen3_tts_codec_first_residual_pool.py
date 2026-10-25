@@ -30,8 +30,8 @@ CHECKPOINT = MODEL.with_name("qwen3_tts_codec_first_residual_pool.npz")
 DILATIONS = (1, 3, 9)
 
 
-def weight_names(unit):
-    base = f"codec.decoder.decoder.1.block.{unit + 2}"
+def weight_names(unit, decoder_block=1):
+    base = f"codec.decoder.decoder.{decoder_block}.block.{unit + 2}"
     return {
         "a1": f"{base}.act1.alpha", "b1": f"{base}.act1.beta",
         "w1": f"{base}.conv1.conv.weight", "bias1": f"{base}.conv1.conv.bias",
@@ -45,8 +45,8 @@ def snake_numpy(x, alpha, beta):
         np.exp(beta[:, None]) + np.float32(1e-9))
 
 
-def unit_numpy(x, arrays, unit, dilation):
-    names = weight_names(unit)
+def unit_numpy(x, arrays, unit, dilation, decoder_block=1):
+    names = weight_names(unit, decoder_block)
     y = snake_numpy(x, arrays[names["a1"]], arrays[names["b1"]])
     padded = np.pad(y, ((0, 0), (6 * dilation, 0)))
     first = np.tile(arrays[names["bias1"]][:, None], (1, x.shape[1])).astype(np.float64)

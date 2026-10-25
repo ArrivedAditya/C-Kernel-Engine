@@ -65,9 +65,10 @@ def _conv(input_name: str, output_name: str,
 
 
 def _unit(graph: dict, unit: int, dilation: int,
-          input_name: str, channels: int, frames: int) -> str:
-    stem = f"decoder_residual_{unit}"
-    weights = f"codec.decoder.decoder.1.block.{unit + 2}"
+          input_name: str, channels: int, frames: int,
+          *, decoder_block: int = 1, stem_prefix: str = "decoder_residual") -> str:
+    stem = f"{stem_prefix}_{unit}"
+    weights = f"codec.decoder.decoder.{decoder_block}.block.{unit + 2}"
     pad = 6 * dilation
     names = {part: f"{stem}_{part}" for part in
              ("act1", "padded", "conv1", "act2", "conv2", "output")}
