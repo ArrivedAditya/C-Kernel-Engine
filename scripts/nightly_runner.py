@@ -1551,6 +1551,24 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_instella_moe_bringup.py",
         timeout_sec=300,
     ),
+    "v8_instella_onednn_expert_contract": TestSuite(
+        "Instella BF16 Expert Provider Contract",
+        "inference",
+        ROOT / "tests" / "test_v8_instella_onednn_expert_contract.py",
+        timeout_sec=120,
+    ),
+    "v8_instella_onednn_expert_oracle": TestSuite(
+        "Instella Pinned oneDNN Expert Oracle",
+        "inference",
+        ROOT / "tests" / "test_v8_instella_onednn_real_oracle.py",
+        timeout_sec=180,
+    ),
+    "v8_instella_onednn_generated_replay": TestSuite(
+        "Instella Generated oneDNN Expert Replay",
+        "inference",
+        ROOT / "tests" / "test_v8_instella_onednn_generated_replay.py",
+        timeout_sec=660,
+    ),
     "v8_xray_operation_bundle": TestSuite(
         "X-Ray Operation Replay Packet Integrity",
         "parity",

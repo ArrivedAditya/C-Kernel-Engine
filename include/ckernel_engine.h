@@ -3897,6 +3897,20 @@ void moe_swiglu_expert_forward_pytorch_bf16_storage(
     const uint16_t *expert_down, float *output, int rows, int hidden_dim,
     int intermediate_dim, int n_experts, int top_k);
 
+int moe_swiglu_expert_forward_pytorch_onednn_3_12_bf16_storage_workspace(
+    const float *hidden, const int *indices, const float *routing_weights,
+    const uint16_t *expert_gate, const uint16_t *expert_up,
+    const uint16_t *expert_down, float *output, int rows, int hidden_dim,
+    int intermediate_dim, int n_experts, int top_k,
+    void *workspace, size_t workspace_bytes);
+
+void moe_swiglu_expert_forward_pytorch_onednn_3_12_bf16_storage_checked(
+    const float *hidden, const int *indices, const float *routing_weights,
+    const uint16_t *expert_gate, const uint16_t *expert_up,
+    const uint16_t *expert_down, float *output, int rows, int hidden_dim,
+    int intermediate_dim, int n_experts, int top_k,
+    void *workspace, size_t workspace_bytes);
+
 void moe_swiglu_expert_forward_bf16_row_range(
     const float *hidden, const int *indices, const float *routing_weights,
     const uint16_t *expert_gate, const uint16_t *expert_up,
