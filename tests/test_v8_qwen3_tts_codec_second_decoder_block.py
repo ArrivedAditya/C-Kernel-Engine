@@ -43,6 +43,28 @@ def weight_names(unit):
     return first_weight_names(unit, decoder_block=2)
 
 
+def pinned_second_block_weights(model_dir: Path):
+    from safetensors import safe_open
+
+    arrays = pinned_pretransformer_weights(model_dir)
+    names = (FIRST_CODEC_UPSAMPLE_WEIGHT, FIRST_CODEC_UPSAMPLE_BIAS,
+             DEPTHWISE_WEIGHT,
+             DEPTHWISE_BIAS, *FIRST_WEIGHT_NAMES,
+             SECOND_UPSAMPLE_WEIGHT, SECOND_UPSAMPLE_BIAS,
+             *SECOND_WEIGHT_NAMES, CONV_WEIGHT, CONV_BIAS,
+             ALPHA, BETA, decoder_upsample_test.WEIGHT,
+             decoder_upsample_test.BIAS,
+             *(name for unit in range(3) for name in first_weight_names(unit).values()),
+             SNAKE_ALPHA, SNAKE_BETA, UPSAMPLE_WEIGHT, UPSAMPLE_BIAS,
+             *(name for unit in range(3) for name in weight_names(unit).values()))
+    with safe_open(model_dir / "speech_tokenizer/model.safetensors",
+                   framework="pt", device="cpu") as source:
+        for name in names:
+            arrays[name] = np.ascontiguousarray(
+                source.get_tensor(name.removeprefix("codec.")).float().numpy())
+    return arrays
+
+
 class Qwen3TTSCodecSecondDecoderBlockTest(unittest.TestCase):
     def test_circuit_fixture_and_edge_contracts(self):
         graph = build_circuit()
@@ -193,28 +215,12 @@ class Qwen3TTSCodecSecondDecoderBlockTest(unittest.TestCase):
     @unittest.skipUnless(os.environ.get("CKE_QWEN3_TTS_MODEL_DIR"),
                          "pinned weights unavailable; connected second decoder NOT_TESTED")
     def test_pinned_connected_second_decoder_block(self):
-        from safetensors import safe_open
         import torch
         import torch.nn.functional as F
 
         torch.set_num_threads(4)
         model_dir = Path(os.environ["CKE_QWEN3_TTS_MODEL_DIR"])
-        arrays = pinned_pretransformer_weights(model_dir)
-        names = (FIRST_CODEC_UPSAMPLE_WEIGHT, FIRST_CODEC_UPSAMPLE_BIAS,
-                 DEPTHWISE_WEIGHT,
-                 DEPTHWISE_BIAS, *FIRST_WEIGHT_NAMES,
-                 SECOND_UPSAMPLE_WEIGHT, SECOND_UPSAMPLE_BIAS,
-                 *SECOND_WEIGHT_NAMES, CONV_WEIGHT, CONV_BIAS,
-                 ALPHA, BETA, decoder_upsample_test.WEIGHT,
-                 decoder_upsample_test.BIAS,
-                 *(name for unit in range(3) for name in first_weight_names(unit).values()),
-                 SNAKE_ALPHA, SNAKE_BETA, UPSAMPLE_WEIGHT, UPSAMPLE_BIAS,
-                 *(name for unit in range(3) for name in weight_names(unit).values()))
-        with safe_open(model_dir / "speech_tokenizer/model.safetensors",
-                       framework="pt", device="cpu") as source:
-            for name in names:
-                arrays[name] = np.ascontiguousarray(
-                    source.get_tensor(name.removeprefix("codec.")).float().numpy())
+        arrays = pinned_second_block_weights(model_dir)
         prior = MODEL.with_name("qwen3_tts_codec_first_residual_pool.npz")
         with np.load(MODEL) as fixture, np.load(CHECKPOINT) as oracle, np.load(prior) as prior_oracle:
             references = {name: oracle[name] for name in oracle.files}
