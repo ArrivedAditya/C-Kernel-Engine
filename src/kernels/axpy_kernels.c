@@ -579,6 +579,72 @@ void moe_swiglu_expert_forward_bf16(const float *hidden,
         output, rows, hidden_dim, intermediate_dim, n_experts, top_k, 0, rows);
 }
 
+/* Publisher-style BF16 storage after each expert stage. Routing weights stay
+ * FP32; the weighted result is stored to BF16 before each BF16 accumulation.
+ * Expert-index order matches the reference's expert-major index_add loop. */
+void moe_swiglu_expert_forward_pytorch_bf16_storage(
+    const float *hidden, const int *indices, const float *routing_weights,
+    const uint16_t *expert_gate, const uint16_t *expert_up,
+    const uint16_t *expert_down, float *output, int rows, int hidden_dim,
+    int intermediate_dim, int n_experts, int top_k)
+{
+    if (!hidden || !indices || !routing_weights || !expert_gate ||
+        !expert_up || !expert_down || !output || rows <= 0 ||
+        hidden_dim <= 0 || intermediate_dim <= 0 || n_experts <= 0 ||
+        top_k <= 0) {
+        return;
+    }
+
+    float projection[2 * intermediate_dim];
+    float activation[intermediate_dim];
+    float x_stored[hidden_dim];
+    for (int r = 0; r < rows; ++r) {
+        const float *x = hidden + (size_t)r * (size_t)hidden_dim;
+        float *y = output + (size_t)r * (size_t)hidden_dim;
+        for (int h = 0; h < hidden_dim; ++h) y[h] = 0.0f;
+        for (int h = 0; h < hidden_dim; ++h) {
+            x_stored[h] = ck_moe_bf16_round(x[h]);
+        }
+
+        for (int e = 0; e < n_experts; ++e) {
+            for (int slot = 0; slot < top_k; ++slot) {
+                const size_t route_idx =
+                    (size_t)r * (size_t)top_k + (size_t)slot;
+                if (indices[route_idx] != e) continue;
+                const float route_w = routing_weights[route_idx];
+
+                for (int i = 0; i < intermediate_dim; ++i) {
+                    float gv = 0.0f;
+                    float uv = 0.0f;
+                    for (int h = 0; h < hidden_dim; ++h) {
+                        gv += bf16_to_float(expert_gate[
+                            ck_moe_up_idx(e, i, h, intermediate_dim, hidden_dim)]) * x_stored[h];
+                        uv += bf16_to_float(expert_up[
+                            ck_moe_up_idx(e, i, h, intermediate_dim, hidden_dim)]) * x_stored[h];
+                    }
+                    projection[i] = ck_moe_bf16_round(gv);
+                    projection[intermediate_dim + i] = ck_moe_bf16_round(uv);
+                }
+                swiglu_forward_pytorch_bf16_storage(
+                    projection, activation, 1, intermediate_dim);
+
+                for (int h = 0; h < hidden_dim; ++h) {
+                    float v = 0.0f;
+                    for (int i = 0; i < intermediate_dim; ++i) {
+                        v += bf16_to_float(expert_down[
+                            ck_moe_down_idx(e, h, i, hidden_dim, intermediate_dim)]) *
+                             activation[i];
+                    }
+                    const float down_stored = ck_moe_bf16_round(v);
+                    const float weighted_stored =
+                        ck_moe_bf16_round(down_stored * route_w);
+                    y[h] = ck_moe_bf16_round(y[h] + weighted_stored);
+                }
+            }
+        }
+    }
+}
+
 void moe_swiglu_packed_expert_forward_bf16(
     const float *hidden,
     const int *indices,

@@ -1,0 +1,51 @@
+{
+  "schema": "cke.instella.moe_bf16_candidate.v1",
+  "status": "partial_numerical_improvement",
+  "candidate_source_commit": "846e024ea69e",
+  "remote_build_base": "de5e5a0e1",
+  "token_ids": [
+    1
+  ],
+  "context_capacity": 32768,
+  "cpu": "AMD Ryzen 9 9950X3D 16-Core Processor",
+  "weights_sha256": "aa65a6af8e1c1ba2464b2e3955cfca4353a13e6427ac446cdab6680236a77e84",
+  "old": {
+    "runtime": "/data/cke/runs/longcontext-parity-20261024/instella-32768-merged-runtime",
+    "model_sha256": "6ebcc243e42ea5d24de0be9b0e8675701b068e26bb3d3e7fcdf66d62c3645247",
+    "engine_sha256": "f0c0f840630ff1b8925c2ed5e28457d4f04bccf1ae5f6256b6ed56a811c9b620",
+    "comparison": {
+      "xray_report": "/data/cke/runs/longcontext-parity-20261024/instella-xray-moe-old-token1/xray_summary.json",
+      "top1_match": true,
+      "logit_rmse": 8.34032028752195,
+      "logit_max_abs": 13.787091255187988,
+      "logit_cosine": 0.9969571276456728,
+      "layer1_routed_exact": 0,
+      "layer1_routed_total": 2048,
+      "first_material": "decoder.layer.13.layer_out"
+    }
+  },
+  "candidate": {
+    "runtime": "/data/cke/runs/longcontext-parity-20261024/instella-32768-bf16-candidate",
+    "model_sha256": "0aae6bbe103f113e26fe6b5790795327c7fa00ee5ef7f39bdc9cad9a9dd32d0a",
+    "engine_sha256": "d020c56a88d38912fcca8834ea36c778013e1c21783f98ddc9a54548ce738a44",
+    "tokenizer_sha256": "ac94e41160f7f441c3aa1f11a2a26b23e3f8bf4495aa82faf92f496057c8cbe5",
+    "manifest_sha256": "bdcf79eb05961e07df8f132faac29d5ecda2910989ae5a238f4acd71ab90c51a",
+    "selected_provider": "moe_swiglu_expert_forward_pytorch_bf16_storage",
+    "comparison": {
+      "xray_report": "/data/cke/runs/longcontext-parity-20261024/instella-xray-moe-new-optimized-token1/xray_summary.json",
+      "top1_match": true,
+      "logit_rmse": 1.2353121622059102,
+      "logit_max_abs": 1.783294677734375,
+      "logit_cosine": 0.9999645097778104,
+      "layer1_routed_exact": 2048,
+      "layer1_routed_total": 2048,
+      "first_material": "decoder.layer.13.layer_out"
+    }
+  },
+  "limits": [
+    "Full-logit numerical parity remains FAIL at later layers.",
+    "Top-token equality is not numerical certification.",
+    "No matched warm-cache throughput or practical harness test was run.",
+    "The remote build uses base de5e5a0e1 plus the candidate file overlay; the local branch commit pins those candidate source changes."
+  ]
+}
