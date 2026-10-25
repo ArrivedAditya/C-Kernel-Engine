@@ -8037,6 +8037,30 @@ def _resolve_position_embeddings_kernel(config: Dict, template_kernels: Dict[str
     return str(kernel_spec)
 
 
+def _resolve_patchify_kernel(
+    config: Dict, template_kernels: Dict[str, Any], header_quant: Dict[str, str]
+) -> str:
+    kernel_spec = template_kernels.get("patchify")
+    if not isinstance(kernel_spec, dict):
+        return str(kernel_spec or "im2patch")
+    storage = str(config.get("vision_patch_operand_storage", "fp32") or "").strip().lower()
+    selected = kernel_spec.get(storage)
+    if not selected:
+        raise RuntimeError(
+            f"HARD KERNEL RESOLUTION FAULT: patchify has no circuit provider "
+            f"for operand storage {storage!r}."
+        )
+    if storage == "fp16":
+        for key in ("patch_emb", "patch_emb_aux"):
+            dtype = str(header_quant.get(key, "") or "").strip().lower()
+            if dtype not in ("fp32", "f32"):
+                raise RuntimeError(
+                    f"HARD KERNEL RESOLUTION FAULT: {storage} patch operand storage "
+                    f"requires {key} FP32 weights, got {dtype!r}."
+                )
+    return str(selected)
+
+
 def _require_phase_kernel_mapping(
     template_kernels: Dict[str, Any], operation: str, phase: str
 ) -> str:
@@ -9365,7 +9389,11 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         )
 
     template_flags = template.get("flags", {}) if isinstance(template.get("flags"), dict) else {}
-    template_kernels = template.get("kernels", {}) if isinstance(template.get("kernels"), dict) else {}
+    template_kernels = dict(template.get("kernels", {})) if isinstance(template.get("kernels"), dict) else {}
+    if isinstance(template_kernels.get("patchify"), dict):
+        template_kernels["patchify"] = _resolve_patchify_kernel(
+            config, template_kernels, header_quant
+        )
     # Runtime-config opt-in: use FP32->Q8_0 contract adapters for Q8_0 kernels.
     # Weight dtype still comes from the manifest; this only selects the activation
     # contract path when a model family explicitly requests it.

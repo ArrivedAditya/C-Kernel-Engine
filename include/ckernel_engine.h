@@ -5370,6 +5370,9 @@ void embedding_forward_bf16_fp32(const int32_t *token_ids,
 	void im2patch(const float *image,
 	              float *patches,
 	              int C, int H, int W, int P);
+	void im2patch_fp16_round_f32(const float *image,
+	                            float *patches,
+	                            int C, int H, int W, int P);
 	void patch2im(const float *d_patches,
 	              float *d_image,
 	              int C, int H, int W, int P);

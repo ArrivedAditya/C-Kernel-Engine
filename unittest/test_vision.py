@@ -26,6 +26,8 @@ lib.im2patch.argtypes = [
     ctypes.c_int  # P
 ]
 lib.im2patch.restype = None
+lib.im2patch_fp16_round_f32.argtypes = lib.im2patch.argtypes
+lib.im2patch_fp16_round_f32.restype = None
 
 # void patch2im(const float *d_patches, float *d_image, int C, int H, int W, int P)
 lib.patch2im.argtypes = [
@@ -637,6 +639,35 @@ def test_im2patch(C=3, H=224, W=224, P=16):
 
     if diff > 1e-7:
         raise AssertionError("im2patch forward mismatch!")
+
+
+def test_im2patch_fp16_round_f32():
+    image = np.linspace(-2.0, 2.0, 48, dtype=np.float32).reshape(3, 4, 4)
+    image.flat[0] = np.float32(1.0007)
+    image.flat[17] = np.float32(-1.0007)
+    source = torch.from_numpy(image.copy())
+    patches = torch.nn.Unfold(kernel_size=(2, 2), stride=(2, 2))(
+        source.unsqueeze(0)
+    ).squeeze(0).transpose(0, 1).numpy()
+    expected = patches.astype(np.float16).astype(np.float32).reshape(-1)
+    guarded = np.full(expected.size + 8, np.float32(12345.5), dtype=np.float32)
+    out = guarded[4:-4]
+    lib.im2patch_fp16_round_f32(
+        image.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+        out.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+        3, 4, 4, 2,
+    )
+    np.testing.assert_array_equal(out.view(np.uint32), expected.view(np.uint32))
+    np.testing.assert_array_equal(guarded[:4], np.full(4, 12345.5, dtype=np.float32))
+    np.testing.assert_array_equal(guarded[-4:], np.full(4, 12345.5, dtype=np.float32))
+    legacy = np.empty_like(out)
+    lib.im2patch(
+        image.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+        legacy.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+        3, 4, 4, 2,
+    )
+    np.testing.assert_array_equal(legacy.view(np.uint32), patches.reshape(-1).view(np.uint32))
+    assert np.any(out.view(np.uint32) != legacy.view(np.uint32))
 
 
 def test_patch2im(C=3, H=224, W=224, P=16):
@@ -1263,6 +1294,7 @@ def test_mrope_qk_vision_ggml_libm_exact():
 
 if __name__ == "__main__":
     test_im2patch()
+    test_im2patch_fp16_round_f32()
     test_patch2im()
     test_position_embeddings_add()
     test_position_embeddings_add_at_offset()
