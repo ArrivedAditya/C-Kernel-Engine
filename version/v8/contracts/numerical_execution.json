@@ -370,6 +370,23 @@
       "position_transform": null,
       "description": "Checked FP32 strided clamp with finite bounds and inputs, untouched output on rejection, and exact finite FP32 selection."
     },
+    "indexed_sum_rows_checked_fp32_add": {
+      "operator_family": "indexed_sum_rows",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "none", "output": "fp32"},
+      "compute": {
+        "input": "fp32", "weight": "none", "accumulator": "fp32",
+        "contraction": "disabled",
+        "evaluation_order": "validate_all_i32_row_indices_and_finite_selected_inputs_then_ascending_row_channel_exact_single_source_copy_or_single_fp32_add"
+      },
+      "rounding": {"mode": "rne", "points": ["output_store"]},
+      "reduction": {"kind": "none", "order": "none",
+                    "partial_accumulator": "none", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "independent_outputs",
+                    "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Checked row selection from two FP32 sources using i32 indices. A -1 index omits that source, preserving exact single-source values; two selected sources use one FP32 addition. No reduction or heap allocation; rejection leaves output unchanged."
+    },
     "tanh_strided_f32_checked_system_tanhf": {
       "operator_family": "tanh",
       "status": "validated",

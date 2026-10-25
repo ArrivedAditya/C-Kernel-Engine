@@ -1,0 +1,29 @@
+{
+  "schema": "cke.v8.tts.generated_prompt_first_block_evidence",
+  "schema_version": 1,
+  "scope": "Pinned English/Ryan text and codec prompt IDs through native embeddings, projected text, checked row assembly and first talker block; remaining talker, code predictor and text-to-waveform NOT_TESTED",
+  "model_revision": "85e237c12c027371202489a0ec509ded67b5e4b5",
+  "reference_revision": "022e286b98fbec7e1e916cb940cdf532cd9f488e",
+  "reference_backend": "PyTorch 2.14.1+cpu, eager attention, float32",
+  "first_block_fixture_sha256": "16515797aaec51662b9b7ec02d68a9d9643e1207598d2578009abf4e1b3677a7",
+  "spoken_text_context_tokens": 7,
+  "prompt_rows": 18,
+  "generated_graph_operations": 28,
+  "prompt_max_abs": 0.0000002384185791015625,
+  "first_block_output_max_abs": 0.0000095367431640625,
+  "generated_library_sha256": "2c7a8554843cb6c922486bcddf9023644e088a16f4a82f32bcd35767169bb893",
+  "negative_controls": [
+    "Invalid codec ID blocks the first talker layer and leaves its output unchanged",
+    "Incorrect but in-range prompt row edge changes the pinned prompt checkpoint",
+    "Out-of-range row index blocks the first talker layer and leaves its output unchanged",
+    "Insufficient arena capacity rejects without publishing block output",
+    "Corrected request replays the prior block output on the same generated entry"
+  ],
+  "reproduce": "CKE_QWEN3_TTS_MODEL_DIR=<pinned model snapshot> <pinned oracle Python> -m unittest tests.test_v8_qwen3_tts_prompt_first_block -v",
+  "remaining": [
+    "Generate all 28 talker layers and final logits through native execution",
+    "Declare decode cache, position, reset and EOS behavior",
+    "Generate code predictor groups and connect CKE-produced codes to the codec",
+    "Handle varying text lengths and repeated requests in one deployment"
+  ]
+}

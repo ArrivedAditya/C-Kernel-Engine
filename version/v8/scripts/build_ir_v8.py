@@ -1981,6 +1981,12 @@ OP_DATAFLOW = {
         "inputs": {"left": "external:left", "right": "external:right"},
         "outputs": {"output": {"slot": "summed_features", "dtype": "fp32"}},
     },
+    "indexed_sum_rows_checked": {
+        "inputs": {"left": "external:left", "right": "external:right",
+                   "left_indices": "external:left_indices",
+                   "right_indices": "external:right_indices"},
+        "outputs": {"output": {"slot": "summed_rows", "dtype": "fp32"}},
+    },
     "silu_mul_rows_checked": {
         "inputs": {"gate": "external:gate", "up": "external:up"},
         "outputs": {"output": {"slot": "activated_features", "dtype": "fp32"}},
@@ -4897,6 +4903,7 @@ TEMPLATE_TO_KERNEL_OP = {
     "linear_rows_checked_no_bias": "linear_rows_checked_no_bias",
     "token_head_layout_checked": "token_head_layout_checked",
     "add_rows_checked": "add_rows_checked",
+    "indexed_sum_rows_checked": "indexed_sum_rows_checked",
     "silu_mul_rows_checked": "silu_mul_rows_checked",
     "rope_qk_bounded": "rope_qk_bounded",
     "attention_causal_bounded": "attention_causal_bounded",

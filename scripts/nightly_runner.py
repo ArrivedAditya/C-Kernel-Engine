@@ -753,6 +753,15 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_qwen3_tts_first_block.py",
         timeout_sec=180,
     ),
+    "tts_indexed_sum_rows_checked": TestSuite(
+        "Checked Indexed Row Sum", "kernels",
+        ROOT / "tests" / "test_v8_indexed_sum_rows_checked.py",
+    ),
+    "tts_qwen3_customvoice_prompt_first_block": TestSuite(
+        "Qwen3-TTS Generated Prompt and First Talker Block", "inference",
+        ROOT / "tests" / "test_v8_qwen3_tts_prompt_first_block.py",
+        timeout_sec=180,
+    ),
     "tts_qwen3_customvoice_codec_semantic": TestSuite(
         "Qwen3-TTS Generated Split-RVQ Codec Prefix", "inference",
         ROOT / "tests" / "test_v8_qwen3_tts_codec_semantic.py",
