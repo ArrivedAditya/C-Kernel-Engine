@@ -1,0 +1,444 @@
+{
+  "id": "attention_decode_append_checked_f32",
+  "op": "attention_decode_append_checked",
+  "operation_interface": "attention.decode_append_gqa.head_major.fp32.v1",
+  "variant": "checked_grouped_query_fp32",
+  "selection": {
+    "status": "candidate",
+    "priority": 100,
+    "equivalence_group": "attention.decode_append_gqa.head_major.fp32.v1",
+    "phases": [
+      "prefill"
+    ]
+  },
+  "quant": {
+    "weight": "none",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {
+      "name": "q",
+      "dtype": "fp32",
+      "shape": [
+        "H",
+        "D"
+      ],
+      "layout": "head_major_contiguous",
+      "access": "read",
+      "storage_class": "activation",
+      "consumption": "required"
+    },
+    {
+      "name": "k_new",
+      "dtype": "fp32",
+      "shape": [
+        "KV",
+        "D"
+      ],
+      "layout": "head_major_contiguous",
+      "access": "read",
+      "storage_class": "activation",
+      "consumption": "required"
+    },
+    {
+      "name": "v_new",
+      "dtype": "fp32",
+      "shape": [
+        "KV",
+        "D"
+      ],
+      "layout": "head_major_contiguous",
+      "access": "read",
+      "storage_class": "activation",
+      "consumption": "required"
+    },
+    {
+      "name": "cache_k",
+      "dtype": "fp32",
+      "shape": [
+        "KV",
+        "S",
+        "D"
+      ],
+      "layout": "head_major_capacity_stride",
+      "access": "read",
+      "storage_class": "state",
+      "consumption": "required"
+    },
+    {
+      "name": "cache_v",
+      "dtype": "fp32",
+      "shape": [
+        "KV",
+        "S",
+        "D"
+      ],
+      "layout": "head_major_capacity_stride",
+      "access": "read",
+      "storage_class": "state",
+      "consumption": "required"
+    }
+  ],
+  "weights": [],
+  "outputs": [
+    {
+      "name": "work_scores",
+      "dtype": "fp32",
+      "shape": [
+        "H",
+        "S"
+      ],
+      "layout": "head_major_capacity_stride",
+      "access": "write",
+      "storage_class": "activation",
+      "consumption": "required"
+    },
+    {
+      "name": "staged",
+      "dtype": "fp32",
+      "shape": [
+        "H",
+        "D"
+      ],
+      "layout": "head_major_contiguous",
+      "access": "write",
+      "storage_class": "activation",
+      "consumption": "required"
+    },
+    {
+      "name": "out",
+      "dtype": "fp32",
+      "shape": [
+        "H",
+        "D"
+      ],
+      "layout": "head_major_contiguous",
+      "access": "write",
+      "storage_class": "activation",
+      "consumption": "required"
+    },
+    {
+      "name": "cache_k",
+      "dtype": "fp32",
+      "shape": [
+        "KV",
+        "S",
+        "D"
+      ],
+      "layout": "head_major_capacity_stride",
+      "access": "read_write",
+      "storage_class": "state",
+      "consumption": "required",
+      "alias_of": "input:cache_k"
+    },
+    {
+      "name": "cache_v",
+      "dtype": "fp32",
+      "shape": [
+        "KV",
+        "S",
+        "D"
+      ],
+      "layout": "head_major_capacity_stride",
+      "access": "read_write",
+      "storage_class": "state",
+      "consumption": "required",
+      "alias_of": "input:cache_v"
+    }
+  ],
+  "scratch": [],
+  "dims": [
+    "H",
+    "KV",
+    "S",
+    "D"
+  ],
+  "impl": {
+    "function": "ck_attention_decode_append_checked_f32",
+    "c_declaration": "int ck_attention_decode_append_checked_f32(const float *q, size_t q_elements, const float *k_new, size_t k_new_elements, const float *v_new, size_t v_new_elements, float *k_cache, size_t k_cache_elements, float *v_cache, size_t v_cache_elements, float *scores, size_t score_elements, float *staged_output, size_t staged_output_elements, float *output, size_t output_elements, size_t heads, size_t kv_heads, size_t cache_capacity, size_t head_dim, size_t position);",
+    "sources": [
+      "src/kernels/attention_decode_append_checked.c"
+    ]
+  },
+  "modes": {
+    "inference": true,
+    "training": false,
+    "backward": false
+  },
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {
+        "name": "q",
+        "source": "activation:q",
+        "cast": "const float*",
+        "ports": [
+          "input:q"
+        ]
+      },
+      {
+        "name": "q_elements",
+        "source": "runtime:q_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "k_new",
+        "source": "activation:k_new",
+        "cast": "const float*",
+        "ports": [
+          "input:k_new"
+        ]
+      },
+      {
+        "name": "k_new_elements",
+        "source": "runtime:k_new_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "v_new",
+        "source": "activation:v_new",
+        "cast": "const float*",
+        "ports": [
+          "input:v_new"
+        ]
+      },
+      {
+        "name": "v_new_elements",
+        "source": "runtime:v_new_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "k_cache",
+        "source": "activation:cache_k",
+        "cast": "float*",
+        "ports": [
+          "input:cache_k",
+          "output:cache_k"
+        ]
+      },
+      {
+        "name": "k_cache_elements",
+        "source": "runtime:k_cache_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "v_cache",
+        "source": "activation:cache_v",
+        "cast": "float*",
+        "ports": [
+          "input:cache_v",
+          "output:cache_v"
+        ]
+      },
+      {
+        "name": "v_cache_elements",
+        "source": "runtime:v_cache_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "scores",
+        "source": "output:work_scores",
+        "cast": "float*",
+        "ports": [
+          "output:work_scores"
+        ]
+      },
+      {
+        "name": "score_elements",
+        "source": "runtime:score_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "staged_output",
+        "source": "output:staged",
+        "cast": "float*",
+        "ports": [
+          "output:staged"
+        ]
+      },
+      {
+        "name": "staged_output_elements",
+        "source": "runtime:staged_output_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "output",
+        "source": "output:out",
+        "cast": "float*",
+        "ports": [
+          "output:out"
+        ]
+      },
+      {
+        "name": "output_elements",
+        "source": "runtime:output_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "heads",
+        "source": "runtime:heads",
+        "value_type": "size_t"
+      },
+      {
+        "name": "kv_heads",
+        "source": "runtime:kv_heads",
+        "value_type": "size_t"
+      },
+      {
+        "name": "cache_capacity",
+        "source": "runtime:cache_capacity",
+        "value_type": "size_t"
+      },
+      {
+        "name": "head_dim",
+        "source": "runtime:head_dim",
+        "value_type": "size_t"
+      },
+      {
+        "name": "position",
+        "source": "runtime:position",
+        "value_type": "size_t"
+      }
+    ]
+  },
+  "call_constant_contract": {
+    "shape_symbols": {
+      "H": "heads",
+      "KV": "kv_heads",
+      "S": "cache_capacity",
+      "D": "head_dim"
+    },
+    "buffer_spans": [
+      {
+        "pointer": "q",
+        "elements": "q_elements",
+        "rows": 1,
+        "width": "q_elements",
+        "element_bytes": 4,
+        "exact_elements_product": [
+          "heads",
+          "head_dim"
+        ]
+      },
+      {
+        "pointer": "k_new",
+        "elements": "k_new_elements",
+        "rows": 1,
+        "width": "k_new_elements",
+        "element_bytes": 4,
+        "exact_elements_product": [
+          "kv_heads",
+          "head_dim"
+        ]
+      },
+      {
+        "pointer": "v_new",
+        "elements": "v_new_elements",
+        "rows": 1,
+        "width": "v_new_elements",
+        "element_bytes": 4,
+        "exact_elements_product": [
+          "kv_heads",
+          "head_dim"
+        ]
+      },
+      {
+        "pointer": "k_cache",
+        "elements": "k_cache_elements",
+        "rows": 1,
+        "width": "k_cache_elements",
+        "element_bytes": 4,
+        "exact_elements_product": [
+          "kv_heads",
+          "cache_capacity",
+          "head_dim"
+        ]
+      },
+      {
+        "pointer": "v_cache",
+        "elements": "v_cache_elements",
+        "rows": 1,
+        "width": "v_cache_elements",
+        "element_bytes": 4,
+        "exact_elements_product": [
+          "kv_heads",
+          "cache_capacity",
+          "head_dim"
+        ]
+      },
+      {
+        "pointer": "scores",
+        "elements": "score_elements",
+        "rows": 1,
+        "width": "score_elements",
+        "element_bytes": 4,
+        "exact_elements_product": [
+          "heads",
+          "cache_capacity"
+        ]
+      },
+      {
+        "pointer": "staged_output",
+        "elements": "staged_output_elements",
+        "rows": 1,
+        "width": "staged_output_elements",
+        "element_bytes": 4,
+        "exact_elements_product": [
+          "heads",
+          "head_dim"
+        ]
+      },
+      {
+        "pointer": "output",
+        "elements": "output_elements",
+        "rows": 1,
+        "width": "output_elements",
+        "element_bytes": 4,
+        "exact_elements_product": [
+          "heads",
+          "head_dim"
+        ]
+      }
+    ]
+  },
+  "tests": {
+    "unit": [
+      "tests/test_v8_attention_decode_append_checked.py",
+      "tests/test_v8_qwen3_tts_talker_continuation.py"
+    ],
+    "oracle": "NumPy grouped attention and pinned Qwen3-TTS continuation"
+  },
+  "notes": "One-token attention with checked valid cache position, caller-owned scores/staging and capacity-strided KV. Rejection leaves output and cache unchanged. Scores use serial FP64 products/sums, then FP32 score storage; the maximum is selected from stored FP32 scores. Exponentials and weighted reductions use FP64. This is a declared CKE provider order, not a claim of bitwise PyTorch equivalence.",
+  "numerical_capabilities": [
+    {
+      "contract_id": "attention_decode_fp32_scores_fp64_reduction",
+      "status": "validated",
+      "phases": [
+        "prefill"
+      ],
+      "function": "ck_attention_decode_append_checked_f32",
+      "explicit_selector": true,
+      "implementation": {
+        "isa_dispatch": "scalar",
+        "threading": {
+          "runtime": "serial",
+          "work_partition": [
+            "serial"
+          ],
+          "dispatch": [
+            "inline"
+          ],
+          "reduction_order_effect": "contract_defined"
+        }
+      },
+      "arithmetic": {
+        "partial_accumulator": "fp64",
+        "merge_order": "none",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false,
+        "split_strategy": "serial"
+      }
+    }
+  ]
+}

@@ -767,6 +767,15 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_qwen3_tts_talker_prefill.py",
         timeout_sec=300,
     ),
+    "tts_qwen3_customvoice_talker_continuation": TestSuite(
+        "Qwen3-TTS Checked Talker Continuation", "inference",
+        ROOT / "tests" / "test_v8_qwen3_tts_talker_continuation.py",
+        timeout_sec=300,
+    ),
+    "tts_attention_decode_append_checked": TestSuite(
+        "Checked GQA Decode and KV Append", "kernels",
+        ROOT / "tests" / "test_v8_attention_decode_append_checked.py",
+    ),
     "tts_qwen3_customvoice_codec_semantic": TestSuite(
         "Qwen3-TTS Generated Split-RVQ Codec Prefix", "inference",
         ROOT / "tests" / "test_v8_qwen3_tts_codec_semantic.py",
