@@ -13,9 +13,14 @@ import copy
 import json
 from pathlib import Path
 
-from build_qwen3_tts_prompt_first_block_circuit import (
-    HIDDEN, ROOT, build_circuit as prompt_first_block,
-)
+if __package__:
+    from .build_qwen3_tts_prompt_first_block_circuit import (
+        HIDDEN, ROOT, build_circuit as prompt_first_block,
+    )
+else:
+    from build_qwen3_tts_prompt_first_block_circuit import (
+        HIDDEN, ROOT, build_circuit as prompt_first_block,
+    )
 
 OUTPUT = ROOT / "version/v8/circuits/qwen3_tts_talker_prefill_bounded.json"
 LAYERS = 28
@@ -27,8 +32,9 @@ def build_circuit(*, context_tokens: int = 7, layers: int = LAYERS) -> dict:
         raise ValueError("talker layers must be an integer from 1 to 28")
     graph = prompt_first_block(context_tokens)
     rows = context_tokens + 11
-    graph["name"] = "qwen3_tts_talker_prefill_bounded"
-    graph["native_entry"]["function"] = "ck_qwen3_tts_talker_prefill_bounded"
+    graph["name"] = ("qwen3_tts_talker_prefill_bounded" if layers == LAYERS else
+                     f"qwen3_tts_talker_prefill_{layers}_layer_fixture")
+    graph["native_entry"]["function"] = "ck_" + graph["name"]
     graph["contract"]["runtime_invariants"].update({
         "talker_layers": layers,
         "complete_talker_prefill": layers == LAYERS,

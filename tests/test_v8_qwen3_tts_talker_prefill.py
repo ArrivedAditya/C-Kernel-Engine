@@ -93,9 +93,76 @@ class Qwen3TTSTalkerPrefillTest(unittest.TestCase):
 
     def test_two_layer_builder_preserves_distinct_edges(self):
         graph = build_circuit(layers=2)
+        self.assertEqual(graph["name"], "qwen3_tts_talker_prefill_2_layer_fixture")
         self.assertEqual(len(graph["sequence"]), 4)
         self.assertEqual(len(weight_shapes(graph)), 30)
         self.assertFalse(graph["contract"]["runtime_invariants"]["complete_talker_prefill"])
+
+    def test_two_layer_generated_nonzero_recurrence_without_model_assets(self):
+        graph = build_circuit(context_tokens=1, layers=2)
+        with tempfile.TemporaryDirectory() as temp:
+            fn, acts, weights, layout, calls, _ = compile_entry(
+                Path(temp), graph, weight_shapes(graph))
+            self.assertEqual(len(calls["operations"]), 50)
+            size = layout["memory"]["arena"]["total_size"]
+            raw = (ctypes.c_uint8 * (size + 63))()
+            arena = (ctypes.c_uint8 * size).from_buffer(raw, (-ctypes.addressof(raw)) & 63)
+
+            def weight(name, shape):
+                return np.ndarray(shape, dtype=np.float32, buffer=arena,
+                                  offset=weights[name]["abs_offset"])
+
+            for index in range(7):
+                weight("talker.model.text_embedding.weight", (151936, 2048))[index, 0] = (
+                    index + 1) / 10
+                weight("talker.model.codec_embedding.weight", (3072, 1024))[index, 0] = (
+                    index + 1) / 20
+            weight("talker.text_projection.linear_fc1.weight", (2048, 2048))[0, 0] = 1
+            weight("talker.text_projection.linear_fc2.weight", (1024, 2048))[0, 0] = 1
+            for layer, down_scale in ((0, 0.015), (1, -0.01)):
+                prefix = f"talker.model.layers.{layer}."
+                for suffix in ("input_layernorm.weight", "post_attention_layernorm.weight"):
+                    weight(prefix + suffix, (1024,))[:] = 1
+                for suffix in ("self_attn.q_norm.weight", "self_attn.k_norm.weight"):
+                    weight(prefix + suffix, (128,))[:] = 1
+                weight(prefix + "mlp.gate_proj.weight", (3072, 1024))[0, 0] = 0.03
+                weight(prefix + "mlp.up_proj.weight", (3072, 1024))[0, 0] = 0.04
+                weight(prefix + "mlp.down_proj.weight", (1024, 3072))[0, 0] = down_scale
+            weight("talker.model.norm.weight", (1024,))[:] = 1
+            weight("talker.codec_head.weight", (3072, 1024))[0, 0] = 0.5
+            view(arena, acts, "text_ids", np.int32, (7,))[:] = np.arange(7)
+            view(arena, acts, "codec_ids", np.int32, (7,))[:] = np.arange(7)
+            for name, indices in prompt_plan(1).items():
+                view(arena, acts, name, np.int32, (12,))[:] = indices
+            self.assertEqual(fn(arena, size), 0)
+            prompt = view(arena, acts, "block_input", np.float32, (12, 1024))
+            self.assertGreater(float(np.max(np.abs(prompt))), 0.1)
+            expected = prompt.astype(np.float64).copy()
+            for layer, down_scale in ((0, 0.015), (1, -0.01)):
+                norm = expected[:, 0] / np.sqrt(
+                    np.mean(expected * expected, axis=1) + 1e-6)
+                gate = 0.03 * norm
+                up = 0.04 * norm
+                expected[:, 0] += down_scale * (gate / (1 + np.exp(-gate))) * up
+                name = "block_output" if layer == 0 else "layer1_block_output"
+                actual = view(arena, acts, name, np.float32, (12, 1024))
+                self.assertTrue(np.isfinite(actual).all(), name)
+                np.testing.assert_allclose(actual, expected, atol=3e-5, rtol=3e-5)
+            logits = view(arena, acts, "talker_logits", np.float32, (12, 3072))
+            self.assertTrue(np.isfinite(logits).all())
+            expected_logits = 0.5 * expected[:, 0] / np.sqrt(
+                np.mean(expected * expected, axis=1) + 1e-6)
+            np.testing.assert_allclose(logits[:, 0], expected_logits,
+                                       atol=3e-5, rtol=3e-5)
+            self.assertTrue(np.all(logits[:, 1:] == 0))
+            pristine = logits.copy()
+            logits[:] = -777
+            view(arena, acts, "codec_ids", np.int32, (7,))[0] = 3072
+            self.assertNotEqual(fn(arena, size), 0)
+            self.assertTrue(np.all(logits == -777))
+            view(arena, acts, "codec_ids", np.int32, (7,))[0] = 0
+            self.assertEqual(fn(arena, size), 0)
+            np.testing.assert_array_equal(logits, pristine)
 
     @unittest.skipUnless(os.environ.get("CKE_QWEN3_TTS_MODEL_DIR"),
                          "pinned Qwen3-TTS weights unavailable; complete talker prefill NOT_TESTED")

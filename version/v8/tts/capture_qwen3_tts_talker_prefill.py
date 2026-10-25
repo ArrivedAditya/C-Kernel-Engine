@@ -15,10 +15,16 @@ from pathlib import Path
 import platform
 import sys
 
-from capture_qwen3_tts_customvoice_oracle import (
-    DEFAULT_LANGUAGE, DEFAULT_SPEAKER, DEFAULT_TEXT, MODEL_REVISION,
-    REFERENCE_REVISION, verify_model_dir, verify_reference_code,
-)
+if __package__:
+    from .capture_qwen3_tts_customvoice_oracle import (
+        DEFAULT_LANGUAGE, DEFAULT_SPEAKER, DEFAULT_TEXT, MODEL_REVISION,
+        REFERENCE_REVISION, verify_model_dir, verify_reference_code,
+    )
+else:
+    from capture_qwen3_tts_customvoice_oracle import (
+        DEFAULT_LANGUAGE, DEFAULT_SPEAKER, DEFAULT_TEXT, MODEL_REVISION,
+        REFERENCE_REVISION, verify_model_dir, verify_reference_code,
+    )
 
 
 def capture(model_dir: Path, output_dir: Path) -> dict:

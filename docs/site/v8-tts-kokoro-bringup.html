@@ -1290,7 +1290,9 @@ row indices stop downstream execution, while a valid but incorrect row edge
 fails the prompt checkpoint. The complete prefill uses 570 declared operations
 and 316 distinct weight tensors. Direct pinned PyTorch checkpoints cover each
 layer and final logits; this is fixed-prompt prefill evidence, not continuation
-or autonomous code production. The tests are
+or autonomous code production. Standard nightly also runs a two-layer
+generated graph with nonzero synthetic weights and a scalar recurrence check,
+so repeated-layer stitching remains tested without the model asset. The tests are
 <code>tests/test_v8_indexed_sum_rows_checked.py</code> and
 <code>tests/test_v8_qwen3_tts_prompt_first_block.py</code> and
 <code>tests/test_v8_qwen3_tts_talker_prefill.py</code>. Decode cache, code
