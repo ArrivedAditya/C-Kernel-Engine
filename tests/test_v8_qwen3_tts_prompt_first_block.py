@@ -41,6 +41,7 @@ def expected_weight_shapes(graph):
 
 
 def compile_entry(folder: Path, graph: dict, shapes: dict):
+    folder.mkdir(parents=True, exist_ok=True)
     circuit = folder / "circuit.json"
     circuit.write_text(json.dumps(graph), encoding="utf-8")
     entries = []
@@ -51,7 +52,7 @@ def compile_entry(folder: Path, graph: dict, shapes: dict):
         entries.append({"name": name, "shape": list(shape), "dtype": "F32",
                         "size": size, "file_offset": offset})
         offset += size
-    request_rows = graph["contract"]["runtime_invariants"]["prompt_rows"]
+    request_rows = graph["contract"]["runtime_invariants"].get("prompt_rows", 1)
     source = {"config": {
         "model": graph["name"], "arch": graph["name"],
         "num_layers": 1, "embed_dim": 1024, "num_heads": 16,
@@ -60,7 +61,8 @@ def compile_entry(folder: Path, graph: dict, shapes: dict):
         "vocab_size": 151936,
         "activation_buffer_dtypes": {
             name: "i32" for name in (
-                "text_ids", "codec_ids", "left_indices", "right_indices")},
+                "text_ids", "codec_ids", "left_indices", "right_indices",
+                "step_index_input", "step_index_checked", "position_checked")},
     }, "entries": entries, "quant_summary": {}, "template": graph}
     registry = build_ir_v8.load_kernel_registry()
     with contextlib.redirect_stdout(io.StringIO()):
@@ -95,7 +97,9 @@ def compile_entry(folder: Path, graph: dict, shapes: dict):
             "src/kernels/rope_kernels.c", "src/kernels/attention_kernels.c",
             "src/kernels/softmax_kernels.c",
             "src/kernels/attention_flash_true.c", "src/ck_threadpool.c",
-            "src/ckernel_strict.c")),
+            "src/ckernel_strict.c",
+            "src/kernels/attention_decode_append_checked.c",
+            "src/kernels/runtime_extent.c")),
         "-I", str(ROOT / "include"), "-lm", "-ldl", "-lpthread",
         "-o", str(library),
     ], check=True, capture_output=True, text=True)

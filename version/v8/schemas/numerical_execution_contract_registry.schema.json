@@ -66,6 +66,8 @@
             "rwkv7_scale_k",
             "rwkv7_channelmix_decode",
             "attention",
+            "kv_cache_seed_checked",
+            "attention_decode_append_checked",
             "attention_gate",
             "final_logit_scale",
             "audio_hann_window",

@@ -4730,6 +4730,80 @@
       },
       "position_transform": null,
       "description": "Checked strided-row adapter for the existing FP64-erf GELU with FP32 storage; exact input/output contract independent of tanh approximation."
+    },
+    "kv_cache_seed_exact_copy_f32": {
+      "operator_family": "kv_cache_seed_checked",
+      "status": "validated",
+      "storage": {
+        "input": "fp32",
+        "weight": "none",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "none",
+        "accumulator": "fp32",
+        "contraction": "disabled",
+        "evaluation_order": "validate_all_geometry_aliasing_and_finite_input_before_ascending_head_row_copy"
+      },
+      "rounding": {
+        "mode": "none",
+        "points": [
+          "input_load",
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "none",
+        "order": "none",
+        "partial_accumulator": "none",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "serial",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Checked head-major FP32 prefill KV copy to capacity-strided caller-owned cache. Valid rows are copied bitwise; unused rows stay untouched."
+    },
+    "attention_decode_fp32_scores_fp64_reduction": {
+      "operator_family": "attention_decode_append_checked",
+      "status": "validated",
+      "storage": {
+        "input": "fp32",
+        "weight": "none",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "none",
+        "accumulator": "fp64",
+        "contraction": "disabled",
+        "evaluation_order": "validate_geometry_aliasing_and_finite_inputs_then_ascending_head_key_channel_fp64_dot_then_fp32_score_store_then_max_of_stored_fp32_scores_then_fp64_exp_softmax_and_ascending_key_fp64_weighted_sum_then_validate_all_staged_outputs_then_append_new_kv_and_store_output"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "activation_intermediate_store",
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "sum",
+        "order": "left_to_right",
+        "partial_accumulator": "fp64",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "serial",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Checked single-query grouped attention over caller-owned capacity-strided KV. FP32 stored scores and selected maximum, FP64 exponentials and weighted sums. Source-score workspace may change on failure; KV and final output do not."
     }
   }
 }
