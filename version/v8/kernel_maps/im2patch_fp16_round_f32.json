@@ -1,0 +1,48 @@
+{
+  "id": "im2patch_fp16_round_f32",
+  "op": "vision_patchify",
+  "variant": "fp16_im2col_roundtrip",
+  "quant": {
+    "weight": "none",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {"name": "image", "dtype": "fp32", "shape": ["C", "H", "W"],
+      "layout": "planar_chw_contiguous", "placement": "local", "access": "read",
+      "storage_class": "activation", "consumption": "required", "desc": "Planar input image"}
+  ],
+  "weights": [],
+  "outputs": [
+    {"name": "patches", "dtype": "fp32", "shape": ["N", "K"],
+      "layout": "token_major_contiguous", "placement": "local", "access": "write",
+      "storage_class": "activation", "consumption": "required",
+      "desc": "Raster-order patches rounded through FP16 storage"}
+  ],
+  "dims": ["C", "H", "W", "P"],
+  "constraints": {
+    "contract_id": "vision_patchify_fp16_im2col_roundtrip",
+    "patch_order": "raster_channel_kernel_y_kernel_x",
+    "storage_roundtrip": "fp32_to_fp16_to_fp32_nearest_even",
+    "notes": "Models the FP16 im2col operand constructed by ggml_conv_2d with FP32 patch weights. The following FP32 GEMM retains its own reduction contract."
+  },
+  "impl": {
+    "function": "im2patch_fp16_round_f32",
+    "sources": ["src/kernels/vision_kernels.c"],
+    "c_declaration": "void im2patch_fp16_round_f32(const float *image, float *patches, int C, int H, int W, int P);"
+  },
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {"name": "image", "source": "activation:image", "cast": "const float*"},
+      {"name": "patches", "source": "output:patches", "cast": "float*"},
+      {"name": "C", "source": "param:vision_channels"},
+      {"name": "H", "source": "param:image_height"},
+      {"name": "W", "source": "param:image_width"},
+      {"name": "P", "source": "param:patch_size"}
+    ]
+  },
+  "modes": {"inference": true, "training": false, "backward": false},
+  "tests": {"unit": ["unittest/test_vision.py", "tests/test_v8_qwen3vl_template.py"]},
+  "notes": "Explicit FP16 operand-storage boundary; ordinary im2patch remains available for FP32 contracts."
+}

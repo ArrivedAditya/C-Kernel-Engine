@@ -120,6 +120,10 @@
     }
   },
   "kernels": {
+    "patchify": {
+      "fp32": "im2patch",
+      "fp16": "im2patch_fp16_round_f32"
+    },
     "patch_proj": "gemm_nt_fp32_exact",
     "patch_proj_aux": "gemm_nt_fp32_exact",
     "add_stream": "add_stream_reorder_2d",

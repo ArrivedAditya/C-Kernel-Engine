@@ -123,7 +123,8 @@ def _make_qwen3vl_manifest() -> dict:
             "prefer_q8_activation": True,
             "vision_mrope_n_dims": 72,
             "vision_mrope_sections": [18, 18, 0, 0],
-            "vision_mrope_storage_boundary": "bf16"
+            "vision_mrope_storage_boundary": "bf16",
+            "vision_patch_operand_storage": "fp16",
         },
         "quant_summary": {
             "layer.0": {
@@ -148,6 +149,32 @@ def _make_qwen3vl_manifest() -> dict:
 
 
 class V8Qwen3VLTemplateTests(unittest.TestCase):
+    def test_patch_operand_storage_selects_declared_provider(self) -> None:
+        manifest = _make_qwen3vl_manifest()
+        self.assertEqual(
+            convert_gguf_to_bump_v8._inject_runtime_config_defaults({}, "qwen3_vl_vision")
+            ["vision_patch_operand_storage"],
+            "fp16",
+        )
+        path = ROOT / "tests" / "qwen3_vl_vision_manifest.synthetic.json"
+        ops = build_ir_v8.build_ir1_direct(manifest, path, mode="prefill")
+        self.assertEqual(next(op["kernel"] for op in ops if op["op"] == "patchify"),
+                         "im2patch_fp16_round_f32")
+
+        manifest["config"]["vision_patch_operand_storage"] = "fp32"
+        ops = build_ir_v8.build_ir1_direct(manifest, path, mode="prefill")
+        self.assertEqual(next(op["kernel"] for op in ops if op["op"] == "patchify"),
+                         "im2patch")
+
+        manifest["config"]["vision_patch_operand_storage"] = "bf16"
+        with self.assertRaisesRegex(RuntimeError, "no circuit provider"):
+            build_ir_v8.build_ir1_direct(manifest, path, mode="prefill")
+
+        manifest["config"]["vision_patch_operand_storage"] = "fp16"
+        manifest["quant_summary"]["patch_emb_aux"] = "bf16"
+        with self.assertRaisesRegex(RuntimeError, "requires patch_emb_aux FP32 weights"):
+            build_ir_v8.build_ir1_direct(manifest, path, mode="prefill")
+
     def test_converter_accepts_bf16_vision_weights(self) -> None:
         self.assertEqual(
             convert_gguf_to_bump_v8.ck_dtype_from_ggml_type(
@@ -1357,6 +1384,7 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
             by_op.setdefault(ir_op["op"], []).append(ir_op)
 
         self.assertEqual(by_op["patch_proj"][0]["weights"]["patch_emb"]["name"], "v.patch_embd.weight")
+        self.assertEqual(by_op["patchify"][0]["kernel"], "im2patch_fp16_round_f32")
         self.assertEqual(by_op["patch_proj_aux"][0]["weights"]["patch_emb_aux"]["name"], "v.patch_embd.weight.1")
         self.assertEqual(by_op["patch_bias_add"][0]["weights"]["patch_bias"]["name"], "v.patch_embd.bias")
         self.assertEqual(by_op["position_embeddings"][0]["weights"]["pos_emb"]["name"], "v.position_embd.weight")
@@ -1495,6 +1523,8 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
             branch_fc2_bias = next(arg for arg in branch_fc2.get("args", []) if arg.get("name") == "bias")
             self.assertEqual(branch_fc2_bias.get("weight_ref"), "v.deepstack.0.fc2.bias")
             patch_proj = next(op for op in call_ops if op.get("op") == "patch_proj")
+            patchify = next(op for op in call_ops if op.get("op") == "patchify")
+            self.assertEqual(patchify.get("function"), "im2patch_fp16_round_f32")
             self.assertEqual(
                 patch_proj.get("function"),
                 "gemm_nt_fp32_exact_parallel_dispatch",

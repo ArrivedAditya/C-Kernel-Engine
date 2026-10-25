@@ -18,6 +18,7 @@
 #include <math.h>
 
 #include "bf16_utils.h"
+#include "ckernel_quant.h"
 
 #if defined(__clang__)
 #define CK_VISION_NOINLINE __attribute__((noinline))
@@ -111,6 +112,21 @@ void im2patch(const float *image,
                 }
             }
         }
+    }
+}
+
+void im2patch_fp16_round_f32(const float *image,
+                             float *patches,
+                             int C, int H, int W, int P)
+{
+    if (!image || !patches || C <= 0 || H <= 0 || W <= 0 || P <= 0) {
+        return;
+    }
+    im2patch(image, patches, C, H, W, P);
+    const size_t count = (size_t)(H / P) * (size_t)(W / P) *
+                         (size_t)C * (size_t)P * (size_t)P;
+    for (size_t i = 0; i < count; ++i) {
+        patches[i] = ck_fp16_to_fp32(ck_fp32_to_fp16(patches[i]));
     }
 }
 
