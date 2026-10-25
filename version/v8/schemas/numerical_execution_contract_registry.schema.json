@@ -114,6 +114,7 @@
             "audio_noise_counter_gaussian",
             "audio_harmonic_source_checked",
             "tanh",
+            "clip",
             "snake",
             "snake_beta",
             "layout_transform",

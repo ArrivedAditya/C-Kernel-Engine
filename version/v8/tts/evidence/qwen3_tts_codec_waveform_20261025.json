@@ -1,0 +1,46 @@
+{
+  "schema": "cke.v8.tts.codec_waveform_evidence",
+  "schema_version": 1,
+  "scope": "Reference codec IDs through one generated C codec entry to bounded FP32 PCM and diagnostic PCM16 WAV; autonomous text-to-speech not tested",
+  "model_revision": "85e237c12c027371202489a0ec509ded67b5e4b5",
+  "reference_revision": "022e286b98fbec7e1e916cb940cdf532cd9f488e",
+  "reference_backend": "PyTorch 2.14.1+cpu, eager attention, MKLDNN enabled, four threads",
+  "oracle_fixture_sha256": "878ef774aecfcf20dc8352572481f923799019582b58ecb7adaece7e7cf0d743",
+  "sample_rate_hz": 24000,
+  "generated_graph_operations": 311,
+  "measurements": [
+    {
+      "code_frames": 8,
+      "samples": 15360,
+      "connected_pcm_max_abs": 0.0000014156103134155273,
+      "connected_pcm_rmse": 0.00000009875244293200139,
+      "library_sha256": "3aa60a10175288f7b1c48be3e9c094301604854885c04c354a192c8f74509e77"
+    },
+    {
+      "code_frames": 46,
+      "samples": 88320,
+      "connected_pcm_max_abs": 0.0000013262033462524414,
+      "connected_pcm_rmse": 0.00000007225543615043277,
+      "library_sha256": "b7a322a5ecc8e04bebba81e1a1d0ee42ddf6bcb1e8317a80340368cf54180d8c"
+    }
+  ],
+  "fourth_stage_residual_one": {
+    "connected_input_max_abs": 0.000016197562217712402,
+    "connected_output_max_abs": 0.0003070831298828125,
+    "same_input_local_max_abs": 0.0000152587890625,
+    "reference_replay_max_abs": 0.00000762939453125,
+    "input_propagation_max_abs": 0.000308990478515625
+  },
+  "retained_wav": {
+    "path": "tests/fixtures/tts/qwen3_tts_0b6_customvoice/qwen3_tts_codec_generated_46.wav",
+    "sha256": "77d03382bd6120c6fd5e94a84af147732f4d205913136f104f4f8e9ef49b773f",
+    "format": "mono PCM16 RIFF WAVE",
+    "listening_verdict": "NOT_TESTED"
+  },
+  "reproduce": "CKE_QWEN3_TTS_MODEL_DIR=<pinned model snapshot> CKE_QWEN3_TTS_CODEC_WAV=/tmp/cke-qwen3-tts-codec-diagnostic.wav <pinned oracle Python> -m unittest tests.test_v8_qwen3_tts_codec_waveform -v",
+  "remaining": [
+    "Native talker and code predictor must generate codec IDs from text",
+    "One loaded runtime must handle varied code lengths and repeated requests",
+    "Speech session, cancellation, latency and human listening need separate evidence"
+  ]
+}

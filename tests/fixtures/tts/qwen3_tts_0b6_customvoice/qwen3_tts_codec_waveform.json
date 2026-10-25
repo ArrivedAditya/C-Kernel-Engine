@@ -1,0 +1,23 @@
+{
+  "attention_implementation": "eager",
+  "codec_source_sha256": "844e8dd8c0182ef9c6463c874631c22ef3c5a4fd1899dd657016164cc5379628",
+  "full_code_frames": 46,
+  "full_codec_ids_sha256": "10ecb0d99175ebce3ab2a129eb48f0346c52e983f6e52929fbee18870062f171",
+  "full_samples": 88320,
+  "model_revision": "85e237c12c027371202489a0ec509ded67b5e4b5",
+  "npz_sha256": "878ef774aecfcf20dc8352572481f923799019582b58ecb7adaece7e7cf0d743",
+  "reference_revision": "022e286b98fbec7e1e916cb940cdf532cd9f488e",
+  "sample_rate_hz": 24000,
+  "schema": 1,
+  "scope": "reference-code-fed pinned full-model codec waveform; autonomous talker NOT_TESTED",
+  "short_code_frames": 8,
+  "short_codec_ids_sha256": "6abb3b5e009ab4ca944370b07ee066c82a29acf0c75ecccd032e8f9959cacbe3",
+  "short_samples": 15360,
+  "source_codec_fixture_sha256": "949c2b4ea814e01800c53c546216606e72a26361d7ce0a6c70a287a0e72a8f57",
+  "source_third_decoder_block_sha256": "b6c88f41e011ed3dabf50b8889e8b117c30ef9f01ad132d14506af6b0104db98",
+  "source_third_decoder_full_max_abs": 0.0,
+  "source_third_decoder_short_max_abs": 0.0,
+  "torch_mkldnn_enabled": true,
+  "torch_num_threads": 4,
+  "torch_version": "2.14.1+cpu"
+}

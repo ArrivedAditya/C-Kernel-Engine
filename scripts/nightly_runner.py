@@ -838,6 +838,11 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_qwen3_tts_codec_third_decoder_block.py",
         timeout_sec=900,
     ),
+    "tts_qwen3_customvoice_codec_waveform": TestSuite(
+        "Qwen3-TTS Generated Reference-Code Codec Waveform", "inference",
+        ROOT / "tests" / "test_v8_qwen3_tts_codec_waveform.py",
+        timeout_sec=900,
+    ),
     "tts_audio_sliding_attention_oracle": TestSuite(
         "Checked Sliding Attention Independent Oracle", "kernels",
         ROOT / "tests" / "test_v8_attention_sliding_bounded_oracle.py",
@@ -1238,6 +1243,10 @@ TEST_SUITES = {
     "tts_audio_tanh_checked": TestSuite(
         "Checked Strided Tanh NumPy and PyTorch Oracles", "kernels",
         ROOT / "tests" / "test_v8_audio_tanh_checked_oracle.py",
+    ),
+    "tts_audio_clip_checked": TestSuite(
+        "Checked Strided Clip Independent NumPy Oracle", "kernels",
+        ROOT / "tests" / "test_v8_audio_clip_checked_oracle.py",
     ),
     "tts_audio_snake_checked": TestSuite(
         "Checked Channelwise Snake PyTorch Oracles", "kernels",
