@@ -52,6 +52,7 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
         self.assertEqual(
             status("incomplete", {"status": "fail", "summary": {"fail": 1}}), "fail"
         )
+        self.assertEqual(status("pass", None, "fail"), "fail")
 
     def test_failed_replay_removes_stale_pass_without_overwriting_inputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -246,7 +247,7 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
             artifacts.update({"image": identity(image), "cke_bridge_report": identity(bridge_path)})
             report = {
                 "status": "pass", "lane": "independent_mtmd_encoder_prefix",
-                "input_provenance": "independently_decoded_and_preprocessed_from_same_p6",
+                "input_provenance": "independently_decoded_and_preprocessed_from_same_image",
                 "metrics": {"tokens": 2, "embed_dim": 2, "rmse": 0.0, "max_abs": 0.0},
                 "thresholds": {"max_rmse": 0.1, "max_abs": 0.1},
                 "decoder_prefix_exports": {
@@ -298,6 +299,17 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
                 decoder_parity_v8._verify_encoder_prefix_report(
                     report_path, ck, oracle, 2, 2, root / "other-bridge.json",
                 )
+            oracle.write_bytes(array("f", [1.0, 2.0, 3.0, 4.5]).tobytes())
+            failed = copy.deepcopy(report)
+            failed["status"] = "fail"
+            failed["metrics"].update(rmse=0.25, max_abs=0.5)
+            failed["decoder_prefix_exports"]["llama"] = identity(oracle)
+            failed["provenance"]["oracle_prefix_sha256"] = identity(oracle)["sha256"]
+            self.assertEqual(verify(failed)["encoder_prefix_status"], "fail")
+            contradictory = copy.deepcopy(failed)
+            contradictory["status"] = "pass"
+            with self.assertRaisesRegex(ValueError, "inconsistent numerical verdict"):
+                verify(contradictory)
 
     def test_xray_verifies_planner_memory_contract_without_recomputing_extent(self) -> None:
         with tempfile.TemporaryDirectory(prefix="v8_memory_contract_") as tmpdir:

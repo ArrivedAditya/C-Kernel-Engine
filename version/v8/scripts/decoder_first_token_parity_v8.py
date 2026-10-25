@@ -551,6 +551,7 @@ def _verify_encoder_prefix_report(
         "report_sha256": _sha256_file(report_path),
         "input_provenance": report["input_provenance"],
         "artifact_hashes": {name: identity["sha256"] for name, identity in identities.items()},
+        "encoder_prefix_status": "pass",
     }
 
 
@@ -558,10 +559,13 @@ def _verify_mtmd_prefix_report(
     report_path: Path, report: dict[str, Any], ck_prefix: Path, llama_prefix: Path,
     prefix_tokens: int, prefix_row_dim: int, bridge_report_path: Path | None,
 ) -> dict[str, Any]:
-    if (report.get("status") != "pass"
-            or report.get("input_provenance") != "independently_decoded_and_preprocessed_from_same_p6"
+    if (report.get("status") not in ("pass", "fail")
+            or report.get("input_provenance") not in (
+                "independently_decoded_and_preprocessed_from_same_p6",
+                "independently_decoded_and_preprocessed_from_same_image",
+            )
             or bridge_report_path is None):
-        raise ValueError("MTMD prefix report lacks passing independent image evidence")
+        raise ValueError("MTMD prefix report lacks complete independent image evidence")
     metrics = report.get("metrics")
     thresholds = report.get("thresholds")
     if (not isinstance(metrics, dict) or not isinstance(thresholds, dict)
@@ -573,8 +577,14 @@ def _verify_mtmd_prefix_report(
         bound = thresholds.get(limit)
         if (type(value) not in (int, float) or type(bound) not in (int, float)
                 or not math.isfinite(value) or not math.isfinite(bound)
-                or value < 0 or bound < 0 or value > bound):
-            raise ValueError(f"MTMD prefix report has invalid {name} verdict")
+                or value < 0 or bound < 0):
+            raise ValueError(f"MTMD prefix report has invalid {name} metric or bound")
+    expected_status = (
+        "pass" if metrics["rmse"] <= thresholds["max_rmse"]
+        and metrics["max_abs"] <= thresholds["max_abs"] else "fail"
+    )
+    if report["status"] != expected_status:
+        raise ValueError("MTMD prefix report has inconsistent numerical verdict")
 
     exports = report.get("decoder_prefix_exports")
     if (not isinstance(exports, dict) or exports.get("contract") != "cke.decoder_prefix_f32.v1"
@@ -649,6 +659,7 @@ def _verify_mtmd_prefix_report(
         "input_provenance": report["input_provenance"],
         "artifact_hashes": {name: identities[name]["sha256"] for name in sorted(required)},
         "numerical_contract": dict(thresholds),
+        "encoder_prefix_status": report["status"],
     }
 
 
@@ -663,7 +674,12 @@ def _comparison_status(
     return "pass" if numerical_match else "fail"
 
 
-def _capture_aware_status(logit_status: str, dump_report: dict[str, Any] | None) -> str:
+def _capture_aware_status(
+    logit_status: str, dump_report: dict[str, Any] | None,
+    encoder_prefix_status: str | None = None,
+) -> str:
+    if encoder_prefix_status == "fail":
+        return "fail"
     if dump_report is None:
         return logit_status
     summary = dict(dump_report.get("summary") or {})
@@ -2514,12 +2530,18 @@ def main(argv: list[str] | None = None) -> int:
         numerical_contract_declared=numerical_contract_declared,
         numerical_match=passed,
     )
-    status = _capture_aware_status(logit_status, dump_report)
+    status = _capture_aware_status(
+        logit_status, dump_report,
+        prefix_provenance.get("encoder_prefix_status") if prefix_provenance else None,
+    )
 
     report = {
         "status": status,
         "pass": status == "pass",
         "logit_status": logit_status,
+        "encoder_prefix_status": (
+            prefix_provenance.get("encoder_prefix_status") if prefix_provenance else None
+        ),
         "diagnostic_comparison_pass": passed if separate_prefixes else None,
         "comparison_scope": "independent_image_to_first_logit" if separate_prefixes else "shared_prefix_decoder_first_logit",
         "gguf_path": str(gguf_path),
