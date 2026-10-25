@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "status": "PASS",
+  "scope": "connected prompt through 28-layer prefill and logits; no cache or codes",
+  "model_revision": "85e237c12c027371202489a0ec509ded67b5e4b5",
+  "reference_revision": "022e286b98fbec7e1e916cb940cdf532cd9f488e",
+  "oracle_runtime": {
+    "python": "3.12.15",
+    "torch": "2.14.1+cpu",
+    "numpy": "2.5.4",
+    "machine": "x86_64",
+    "device": "cpu",
+    "dtype": "float32",
+    "attention": "eager",
+    "threads": 4
+  },
+  "fixture_sha256": "8287c279cac394f9702b7251e13411a747e67c708d76b17f31bcb073e5746831",
+  "generated_library_sha256": "b87dfbaaab6e0d968e0754f0e9cb7f2d1c812bff757c0685349d75a4d9d28d1c",
+  "operations": 570,
+  "weight_tensors": 316,
+  "prompt_tokens": 18,
+  "arena_bytes": 3125897664,
+  "layer_worst_max_abs": 0.000244140625,
+  "layer_worst_rmse": 8.243754923130455e-06,
+  "final_norm": {
+    "max_abs": 0.00014972686767578125,
+    "reference_peak": 157.701171875,
+    "rmse": 1.3020797230390925e-05
+  },
+  "logits": {
+    "max_abs": 9.5367431640625e-05,
+    "reference_peak": 43.24237823486328,
+    "rmse": 8.556199589821271e-06
+  },
+  "last_token_top1": 1995,
+  "last_token_top1_margin": 7.674812316894531,
+  "controls": [
+    "asset-free two-layer generated nonzero recurrence matches independent scalar arithmetic",
+    "invalid codec ID rejects without output publication",
+    "same-entry A-B-A restores exact logits",
+    "one-byte-short arena rejects without output publication",
+    "late-layer weight mutation violates matching checkpoint and restoration reproduces exact logits"
+  ],
+  "autonomous_speech": "NOT_TESTED",
+  "continuation_cache": "NOT_TESTED",
+  "code_predictor": "NOT_TESTED"
+}

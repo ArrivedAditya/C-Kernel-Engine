@@ -13,10 +13,16 @@ import argparse
 import json
 from pathlib import Path
 
-from build_qwen3_tts_first_block_circuit import build_circuit as first_block
-from build_qwen3_tts_text_projection_circuit import (
-    ROOT, VOCAB, TEXT, HIDDEN, build_circuit as text_projection,
-)
+if __package__:
+    from .build_qwen3_tts_first_block_circuit import build_circuit as first_block
+    from .build_qwen3_tts_text_projection_circuit import (
+        ROOT, VOCAB, TEXT, HIDDEN, build_circuit as text_projection,
+    )
+else:
+    from build_qwen3_tts_first_block_circuit import build_circuit as first_block
+    from build_qwen3_tts_text_projection_circuit import (
+        ROOT, VOCAB, TEXT, HIDDEN, build_circuit as text_projection,
+    )
 
 OUTPUT = ROOT / "version/v8/circuits/qwen3_tts_prompt_first_block_bounded.json"
 CODEC_VOCAB = 3072

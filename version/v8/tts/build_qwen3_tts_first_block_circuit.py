@@ -12,7 +12,10 @@ import argparse
 import json
 from pathlib import Path
 
-from build_qwen3_tts_text_projection_circuit import ROOT
+if __package__:
+    from .build_qwen3_tts_text_projection_circuit import ROOT
+else:
+    from build_qwen3_tts_text_projection_circuit import ROOT
 
 OUTPUT = ROOT / "version/v8/circuits/qwen3_tts_first_block_bounded.json"
 HIDDEN = 1024
