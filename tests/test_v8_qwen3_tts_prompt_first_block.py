@@ -100,7 +100,7 @@ def compile_entry(folder: Path, graph: dict, shapes: dict):
         "-o", str(library),
     ], check=True, capture_output=True, text=True)
     loaded = ctypes.CDLL(str(library))
-    fn = loaded.ck_qwen3_tts_prompt_first_block_bounded
+    fn = getattr(loaded, graph["native_entry"]["function"])
     fn.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t]
     fn.restype = ctypes.c_int
     activations = {entry["name"]: entry for entry in
@@ -113,6 +113,23 @@ def compile_entry(folder: Path, graph: dict, shapes: dict):
 def view(arena, activations, name, dtype, shape):
     return np.ndarray(shape, dtype=dtype, buffer=arena,
                       offset=activations[name]["abs_offset"])
+
+
+def pinned_prompt_ids(model_dir: Path, source_capture):
+    input_ids = source_capture["text_token_ids"].reshape(-1)
+    context_ids = source_capture["context_token_ids"].reshape(-1)
+    config = json.loads((model_dir / "config.json").read_text())
+    talker = config["talker_config"]
+    text_ids = np.r_[input_ids[:3], [config["tts_pad_token_id"],
+                    config["tts_bos_token_id"], config["tts_eos_token_id"]],
+                    context_ids].astype(np.int32)
+    codec_ids = np.array([
+        talker["codec_think_id"], talker["codec_think_bos_id"],
+        talker["codec_language_id"]["english"],
+        talker["codec_think_eos_id"], talker["spk_id"]["ryan"],
+        talker["codec_pad_id"], talker["codec_bos_id"],
+    ], dtype=np.int32)
+    return text_ids, codec_ids
 
 
 class Qwen3TTSPromptFirstBlockTest(unittest.TestCase):
@@ -170,20 +187,9 @@ class Qwen3TTSPromptFirstBlockTest(unittest.TestCase):
                     self.assertTrue(value.flags.c_contiguous)
                     arena[item["abs_offset"]:item["abs_offset"] + value.nbytes] = value.tobytes()
 
-            input_ids = source_capture["text_token_ids"].reshape(-1)
             context_ids = source_capture["context_token_ids"].reshape(-1)
             self.assertEqual(len(context_ids), 7)
-            config = json.loads((model_dir / "config.json").read_text())
-            talker = config["talker_config"]
-            text_ids = np.r_[input_ids[:3], [config["tts_pad_token_id"],
-                            config["tts_bos_token_id"], config["tts_eos_token_id"]],
-                            context_ids].astype(np.int32)
-            codec_ids = np.array([
-                talker["codec_think_id"], talker["codec_think_bos_id"],
-                talker["codec_language_id"]["english"],
-                talker["codec_think_eos_id"], talker["spk_id"]["ryan"],
-                talker["codec_pad_id"], talker["codec_bos_id"],
-            ], dtype=np.int32)
+            text_ids, codec_ids = pinned_prompt_ids(model_dir, source_capture)
             view(arena, acts, "text_ids", np.int32, text_ids.shape)[:] = text_ids
             view(arena, acts, "codec_ids", np.int32, codec_ids.shape)[:] = codec_ids
             for name, values in prompt_plan(7).items():
