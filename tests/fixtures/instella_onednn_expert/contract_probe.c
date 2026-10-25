@@ -14,10 +14,11 @@ void swiglu_forward_pytorch_bf16_storage(const float *input,float *output,int ro
 }
 int main(void){
  enum {H=32,I=32,E=3,K=2,R=2};
- float x[R*H],routes[R*K],y[R*H];int ids[R*K]={2,0,1,2};
+ float x[R*H],routes[R*K]={0.375f,0.625f,-0.875f,1.125f};
+ float guarded[2+R*H+2],*y=guarded+2;int ids[R*K]={2,0,1,2};
  uint16_t gate[E*I*H],up[E*I*H],down[E*H*I];
  for(int r=0;r<R;r++)for(int h=0;h<H;h++)x[r*H+h]=(float)(r+1);
- for(int j=0;j<R*K;j++)routes[j]=1.0f;
+ guarded[0]=guarded[1]=guarded[2+R*H]=guarded[3+R*H]=123456.0f;
  memset(gate,0,sizeof(gate));memset(up,0,sizeof(up));memset(down,0,sizeof(down));
  for(int e=0;e<E;e++)for(int i=0;i<I;i++) {
    gate[e*I*H+i*H+i]=0x3f80;up[e*I*H+i*H+i]=0x3f80;
@@ -26,13 +27,27 @@ int main(void){
  void *raw=malloc(8*H+16*I+64); uintptr_t p=((uintptr_t)raw+63)&~(uintptr_t)63;
  if(!raw)return 1;
  int rc=moe_swiglu_expert_forward_pytorch_onednn_3_12_bf16_storage_workspace(x,ids,routes,gate,up,down,y,R,H,I,E,K,(void*)p,8*H+16*I);
- if(rc || y[0] != 4.0f || y[H] != 20.0f) return 2;
+ if(rc) return 2;
+ for(int j=0;j<R*H;j++) if(y[j] != (j<H ? 1.75f : 6.5f)) return 2;
+ if(guarded[0]!=123456.0f||guarded[1]!=123456.0f||guarded[2+R*H]!=123456.0f||guarded[3+R*H]!=123456.0f)return 2;
  for (int j=0;j<R*H;j++) y[j]=12345.0f;
  rc=moe_swiglu_expert_forward_pytorch_onednn_3_12_bf16_storage_workspace(x,ids,routes,gate,up,down,y,R,H,I,E,K,(void*)p,8*H+16*I-1);
- if(rc!=-1 || y[0]!=12345.0f || y[H]!=12345.0f) return 3;
+ if(rc!=-1) return 3;
+ for(int j=0;j<R*H;j++)if(y[j]!=12345.0f)return 3;
+ rc=moe_swiglu_expert_forward_pytorch_onednn_3_12_bf16_storage_workspace(x,ids,routes,gate,up,down,y,R,H,I,E,K,(void*)(p+1),8*H+16*I);
+ if(rc!=-1)return 5;
+ for(int j=0;j<R*H;j++)if(y[j]!=12345.0f)return 5;
+ rc=moe_swiglu_expert_forward_pytorch_onednn_3_12_bf16_storage_workspace(x,ids,routes,gate,up,down,y,R,H-1,I,E,K,(void*)p,8*H+16*I);
+ if(rc!=-1)return 6;
+ for(int j=0;j<R*H;j++)if(y[j]!=12345.0f)return 6;
  ids[3]=E;
  rc=moe_swiglu_expert_forward_pytorch_onednn_3_12_bf16_storage_workspace(x,ids,routes,gate,up,down,y,R,H,I,E,K,(void*)p,8*H+16*I);
- if(rc!=-2 || y[0]!=12345.0f || y[H]!=12345.0f) return 4;
- puts("PASS: expert routing, workspace rejection, and no mutation on invalid expert");
+ if(rc!=-2)return 4;
+ for(int j=0;j<R*H;j++)if(y[j]!=12345.0f)return 4;
+ ids[3]=2;
+ rc=moe_swiglu_expert_forward_pytorch_onednn_3_12_bf16_storage_workspace(x,ids,routes,gate,up,down,y,R,H,I,E,K,(void*)p,8*H+16*I);
+ if(rc)return 7;
+ for(int j=0;j<R*H;j++)if(y[j] != (j<H ? 1.75f : 6.5f))return 7;
+ puts("PASS: fractional/cancelling routes, all outputs and guards, rejection and recovery (stub arithmetic only)");
  free(raw);return 0;
 }

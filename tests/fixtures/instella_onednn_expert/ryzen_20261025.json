@@ -74,5 +74,68 @@
     "reconstructed_routed_free_exact_elements": 2048,
     "reconstructed_routed_free_elements": 2048,
     "attribution": "The currently selected scalar shared projection differs at a BF16 boundary; the pinned oneDNN projection path reconstructs the publisher output from identical inputs."
+  },
+  "small_real_backend_oracle": {
+    "fixture_seed": 930,
+    "hidden_dim": 32,
+    "intermediate_dim": 32,
+    "rows": 3,
+    "experts": 3,
+    "top_k": 2,
+    "routes": [
+      [
+        0.375,
+        0.625
+      ],
+      [
+        -0.875,
+        1.125
+      ],
+      [
+        0.499,
+        0.501
+      ]
+    ],
+    "single_row_exact_elements": 32,
+    "single_row_elements": 32,
+    "rowwise_multirow_exact_elements": 96,
+    "rowwise_multirow_elements": 96,
+    "grouped_multirow_exact_elements": 96,
+    "grouped_multirow_elements": 96,
+    "down_weight_perturbation_changed_elements": 96,
+    "backend_memory": {
+      "cke_staging_workspace_bytes": 768,
+      "scope": "glibc malloc/calloc/realloc requests during each three-row provider call; aligned allocator APIs and retained cache excluded",
+      "ctypes_noop_calls": 0,
+      "cold_calls": 617,
+      "cold_requested_bytes": 109156,
+      "warm_calls": 414,
+      "warm_requested_bytes": 91800,
+      "loaded_onednn_sha256": "9476142d9b469adaa0d0fa07fb2a3c2bd0930c1063bc2779f942a86b40b94b8b",
+      "loaded_onednn_backing_verified": true,
+      "max_cpu_isa": "AVX512_CORE_BF16",
+      "planner_accounts_for_backend_allocations": false
+    }
+  },
+  "generated_three_token_prefill": {
+    "source": "normal circuit-to-IR-to-codegen build using the pinned diagnostic bundle and real oneDNN provider; token IDs 1,5,7",
+    "status": "DIVERGED",
+    "generated_source_sha256": "6dd350ac3db5ec0844d5cfcad927cfb7875e90c51964eedfc28f14e30d82d31e",
+    "model_library_file_sha256": "9832adac81419e06b498aa61d716e8691515285882e308b3d23657dc8183eecc",
+    "engine_library_file_sha256": "7e45a7238eac95d13653795ea272b7774edea019923125ef9104347865a42017",
+    "loaded_onednn_sha256": "9476142d9b469adaa0d0fa07fb2a3c2bd0930c1063bc2779f942a86b40b94b8b",
+    "loaded_onednn_backing_verified": true,
+    "engine_and_model_file_hashes_only": true,
+    "omp_threads": 8,
+    "max_cpu_isa": "AVX512_CORE_BF16",
+    "layer_1_output_exact_elements": 6144,
+    "layer_1_output_elements": 6144,
+    "layer_2_routed_output_exact_elements": 6134,
+    "layer_2_routed_output_elements": 6144,
+    "layer_2_output_exact_elements": 6143,
+    "layer_2_output_elements": 6144,
+    "final_logit_rmse": 0.20067133425017294,
+    "likely_boundary": "The CKE expert provider executes each routed row with M=1 while the publisher groups rows by expert; the small 32-wide grouped fixture agrees but this full-width generated trajectory does not.",
+    "certifies_multirow_parity": false
   }
 }

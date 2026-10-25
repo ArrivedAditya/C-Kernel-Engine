@@ -646,7 +646,8 @@ void moe_swiglu_expert_forward_pytorch_bf16_storage(
 }
 
 /* oneDNN 3.12 uses the same BF16 projection reduction as the pinned
- * publisher runtime. All temporary tensors are owned by the caller. */
+ * publisher runtime. CKE's tensor staging is caller-owned; oneDNN still
+ * creates descriptors/primitives and uses library-managed scratchpad. */
 int moe_swiglu_expert_forward_pytorch_onednn_3_12_bf16_storage_workspace(
     const float *hidden, const int *indices, const float *routing_weights,
     const uint16_t *expert_gate, const uint16_t *expert_up,

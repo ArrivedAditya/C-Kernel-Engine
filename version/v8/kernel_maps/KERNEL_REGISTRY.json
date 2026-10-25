@@ -57862,7 +57862,7 @@
           }
         ]
       },
-      "notes": "Opt-in pinned oneDNN 3.12 BF16 expert projection reduction, with publisher BF16 stage/weighted accumulation. Exactness applies at a fixed OpenMP thread count. Requires caller-owned 64-byte aligned workspace. The generated-call wrapper hard-fails on invalid routing or workspace; direct native callers can use the status-returning workspace function.",
+      "notes": "Experimental diagnostic provider. Pinned oneDNN 3.12 BF16 expert projection reduction with publisher BF16 stage/weighted accumulation. Exactness depends on shape, row grouping, ISA, and OpenMP threads. The three-token normal generated Instella run differs at layer-2 routed output (6134/6144 exact); it does not certify multirow prefill. Requires caller-owned 64-byte aligned workspace. The generated-call wrapper hard-fails on invalid routing or workspace; direct native callers can use the status-returning workspace function. The 8*H+16*I workspace bounds CKE staging only; oneDNN allocates descriptors, primitives, and library scratchpad. The pinned real-backend oracle reports cold/warm malloc-family requests.",
       "numerical_contract": "moe_expert_pytorch_onednn_3_12_bf16_stages_fp32_route_bf16_accum",
       "scratch": [
         {
@@ -57872,7 +57872,7 @@
           "lifetime": "kernel_call",
           "size_resolution": "required",
           "size_bytes": "8 * H + 16 * I",
-          "desc": "Planner-owned BF16 projection staging and FP32 expert intermediates; H and I are multiples of 32."
+          "desc": "Planner-owned CKE BF16 projection staging and FP32 expert intermediates only; does not include oneDNN allocations or scratchpad."
         }
       ],
       "constraints": {
@@ -57899,8 +57899,19 @@
           "tests/test_v8_instella_onednn_expert_contract.py"
         ],
         "asset_backed": [
-          "Pinned Ryzen same-input layer-2 routed expert output: 2048/2048 exact at eight OpenMP threads; full trajectory remains divergent."
+          "Pinned Ryzen same-input layer-2 routed expert output: 2048/2048 exact at eight OpenMP threads; three-token normal generated prefill: 6134/6144 exact at layer-2 routed output and final logits diverge."
+        ],
+        "real_backend": [
+          "tests/test_v8_instella_onednn_real_oracle.py",
+          "tests/test_v8_instella_onednn_generated_replay.py"
         ]
+      },
+      "backend_memory": {
+        "scope": "oneDNN 3.12 CPU matmul primitive",
+        "primitive_and_memory_descriptors": "created and destroyed per expert projection",
+        "scratchpad_mode": "library_managed",
+        "backend_allocations_accounted_by_cke_planner": false,
+        "promotion_requirement": "Cache or prepare primitives outside the hot path and account for oneDNN scratchpad before claiming bounded allocation-free execution."
       },
       "name": "moe_swiglu_expert_forward_pytorch_onednn_3_12_bf16_storage",
       "_source_file": "moe_swiglu_expert_forward_pytorch_onednn_3_12_bf16_storage.json"
