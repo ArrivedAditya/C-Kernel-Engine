@@ -1,0 +1,58 @@
+{
+  "schema": "cke.instella_expert_boundary_diagnostic.v1",
+  "status": "DIVERGED",
+  "certification": false,
+  "scope": "One teacher-forced token (ID 1) on an isolated Ryzen diagnostic bundle; not the deployed serving artifact.",
+  "model": {
+    "repository": "amd/Instella-MoE-16B-A3B-Think",
+    "revision": "fe339bc1a9464a486754c695666f13c036b4f809",
+    "weights_bump_sha256": "aa65a6af8e1c1ba2464b2e3955cfca4353a13e6427ac446cdab6680236a77e84",
+    "weights_manifest_sha256": "13e40d043e9207e2b2cae9e4435cd1b6f16df28942ce190e48993c068f042a6d",
+    "tokenizer_json_sha256": "621ac2e32d0dba658404412318818aaa8ce8cda492e59830109d8da6b517fb41"
+  },
+  "execution": {
+    "cpu": "AMD Ryzen 9 9950X3D",
+    "omp_threads": 8,
+    "onednn_source_hash": "80afa71049cd69a3df32adcccb623b12cd7baa22",
+    "mkl_version": "2024.2.0",
+    "diagnostic_overlays": [
+      "oneDNN 3.12 BF16 dense projections and routed experts",
+      "MKL FP32 router projection",
+      "publisher-order unsorted top-k",
+      "opt-in BF16 FarSkip"
+    ],
+    "generated_source_sha256": "6dd350ac3db5ec0844d5cfcad927cfb7875e90c51964eedfc28f14e30d82d31e",
+    "model_library_file_sha256": "9832adac81419e06b498aa61d716e8691515285882e308b3d23657dc8183eecc",
+    "engine_library_file_sha256": "7e45a7238eac95d13653795ea272b7774edea019923125ef9104347865a42017",
+    "loaded_library_backing_verified": false
+  },
+  "same_input_native_expert": {
+    "layer": 2,
+    "selected_experts": [15, 18, 29, 41, 57, 58],
+    "routed_output_exact_elements": 2048,
+    "routed_output_elements": 2048,
+    "short_workspace_rejected_without_output_mutation": true
+  },
+  "generated_trajectory": {
+    "layer_1_output_exact_elements": 2048,
+    "layer_1_output_elements": 2048,
+    "layer_2_routed_output_exact_elements": 2048,
+    "layer_2_routed_output_elements": 2048,
+    "layer_2_output_exact_elements": 2048,
+    "layer_2_output_elements": 2048,
+    "first_observed_difference": {
+      "layer": 3,
+      "operation": "routed_free_out",
+      "channel": 1230,
+      "cke": -0.043701171875,
+      "publisher": -0.0439453125
+    },
+    "final_logit_rmse": 14.379599256812087,
+    "top1_match": true
+  },
+  "limitations": [
+    "Diagnostic router, top-k, and FarSkip overlays are not part of this provider change.",
+    "File hashes alone do not certify dynamic-loader backing.",
+    "One-token agreement at early layers does not certify longer trajectories, tools, or harness execution."
+  ]
+}

@@ -5,7 +5,7 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "version/v8/kernel_maps",
     "counts": {
-      "total": 458,
+      "total": 459,
       "by_op": {
         "add_backward": 1,
         "add_rows_checked": 1,
@@ -123,7 +123,7 @@
         "mla_kv_cache_batch_store": 1,
         "mla_kv_cache_store": 1,
         "moe_relu2_expert_mlp": 4,
-        "moe_swiglu_expert_mlp": 11,
+        "moe_swiglu_expert_mlp": 12,
         "moe_swiglu_packed_expert_mlp": 1,
         "multimodal_position_builder": 1,
         "multimodal_prefix_insert": 1,
@@ -57638,6 +57638,272 @@
       "numerical_contract": "moe_expert_pytorch_bf16_stages_fp32_route_bf16_accum",
       "name": "moe_swiglu_expert_forward_pytorch_bf16_storage",
       "_source_file": "moe_swiglu_expert_forward_pytorch_bf16_storage.json"
+    },
+    {
+      "id": "moe_swiglu_expert_forward_pytorch_onednn_3_12_bf16_storage",
+      "op": "moe_swiglu_expert_mlp",
+      "variant": "bf16_weight_onednn_3_12_bf16_stage_storage_fp32_route",
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "quant": {
+        "weight": "bf16",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "hidden",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "H"
+          ],
+          "layout": "token_major_contiguous",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        },
+        {
+          "name": "indices",
+          "dtype": "i32",
+          "shape": [
+            "R",
+            "K"
+          ],
+          "layout": "token_major_contiguous",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        },
+        {
+          "name": "routing_weights",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "K"
+          ],
+          "layout": "token_major_contiguous",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "weights": [
+        {
+          "name": "moe_expert_gate",
+          "dtype": "bf16",
+          "shape": [
+            "E",
+            "I",
+            "H"
+          ],
+          "layout": "expert_major_contiguous",
+          "access": "read",
+          "storage_class": "weight",
+          "consumption": "required"
+        },
+        {
+          "name": "moe_expert_up",
+          "dtype": "bf16",
+          "shape": [
+            "E",
+            "I",
+            "H"
+          ],
+          "layout": "expert_major_contiguous",
+          "access": "read",
+          "storage_class": "weight",
+          "consumption": "required"
+        },
+        {
+          "name": "moe_expert_down",
+          "dtype": "bf16",
+          "shape": [
+            "E",
+            "H",
+            "I"
+          ],
+          "layout": "expert_major_contiguous",
+          "access": "read",
+          "storage_class": "weight",
+          "consumption": "required"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "H"
+          ],
+          "layout": "token_major_contiguous",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "dims": [
+        "R",
+        "H",
+        "I",
+        "E",
+        "K"
+      ],
+      "impl": {
+        "function": "moe_swiglu_expert_forward_pytorch_onednn_3_12_bf16_storage_checked",
+        "c_declaration": "void moe_swiglu_expert_forward_pytorch_onednn_3_12_bf16_storage_checked(const float *hidden, const int *indices, const float *routing_weights, const uint16_t *expert_gate, const uint16_t *expert_up, const uint16_t *expert_down, float *output, int rows, int hidden_dim, int intermediate_dim, int n_experts, int top_k, void *workspace, size_t workspace_bytes);",
+        "sources": [
+          "src/kernels/axpy_kernels.c",
+          "src/kernels/gemm_kernels_bf16.c"
+        ],
+        "variants": [
+          {
+            "name": "onednn_3_12_openmp",
+            "requires": [
+              "avx512_bf16"
+            ],
+            "compile_flags": [
+              "-DUSE_ONEDNN"
+            ]
+          }
+        ]
+      },
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "hidden",
+            "source": "activation:hidden",
+            "cast": "const float*",
+            "ports": [
+              "input:hidden"
+            ]
+          },
+          {
+            "name": "indices",
+            "source": "activation:indices",
+            "cast": "const int*",
+            "ports": [
+              "input:indices"
+            ]
+          },
+          {
+            "name": "routing_weights",
+            "source": "activation:routing_weights",
+            "cast": "const float*",
+            "ports": [
+              "input:routing_weights"
+            ]
+          },
+          {
+            "name": "expert_gate",
+            "source": "weight:moe_expert_gate",
+            "cast": "const uint16_t*",
+            "ports": [
+              "weight:moe_expert_gate"
+            ]
+          },
+          {
+            "name": "expert_up",
+            "source": "weight:moe_expert_up",
+            "cast": "const uint16_t*",
+            "ports": [
+              "weight:moe_expert_up"
+            ]
+          },
+          {
+            "name": "expert_down",
+            "source": "weight:moe_expert_down",
+            "cast": "const uint16_t*",
+            "ports": [
+              "weight:moe_expert_down"
+            ]
+          },
+          {
+            "name": "output",
+            "source": "output:output",
+            "cast": "float*",
+            "ports": [
+              "output:output"
+            ]
+          },
+          {
+            "name": "rows",
+            "source": "dim:_m"
+          },
+          {
+            "name": "hidden_dim",
+            "source": "dim:embed_dim"
+          },
+          {
+            "name": "intermediate_dim",
+            "source": "dim:moe_intermediate_size"
+          },
+          {
+            "name": "n_experts",
+            "source": "dim:n_routed_experts"
+          },
+          {
+            "name": "top_k",
+            "source": "dim:num_experts_per_tok"
+          },
+          {
+            "name": "workspace",
+            "source": "scratch:workspace",
+            "cast": "void*"
+          },
+          {
+            "name": "workspace_bytes",
+            "source": "scratch_size:workspace"
+          }
+        ]
+      },
+      "notes": "Opt-in pinned oneDNN 3.12 BF16 expert projection reduction, with publisher BF16 stage/weighted accumulation. Exactness applies at a fixed OpenMP thread count. Requires caller-owned 64-byte aligned workspace. The generated-call wrapper hard-fails on invalid routing or workspace; direct native callers can use the status-returning workspace function.",
+      "numerical_contract": "moe_expert_pytorch_onednn_3_12_bf16_stages_fp32_route_bf16_accum",
+      "scratch": [
+        {
+          "name": "workspace",
+          "dtype": "u8",
+          "alignment": 64,
+          "lifetime": "kernel_call",
+          "size_resolution": "required",
+          "size_bytes": "8 * H + 16 * I",
+          "desc": "Planner-owned BF16 projection staging and FP32 expert intermediates; H and I are multiples of 32."
+        }
+      ],
+      "constraints": {
+        "alignment": {
+          "H": 32,
+          "I": 32
+        },
+        "external_runtime": "onednn_3_12_openmp",
+        "source_hash": "80afa71049cd69a3df32adcccb623b12cd7baa22"
+      },
+      "operation_interface": "moe_swiglu_expert.bf16_staged.fp32_route.v1",
+      "selection": {
+        "status": "candidate",
+        "priority": 180,
+        "equivalence_group": "moe_expert_pytorch_onednn_3_12_bf16_stages_fp32_route_bf16_accum",
+        "phases": [
+          "prefill",
+          "decode"
+        ]
+      },
+      "physical_contract_version": 1,
+      "tests": {
+        "unit": [
+          "tests/test_v8_instella_onednn_expert_contract.py"
+        ],
+        "asset_backed": [
+          "Pinned Ryzen same-input layer-2 routed expert output: 2048/2048 exact at eight OpenMP threads; full trajectory remains divergent."
+        ]
+      },
+      "name": "moe_swiglu_expert_forward_pytorch_onednn_3_12_bf16_storage",
+      "_source_file": "moe_swiglu_expert_forward_pytorch_onednn_3_12_bf16_storage.json"
     },
     {
       "id": "moe_swiglu_expert_forward_q4k_q4k",

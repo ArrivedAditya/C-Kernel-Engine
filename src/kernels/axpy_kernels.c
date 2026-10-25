@@ -645,6 +645,114 @@ void moe_swiglu_expert_forward_pytorch_bf16_storage(
     }
 }
 
+/* oneDNN 3.12 uses the same BF16 projection reduction as the pinned
+ * publisher runtime. All temporary tensors are owned by the caller. */
+int moe_swiglu_expert_forward_pytorch_onednn_3_12_bf16_storage_workspace(
+    const float *hidden, const int *indices, const float *routing_weights,
+    const uint16_t *expert_gate, const uint16_t *expert_up,
+    const uint16_t *expert_down, float *output, int rows, int hidden_dim,
+    int intermediate_dim, int n_experts, int top_k,
+    void *workspace, size_t workspace_bytes)
+{
+    if (!hidden || !indices || !routing_weights || !expert_gate ||
+        !expert_up || !expert_down || !output || !workspace ||
+        rows <= 0 || hidden_dim <= 0 || intermediate_dim <= 0 ||
+        n_experts <= 0 || top_k <= 0 || top_k > n_experts ||
+        hidden_dim % 32 || intermediate_dim % 32 ||
+        (uintptr_t)workspace % 64 ||
+        (size_t)intermediate_dim > SIZE_MAX / 16u ||
+        (size_t)hidden_dim >
+            (SIZE_MAX - 16u * (size_t)intermediate_dim) / 8u ||
+        (size_t)rows > SIZE_MAX / (size_t)hidden_dim / sizeof(float) ||
+        (size_t)n_experts > SIZE_MAX /
+            ((size_t)intermediate_dim * (size_t)hidden_dim) ||
+        workspace_bytes < 8u * (size_t)hidden_dim +
+                          16u * (size_t)intermediate_dim) {
+        return -1;
+    }
+    for (int r = 0; r < rows; ++r) {
+        for (int slot = 0; slot < top_k; ++slot) {
+            const int expert = indices[(size_t)r * (size_t)top_k + (size_t)slot];
+            if (expert < 0 || expert >= n_experts) return -2;
+        }
+    }
+
+    uint8_t *cursor = (uint8_t *)workspace;
+    uint16_t *hidden_input = (uint16_t *)cursor;
+    cursor += 2u * (size_t)hidden_dim;
+    uint16_t *intermediate_input = (uint16_t *)cursor;
+    cursor += 2u * (size_t)intermediate_dim;
+    uint16_t *intermediate_output = (uint16_t *)cursor;
+    cursor += 2u * (size_t)intermediate_dim;
+    uint16_t *hidden_output = (uint16_t *)cursor;
+    cursor += 2u * (size_t)hidden_dim;
+    float *projection = (float *)cursor;
+    cursor += 2u * (size_t)intermediate_dim * sizeof(float);
+    float *activation = (float *)cursor;
+    cursor += (size_t)intermediate_dim * sizeof(float);
+    float *expert_output = (float *)cursor;
+
+    const size_t up_stride = (size_t)intermediate_dim * (size_t)hidden_dim;
+    const size_t down_stride = (size_t)hidden_dim * (size_t)intermediate_dim;
+    memset(output, 0, (size_t)rows * (size_t)hidden_dim * sizeof(float));
+    for (int r = 0; r < rows; ++r) {
+        const float *x = hidden + (size_t)r * (size_t)hidden_dim;
+        float *y = output + (size_t)r * (size_t)hidden_dim;
+        for (int e = 0; e < n_experts; ++e) {
+            for (int slot = 0; slot < top_k; ++slot) {
+                const size_t route = (size_t)r * (size_t)top_k + (size_t)slot;
+                if (indices[route] != e) continue;
+                gemm_nt_bf16_pytorch_onednn_3_12_brgemm_bf16_storage_workspace(
+                    x, expert_gate + (size_t)e * up_stride, NULL,
+                    projection, 1, intermediate_dim, hidden_dim,
+                    hidden_input, 2u * (size_t)hidden_dim,
+                    intermediate_output, 2u * (size_t)intermediate_dim,
+                    NULL, 0);
+                gemm_nt_bf16_pytorch_onednn_3_12_brgemm_bf16_storage_workspace(
+                    x, expert_up + (size_t)e * up_stride, NULL,
+                    projection + intermediate_dim, 1, intermediate_dim,
+                    hidden_dim, hidden_input, 2u * (size_t)hidden_dim,
+                    intermediate_output, 2u * (size_t)intermediate_dim,
+                    NULL, 0);
+                swiglu_forward_pytorch_bf16_storage(
+                    projection, activation, 1, intermediate_dim);
+                gemm_nt_bf16_pytorch_onednn_3_12_brgemm_bf16_storage_workspace(
+                    activation, expert_down + (size_t)e * down_stride, NULL,
+                    expert_output, 1, hidden_dim, intermediate_dim,
+                    intermediate_input, 2u * (size_t)intermediate_dim,
+                    hidden_output, 2u * (size_t)hidden_dim,
+                    NULL, 0);
+                const float route_weight = routing_weights[route];
+                for (int h = 0; h < hidden_dim; ++h) {
+                    const float weighted = ck_moe_bf16_round(
+                        expert_output[h] * route_weight);
+                    y[h] = ck_moe_bf16_round(y[h] + weighted);
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+void moe_swiglu_expert_forward_pytorch_onednn_3_12_bf16_storage_checked(
+    const float *hidden, const int *indices, const float *routing_weights,
+    const uint16_t *expert_gate, const uint16_t *expert_up,
+    const uint16_t *expert_down, float *output, int rows, int hidden_dim,
+    int intermediate_dim, int n_experts, int top_k,
+    void *workspace, size_t workspace_bytes)
+{
+    const int status =
+        moe_swiglu_expert_forward_pytorch_onednn_3_12_bf16_storage_workspace(
+            hidden, indices, routing_weights, expert_gate, expert_up,
+            expert_down, output, rows, hidden_dim, intermediate_dim,
+            n_experts, top_k, workspace, workspace_bytes);
+    if (status != 0) {
+        fprintf(stderr, "HARD KERNEL CONTRACT FAULT: oneDNN BF16 expert "
+                        "received invalid inputs or workspace (status=%d)\n", status);
+        abort();
+    }
+}
+
 void moe_swiglu_packed_expert_forward_bf16(
     const float *hidden,
     const int *indices,
