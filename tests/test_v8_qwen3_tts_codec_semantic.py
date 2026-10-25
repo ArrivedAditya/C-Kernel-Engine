@@ -34,6 +34,7 @@ from build_qwen3_tts_codec_decoder_ingress_circuit import build_circuit as build
 from build_qwen3_tts_codec_snake_beta_circuit import build_circuit as build_snake_beta_circuit
 from build_qwen3_tts_codec_decoder_upsample_circuit import build_circuit as build_decoder_upsample_circuit
 from build_qwen3_tts_codec_first_residual_pool_circuit import build_circuit as build_first_residual_pool_circuit
+from build_qwen3_tts_codec_second_decoder_block_circuit import build_circuit as build_second_decoder_block_circuit
 from build_qwen3_tts_codec_depthwise_circuit import build_circuit as build_depthwise_circuit
 from build_qwen3_tts_codec_convnext_complete_circuit import build_circuit as build_convnext_complete_circuit
 
@@ -63,10 +64,12 @@ def generated_entry(folder: Path, arrays: dict[str, np.ndarray], frames: int,
                     decoder_snake_beta: bool = False,
                     decoder_upsample: bool = False,
                     first_residual_pool: bool = False,
+                    second_decoder_block: bool = False,
+                    second_decoder_upsample_rate: int = 5,
                     decoder_upsample_rate: int = 8,
                     convnext_expansion: int = 4):
     after_second = (second_convnext_complete or decoder_ingress or
-                    decoder_snake_beta or decoder_upsample or first_residual_pool)
+                    decoder_snake_beta or decoder_upsample or first_residual_pool or second_decoder_block)
     table, projection = arrays[TABLE], arrays[PROJECTION]
     dimensions = {"frames": frames, "vocabulary": table.shape[0],
                   "codebook_width": table.shape[1],
@@ -91,7 +94,16 @@ def generated_entry(folder: Path, arrays: dict[str, np.ndarray], frames: int,
             **dimensions,
         } if (first_decoder_upsample or first_decoder_depthwise or first_convnext_complete or second_decoder_upsample or after_second or pre_transformer_complete or
               pre_transformer_first_block) else None
-        if first_residual_pool:
+        if second_decoder_block:
+            graph = build_second_decoder_block_circuit(
+                layers=transformer_layers, depthwise_kernel=depthwise_kernel,
+                expansion=convnext_expansion,
+                decoder_width=arrays["codec.decoder.decoder.0.conv.weight"].shape[0],
+                ingress_kernel=arrays["codec.decoder.decoder.0.conv.weight"].shape[2],
+                decoder_upsample_rate=decoder_upsample_rate,
+                second_decoder_upsample_rate=second_decoder_upsample_rate,
+                **block_dimensions)
+        elif first_residual_pool:
             graph = build_first_residual_pool_circuit(
                 layers=transformer_layers, depthwise_kernel=depthwise_kernel,
                 expansion=convnext_expansion,
@@ -230,15 +242,16 @@ def generated_entry(folder: Path, arrays: dict[str, np.ndarray], frames: int,
            str(ROOT / "src/kernels/gelu_kernels.c")]
           if first_convnext_complete or second_decoder_upsample or after_second else []),
         *([str(ROOT / "src/kernels/audio_snake_checked.c")]
-          if decoder_snake_beta or decoder_upsample or first_residual_pool else []),
+          if decoder_snake_beta or decoder_upsample or first_residual_pool or second_decoder_block else []),
         *([str(ROOT / "src/kernels/audio_scaled_sum_strided.c")]
-          if first_residual_pool else []),
+          if first_residual_pool or second_decoder_block else []),
         str(ROOT / "src/ck_threadpool.c"),
         str(ROOT / "src/ckernel_strict.c"),
         "-I", str(ROOT / "include"), "-lm", "-ldl", "-lpthread",
         "-o", str(so_path),
     ], check=True, capture_output=True, text=True)
-    symbol = ("ck_qwen3_tts_codec_first_residual_pool_bounded" if first_residual_pool else
+    symbol = ("ck_qwen3_tts_codec_second_decoder_block_bounded" if second_decoder_block else
+              "ck_qwen3_tts_codec_first_residual_pool_bounded" if first_residual_pool else
               "ck_qwen3_tts_codec_decoder_upsample_bounded" if decoder_upsample else
               "ck_qwen3_tts_codec_snake_beta_bounded" if decoder_snake_beta else
               "ck_qwen3_tts_codec_decoder_ingress_bounded" if decoder_ingress else
