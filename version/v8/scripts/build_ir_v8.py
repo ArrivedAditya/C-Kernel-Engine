@@ -9395,10 +9395,6 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
 
     template_flags = template.get("flags", {}) if isinstance(template.get("flags"), dict) else {}
     template_kernels = dict(template.get("kernels", {})) if isinstance(template.get("kernels"), dict) else {}
-    if isinstance(template_kernels.get("patchify"), dict):
-        template_kernels["patchify"] = _resolve_patchify_kernel(
-            config, template_kernels, header_quant
-        )
     # Runtime-config opt-in: use FP32->Q8_0 contract adapters for Q8_0 kernels.
     # Weight dtype still comes from the manifest; this only selects the activation
     # contract path when a model family explicitly requests it.
@@ -9428,6 +9424,12 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
     header_ops = [item["op"] for item in header_items]
     body_ops = [item["op"] for item in body_items]
     footer_ops = [item["op"] for item in footer_items]
+    if "patchify" in (*header_ops, *body_ops, *footer_ops) and isinstance(
+        template_kernels.get("patchify"), dict
+    ):
+        template_kernels["patchify"] = _resolve_patchify_kernel(
+            config, template_kernels, header_quant
+        )
     branch_plan = _build_block_branch_plan(block, config)
     branch_tap_targets: Dict[Tuple[str, int, str], List[Dict[str, Any]]] = {}
     for branch in branch_plan:
