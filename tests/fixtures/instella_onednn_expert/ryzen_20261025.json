@@ -28,7 +28,14 @@
   },
   "same_input_native_expert": {
     "layer": 2,
-    "selected_experts": [15, 18, 29, 41, 57, 58],
+    "selected_experts": [
+      15,
+      18,
+      29,
+      41,
+      57,
+      58
+    ],
     "routed_output_exact_elements": 2048,
     "routed_output_elements": 2048,
     "short_workspace_rejected_without_output_mutation": true
@@ -54,5 +61,18 @@
     "Diagnostic router, top-k, and FarSkip overlays are not part of this provider change.",
     "File hashes alone do not certify dynamic-loader backing.",
     "One-token agreement at early layers does not certify longer trajectories, tools, or harness execution."
-  ]
+  ],
+  "same_input_shared_layer_3": {
+    "gate_exact_elements": 2816,
+    "gate_elements": 2816,
+    "up_exact_elements": 2816,
+    "up_elements": 2816,
+    "activation_exact_elements": 2816,
+    "activation_elements": 2816,
+    "down_exact_elements": 2048,
+    "down_elements": 2048,
+    "reconstructed_routed_free_exact_elements": 2048,
+    "reconstructed_routed_free_elements": 2048,
+    "attribution": "The currently selected scalar shared projection differs at a BF16 boundary; the pinned oneDNN projection path reconstructs the publisher output from identical inputs."
+  }
 }
