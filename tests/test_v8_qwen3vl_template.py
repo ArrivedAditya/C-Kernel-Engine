@@ -187,6 +187,17 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
             convert_gguf_to_bump_v8.VISION_GGUF_WEIGHT_TYPES,
         )
 
+    def test_inactive_patchify_does_not_validate_integrated_frontend_weights(self) -> None:
+        manifest = _make_qwen3vl_manifest()
+        manifest["config"]["vision_patch_frontend"] = "integrated_temporal2"
+        manifest["quant_summary"]["patch_emb"] = "bf16"
+        manifest["quant_summary"]["patch_emb_aux"] = "bf16"
+        path = ROOT / "tests" / "qwen3_vl_vision_manifest.synthetic.json"
+        ops = build_ir_v8.build_ir1_direct(manifest, path, mode="prefill")
+        names = {op["op"] for op in ops}
+        self.assertIn("patch_projection_image", names)
+        self.assertNotIn("patchify", names)
+
     def test_bridge_uses_aligned_arena_activation_base(self) -> None:
         layout = {
             "memory": {
