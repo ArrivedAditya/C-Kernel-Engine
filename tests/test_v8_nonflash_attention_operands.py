@@ -144,6 +144,16 @@ class NonflashAttentionOperandsTests(unittest.TestCase):
         with self.assertRaisesRegex(BundleError, "geometry"):
             compare(self.bundle, self.capture, 2)
 
+    def test_accepts_executed_nonflash_mode_but_rejects_flash_mode(self):
+        manifest = json.loads(self.bundle.read_text(encoding="utf-8"))
+        manifest["context"]["oracle_mode"] = "disabled_for_internal_dump"
+        self.bundle.write_text(json.dumps(manifest), encoding="utf-8")
+        self.assertEqual(compare(self.bundle, self.capture, 2)["status"], "diagnostic_only")
+        manifest["context"]["oracle_mode"] = "enabled"
+        self.bundle.write_text(json.dumps(manifest), encoding="utf-8")
+        with self.assertRaisesRegex(BundleError, "not a non-flash"):
+            compare(self.bundle, self.capture, 2)
+
     def test_rejects_wrong_mask(self):
         path = self.capture / "kqv_out-0-token-000002-occ-000.nonflash_mask.bin"
         mask = np.fromfile(path, dtype="<f4")

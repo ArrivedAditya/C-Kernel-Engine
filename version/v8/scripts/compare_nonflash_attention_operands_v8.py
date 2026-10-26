@@ -75,7 +75,8 @@ def read_capture(directory: Path, token: int, layer: int = 0) -> tuple[dict[str,
 def compare(bundle: Path, directory: Path, token: int) -> dict:
     manifest, cke = load_bundle(bundle)
     context = manifest.get("context") or {}
-    if manifest.get("operation") != "attention_sliding" or context.get("oracle_mode") != "disabled":
+    if (manifest.get("operation") != "attention_sliding" or
+            context.get("oracle_mode") not in {"disabled", "disabled_for_internal_dump"}):
         raise BundleError("packet is not a non-flash attention comparison")
     segments = context.get("segments")
     if not isinstance(segments, list) or any(type(n) is not int or n < 1 for n in segments):
