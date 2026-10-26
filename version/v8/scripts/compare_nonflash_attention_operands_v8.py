@@ -75,7 +75,8 @@ def read_capture(directory: Path, token: int, layer: int = 0) -> tuple[dict[str,
 def compare(bundle: Path, directory: Path, token: int) -> dict:
     manifest, cke = load_bundle(bundle)
     context = manifest.get("context") or {}
-    if manifest.get("operation") != "attention_sliding" or context.get("oracle_mode") != "disabled":
+    if (manifest.get("operation") != "attention_sliding" or
+            context.get("oracle_mode") not in {"disabled", "disabled_for_internal_dump"}):
         raise BundleError("packet is not a non-flash attention comparison")
     segments = context.get("segments")
     if not isinstance(segments, list) or any(type(n) is not int or n < 1 for n in segments):
@@ -130,8 +131,12 @@ def compare(bundle: Path, directory: Path, token: int) -> dict:
     if keys.shape != expected_k.shape or values.shape != expected_v.shape:
         raise BundleError("oracle cache extent differs from the CKE valid cache")
     exact_output = np.empty((query_rows, heads, dim), dtype=np.float64)
+    f16_connected_output = np.empty_like(exact_output)
+    f16_value_output = np.empty_like(exact_output)
     score_pairs = []
     probability_pairs = []
+    f16_scores_by_row = []
+    f16_probabilities_by_row = []
     masked_probability_max = 0.0
     for row in range(query_rows):
         position = query_start + row
@@ -149,13 +154,33 @@ def compare(bundle: Path, directory: Path, token: int) -> dict:
             exact_scores = keys[kv_head, :position + 1].astype(np.float64) @ query[row, head].astype(np.float64)
             weights = np.exp(exact_scores - np.max(exact_scores))
             weights /= np.sum(weights)
+            with np.errstate(over="ignore", invalid="ignore"):
+                rounded_query = query[row, head].astype(np.float16).astype(np.float64)
+            if not np.isfinite(rounded_query).all():
+                raise BundleError("oracle query exceeds the FP16 matrix-multiply input contract")
+            f16_scores = keys[kv_head, :position + 1].astype(np.float64) @ rounded_query
+            f16_weights = np.exp(f16_scores - np.max(f16_scores))
+            f16_weights /= np.sum(f16_weights)
+            captured_weights = probabilities[0, head, row, :position + 1]
             score_pairs.append((scores[0, head, row, :position + 1], exact_scores))
-            probability_pairs.append((probabilities[0, head, row, :position + 1], weights))
+            probability_pairs.append((captured_weights, weights))
+            f16_scores_by_row.append(f16_scores)
+            f16_probabilities_by_row.append(f16_weights)
+            f16_value_output[row, head] = (
+                captured_weights.astype(np.float16).astype(np.float64) @
+                values[kv_head, :position + 1].astype(np.float64)
+            )
             exact_output[row, head] = weights @ values[kv_head, :position + 1].astype(np.float64)
+            f16_connected_output[row, head] = (
+                f16_weights.astype(np.float16).astype(np.float64) @
+                values[kv_head, :position + 1].astype(np.float64)
+            )
     captured_scores = np.concatenate([pair[0] for pair in score_pairs])
     exact_scores = np.concatenate([pair[1] for pair in score_pairs])
     captured_probabilities = np.concatenate([pair[0] for pair in probability_pairs])
     exact_probabilities = np.concatenate([pair[1] for pair in probability_pairs])
+    f16_scores = np.concatenate(f16_scores_by_row)
+    f16_probabilities = np.concatenate(f16_probabilities_by_row)
     oracle_output = oracle["output"].reshape(query_rows, heads, dim)
     cke_output = cke["kqv_out"][query_start:token + 1]
     if not all(np.isfinite(item).all() for item in (
@@ -189,6 +214,13 @@ def compare(bundle: Path, directory: Path, token: int) -> dict:
             "scores": _metrics(captured_scores, exact_scores),
             "softmax": _metrics(captured_probabilities, exact_probabilities),
             "output": _metrics(oracle_output, exact_output),
+        },
+        "oracle_vs_f16_gemm": {
+            "contract": "FP16-rounded Q for score GEMM; FP16-rounded softmax for value GEMM",
+            "scores": _metrics(captured_scores, f16_scores),
+            "softmax": _metrics(captured_probabilities, f16_probabilities),
+            "value_output_from_captured_softmax": _metrics(oracle_output, f16_value_output),
+            "connected_output": _metrics(oracle_output, f16_connected_output),
         },
         "cke_vs_fp64_output": _metrics(cke_output, exact_output),
         "cke_vs_oracle_output": _metrics(cke_output, oracle_output),
