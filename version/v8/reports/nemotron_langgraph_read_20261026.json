@@ -1,0 +1,79 @@
+{
+  "attempts": [
+    {
+      "gate": "pass",
+      "number": 1,
+      "same_server_instance": true,
+      "same_serving_identity": true,
+      "same_session_library": true,
+      "status": "PASS",
+      "tool_calls": 1,
+      "trace_sha256": "9ae3e28aafb26a1ced85aab264221020e25018f57f25ea3e4aa6b038269cce97"
+    },
+    {
+      "gate": "pass",
+      "number": 2,
+      "same_server_instance": true,
+      "same_serving_identity": true,
+      "same_session_library": true,
+      "status": "PASS",
+      "tool_calls": 1,
+      "trace_sha256": "05e7952e2b5240e4875cf2ee71cde0f874e2cdb3066527a3f1f7441aaff33010"
+    },
+    {
+      "gate": "pass",
+      "number": 3,
+      "same_server_instance": true,
+      "same_serving_identity": true,
+      "same_session_library": true,
+      "status": "PASS",
+      "tool_calls": 1,
+      "trace_sha256": "4367308ffd7da7b4bbd5dfc3743f75379dfa0876b41badb888c1696096d81c25"
+    }
+  ],
+  "execution": {
+    "ck_num_threads": 16,
+    "compiled_context_capacity": 2048,
+    "execution_mode": "ordinary single-request HTTP; no native batching claim",
+    "host_cpu": "AMD Ryzen 9 9950X3D",
+    "loaded_bundle_sha256": {
+      "libckernel_engine.so": "a2a46a703f09a06ded65b8c98e5cb8f780b248e0bf163fa7338d63680c6c878f",
+      "libckernel_tokenizer.so": "ad1a2eab86b10023d8b37554386ac10d3d770c3bdf498ced57366d681a19cc10",
+      "libmodel.so": "ca74e73ec0c783ba74c64a46e342a82289bfc5dd2a1de71cb43bb627c33d7cc1",
+      "weights.bump": "4a18f4d499d5e74269e8e9344627a2aa50fc85b306cdfd70afef35e6f2a3f619"
+    },
+    "loader_configuration": "Bundle directory first in LD_LIBRARY_PATH before server startup; loaded-library verifier passed.",
+    "loader_control": "Startup without that loader setting rejected the stale build tokenizer as a loaded-library identity mismatch; the verifier was not bypassed.",
+    "omp_num_threads": 1,
+    "output_protocol": "nemotron_toolcall_v1",
+    "repository_commit": "e67f87264d01375dff22c77741c1e2ec619309f9",
+    "runner_source_sha256": "f8c510cd5a43b39b325849029b3e17c3877f7b6a92f6dfb18897a211c7dd58de",
+    "serving_variant": "tools"
+  },
+  "fixture_sha256": "a09b40eacd2d0f239e06b13bfc6b3aca463f7e684d3caad45c3986c8c2250a17",
+  "limitations": [
+    "Three same-endpoint file-read tool round trips are a bounded protocol result, not a read/edit/test task.",
+    "No cancellation, disconnect, long-context, numerical parity, or multi-agent certification.",
+    "The first /think configuration failed at 256 output tokens; the passing matrix used frozen /no_think settings.",
+    "The deployed 2K bundle predates this run; its loaded file hashes were verified by the current-main server.",
+    "The endpoint was stopped after the run; no production server was changed.",
+    "A server started from this older resolved bundle requires the bundle tokenizer to win dynamic linking; without explicit loader search configuration, startup is rejected."
+  ],
+  "max_output_tokens": 256,
+  "model": "nemotron-nano-9b-repeat",
+  "preliminary_control": {
+    "max_output_tokens": 256,
+    "not_part_of_frozen_matrix": true,
+    "observed": "model spent output allowance on reasoning text and did not issue an executable tool call",
+    "prompt_mode": "publisher reference harness with /think",
+    "status": "FAIL",
+    "trace_sha256": "f9e83845885397719de8c4ba4f1003f6dbc0d36a7d19bf50ccfc0c4f80362264"
+  },
+  "prompt_sha256": "45e809d527e25d252a7e3678fb28110318dc88629f084de471874b2e38cf4434",
+  "schema": "cke.langgraph_read_acceptance.v1",
+  "scope": "Restricted one-file LangGraph tool/result/answer probe; not edit/test or numerical parity",
+  "server_instance_id": "9e7bb9d836eb4381bf1c8842fa7b958f",
+  "serving_identity": "a562820ea73ce87571a753333e467ccc2baa59386b8cb8c5b969ee1b8f212cf4",
+  "session_library_sha256": "070370cf3df7262bc7061e88ab3f645176c8374f58b30e4848bf826f5815c9ca",
+  "status": "PASS"
+}
