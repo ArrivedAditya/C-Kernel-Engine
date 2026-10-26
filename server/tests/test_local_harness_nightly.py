@@ -103,3 +103,18 @@ def test_pause_retains_missing_run(tmp_path, monkeypatch):
     report = lane.run(config, state)
     assert report["status"] == "NOT_TESTED"
     assert report["clients"][0]["status"] == "NOT_TESTED"
+
+
+def test_missing_http_dependency_fails_before_model_work(tmp_path, monkeypatch):
+    monkeypatch.setattr(lane, "_source_commit", lambda: "c" * 40)
+    monkeypatch.setattr(lane, "_http_dependencies_ready", lambda: False)
+    monkeypatch.setattr(lane, "_preflight", lambda _: (_ for _ in ()).throw(
+        AssertionError("the endpoint must not be probed")))
+    monkeypatch.setattr(lane, "_invoke", lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError("the harness must not be started")))
+    config = tmp_path / "config.json"
+    _config(config)
+    report = lane.run(config, tmp_path / "state")
+    assert report["status"] == "FAIL"
+    assert report["clients"][0]["status"] == "FAIL"
+    assert "httpx" in report["reason"]

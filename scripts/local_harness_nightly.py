@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import fcntl
 import hashlib
+import importlib
 import json
 import os
 from pathlib import Path
@@ -85,6 +86,15 @@ def _source_commit() -> str:
     ).strip()
 
 
+def _http_dependencies_ready() -> bool:
+    """The coordinator launches HTTP probes with this same Python interpreter."""
+    try:
+        importlib.import_module("httpx")
+    except ImportError:
+        return False
+    return True
+
+
 def run(config_path: Path, state_dir: Path) -> dict:
     if str(ROOT) not in sys.path:
         sys.path.insert(0, str(ROOT))
@@ -110,6 +120,12 @@ def run(config_path: Path, state_dir: Path) -> dict:
             report["status"] = "NOT_TESTED"
             report["reason"] = "local harness nightly paused"
             report["clients"] = [{"name": item["name"], "status": "NOT_TESTED"}
+                                 for item in config["clients"]]
+        elif not _http_dependencies_ready():
+            report["status"] = "FAIL"
+            report["reason"] = "client Python lacks httpx required by the HTTP acceptance suites"
+            report["clients"] = [{"name": item["name"], "status": "FAIL",
+                                  "reason": report["reason"]}
                                  for item in config["clients"]]
         else:
             for client in config["clients"]:
