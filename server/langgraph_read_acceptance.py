@@ -29,12 +29,22 @@ def assess(messages: list[dict], calls: list[dict], expected: str) -> tuple[bool
     """Require real execution, correlated result, and a complete final answer."""
     if len(calls) != 1 or calls[0] != {"cmd": "cat note.txt", "stdout": expected}:
         return False, "tool_execution"
+    if not isinstance(messages, list) or any(not isinstance(message, dict) for message in messages):
+        return False, "malformed_child_output"
     emitted = [call for message in messages for call in message.get("tool_calls", [])]
     if len(emitted) != 1 or emitted[0].get("name") != "exec_bash_command" or \
             emitted[0].get("args") != {"cmd": "cat note.txt"}:
         return False, "tool_request"
     call_id = emitted[0].get("id")
-    results = [message for message in messages if message.get("type") == "ToolMessage"]
+    call_positions = [index for index, message in enumerate(messages)
+                      if message.get("tool_calls")]
+    result_positions = [index for index, message in enumerate(messages)
+                        if message.get("type") == "ToolMessage"]
+    if (len(call_positions) != 1 or len(result_positions) != 1
+            or messages[call_positions[0]].get("type") != "AIMessage"
+            or not call_positions[0] < result_positions[0] < len(messages) - 1):
+        return False, "event_order"
+    results = [messages[result_positions[0]]]
     if not call_id or len(results) != 1 or results[0].get("tool_call_id") != call_id:
         return False, "result_correlation"
     try:
@@ -107,11 +117,29 @@ def run(args: argparse.Namespace) -> dict:
     workspace.mkdir(exist_ok=True)
     value = "cke-" + secrets.token_hex(6)
     (workspace / "note.txt").write_text(value + "\n")
-    first = identity(args.base_url)
+    base = {
+        "schema": "cke.langgraph_read_acceptance.v1", "status": "FAIL",
+        "scope": "Restricted one-file LangGraph tool/result/answer probe; not edit/test or numerical parity",
+        "model": args.model,
+        "serving_identity": args.expected_serving_identity,
+        "session_library_sha256": args.expected_session_sha256,
+        "server_instance_id": None,
+        "prompt_sha256": sha256((SYSTEM + "\n" + PROMPT).encode()),
+        "fixture_sha256": sha256((value + "\n").encode()),
+        "max_output_tokens": args.output_tokens, "attempts": [],
+    }
+    try:
+        first = identity(args.base_url)
+    except Exception as exc:
+        return {**base, "gate": "identity_unavailable", "error_type": type(exc).__name__}
+    if (not isinstance(first.get("server_instance_id"), str)
+            or not first["server_instance_id"].strip()):
+        return {**base, "gate": "missing_server_instance"}
     if first.get("model") != args.model or \
             first.get("serving_identity") != args.expected_serving_identity or \
             first.get("session_library_sha256") != args.expected_session_sha256:
-        raise ValueError("initial loaded model or artifact identity differs from expectations")
+        return {**base, "gate": "identity_mismatch",
+                "server_instance_id": first["server_instance_id"]}
     attempts = []
     for number in range(1, args.attempts + 1):
         command = [sys.executable, __file__, "--child", str(workspace), args.model,
@@ -120,11 +148,19 @@ def run(args: argparse.Namespace) -> dict:
             completed = subprocess.run(command, capture_output=True, text=True,
                                        timeout=args.case_timeout, check=False)
             raw = completed.stdout.strip()
-            trace = json.loads(raw.rsplit("\n", 1)[-1]) if completed.returncode == 0 else {}
-            passed, gate = assess(trace.get("messages", []), trace.get("calls", []), value)
-            passed = passed and completed.returncode == 0
+            trace = {}
             if completed.returncode != 0:
-                gate = "client_error"
+                passed, gate = False, "client_error"
+            else:
+                try:
+                    trace = json.loads(raw.rsplit("\n", 1)[-1])
+                    if (not isinstance(trace, dict)
+                            or not isinstance(trace.get("messages"), list)
+                            or not isinstance(trace.get("calls"), list)):
+                        raise ValueError("child trace has invalid shape")
+                    passed, gate = assess(trace["messages"], trace["calls"], value)
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    passed, gate = False, "malformed_child_output"
             attempt = {"number": number, "status": "PASS" if passed else "FAIL",
                        "gate": gate, "trace_sha256": sha256(raw.encode()),
                        "tool_calls": len(trace.get("calls", []))}
@@ -150,19 +186,9 @@ def run(args: argparse.Namespace) -> dict:
             attempt["status"] = "FAIL"
             attempt["gate"] = "identity_changed"
         attempts.append(attempt)
-    return {
-        "schema": "cke.langgraph_read_acceptance.v1",
-        "status": "PASS" if all(item["status"] == "PASS" for item in attempts) else "FAIL",
-        "scope": "Restricted one-file LangGraph tool/result/answer probe; not edit/test or numerical parity",
-        "model": args.model,
-        "serving_identity": first["serving_identity"],
-        "session_library_sha256": first["session_library_sha256"],
-        "server_instance_id": first["server_instance_id"],
-        "prompt_sha256": sha256((SYSTEM + "\n" + PROMPT).encode()),
-        "fixture_sha256": sha256((value + "\n").encode()),
-        "max_output_tokens": args.output_tokens,
-        "attempts": attempts,
-    }
+    return {**base, "status": "PASS" if attempts and all(
+        item["status"] == "PASS" for item in attempts) else "FAIL",
+            "server_instance_id": first["server_instance_id"], "attempts": attempts}
 
 
 def main() -> int:

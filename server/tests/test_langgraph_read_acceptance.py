@@ -1,5 +1,10 @@
 """Negative controls for the optional LangGraph tool-result assessor."""
-from server.langgraph_read_acceptance import assess
+import argparse
+from types import SimpleNamespace
+
+from server import langgraph_read_acceptance as lane
+
+assess = lane.assess
 
 
 def _trace():
@@ -38,3 +43,53 @@ def test_output_limit_is_not_a_complete_answer():
     trace = _trace()
     trace[-1]["finish_reason"] = "length"
     assert assess(trace, [{"cmd": "cat note.txt", "stdout": "cke-123"}], "cke-123") == (False, "terminal_state")
+
+
+def test_tool_result_must_follow_its_call():
+    trace = _trace()
+    trace[0], trace[1] = trace[1], trace[0]
+    assert assess(trace, [{"cmd": "cat note.txt", "stdout": "cke-123"}], "cke-123") == (False, "event_order")
+
+
+def _args(tmp_path):
+    return argparse.Namespace(run_dir=tmp_path / "run", base_url="http://localhost:19099/v1",
+                              model="nemotron-test", expected_serving_identity="a" * 64,
+                              expected_session_sha256="b" * 64, attempts=1,
+                              output_tokens=256, case_timeout=1)
+
+
+def _identity(instance="instance"):
+    return {"schema": "cke.loaded_serving_identity.v1", "model": "nemotron-test",
+            "serving_identity": "a" * 64, "session_library_sha256": "b" * 64,
+            "server_instance_id": instance}
+
+
+def test_missing_instance_rejected_before_child(tmp_path, monkeypatch):
+    monkeypatch.setattr(lane.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("child must not run")))
+    for number, instance in enumerate(("", "   ")):
+        monkeypatch.setattr(lane, "identity", lambda _, value=instance: _identity(value))
+        args = _args(tmp_path)
+        args.run_dir = tmp_path / f"run-{number}"
+        report = lane.run(args)
+        assert report["status"] == "FAIL" and report["gate"] == "missing_server_instance"
+        assert report["attempts"] == []
+
+
+def test_initial_identity_failure_is_structured(tmp_path, monkeypatch):
+    monkeypatch.setattr(lane, "identity", lambda _: (_ for _ in ()).throw(OSError("offline")))
+    report = lane.run(_args(tmp_path))
+    assert report["status"] == "FAIL" and report["gate"] == "identity_unavailable"
+    assert report["error_type"] == "OSError" and report["attempts"] == []
+
+
+def test_malformed_child_output_retains_failed_attempt(tmp_path, monkeypatch):
+    monkeypatch.setattr(lane, "identity", lambda _: _identity())
+    monkeypatch.setattr(lane.subprocess, "run", lambda *a, **k: SimpleNamespace(
+        stdout="not-json", stderr="bad output", returncode=0))
+    report = lane.run(_args(tmp_path))
+    assert report["status"] == "FAIL"
+    assert report["attempts"][0]["gate"] == "malformed_child_output"
+    assert report["attempts"][0]["same_server_instance"]
+    assert (tmp_path / "run/attempt-1.json").read_text() == "not-json"
+    assert (tmp_path / "run/attempt-1.stderr").read_text() == "bad output"
