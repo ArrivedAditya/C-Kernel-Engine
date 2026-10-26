@@ -1593,6 +1593,18 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_instella_onednn_grouping_oracle.py",
         timeout_sec=180,
     ),
+    "v8_instella_onednn_shared_contract": TestSuite(
+        "Instella BF16 Shared FarSkip Contract",
+        "inference",
+        ROOT / "tests" / "test_v8_instella_onednn_shared_contract.py",
+        timeout_sec=120,
+    ),
+    "v8_instella_onednn_shared_oracle": TestSuite(
+        "Instella Pinned Shared FarSkip Oracle",
+        "inference",
+        ROOT / "tests" / "test_v8_instella_onednn_shared_oracle.py",
+        timeout_sec=180,
+    ),
     "v8_instella_onednn_generated_replay": TestSuite(
         "Instella Generated oneDNN Expert Replay",
         "inference",

@@ -6336,6 +6336,30 @@ def _validate_lowered_activation_memory(
     }
 
 
+def _bind_farskip_shared_width(
+    params: Dict[str, Any], config: Dict[str, Any]
+) -> None:
+    """Bind FarSkip scratch I to the shared expert, never the routed expert."""
+    names = ("moe_shared_expert_intermediate_size", "moe_shared_intermediate_size")
+    declared = [config[name] for name in names if name in config]
+    if len(declared) == 2 and declared[0] != declared[1]:
+        raise RuntimeError(
+            "HARD SCRATCH CONTRACT FAULT: conflicting shared expert intermediate widths"
+        )
+    shared_width = declared[0] if declared else None
+    if (not isinstance(shared_width, int) or isinstance(shared_width, bool)
+            or shared_width <= 0):
+        raise RuntimeError(
+            "HARD SCRATCH CONTRACT FAULT: shared FarSkip requires "
+            "an explicit positive shared expert intermediate width"
+        )
+    params.update({
+        "R": int(params["_m"]),
+        "H": int(config.get("embed_dim", config.get("hidden_size", 0)) or 0),
+        "I": shared_width,
+    })
+
+
 def _kernel_scratch_size_bytes(
     scratch: Dict[str, Any], params: Dict[str, Any], config: Dict[str, Any]
 ) -> Optional[int]:
@@ -16100,6 +16124,8 @@ def generate_ir_lower_2(
                     config.get("moe_shared_expert_intermediate_size", params["I"])
                     or params["I"]
                 )
+        if op_type == "farskip_routed_shared_combine":
+            _bind_farskip_shared_width(params, config)
         if op_type == "full_softmax_topk_router":
             params["routed_scaling_factor"] = float(
                 config.get("routed_scaling_factor", 1.0) or 1.0
@@ -17475,7 +17501,14 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
                     base = int(config.get("head_dim", 1) or 1)
                     expr = str(max(k_head, v_head, base))
                 elif key == "moe_shared_expert_intermediate_size":
-                    if key in config:
+                    if op.get("op") == "farskip_routed_shared_combine":
+                        shared_width = params.get("I")
+                        if not isinstance(shared_width, int) or shared_width <= 0:
+                            op_errors.append(f"{func}.{name}: missing bound shared expert width")
+                            expr = "0"
+                        else:
+                            expr = str(shared_width)
+                    elif key in config:
                         expr = str(config[key])
                     else:
                         expr = str(int(config.get("moe_intermediate_size", 0) or 0) * max(1, int(config.get("n_shared_experts", 1) or 1)))

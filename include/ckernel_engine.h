@@ -4312,6 +4312,20 @@ void farskip_swiglu_shared_combine_pytorch_bf16_storage(
     const uint16_t *shared_up, const uint16_t *shared_down,
     float *main_output, float *routed_free_output, int rows,
     int hidden_dim, int intermediate_dim);
+int farskip_swiglu_shared_combine_pytorch_onednn_3_12_bf16_storage_workspace(
+    const float *hidden, const float *routed,
+    const float *post_attn_residual, const uint16_t *shared_gate,
+    const uint16_t *shared_up, const uint16_t *shared_down,
+    float *main_output, float *routed_free_output, int rows,
+    int hidden_dim, int intermediate_dim, void *workspace,
+    size_t workspace_bytes);
+void farskip_swiglu_shared_combine_pytorch_onednn_3_12_bf16_storage_checked(
+    const float *hidden, const float *routed,
+    const float *post_attn_residual, const uint16_t *shared_gate,
+    const uint16_t *shared_up, const uint16_t *shared_down,
+    float *main_output, float *routed_free_output, int rows,
+    int hidden_dim, int intermediate_dim, void *workspace,
+    size_t workspace_bytes);
 void farskip_swiglu_shared_combine_pytorch_bf16_storage_row_range(
     const float *hidden, const float *routed,
     const float *post_attn_residual, const uint16_t *shared_gate,
