@@ -792,6 +792,11 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_qwen3_tts_first_frame_waveform.py",
         timeout_sec=360,
     ),
+    "tts_qwen3_customvoice_generated_talker_continuation": TestSuite(
+        "Qwen3-TTS Generated Code Feedback and Talker Continuation", "inference",
+        ROOT / "tests" / "test_v8_qwen3_tts_generated_talker_continuation.py",
+        timeout_sec=360,
+    ),
     "tts_attention_decode_append_checked": TestSuite(
         "Checked GQA Decode and KV Append", "kernels",
         ROOT / "tests" / "test_v8_attention_decode_append_checked.py",
