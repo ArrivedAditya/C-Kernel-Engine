@@ -89,6 +89,30 @@ def _load_bridge_report(path: Path) -> dict[str, Any]:
     return payload
 
 
+def _decoder_runtime_overrides(bridge_report: dict[str, Any] | None) -> dict[str, Any] | None:
+    if bridge_report is None or bridge_report.get("composition_circuit") is None:
+        return None
+    composition = bridge_report["composition_circuit"]
+    if not isinstance(composition, dict) or composition.get("status") != "validated":
+        raise ValueError("bridge report has no validated composition circuit")
+    name = composition.get("name")
+    if not isinstance(name, str) or not name:
+        raise ValueError("bridge report composition circuit has no name")
+    circuit = bridge_runner_v8._load_explicit_composition_circuit(name)
+    if composition.get("version") != circuit.get("version"):
+        raise ValueError("bridge report composition circuit version differs from current circuit")
+    contract = bridge_runner_v8._composition_bridge_contract(circuit)
+    if bridge_report.get("bridge_contract") != contract:
+        raise ValueError("bridge report contract differs from the current composition circuit")
+    overrides = {"multimodal_bridge_contract": contract}
+    decoder_config = contract.get("decoder_runtime_config")
+    if decoder_config is not None:
+        if not isinstance(decoder_config, dict):
+            raise ValueError("composition decoder_runtime_config must be an object")
+        overrides.update(decoder_config)
+    return overrides
+
+
 def _prefix_decode_policy(bridge_report: dict[str, Any] | None) -> str:
     if bridge_report is None:
         return "causal_mixed_prefix"
@@ -2345,6 +2369,7 @@ def main(argv: list[str] | None = None) -> int:
         os.environ["OMP_NUM_THREADS"] = str(int(args.threads))
 
     bridge_report = _load_bridge_report(args.bridge_report.resolve()) if args.bridge_report is not None else None
+    runtime_overrides = _decoder_runtime_overrides(bridge_report)
     prefix_decode_policy = _prefix_decode_policy(bridge_report)
     resolved_prefix_path, _ = _bridge_prefix_path(
         bridge_report,
@@ -2382,6 +2407,7 @@ def main(argv: list[str] | None = None) -> int:
         decoder_dir,
         parity_dump=args.dump_dir is not None,
         context_override=requested_ctx_len,
+        runtime_config_overrides=runtime_overrides,
     )
     tokenizer = GGUFTokenizer.from_gguf(str(gguf_path))
     resolved_prompt, token_ids_before, token_ids_after, prompt_meta = _resolve_prompt_token_segments(
@@ -2433,6 +2459,7 @@ def main(argv: list[str] | None = None) -> int:
             decoder_dir,
             parity_dump=args.dump_dir is not None,
             context_override=resolved_ctx_len,
+            runtime_config_overrides=runtime_overrides,
         )
     memory_contract = _verify_runtime_memory_contracts(decoder_runtime)
     if not separate_prefixes:

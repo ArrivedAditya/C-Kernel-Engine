@@ -947,6 +947,7 @@ def _trajectory_context_length(
 
 def _prepare_inputs(args: argparse.Namespace, *, parity_dump: bool = False) -> dict[str, Any]:
     bridge_report = first_token._load_bridge_report(args.bridge_report.resolve())
+    runtime_overrides = first_token._decoder_runtime_overrides(bridge_report)
     gguf_value = str(((bridge_report.get("decoder_runtime") or {}).get("gguf") or "")).strip()
     if not gguf_value:
         raise ValueError("bridge report does not include decoder_runtime.gguf; pass a fresh report")
@@ -971,6 +972,7 @@ def _prepare_inputs(args: argparse.Namespace, *, parity_dump: bool = False) -> d
             decoder_dir,
             parity_dump=bool(parity_dump),
             context_override=max(1, requested_ctx_len),
+            runtime_config_overrides=runtime_overrides,
         )
     tokenizer = GGUFTokenizer.from_gguf(str(gguf_path))
     _, tokens_before, tokens_after, prompt_meta = first_token._resolve_prompt_token_segments(
@@ -1011,6 +1013,7 @@ def _prepare_inputs(args: argparse.Namespace, *, parity_dump: bool = False) -> d
             decoder_dir,
             parity_dump=bool(parity_dump),
             context_override=resolved_ctx_len,
+            runtime_config_overrides=runtime_overrides,
         )
 
     requested_engine = getattr(args, "ck_engine_so", None)
