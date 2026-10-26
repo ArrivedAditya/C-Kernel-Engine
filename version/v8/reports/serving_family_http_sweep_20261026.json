@@ -1,0 +1,155 @@
+{
+  "schema": "cke.harness_family_sweep.v1",
+  "run_date_utc": "2026-10-26",
+  "source_commit": "a657c51f8c50e6d6bc05372989ce52ec29eb0078",
+  "scope": "Retained artifact-bound direct HTTP probes on Ryzen; raw private traces and disposable workspaces are retained on the test hosts.",
+  "machine": "AMD Ryzen 9 9950X3D",
+  "verdicts_are_independent": true,
+  "artifacts": [
+    {
+      "family": "Muse Glimmer",
+      "model": "muse-glimmer-32k-sweep",
+      "serving_identity": "c6cee8cd896162987e431ae47908cbcf5c23eb3e610bfb1a58f93c79979d7f71",
+      "session_library_sha256": "070370cf3df7262bc7061e88ab3f645176c8374f58b30e4848bf826f5815c9ca",
+      "server_instance_id": "abcb04320cfd4586a17c3883c0664c09",
+      "compiled_context_capacity": 32768,
+      "output_protocol": "muse_atem_v1",
+      "gates": {
+        "plain_chat": "PASS",
+        "tool_call": "PASS",
+        "tool_result_continuation": "PASS",
+        "task_success": "PASS",
+        "pinned_hermes_agent": "BLOCKED",
+        "muse_code_cli": "NOT_TESTED",
+        "32k_input": "NOT_TESTED",
+        "numerical_parity": "NOT_TESTED",
+        "mixed_batching": "NOT_TESTED"
+      },
+      "evidence": {
+        "plain_chat_input_tokens": 64,
+        "plain_chat_output_tokens": 156,
+        "plain_chat_wall_seconds": 217.702697,
+        "tool_call_input_tokens": 438,
+        "tool_call_output_tokens": 91,
+        "tool_call_wall_seconds": 135.549664,
+        "tool_name": "muse.read_file",
+        "tool_arguments": {
+          "path": "note.txt"
+        },
+        "tool_call_response_sha256": "3fdfb069afeef70ea4d3c8e79be5440a3aedc442116d9759fefd370d58bb5755",
+        "continuation_input_tokens": 518,
+        "continuation_output_tokens": 328,
+        "continuation_wall_seconds": 480.087332,
+        "continuation_response_sha256": "7b93bbe84652fc08963458c38e08b2b06e6574ee78ee11a4befb6e5d05549eac",
+        "fixture_sha256": "eab0db09a4712b3377213b9ca4f042d1c122fecf5ec0e8ffd4241c9b052026fa",
+        "final_answer_contained_exact_fixture_value": true,
+        "output_budget_256_result": "FAIL: stopped mid-reasoning at 256 tokens; output budget 512 completed at 328 tokens",
+        "hermes_agent_commit": "edfa1c2a135532a8b64f7825c0ac0af6cfe73d4d",
+        "hermes_blocker": "Pinned Hermes Agent requires at least 64K context; this bundle is 32K.",
+        "task_scope": "One disposable file read followed by exact-value answer.",
+        "output_budget_256_note": "The 256-token failure occurred on the same bundle hashes in an earlier server instance; the 512-token tool loop used one new instance.",
+        "generated_count_text_tokens_symbol_present": false
+      },
+      "largest_observed_prompt_count": 518,
+      "reproduction": {
+        "http_route": "POST /v1/responses",
+        "temperature": 0,
+        "max_output_tokens": 512,
+        "user_input": "Use muse.read_file to read note.txt. Wait for the tool result before answering. Report the exact value in the file.",
+        "tool": "muse.read_file(path: string)",
+        "fixture": "A disposable note.txt containing a newly generated value; its SHA-256 is retained in evidence.",
+        "continuation": "Submit the actual file value as function_call_output with the returned call_id and previous_response_id."
+      }
+    },
+    {
+      "family": "Cohere Command R7B",
+      "model": "cohere-command-r7b-2k-chat",
+      "serving_identity": "1907c7c2cb26d54255dae45b7ab30a21cd8b10c9dce139a86cb51a83666796ba",
+      "session_library_sha256": "070370cf3df7262bc7061e88ab3f645176c8374f58b30e4848bf826f5815c9ca",
+      "server_instance_id": "b7af353c10804a068aa6ecec406a669a",
+      "compiled_context_capacity": 2048,
+      "output_protocol": "none",
+      "gates": {
+        "plain_chat": "PASS",
+        "streaming": "PASS",
+        "tool_protocol": "UNSUPPORTED",
+        "context_admission": "PASS",
+        "same_instance_recovery": "PASS",
+        "harness_task": "NOT_TESTED",
+        "numerical_parity": "NOT_TESTED"
+      },
+      "evidence": {
+        "plain_chat_input_tokens": 31,
+        "plain_chat_output_tokens": 9,
+        "plain_chat_response_sha256": "0c1339c669a5617fa921fa688b0dec40b6b34e04f6eed2206eb9807d75c6d917",
+        "stream_terminal_events": 1,
+        "stream_response_sha256": "6c2460bc28b53f7795ff03faef87c9a66c1d4e824770549b9c612dbaa694960c",
+        "tool_request_http_status": 501,
+        "overflow_rendered_tokens": 5009,
+        "overflow_http_status": 400,
+        "overflow_error_code": "context_length_exceeded",
+        "recovery_response_sha256": "e5827f509d7ee7b082595346a5d1e8429311aa4b037a1d01a4a88d46df5ab498",
+        "generated_count_text_tokens_symbol_present": true
+      },
+      "largest_observed_prompt_count": 5009,
+      "largest_observed_prompt_count_note": "5009 was counted then rejected before generation; completed prompts were short.",
+      "reproduction": {
+        "plain_chat_prompt": "What does this Python code print? x = 2; print(x * 3). Answer briefly.",
+        "streaming_prompt": "Explain in one sentence the difference between a server and its client harness.",
+        "over_capacity_input": "blue repeated 5000 times with spaces",
+        "temperature": 0
+      }
+    },
+    {
+      "family": "Instella-MoE Think BF16",
+      "model": "instella-moe-bf16-4k-chat",
+      "serving_identity": "518efca6da3b21c892830d4a125dd86786ce101ee5a7c5ee5e64b8947b67f04b",
+      "session_library_sha256": "070370cf3df7262bc7061e88ab3f645176c8374f58b30e4848bf826f5815c9ca",
+      "server_instance_id": "ab9de27aeefa4c64a4d7d31ac5403fff",
+      "compiled_context_capacity": 4096,
+      "output_protocol": "none",
+      "gates": {
+        "plain_chat_128": "INCOMPLETE",
+        "plain_chat_256": "PASS",
+        "streaming": "PASS",
+        "tool_protocol": "UNSUPPORTED",
+        "context_admission": "FAIL",
+        "same_instance_recovery": "PASS",
+        "openhands_task": "UNSUPPORTED",
+        "numerical_parity_this_bundle": "NOT_TESTED",
+        "current_main_rebuilt_capacity_admission": "NOT_TESTED"
+      },
+      "evidence": {
+        "plain_chat_128_output_tokens": 128,
+        "plain_chat_256_output_tokens": 229,
+        "plain_chat_256_response_sha256": "064472b7278064b22a0d2e8f857b6a9a8f0e6c24343f1168150cf9c978e8359b",
+        "stream_terminal_events": 1,
+        "stream_response_sha256": "39dc53f65ef70f979656024d12c8842bd6cc101aac2cc3c75f3b85d770a9edd4",
+        "tool_request_http_status": 501,
+        "oversized_request_repetitions": 6000,
+        "overflow_http_status": 500,
+        "overflow_error_code": "native_tokenization_failed",
+        "recovery_response_sha256": "13943dc46ba7909e78c52d778b2cbf0fedb33c9ad1fba8790242eb5c4399a2ff",
+        "related_numerical_work": "Merged #938 retains a separate opt-in provider layer-3 exactness result and unresolved full-model logit divergence; this sweep did not replay that comparison.",
+        "generated_count_text_tokens_symbol_present": false,
+        "capacity_failure_interpretation": "The loaded 20 October generated library predates the standalone token-count symbol. The native ABI fell back to context-limited encoding and reported an ambiguous tokenizer failure. Rebuild this artifact from current main and retest before judging current codegen capacity admission."
+      },
+      "largest_observed_prompt_count": 24,
+      "largest_observed_prompt_count_note": "The over-capacity tokenizer failure returned no prompt token count.",
+      "reproduction": {
+        "plain_chat_prompt": "What does this Python code print? x = 2; print(x * 3). Answer briefly.",
+        "streaming_prompt": "Summarize in one sentence: The harness runs file tools; CKE runs model inference.",
+        "over_capacity_input": "blue repeated 6000 times with spaces",
+        "temperature": 0
+      }
+    }
+  ],
+  "limits": [
+    "No asset in this report was tested at its compiled context capacity.",
+    "Direct HTTP tool use is not certification of Muse Code or Hermes Agent.",
+    "Chat-only Cohere and Instella variants reject tool requests before generation.",
+    "No multi-client or native batching certification was performed in this sweep.",
+    "Private raw traces are not published as full replay artifacts.",
+    "Older Muse and Instella generated libraries lack ck_model_count_text_tokens; capacity-error results from them do not certify the current generated tokenizer contract."
+  ]
+}
