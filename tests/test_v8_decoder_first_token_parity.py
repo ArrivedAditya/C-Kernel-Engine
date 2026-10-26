@@ -428,11 +428,21 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
                 decoder_parity_v8._run_llama_capture(
                     Path("model.gguf"), [3], 128, 1, 1, flash_attention="enabled",
                 )
+            self.assertEqual(captured[captured.index("--prefix-decode-mode") + 1], "batched")
+            self.assertEqual(captured[captured.index("--prefix-decode-policy") + 1], "non_causal_visual_chunk")
+            self.assertEqual(captured[captured.index("--decode-mode") + 1], "sequential")
+            self.assertEqual(captured[captured.index("--flash-attn") + 1], "enabled")
+            captured.clear()
+            with tempfile.TemporaryDirectory() as directory:
+                decoder_parity_v8._run_llama_capture(
+                    Path("model.gguf"), [3], 128, 1, 1,
+                    dump_dir=Path(directory) / "oracle",
+                    flash_attention="disabled",
+                    dump_nonflash_inputs=True,
+                )
+            self.assertIn("--dump-nonflash-inputs", captured)
 
-        self.assertEqual(captured[captured.index("--prefix-decode-mode") + 1], "batched")
-        self.assertEqual(captured[captured.index("--prefix-decode-policy") + 1], "non_causal_visual_chunk")
-        self.assertEqual(captured[captured.index("--decode-mode") + 1], "sequential")
-        self.assertEqual(captured[captured.index("--flash-attn") + 1], "enabled")
+        self.assertEqual(captured[captured.index("--flash-attn") + 1], "disabled")
 
     def test_llama_capture_rejects_helper_without_prefix_policy_evidence(self) -> None:
         def fake_run(command: list[str]):
@@ -2271,6 +2281,21 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
             self.assertEqual(ck_capture.call_args.kwargs["prefix_decode_policy"], "non_causal_visual_chunk")
             llama_capture.assert_called_once()
             self.assertEqual(llama_capture.call_args.kwargs["flash_attention"], "enabled")
+
+    def test_nonflash_operand_request_rejects_missing_oracle_capture(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="v8_nonflash_missing_") as directory:
+            with mock.patch.object(
+                decoder_parity_v8, "_run_llama_capture",
+                return_value={"meta": {"dumped": 1, "flash_attention_mode": "disabled_for_internal_dump"}},
+            ) as llama_capture:
+                with self.assertRaisesRegex(RuntimeError, "produced no attention operands"):
+                    decoder_parity_v8._capture_dump_compare(
+                        Path("/tmp/model.gguf"), {"embed_dim": 4}, array("f", [0.0] * 8),
+                        2, [1], prefix_row_dim=4, ctx_len=8, top_k=2, threads=1,
+                        dump_root=Path(directory), dump_names="kqv_out-0", dump_pass="prefill",
+                        dump_atol=1.0e-4, dump_rtol=1.0e-3, dump_nonflash_inputs=True,
+                    )
+            self.assertTrue(llama_capture.call_args.kwargs["dump_nonflash_inputs"])
 
     def test_coalesce_multimodal_prefill_segments_joins_token_rows(self) -> None:
         dump = decoder_parity_v8.parity_test_v7.ParityDump

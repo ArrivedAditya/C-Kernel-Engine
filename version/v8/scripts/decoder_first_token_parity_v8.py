@@ -368,6 +368,7 @@ def _run_llama_capture(
     dump_names: str | None = None,
     no_repack: bool = False,
     flash_attention: str = "disabled",
+    dump_nonflash_inputs: bool = False,
 ) -> dict[str, Any]:
     helper = compare_first_token_logits_v7.ensure_llama_helper()
     if dump_dir is not None:
@@ -422,6 +423,8 @@ def _run_llama_capture(
             cmd.extend(["--dump-dir", str(dump_dir)])
             if dump_names:
                 cmd.extend(["--dump-names", str(dump_names)])
+            if dump_nonflash_inputs:
+                cmd.append("--dump-nonflash-inputs")
 
         proc = _run(cmd)
         if proc.returncode != 0:
@@ -2065,6 +2068,7 @@ def _capture_dump_compare(
     llama_prefix_decode_mode: str = "batched",
     llama_decode_mode: str = "sequential",
     llama_flash_attention: str = "disabled",
+    dump_nonflash_inputs: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     runtime_config = dict((runtime.get("manifest") or {}).get("config") or {})
     layer_count = int(runtime_config.get("num_layers", 0) or 0)
@@ -2107,7 +2111,11 @@ def _capture_dump_compare(
         flash_attention=str(llama_flash_attention),
         dump_dir=llama_dump_dir,
         dump_names=llama_dump_names,
+        dump_nonflash_inputs=dump_nonflash_inputs,
     )
+    nonflash_captures = sorted(llama_dump_dir.glob("kqv_out-*.nonflash_q.json")) if dump_nonflash_inputs else []
+    if dump_nonflash_inputs and not nonflash_captures:
+        raise RuntimeError("requested non-flash operand capture produced no attention operands")
     ck_dump_names = _ck_dump_filter_names(
         dump_names, post_layer_embedding_layers=post_layer_embedding_layers
     )
@@ -2262,6 +2270,7 @@ def _capture_dump_compare(
             llama_capture["meta"].get("flash_attention_mode", "unknown")
         ),
         "llama_dumped": int(llama_capture["meta"].get("dumped", 0)),
+        "llama_nonflash_input_captures": len(nonflash_captures),
         "prefix_path": None if prefix_path is None else str(prefix_path),
         "tokens_before_count": int(tokens_before_count),
         "ck_prompt_start_token": None if ck_prompt_start_token is None else int(ck_prompt_start_token),
@@ -2306,6 +2315,8 @@ def main(argv: list[str] | None = None) -> int:
         help="Comma-separated llama dump names for sequential decoder dump capture",
     )
     ap.add_argument("--dump-pass", choices=("all", "prefill", "decode"), default="decode")
+    ap.add_argument("--dump-nonflash-inputs", action="store_true",
+                    help="Capture actual non-flash Q/K/V/mask operands with oracle attention outputs")
     ap.add_argument(
         "--ck-extra-dump-names",
         type=str,
@@ -2324,6 +2335,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.llama_prefix_f32 is not None and args.dump_dir is not None:
         ap.error("--dump-dir is not a decoder-arithmetic comparison with separate prefixes")
+    if args.dump_nonflash_inputs and (args.dump_dir is None or args.llama_flash_attention != "disabled"):
+        ap.error("--dump-nonflash-inputs requires --dump-dir and disabled oracle flash attention")
     if args.encoder_prefix_report is not None and args.llama_prefix_f32 is None:
         ap.error("--encoder-prefix-report requires --llama-prefix-f32")
 
@@ -2498,6 +2511,7 @@ def main(argv: list[str] | None = None) -> int:
             prefix_text_pos=resolved_prefix_text_pos,
             prefix_decode_policy=prefix_decode_policy,
             llama_flash_attention=str(args.llama_flash_attention),
+            dump_nonflash_inputs=bool(args.dump_nonflash_inputs),
             ck_strict_parity=bool(args.ck_strict_parity),
         )
     else:
