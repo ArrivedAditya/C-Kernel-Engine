@@ -782,6 +782,11 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_qwen3_tts_predictor_feedback.py",
         timeout_sec=180,
     ),
+    "tts_qwen3_customvoice_talker_predictor_frame": TestSuite(
+        "Qwen3-TTS Connected Talker/Predictor Frame", "inference",
+        ROOT / "tests" / "test_v8_qwen3_tts_talker_predictor_frame.py",
+        timeout_sec=240,
+    ),
     "tts_attention_decode_append_checked": TestSuite(
         "Checked GQA Decode and KV Append", "kernels",
         ROOT / "tests" / "test_v8_attention_decode_append_checked.py",
