@@ -25,23 +25,26 @@ int main(int argc, char **argv) {
     ggml_cgraph *graph = ggml_new_graph(ctx);
     for (int i = 0; i < 2; ++i) {
         images[i] = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, 5, 3, 2, 1);
-        weights[i] = ggml_new_tensor_4d(ctx, GGML_TYPE_F16, 2, 2, 2, 3);
+        weights[i] = ggml_new_tensor_4d(ctx, i == 1 ? GGML_TYPE_F32 : GGML_TYPE_F16, 2, 2, 2, 3);
         outputs[i] = ggml_conv_2d(ctx, weights[i], images[i], 2, 1, 1, 0, 1, 1);
         ggml_build_forward_expand(graph, outputs[i]);
     }
     ggml_backend_t backend = ggml_backend_cpu_init();
     assert(backend);
     std::vector<float> image_values[2];
-    std::vector<ggml_fp16_t> weight_values[2];
+    std::vector<ggml_fp16_t> weight_values_f16;
+    std::vector<float> weight_values_f32;
     for (int i = 0; i < 2; ++i) {
         image_values[i].resize(5 * 3 * 2);
-        weight_values[i].resize(2 * 2 * 2 * 3);
         for (size_t j = 0; j < image_values[i].size(); ++j) {
             image_values[i][j] = float(i * 100 + j) / 7.0f;
         }
-        for (size_t j = 0; j < weight_values[i].size(); ++j) {
-            weight_values[i][j] = ggml_fp32_to_fp16(float(i * 10 + j) / 13.0f);
-        }
+    }
+    weight_values_f16.resize(2 * 2 * 2 * 3);
+    weight_values_f32.resize(weight_values_f16.size());
+    for (size_t j = 0; j < weight_values_f16.size(); ++j) {
+        weight_values_f16[j] = ggml_fp32_to_fp16(float(j) / 13.0f);
+        weight_values_f32[j] = float(10 + j) / 13.0f;
     }
 
     DumpState state;
@@ -59,8 +62,13 @@ int main(int argc, char **argv) {
     for (int i = 0; i < 2; ++i) {
         ggml_backend_tensor_set(images[i], image_values[i].data(), 0,
                                 image_values[i].size() * sizeof(float));
-        ggml_backend_tensor_set(weights[i], weight_values[i].data(), 0,
-                                weight_values[i].size() * sizeof(ggml_fp16_t));
+        if (i == 0) {
+            ggml_backend_tensor_set(weights[i], weight_values_f16.data(), 0,
+                                    weight_values_f16.size() * sizeof(ggml_fp16_t));
+        } else {
+            ggml_backend_tensor_set(weights[i], weight_values_f32.data(), 0,
+                                    weight_values_f32.size() * sizeof(float));
+        }
     }
     std::vector<float> baseline;
     for (int pass = 0; pass < 2; ++pass) {
