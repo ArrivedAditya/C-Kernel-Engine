@@ -71,6 +71,13 @@ int main(void)
     status =
         farskip_swiglu_shared_combine_pytorch_onednn_3_12_bf16_storage_workspace(
             hidden,routed,residual,gate,up,down,main_output,free_output,
+            R,H,I,(uint8_t *)scratch+1,WORKSPACE-1);
+    if (status != -1 || gemm_calls) return 7;
+    for (int p = 0; p < R*H; ++p)
+        if (main_output[p] != -777.0f || free_output[p] != -777.0f) return 8;
+    status =
+        farskip_swiglu_shared_combine_pytorch_onednn_3_12_bf16_storage_workspace(
+            hidden,routed,residual,gate,up,down,main_output,free_output,
             R,H,I,scratch,WORKSPACE);
     if (status || gemm_calls != 3 || wrong_group) return 4;
     for (int row = 0; row < R; ++row) {
@@ -89,7 +96,7 @@ int main(void)
             1,H,I,scratch,WORKSPACE);
     if (status || gemm_calls != 3 || wrong_group ||
         free_output[0] != 2.0f || main_output[0] != 3.0f) return 6;
-    puts("PASS: grouped and single-row projections, two output streams, rejected workspace leaves outputs unchanged");
+    puts("PASS: grouped and single-row projections, two output streams, short/misaligned rejection and recovery");
     free(raw);
     return 0;
 }
