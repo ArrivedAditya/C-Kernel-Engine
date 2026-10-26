@@ -1,0 +1,320 @@
+{
+  "id": "farskip_swiglu_shared_combine_pytorch_onednn_3_12_bf16_storage",
+  "op": "farskip_routed_shared_combine",
+  "operation_interface": "farskip.shared_swiglu.bf16_weights.bf16_storage_two_stream.v1",
+  "selection": {
+    "status": "candidate",
+    "priority": 180,
+    "equivalence_group": "farskip_shared_swiglu_pytorch_onednn_3_12_grouped_rows_bf16_storage_two_stream",
+    "phases": [
+      "prefill",
+      "decode"
+    ]
+  },
+  "physical_contract_version": 1,
+  "contract_schema_version": 1,
+  "numerical_contract": "farskip_shared_swiglu_pytorch_onednn_3_12_grouped_rows_bf16_storage_two_stream",
+  "variant": "bf16_shared_weight_onednn_3_12_grouped_rows_two_stream",
+  "modes": {
+    "inference": true,
+    "training": false,
+    "backward": false
+  },
+  "quant": {
+    "weight": "bf16",
+    "activation": "bf16_stored_fp32_abi",
+    "output": "bf16_stored_fp32_abi"
+  },
+  "inputs": [
+    {
+      "name": "hidden",
+      "dtype": "fp32",
+      "shape": [
+        "R",
+        "H"
+      ],
+      "layout": "token_major_contiguous",
+      "placement": "local",
+      "access": "read",
+      "storage_class": "activation",
+      "consumption": "required"
+    },
+    {
+      "name": "routed",
+      "dtype": "fp32",
+      "shape": [
+        "R",
+        "H"
+      ],
+      "layout": "token_major_contiguous",
+      "placement": "local",
+      "access": "read",
+      "storage_class": "activation",
+      "consumption": "required"
+    },
+    {
+      "name": "post_attn_residual",
+      "dtype": "fp32",
+      "shape": [
+        "R",
+        "H"
+      ],
+      "layout": "token_major_contiguous",
+      "placement": "local",
+      "access": "read",
+      "storage_class": "activation",
+      "consumption": "required"
+    }
+  ],
+  "weights": [
+    {
+      "name": "moe_shared_gate",
+      "dtype": "bf16",
+      "shape": [
+        "I",
+        "H"
+      ],
+      "layout": "feature_major_contiguous",
+      "placement": "local",
+      "access": "read",
+      "storage_class": "weight",
+      "consumption": "required"
+    },
+    {
+      "name": "moe_shared_up",
+      "dtype": "bf16",
+      "shape": [
+        "I",
+        "H"
+      ],
+      "layout": "feature_major_contiguous",
+      "placement": "local",
+      "access": "read",
+      "storage_class": "weight",
+      "consumption": "required"
+    },
+    {
+      "name": "moe_shared_down",
+      "dtype": "bf16",
+      "shape": [
+        "H",
+        "I"
+      ],
+      "layout": "feature_major_contiguous",
+      "placement": "local",
+      "access": "read",
+      "storage_class": "weight",
+      "consumption": "required"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "main_output",
+      "dtype": "fp32",
+      "shape": [
+        "R",
+        "H"
+      ],
+      "layout": "token_major_contiguous",
+      "placement": "local",
+      "access": "write",
+      "storage_class": "activation",
+      "consumption": "required",
+      "may_alias": [
+        "input:post_attn_residual"
+      ]
+    },
+    {
+      "name": "routed_free_output",
+      "dtype": "fp32",
+      "shape": [
+        "R",
+        "H"
+      ],
+      "layout": "token_major_contiguous",
+      "placement": "local",
+      "access": "write",
+      "storage_class": "activation",
+      "consumption": "required"
+    }
+  ],
+  "dims": [
+    "R",
+    "H",
+    "I"
+  ],
+  "scratch": [
+    {
+      "name": "workspace",
+      "dtype": "u8",
+      "alignment": 64,
+      "lifetime": "kernel_call",
+      "size_resolution": "required",
+      "size_bytes": "R * (16 * I + 8 * H) + 8 * I",
+      "desc": "Planner-owned upper bound for grouped BF16 gate/up/down staging. For FarSkip, I is bound to the explicit shared expert width, never the routed expert width. oneDNN internal allocations and scratchpad are additional."
+    }
+  ],
+  "implementation": {
+    "isa_dispatch": "runtime",
+    "threading": {
+      "runtime": "openmp",
+      "work_partition": [
+        "serial"
+      ],
+      "dispatch": [
+        "inline"
+      ],
+      "reduction_order_effect": "implementation_defined"
+    }
+  },
+  "impl": {
+    "function": "farskip_swiglu_shared_combine_pytorch_onednn_3_12_bf16_storage_checked",
+    "c_declaration": "void farskip_swiglu_shared_combine_pytorch_onednn_3_12_bf16_storage_checked(const float *hidden, const float *routed, const float *post_attn_residual, const uint16_t *shared_gate, const uint16_t *shared_up, const uint16_t *shared_down, float *main_output, float *routed_free_output, int rows, int hidden_dim, int intermediate_dim, void *workspace, size_t workspace_bytes);",
+    "sources": [
+      "src/kernels/axpy_kernels.c",
+      "src/kernels/gemm_kernels_bf16.c"
+    ],
+    "variants": [
+      {
+        "name": "onednn_3_12_openmp",
+        "requires": [
+          "avx512_bf16"
+        ],
+        "compile_flags": [
+          "-DUSE_ONEDNN"
+        ]
+      }
+    ]
+  },
+  "numerical_capabilities": [
+    {
+      "contract_id": "farskip_shared_swiglu_pytorch_onednn_3_12_grouped_rows_bf16_storage_two_stream",
+      "status": "observed",
+      "phases": [
+        "prefill",
+        "decode"
+      ],
+      "function": "farskip_swiglu_shared_combine_pytorch_onednn_3_12_bf16_storage_checked",
+      "explicit_selector": true,
+      "implementation": {
+        "isa_dispatch": "runtime",
+        "threading": {
+          "runtime": "openmp",
+          "work_partition": [
+            "serial"
+          ],
+          "dispatch": [
+            "inline"
+          ],
+          "reduction_order_effect": "implementation_defined"
+        }
+      },
+      "arithmetic": {
+        "partial_accumulator": "fp32",
+        "merge_order": "implementation_defined",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": true,
+        "split_strategy": "serial"
+      }
+    }
+  ],
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {
+        "name": "hidden",
+        "source": "activation:hidden",
+        "cast": "const float*",
+        "ports": [
+          "input:hidden"
+        ]
+      },
+      {
+        "name": "routed",
+        "source": "activation:routed",
+        "cast": "const float*",
+        "ports": [
+          "input:routed"
+        ]
+      },
+      {
+        "name": "post_attn_residual",
+        "source": "activation:post_attn_residual",
+        "cast": "const float*",
+        "ports": [
+          "input:post_attn_residual"
+        ]
+      },
+      {
+        "name": "shared_gate",
+        "source": "weight:moe_shared_gate",
+        "cast": "const uint16_t*",
+        "ports": [
+          "weight:moe_shared_gate"
+        ]
+      },
+      {
+        "name": "shared_up",
+        "source": "weight:moe_shared_up",
+        "cast": "const uint16_t*",
+        "ports": [
+          "weight:moe_shared_up"
+        ]
+      },
+      {
+        "name": "shared_down",
+        "source": "weight:moe_shared_down",
+        "cast": "const uint16_t*",
+        "ports": [
+          "weight:moe_shared_down"
+        ]
+      },
+      {
+        "name": "main_output",
+        "source": "output:main_output",
+        "cast": "float*",
+        "ports": [
+          "output:main_output"
+        ]
+      },
+      {
+        "name": "routed_free_output",
+        "source": "output:routed_free_output",
+        "cast": "float*",
+        "ports": [
+          "output:routed_free_output"
+        ]
+      },
+      {
+        "name": "rows",
+        "source": "runtime:seq_len"
+      },
+      {
+        "name": "hidden_dim",
+        "source": "dim:embed_dim"
+      },
+      {
+        "name": "intermediate_dim",
+        "source": "dim:moe_shared_expert_intermediate_size"
+      },
+      {
+        "name": "workspace",
+        "source": "scratch:workspace",
+        "cast": "void*"
+      },
+      {
+        "name": "workspace_bytes",
+        "source": "scratch_size:workspace"
+      }
+    ]
+  },
+  "notes": "Opt-in grouped-row shared FarSkip. Pinned oneDNN 3.12 BF16 projection staging, publisher BF16 SwiGLU and two residual streams. CKE staging is planner-owned; oneDNN internals are outside the bound. Exactness is artifact-, shape-, ISA-, and thread-specific.",
+  "constraints": {
+    "alignment": {
+      "H": 32,
+      "I": 32
+    },
+    "external_runtime": "onednn_3_12_openmp",
+    "source_hash": "80afa71049cd69a3df32adcccb623b12cd7baa22"
+  }
+}

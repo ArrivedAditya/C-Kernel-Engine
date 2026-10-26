@@ -4031,6 +4031,47 @@
       "position_transform": null,
       "description": "Publisher BF16 storage at shared SwiGLU stages and at each two-stream FarSkip addition. The ABI carries BF16-stored values in FP32 buffers. Full-model certification remains separate."
     },
+    "farskip_shared_swiglu_pytorch_onednn_3_12_grouped_rows_bf16_storage_two_stream": {
+      "operator_family": "farskip_shared_swiglu",
+      "status": "observed",
+      "storage": {
+        "input": "bf16",
+        "weight": "bf16",
+        "output": "bf16"
+      },
+      "compute": {
+        "input": "bf16",
+        "weight": "bf16",
+        "accumulator": "fp32",
+        "contraction": "enabled",
+        "evaluation_order": "grouped_rows_onednn_3_12_gate_and_up_brgemm_then_bf16_silu_and_product_then_grouped_rows_down_brgemm_then_bf16_routed_plus_shared_then_bf16_residual_plus_mlp_and_residual_plus_shared"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "input_load",
+          "reduction_update",
+          "activation_intermediate_store",
+          "pointwise_product",
+          "pointwise_sum",
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "composite",
+        "order": "stage_ordered",
+        "partial_accumulator": "fp32",
+        "merge_order": "implementation_defined"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "serial",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": true
+      },
+      "position_transform": null,
+      "description": "Observed pinned oneDNN 3.12 BF16 row-group projection arithmetic with publisher BF16 SwiGLU and two-stream FarSkip storage. Tested artifact/shape/ISA/thread configuration is exact; broader equivalence is not implied."
+    },
     "instella_farskip_bf16_shared_swiglu_fp32_two_stream": {
       "operator_family": "farskip_shared_swiglu",
       "status": "observed",

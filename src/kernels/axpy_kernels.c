@@ -3710,6 +3710,99 @@ void farskip_swiglu_shared_combine_pytorch_bf16_storage(
         intermediate_dim, 0, rows);
 }
 
+/* Optional publisher-shaped shared branch. Preserve the full row group in
+ * each oneDNN projection; row-at-a-time GEMV changes BF16 rounding at M>1.
+ * Tensor staging is caller-owned. oneDNN's internal allocations are separate.
+ */
+int farskip_swiglu_shared_combine_pytorch_onednn_3_12_bf16_storage_workspace(
+    const float *hidden, const float *routed,
+    const float *post_attn_residual, const uint16_t *shared_gate,
+    const uint16_t *shared_up, const uint16_t *shared_down,
+    float *main_output, float *routed_free_output, int rows,
+    int hidden_dim, int intermediate_dim, void *workspace,
+    size_t workspace_bytes)
+{
+    if (!hidden || !routed || !post_attn_residual || !shared_gate ||
+        !shared_up || !shared_down || !main_output || !routed_free_output ||
+        !workspace || rows <= 0 || hidden_dim <= 0 || intermediate_dim <= 0 ||
+        hidden_dim % 32 || intermediate_dim % 32 ||
+        (uintptr_t)workspace % 64) return -1;
+
+    const size_t r = (size_t)rows;
+    const size_t h = (size_t)hidden_dim;
+    const size_t i = (size_t)intermediate_dim;
+    const size_t stage_width = h > i ? h : i;
+    if (i > SIZE_MAX / 12u || h > SIZE_MAX / 4u ||
+        stage_width > SIZE_MAX / 4u ||
+        12u * i > SIZE_MAX - 4u * h ||
+        12u * i + 4u * h > SIZE_MAX - 4u * stage_width)
+        return -1;
+    const size_t per_row = 12u * i + 4u * h + 4u * stage_width;
+    if (r > (SIZE_MAX - 8u * i) / per_row ||
+        workspace_bytes < r * per_row + 8u * i) return -1;
+
+    uint8_t *cursor = (uint8_t *)workspace;
+    float *gate_output = (float *)cursor; cursor += 4u * r * i;
+    float *up_output = (float *)cursor; cursor += 4u * r * i;
+    float *activation = (float *)cursor; cursor += 4u * r * i;
+    float *shared_output = (float *)cursor; cursor += 4u * r * h;
+    uint16_t *stage_input = (uint16_t *)cursor;
+    cursor += 2u * r * stage_width;
+    uint16_t *stage_output = (uint16_t *)cursor;
+    cursor += 2u * r * stage_width;
+    float *projection = (float *)cursor;
+
+    gemm_nt_bf16_pytorch_onednn_3_12_brgemm_bf16_storage_workspace(
+        hidden, shared_gate, NULL, gate_output, rows, intermediate_dim,
+        hidden_dim, stage_input, 2u * r * h,
+        stage_output, 2u * r * i, NULL, 0);
+    gemm_nt_bf16_pytorch_onednn_3_12_brgemm_bf16_storage_workspace(
+        hidden, shared_up, NULL, up_output, rows, intermediate_dim,
+        hidden_dim, stage_input, 2u * r * h,
+        stage_output, 2u * r * i, NULL, 0);
+    for (int row = 0; row < rows; ++row) {
+        memcpy(projection, gate_output + (size_t)row * i, 4u * i);
+        memcpy(projection + i, up_output + (size_t)row * i, 4u * i);
+        swiglu_forward_pytorch_bf16_storage(
+            projection, activation + (size_t)row * i, 1, intermediate_dim);
+    }
+    gemm_nt_bf16_pytorch_onednn_3_12_brgemm_bf16_storage_workspace(
+        activation, shared_down, NULL, shared_output, rows, hidden_dim,
+        intermediate_dim, stage_input, 2u * r * i,
+        stage_output, 2u * r * h, NULL, 0);
+
+    for (size_t p = 0; p < r * h; ++p) {
+        const float shared = ck_moe_bf16_round(shared_output[p]);
+        const float routed_value = ck_moe_bf16_round(routed[p]);
+        const float residual_value = ck_moe_bf16_round(post_attn_residual[p]);
+        const float mlp_output = ck_moe_bf16_round(routed_value + shared);
+        routed_free_output[p] = ck_moe_bf16_round(residual_value + shared);
+        main_output[p] = ck_moe_bf16_round(residual_value + mlp_output);
+    }
+    return 0;
+}
+
+void farskip_swiglu_shared_combine_pytorch_onednn_3_12_bf16_storage_checked(
+    const float *hidden, const float *routed,
+    const float *post_attn_residual, const uint16_t *shared_gate,
+    const uint16_t *shared_up, const uint16_t *shared_down,
+    float *main_output, float *routed_free_output, int rows,
+    int hidden_dim, int intermediate_dim, void *workspace,
+    size_t workspace_bytes)
+{
+    const int status =
+        farskip_swiglu_shared_combine_pytorch_onednn_3_12_bf16_storage_workspace(
+            hidden, routed, post_attn_residual, shared_gate, shared_up,
+            shared_down, main_output, routed_free_output, rows,
+            hidden_dim, intermediate_dim, workspace, workspace_bytes);
+    if (status != 0) {
+        fprintf(stderr, "HARD KERNEL CONTRACT FAULT: oneDNN BF16 shared "
+                        "FarSkip received invalid inputs or workspace "
+                        "(status=%d)\n", status);
+        abort();
+    }
+}
+
 void moe_swiglu_shared_backward_f32(const float *d_output,
                                     const float *hidden,
                                     const float *shared_gate,

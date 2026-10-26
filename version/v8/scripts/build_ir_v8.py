@@ -6336,6 +6336,27 @@ def _validate_lowered_activation_memory(
     }
 
 
+def _bind_farskip_shared_width(
+    params: Dict[str, Any], config: Dict[str, Any]
+) -> None:
+    """Bind FarSkip scratch I to the shared expert, never the routed expert."""
+    shared_width = config.get(
+        "moe_shared_expert_intermediate_size",
+        config.get("moe_shared_intermediate_size"),
+    )
+    if (not isinstance(shared_width, int) or isinstance(shared_width, bool)
+            or shared_width <= 0):
+        raise RuntimeError(
+            "HARD SCRATCH CONTRACT FAULT: shared FarSkip requires "
+            "an explicit positive shared expert intermediate width"
+        )
+    params.update({
+        "R": int(params["_m"]),
+        "H": int(config.get("embed_dim", config.get("hidden_size", 0)) or 0),
+        "I": shared_width,
+    })
+
+
 def _kernel_scratch_size_bytes(
     scratch: Dict[str, Any], params: Dict[str, Any], config: Dict[str, Any]
 ) -> Optional[int]:
@@ -16100,6 +16121,8 @@ def generate_ir_lower_2(
                     config.get("moe_shared_expert_intermediate_size", params["I"])
                     or params["I"]
                 )
+        if op_type == "farskip_routed_shared_combine":
+            _bind_farskip_shared_width(params, config)
         if op_type == "full_softmax_topk_router":
             params["routed_scaling_factor"] = float(
                 config.get("routed_scaling_factor", 1.0) or 1.0
