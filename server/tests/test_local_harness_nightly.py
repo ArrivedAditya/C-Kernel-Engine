@@ -118,3 +118,60 @@ def test_missing_http_dependency_fails_before_model_work(tmp_path, monkeypatch):
     assert report["status"] == "FAIL"
     assert report["clients"][0]["status"] == "FAIL"
     assert "httpx" in report["reason"]
+
+
+def test_failed_configuration_replaces_previous_pass(tmp_path, monkeypatch):
+    monkeypatch.setattr(lane, "_source_commit", lambda: "c" * 40)
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "latest.json").write_text(json.dumps({"status": "PASS", "run_id": "yesterday"}))
+    config = tmp_path / "malformed.json"
+    config.write_text("{")
+    report = lane.run(config, state)
+    latest = json.loads((state / "latest.json").read_text())
+    assert report["status"] == latest["status"] == "FAIL"
+    assert latest["run_id"] != "yesterday"
+    assert latest["failure_stage"] == "configuration"
+    assert json.loads((state / "runs" / latest["run_id"] / "summary.json").read_text()) == latest
+
+
+def test_child_launch_error_preserves_partial_failure(tmp_path, monkeypatch):
+    monkeypatch.setattr(lane, "_source_commit", lambda: "c" * 40)
+    monkeypatch.setattr(lane, "_preflight", lambda _: ("READY", "", "instance"))
+    monkeypatch.setattr(lane, "_invoke", lambda *a, **k: (_ for _ in ()).throw(
+        OSError("launcher unavailable")))
+    config = tmp_path / "config.json"
+    _config(config)
+    report = lane.run(config, tmp_path / "state")
+    assert report["status"] == "FAIL"
+    assert report["failure_stage"] == "launch:qwen-control"
+    assert report["clients"][0]["status"] == "FAIL"
+    assert "launcher unavailable" in report["clients"][0]["reason"]
+
+
+def test_malformed_reassessment_replaces_previous_pass(tmp_path, monkeypatch):
+    monkeypatch.setattr(lane, "_source_commit", lambda: "c" * 40)
+    monkeypatch.setattr(lane, "_preflight", lambda _: ("READY", "", "instance"))
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "latest.json").write_text(json.dumps({"status": "PASS", "run_id": "yesterday"}))
+    config = tmp_path / "config.json"
+    _config(config)
+
+    def fake_invoke(command, **_kwargs):
+        flag = "--output-dir" if "--output-dir" in command else "--reassess-dir"
+        target = Path(command[command.index(flag) + 1])
+        target.mkdir(parents=True, exist_ok=True)
+        if flag == "--output-dir":
+            (target / "summary.json").write_text('{"status":"pass"}')
+        else:
+            (target / "reassessment.json").write_text("{")
+        return 0
+
+    monkeypatch.setattr(lane, "_invoke", fake_invoke)
+    report = lane.run(config, state)
+    latest = json.loads((state / "latest.json").read_text())
+    assert report["status"] == latest["status"] == "FAIL"
+    assert latest["run_id"] != "yesterday"
+    assert latest["failure_stage"] == "reassessment:qwen-control"
+    assert latest["clients"][0]["status"] == "FAIL"

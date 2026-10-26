@@ -96,91 +96,112 @@ def _http_dependencies_ready() -> bool:
 
 
 def run(config_path: Path, state_dir: Path) -> dict:
-    if str(ROOT) not in sys.path:
-        sys.path.insert(0, str(ROOT))
-    from server.harness_repeatability import _validate
-
     state_dir.mkdir(parents=True, exist_ok=True)
     started = datetime.now(timezone.utc)
     run_dir = state_dir / "runs" / (started.strftime("%Y%m%dT%H%M%S%fZ"))
     run_dir.mkdir(parents=True, exist_ok=False)
     report = {
-        "schema": SCHEMA, "source_commit": _source_commit(),
+        "schema": SCHEMA, "source_commit": None, "run_id": run_dir.name,
         "started_at": started.isoformat(), "status": "INCOMPLETE",
         "clients": [],
     }
-    if not config_path.is_file():
-        report["reason"] = "configuration unavailable"
-        report["status"] = "NOT_TESTED"
-    else:
-        raw = config_path.read_bytes()
-        report["config_sha256"] = hashlib.sha256(raw).hexdigest()
-        config = _validate(json.loads(raw))
-        if (state_dir / "PAUSE").exists():
+    def publish() -> None:
+        _write(state_dir / "latest.json", report)
+        _write(run_dir / "summary.json", report)
+
+    # Replace a previous PASS before reading configuration or starting a child.
+    publish()
+    stage = "source_commit"
+    try:
+        report["source_commit"] = _source_commit()
+        if str(ROOT) not in sys.path:
+            sys.path.insert(0, str(ROOT))
+        from server.harness_repeatability import _validate
+
+        stage = "configuration"
+        if not config_path.is_file():
+            report["reason"] = "configuration unavailable"
             report["status"] = "NOT_TESTED"
-            report["reason"] = "local harness nightly paused"
-            report["clients"] = [{"name": item["name"], "status": "NOT_TESTED"}
-                                 for item in config["clients"]]
-        elif not _http_dependencies_ready():
-            report["status"] = "FAIL"
-            report["reason"] = "client Python lacks httpx required by the HTTP acceptance suites"
-            report["clients"] = [{"name": item["name"], "status": "FAIL",
-                                  "reason": report["reason"]}
-                                 for item in config["clients"]]
         else:
-            for client in config["clients"]:
-                name = client["name"]
-                status, reason, instance = _preflight(client)
-                row = {"name": name, "status": status, "reason": reason,
-                       "endpoint": client["endpoint"], "model": client["model"],
-                       "serving_identity": client["serving_identity"],
-                       "session_library_sha256": client["session_library_sha256"],
-                       "server_instance_id": instance}
-                if status == "READY":
-                    directory = run_dir / name
-                    child_config = directory / "config.json"
-                    _write(child_config, {
-                        "schema": config["schema"], "attempts": config["attempts"],
-                        "clients": [client],
-                    })
-                    outcome = directory / "matrix"
-                    code = _invoke([
-                        sys.executable, str(ROOT / "server/harness_repeatability.py"),
-                        "--config", str(child_config), "--output-dir", str(outcome),
-                    ], cwd=ROOT, log=directory / "run.log", deadline=None)
-                    summary_path = outcome / "summary.json"
-                    if code == 0 and summary_path.is_file():
-                        reassess_code = _invoke([
+            raw = config_path.read_bytes()
+            report["config_sha256"] = hashlib.sha256(raw).hexdigest()
+            config = _validate(json.loads(raw))
+            if (state_dir / "PAUSE").exists():
+                report["status"] = "NOT_TESTED"
+                report["reason"] = "local harness nightly paused before startup"
+                report["clients"] = [{"name": item["name"], "status": "NOT_TESTED"}
+                                     for item in config["clients"]]
+            elif not _http_dependencies_ready():
+                report["status"] = "FAIL"
+                report["reason"] = "client Python lacks httpx required by the HTTP acceptance suites"
+                report["clients"] = [{"name": item["name"], "status": "FAIL",
+                                      "reason": report["reason"]}
+                                     for item in config["clients"]]
+            else:
+                for client in config["clients"]:
+                    name = client["name"]
+                    stage = f"preflight:{name}"
+                    status, reason, instance = _preflight(client)
+                    row = {"name": name, "status": status, "reason": reason,
+                           "endpoint": client["endpoint"], "model": client["model"],
+                           "serving_identity": client["serving_identity"],
+                           "session_library_sha256": client["session_library_sha256"],
+                           "server_instance_id": instance}
+                    report["clients"].append(row)
+                    publish()
+                    if status == "READY":
+                        row["status"] = "INCOMPLETE"
+                        publish()
+                        directory = run_dir / name
+                        child_config = directory / "config.json"
+                        _write(child_config, {
+                            "schema": config["schema"], "attempts": config["attempts"],
+                            "clients": [client],
+                        })
+                        outcome = directory / "matrix"
+                        stage = f"launch:{name}"
+                        code = _invoke([
                             sys.executable, str(ROOT / "server/harness_repeatability.py"),
-                            "--reassess-dir", str(outcome),
-                        ], cwd=ROOT, log=directory / "reassess.log", deadline=120)
-                        reassess_path = outcome / "reassessment.json"
-                        if reassess_code == 0 and reassess_path.is_file():
-                            reassessed = json.loads(reassess_path.read_text())
-                            original = json.loads(summary_path.read_text())
-                            if (reassessed.get("status") == "pass"
-                                    and original.get("status") == "pass"
-                                    and original.get("source_commit") == report["source_commit"]
-                                    and reassessed.get("reassessment_source_commit") == report["source_commit"]
-                                    and len(original.get("steps", [])) == 3 + config["attempts"]
-                                    and len(reassessed.get("steps", [])) == 3 + config["attempts"]
-                                    and all(step.get("server_instance_id") == instance
-                                            for step in original["steps"])
-                                    and all(step.get("server_instance_id") == instance
-                                            for step in reassessed.get("steps", []))):
-                                row.update(status="PASS", reason="", steps=len(original.get("steps", [])))
-                    if row["status"] != "PASS":
-                        row.update(status="FAIL", reason="repeatability or reassessment failed",
-                                   exit_code=code)
-                report["clients"].append(row)
-                _write(run_dir / "summary.json", report)
-            statuses = {item["status"] for item in report["clients"]}
-            report["status"] = ("FAIL" if "FAIL" in statuses else
-                                "PASS" if statuses == {"PASS"} else
-                                "NOT_TESTED" if statuses == {"NOT_TESTED"} else "INCOMPLETE")
+                            "--config", str(child_config), "--output-dir", str(outcome),
+                        ], cwd=ROOT, log=directory / "run.log", deadline=None)
+                        summary_path = outcome / "summary.json"
+                        if code == 0 and summary_path.is_file():
+                            stage = f"reassessment:{name}"
+                            reassess_code = _invoke([
+                                sys.executable, str(ROOT / "server/harness_repeatability.py"),
+                                "--reassess-dir", str(outcome),
+                            ], cwd=ROOT, log=directory / "reassess.log", deadline=120)
+                            reassess_path = outcome / "reassessment.json"
+                            if reassess_code == 0 and reassess_path.is_file():
+                                reassessed = json.loads(reassess_path.read_text())
+                                original = json.loads(summary_path.read_text())
+                                if (reassessed.get("status") == "pass"
+                                        and original.get("status") == "pass"
+                                        and original.get("source_commit") == report["source_commit"]
+                                        and reassessed.get("reassessment_source_commit") == report["source_commit"]
+                                        and len(original.get("steps", [])) == 3 + config["attempts"]
+                                        and len(reassessed.get("steps", [])) == 3 + config["attempts"]
+                                        and all(step.get("server_instance_id") == instance
+                                                for step in original["steps"])
+                                        and all(step.get("server_instance_id") == instance
+                                                for step in reassessed.get("steps", []))):
+                                    row.update(status="PASS", reason="", steps=len(original.get("steps", [])))
+                        if row["status"] != "PASS":
+                            row.update(status="FAIL", reason="repeatability or reassessment failed",
+                                       exit_code=code)
+                    publish()
+                statuses = {item["status"] for item in report["clients"]}
+                report["status"] = ("FAIL" if "FAIL" in statuses else
+                                    "PASS" if statuses == {"PASS"} else
+                                    "NOT_TESTED" if statuses == {"NOT_TESTED"} else "INCOMPLETE")
+    except Exception as exc:
+        report.update(status="FAIL", reason=f"{stage} failed: {type(exc).__name__}: {exc}",
+                      error_type=type(exc).__name__, failure_stage=stage)
+        for row in report["clients"]:
+            if row["status"] in {"READY", "INCOMPLETE"}:
+                row.update(status="FAIL", reason=report["reason"])
     report["finished_at"] = datetime.now(timezone.utc).isoformat()
-    _write(run_dir / "summary.json", report)
-    _write(state_dir / "latest.json", report)
+    publish()
     return report
 
 
