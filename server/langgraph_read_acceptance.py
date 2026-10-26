@@ -159,7 +159,8 @@ def run(args: argparse.Namespace) -> dict:
                             or not isinstance(trace.get("calls"), list)):
                         raise ValueError("child trace has invalid shape")
                     passed, gate = assess(trace["messages"], trace["calls"], value)
-                except (json.JSONDecodeError, TypeError, ValueError):
+                except (AttributeError, IndexError, KeyError, json.JSONDecodeError,
+                        TypeError, ValueError):
                     passed, gate = False, "malformed_child_output"
             attempt = {"number": number, "status": "PASS" if passed else "FAIL",
                        "gate": gate, "trace_sha256": sha256(raw.encode()),

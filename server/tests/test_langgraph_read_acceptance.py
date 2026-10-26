@@ -1,5 +1,6 @@
 """Negative controls for the optional LangGraph tool-result assessor."""
 import argparse
+import json
 from types import SimpleNamespace
 
 from server import langgraph_read_acceptance as lane
@@ -93,3 +94,15 @@ def test_malformed_child_output_retains_failed_attempt(tmp_path, monkeypatch):
     assert report["attempts"][0]["same_server_instance"]
     assert (tmp_path / "run/attempt-1.json").read_text() == "not-json"
     assert (tmp_path / "run/attempt-1.stderr").read_text() == "bad output"
+
+
+def test_nested_malformed_child_output_is_structured(tmp_path, monkeypatch):
+    monkeypatch.setattr(lane, "identity", lambda _: _identity())
+    monkeypatch.setattr(lane.secrets, "token_hex", lambda _: "123456789abc")
+    monkeypatch.setattr(lane.subprocess, "run", lambda *a, **k: SimpleNamespace(
+        stdout=json.dumps({"messages": [{"type": "AIMessage", "tool_calls": ["invalid"]}],
+                           "calls": [{"cmd": "cat note.txt", "stdout": "cke-123456789abc"}]}),
+        stderr="", returncode=0))
+    report = lane.run(_args(tmp_path))
+    assert report["status"] == "FAIL"
+    assert report["attempts"][0]["gate"] == "malformed_child_output"
