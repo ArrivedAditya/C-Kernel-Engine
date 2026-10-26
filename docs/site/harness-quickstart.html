@@ -1037,7 +1037,11 @@ native model session and response delivery. A model appearing in <code>/v1/model
 that it loaded, not that it can complete an agent task. The table below names the tested
 artifact boundary as of 26 October 2026. Consult the
 <a href="v8-serving-coverage.html">serving coverage inventory</a> for circuit declarations and the
-<a href="v8-runbook.html#converted-jinja-serving">serving runbook</a> for detailed acceptance commands.</p>
+<a href="v8-runbook.html#converted-jinja-serving">serving runbook</a> for detailed acceptance commands.
+The Qwen report's <code>artifact_certification_status: PASS</code> means the expected
+loaded serving and native-library identities remained bound to the task; it is
+not a full-model numerical-parity certificate. The dated reports are retained
+results from their listed source revisions, not continuously current endpoint status.</p>
 
 <div class="card">
   <h2 style="margin-top:0;">Model and harness map</h2>

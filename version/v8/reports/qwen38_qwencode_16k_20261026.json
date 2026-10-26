@@ -25,6 +25,7 @@
   "instance_continuity": "PASS",
   "task_status": "PASS",
   "artifact_certification_status": "PASS",
+  "artifact_certification_scope": "Expected loaded serving, model, session-library and supporting bundle identities matched before and after the task; this is serving-artifact identity validation, not full-model numerical certification.",
   "observed_tool_sequence": [
     "read_file",
     "edit",
