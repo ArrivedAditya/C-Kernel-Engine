@@ -640,6 +640,17 @@
       "position_transform": null,
       "description": "Checked int32 ID lookup into FP32 table with channel-major output and explicit physical strides. Selected finite FP32 weights are copied bit exactly; output and padding remain untouched on rejection."
     },
+    "embedding_exact_token_major_fp32": {
+      "operator_family": "embedding",
+      "status": "validated",
+      "storage": {"input": "int32", "weight": "fp32", "output": "fp32"},
+      "compute": {"input": "int32", "weight": "fp32", "accumulator": "fp32", "contraction": "disabled", "evaluation_order": "validate_all_ids_and_selected_weights_then_ascending_token_channel_exact_copy_without_accumulation"},
+      "rounding": {"mode": "none", "points": ["input_load", "output_store"]},
+      "reduction": {"kind": "none", "order": "none", "partial_accumulator": "none", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "independent_outputs", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Checked int32 ID lookup into FP32 table with token-major output and explicit physical strides. Selected finite FP32 weights are copied exactly; output and padding remain untouched on rejection."
+    },
     "audio_duration_logits_sigmoid_sum_round_even_fp32": {
       "operator_family": "audio_duration_logits_to_frames",
       "status": "validated",
@@ -4617,6 +4628,17 @@
       "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},
       "position_transform": null,
       "description": "Argmax over nonempty finite FP32 values with NumPy-compatible first-index tie selection."
+    },
+    "argmax_last_row_finite_first_index_fp32": {
+      "operator_family": "audio_argmax",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "none", "output": "int32"},
+      "compute": {"input": "fp32", "weight": "none", "accumulator": "fp32", "contraction": "disabled", "evaluation_order": "select_final_valid_row_then_ascending_channel_strict_greater_comparison_retaining_first_equal_maximum"},
+      "rounding": {"mode": "none", "points": ["input_load", "output_store"]},
+      "reduction": {"kind": "argmax", "order": "ascending_index", "partial_accumulator": "fp32", "merge_order": "first_index_on_tie"},
+      "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Checked first-index argmax of the final valid row in an FP32 strided matrix. Rejection preserves the selected ID."
     },
     "mla_attention_eager_bf16_phases_fp32_carrier_v1": {
       "operator_family": "attention",

@@ -5,11 +5,12 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "version/v8/kernel_maps",
     "counts": {
-      "total": 461,
+      "total": 463,
       "by_op": {
         "add_backward": 1,
         "add_rows_checked": 1,
         "add_stream": 2,
+        "argmax_last_row_checked": 1,
         "assistant_layer_scale": 1,
         "attention": 38,
         "attention_causal_bounded": 1,
@@ -75,6 +76,7 @@
         "embedding": 7,
         "embedding_backward": 1,
         "embedding_lookup_checked": 1,
+        "embedding_lookup_token_major_checked": 1,
         "embedding_three_table_layer_norm": 1,
         "farskip_routed_shared_combine": 2,
         "feature_concat": 1,
@@ -14293,6 +14295,184 @@
       "_source_file": "audio_argmax_first_f32.json"
     },
     {
+      "id": "audio_argmax_last_row_checked_f32",
+      "op": "argmax_last_row_checked",
+      "operation_interface": "tensor.argmax.last_valid_row.checked.fp32.v1",
+      "variant": "finite_first_index_on_tie",
+      "selection": {
+        "status": "candidate",
+        "priority": 100,
+        "equivalence_group": "tensor.argmax.last_valid_row.checked.fp32.v1",
+        "phases": [
+          "prefill",
+          "decode"
+        ]
+      },
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "i32"
+      },
+      "inputs": [
+        {
+          "name": "values",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "C"
+          ],
+          "layout": "row_major_strided",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "index",
+          "dtype": "i32",
+          "shape": [
+            1
+          ],
+          "layout": "scalar",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "R",
+        "C"
+      ],
+      "impl": {
+        "function": "audio_argmax_last_row_checked_f32",
+        "c_declaration": "int audio_argmax_last_row_checked_f32(const float *values, size_t values_elements, size_t rows, size_t channels, size_t row_stride, int32_t *selected, size_t selected_elements);",
+        "sources": [
+          "src/kernels/audio_text_embedding.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "argmax_last_row_finite_first_index_fp32",
+          "status": "validated",
+          "phases": [
+            "prefill",
+            "decode"
+          ],
+          "function": "audio_argmax_last_row_checked_f32",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "contract_defined"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp32",
+            "merge_order": "first_index_on_tie",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "serial"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "values",
+            "source": "activation:values",
+            "cast": "const float*",
+            "ports": [
+              "input:values"
+            ]
+          },
+          {
+            "name": "values_elements",
+            "source": "runtime:values_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "rows",
+            "source": "runtime:rows",
+            "value_type": "size_t"
+          },
+          {
+            "name": "channels",
+            "source": "runtime:channels",
+            "value_type": "size_t"
+          },
+          {
+            "name": "row_stride",
+            "source": "runtime:row_stride",
+            "value_type": "size_t"
+          },
+          {
+            "name": "selected",
+            "source": "output:index",
+            "cast": "int32_t*",
+            "ports": [
+              "output:index"
+            ]
+          },
+          {
+            "name": "selected_elements",
+            "source": "runtime:selected_elements",
+            "value_type": "size_t"
+          }
+        ]
+      },
+      "call_constant_contract": {
+        "shape_symbols": {
+          "R": "rows",
+          "C": "channels"
+        },
+        "buffer_spans": [
+          {
+            "pointer": "values",
+            "elements": "values_elements",
+            "rows": "rows",
+            "width": "channels",
+            "stride": "row_stride",
+            "physical_row_stride": true,
+            "element_bytes": 4
+          },
+          {
+            "pointer": "selected",
+            "elements": "selected_elements",
+            "rows": 1,
+            "width": 1,
+            "element_bytes": 4
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "tests/test_v8_qwen3_tts_predictor_feedback.py"
+        ],
+        "oracle": "NumPy argmax of the final finite FP32 row"
+      },
+      "notes": "Caller-owned output is unchanged on invalid capacity, nonfinite selected row, or overlap; ties select the first index.",
+      "name": "audio_argmax_last_row_checked_f32",
+      "_source_file": "audio_argmax_last_row_checked_f32.json"
+    },
+    {
       "id": "audio_batch_norm_inference_channel_major_f32",
       "op": "audio_batch_norm",
       "operation_interface": "audio_batch_norm.channel_major.inference.fp32.v1",
@@ -28011,6 +28191,231 @@
       },
       "name": "audio_text_embedding_channel_major_f32",
       "_source_file": "audio_text_embedding_channel_major_f32.json"
+    },
+    {
+      "id": "audio_text_embedding_token_major_f32",
+      "op": "embedding_lookup_token_major_checked",
+      "operation_interface": "embedding.checked_token_major.fp32.v1",
+      "variant": "checked_i32_ids_fp32_table_token_major",
+      "selection": {
+        "status": "candidate",
+        "priority": 100,
+        "equivalence_group": "embedding.checked_token_major.fp32.v1",
+        "phases": [
+          "prefill",
+          "decode"
+        ]
+      },
+      "quant": {
+        "weight": "fp32",
+        "activation": "i32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "ids",
+          "dtype": "i32",
+          "shape": [
+            "T"
+          ],
+          "layout": "token_contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "weights": [
+        {
+          "name": "table",
+          "dtype": "fp32",
+          "shape": [
+            "V",
+            "C"
+          ],
+          "layout": "row_major_table_stride",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "weight",
+          "consumption": "required"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "C"
+          ],
+          "layout": "token_major_output_stride",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "T",
+        "V",
+        "C"
+      ],
+      "impl": {
+        "function": "audio_text_embedding_token_major_f32",
+        "c_declaration": "int audio_text_embedding_token_major_f32(const int32_t *ids, size_t id_elements, const float *table, size_t table_elements, size_t vocabulary, size_t channels, size_t table_stride, float *output, size_t output_elements, size_t tokens, size_t output_stride);",
+        "sources": [
+          "src/kernels/audio_text_embedding.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "embedding_exact_token_major_fp32",
+          "status": "validated",
+          "phases": [
+            "prefill",
+            "decode"
+          ],
+          "function": "audio_text_embedding_token_major_f32",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "none",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "ids",
+            "source": "activation:ids",
+            "cast": "const int32_t*",
+            "ports": [
+              "input:ids"
+            ]
+          },
+          {
+            "name": "id_elements",
+            "source": "runtime:id_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "table",
+            "source": "weight:table",
+            "cast": "const float*",
+            "ports": [
+              "weight:table"
+            ]
+          },
+          {
+            "name": "table_elements",
+            "source": "runtime:table_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "vocabulary",
+            "source": "runtime:vocabulary",
+            "value_type": "size_t"
+          },
+          {
+            "name": "channels",
+            "source": "runtime:channels",
+            "value_type": "size_t"
+          },
+          {
+            "name": "table_stride",
+            "source": "runtime:table_stride",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output",
+            "source": "output:output",
+            "cast": "float*",
+            "ports": [
+              "output:output"
+            ]
+          },
+          {
+            "name": "output_elements",
+            "source": "runtime:output_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "tokens",
+            "source": "runtime:tokens",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output_stride",
+            "source": "runtime:output_stride",
+            "value_type": "size_t"
+          }
+        ]
+      },
+      "call_constant_contract": {
+        "shape_symbols": {
+          "T": "tokens",
+          "V": "vocabulary",
+          "C": "channels"
+        },
+        "buffer_spans": [
+          {
+            "pointer": "ids",
+            "elements": "id_elements",
+            "rows": 1,
+            "width": "tokens",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "table",
+            "elements": "table_elements",
+            "rows": "vocabulary",
+            "width": "channels",
+            "stride": "table_stride",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "output",
+            "elements": "output_elements",
+            "rows": "tokens",
+            "width": "channels",
+            "stride": "output_stride",
+            "physical_row_stride": true,
+            "element_bytes": 4
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "tests/test_v8_qwen3_tts_predictor_feedback.py"
+        ],
+        "oracle": "Exact NumPy row gather and pinned predictor codec embedding"
+      },
+      "notes": "Checked exact token-major lookup. The output and padding remain unchanged on rejection; no hidden allocation or backward support.",
+      "name": "audio_text_embedding_token_major_f32",
+      "_source_file": "audio_text_embedding_token_major_f32.json"
     },
     {
       "id": "audio_transpose_channel_to_token_f32",
