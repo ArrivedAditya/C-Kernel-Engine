@@ -7,9 +7,13 @@
 endpoint. The harness owns files, tools and permissions; CKE owns rendering, tokenization, the
 native model session and response delivery. A model appearing in <code>/v1/models</code> proves
 that it loaded, not that it can complete an agent task. The table below names the tested
-artifact boundary as of 25 October 2026. Consult the
+artifact boundary as of 26 October 2026. Consult the
 <a href="v8-serving-coverage.html">serving coverage inventory</a> for circuit declarations and the
-<a href="v8-runbook.html#converted-jinja-serving">serving runbook</a> for detailed acceptance commands.</p>
+<a href="v8-runbook.html#converted-jinja-serving">serving runbook</a> for detailed acceptance commands.
+The Qwen report's <code>artifact_certification_status: PASS</code> means the expected
+loaded serving and native-library identities remained bound to the task; it is
+not a full-model numerical-parity certificate. The dated reports are retained
+results from their listed source revisions, not continuously current endpoint status.</p>
 
 <div class="card">
   <h2 style="margin-top:0;">Model and harness map</h2>
@@ -17,11 +21,11 @@ artifact boundary as of 25 October 2026. Consult the
     <thead><tr><th>CKE model artifact</th><th>Client to try</th><th>Current evidence</th><th>Tool-task status</th></tr></thead>
     <tbody>
       <tr><td>Qwen3.8 27B Q4_K_M</td><td><a href="https://github.com/QwenLM/qwen-code">Qwen Code</a></td>
-        <td>Artifact-bound read → edit → test → summary tasks and HTTP recovery on the tested bundle.</td>
-        <td><strong>Bounded PASS.</strong> Use its exact resolved Qwen Code serving variant and a context profile no larger than the compiled runtime. Other Qwen artifacts require their own run.</td></tr>
+        <td>A fresh current-main read → edit → test → summary task passed on an identified 16K bundle in 847.9 seconds; see <code>version/v8/reports/qwen38_qwencode_16k_20261026.json</code>. Prior HTTP recovery evidence remains separate.</td>
+        <td><strong>Bounded PASS for one task.</strong> Its turns used 7,074–7,569 input tokens, not the full 16K capacity. Other artifacts, repeated reliability and batching require separate runs.</td></tr>
       <tr><td>Gemma4 E4B, explicit tools variant</td><td><a href="https://antigravity.google/docs/sdk/local-models/">Antigravity SDK</a></td>
-        <td>Four bounded local SDK tasks, including edit/validation and tool-error recovery, on a 2,048-token bundle.</td>
-        <td><strong>Bounded PASS.</strong> The chat-only variant rejects tools. Larger contexts and overnight reliability are separate gates.</td></tr>
+        <td>Four bounded local SDK tasks passed on the historical 2K bundle and on one identified 32K-capacity bundle on 26 October 2026. The fresh run took 154.8 seconds; see <code>version/v8/reports/gemma4_antigravity_32k_20261026.json</code> for per-case evidence.</td>
+        <td><strong>Bounded PASS for short tasks.</strong> The 32K build capacity is not a 32K-input result. The chat-only variant rejects tools; overnight reliability remains untested.</td></tr>
       <tr><td>Muse Glimmer</td><td>Muse Code is the intended family client; a generic OpenAI-compatible client is useful for diagnosis.</td>
         <td>A short CKE tool call and correlated continuation passed. A complete 32K Muse Code task has not passed.</td>
         <td><strong>Not certified.</strong> Do not treat an installed Muse Code CLI or rendered template as proof that it targets this CKE endpoint.</td></tr>

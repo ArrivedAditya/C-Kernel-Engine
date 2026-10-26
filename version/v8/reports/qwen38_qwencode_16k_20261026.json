@@ -1,0 +1,46 @@
+{
+  "schema": "cke.artifact_harness_result.v1",
+  "status": "PASS",
+  "run_date_utc": "2026-10-26",
+  "source_commit": "a657c51f8c50e6d6bc05372989ce52ec29eb0078",
+  "model": "qwen38-27b-q4km-16k-state-cert",
+  "checkpoint_bundle": "pinned generated Qwen3.8 27B Q4_K_M state-cert serving bundle",
+  "capacity_tokens": 16384,
+  "observed_turn_input_tokens": [
+    7074,
+    7200,
+    7456,
+    7569
+  ],
+  "qwen_code_version": "0.24.6",
+  "server_host": "AMD Ryzen 9 9950X3D",
+  "client_host": "P3 through a localhost SSH tunnel",
+  "serving_identity_sha256": "60943e21ff1cc4d11139307510ff738bec556d52b8c32183772d5a8ce22d01da",
+  "session_library_sha256": "070370cf3df7262bc7061e88ab3f645176c8374f58b30e4848bf826f5815c9ca",
+  "loaded_engine_sha256": "13bf3fecc6af90ee6736cdacdb6525150ac5b1a905a4ffb133a14775d7677720",
+  "loaded_tokenizer_sha256": "b222ea20baa24f2374afc54728bd884d1bb5e6e90c26e4a48d753b9f8c4b23ae",
+  "loaded_model_library_sha256": "a09eb17cfce83a502c74c46d150737643734fd8b4cfaa0f1c35047102723a69b",
+  "weights_bump_sha256": "ebc9cdbb8d87327637d0f6a6e997b8375f12666a068439bd8ca0bf17c8a7239a",
+  "server_instance_id": "fec3aa9ee76f4bcca8f4d731c4a891c8",
+  "instance_continuity": "PASS",
+  "task_status": "PASS",
+  "artifact_certification_status": "PASS",
+  "artifact_certification_scope": "Expected loaded serving, model, session-library and supporting bundle identities matched before and after the task; this is serving-artifact identity validation, not full-model numerical certification.",
+  "observed_tool_sequence": [
+    "read_file",
+    "edit",
+    "run_shell_command"
+  ],
+  "harness_elapsed_seconds": 847.95,
+  "edited_file_sha256": "a54fe8eaa0946c12e07b73c8235f88a37185b44e33c41ec20c8d1daeee1cf080",
+  "independent_test_status": "PASS",
+  "private_report_sha256": "b8bae0dba0456c75c2ba8d82d9f9547e372e600d6361ca46da5591543645ed56",
+  "events_sha256": "beadd1c344233ae8d688fe9ff91ba0b266663fe4fc8589e6574525305349c004",
+  "session_sha256": "79f1752fca5d73236e1648015377e850db512ad2483628f750fc7986be6f5afd",
+  "limitations": [
+    "This is one bounded task, not repeated overnight reliability.",
+    "The bundle supports 16K tokens; observed task turns used 7,074 through 7,569 input tokens, not a 16K or 256K input.",
+    "No simultaneous subagents or native mixed batching was certified in this task.",
+    "The full private report, session and event traces are retained on the client host; their local paths and generated values are not published."
+  ]
+}

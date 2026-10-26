@@ -1,0 +1,54 @@
+{
+  "schema": "cke.artifact_harness_result.v1",
+  "status": "PASS",
+  "run_date_utc": "2026-10-26",
+  "source_commit": "a657c51f8c50e6d6bc05372989ce52ec29eb0078",
+  "model": "gemma4-e4b-q4km-32k-tools",
+  "checkpoint_bundle": "pinned generated Q4_K_M Gemma4 E4B tools variant",
+  "capacity_tokens": 32768,
+  "actual_prompt_token_count": "NOT_RETAINED",
+  "request_output_cap_tokens": 256,
+  "sdk": "google-antigravity==0.1.20",
+  "server_host": "AMD Ryzen 9 9950X3D",
+  "client_host": "P3 through a localhost SSH tunnel",
+  "serving_identity_sha256": "251f6b742dbc2915db02a397c1c437c3abe162af0b035eef60a142449023ddfb",
+  "session_library_sha256": "070370cf3df7262bc7061e88ab3f645176c8374f58b30e4848bf826f5815c9ca",
+  "loaded_engine_sha256": "13bf3fecc6af90ee6736cdacdb6525150ac5b1a905a4ffb133a14775d7677720",
+  "loaded_tokenizer_sha256": "b222ea20baa24f2374afc54728bd884d1bb5e6e90c26e4a48d753b9f8c4b23ae",
+  "loaded_model_library_sha256": "999c01e23ff9311362ddcc303695183237744f6b462889b0cf76b0252b9694dc",
+  "weights_bump_sha256": "8706ac92cad15cd974996a5d4d9b17adc3f3cbcfe6804bca4e12af85d1ea3766",
+  "server_instance_id": "90877762c5c046b19ba8c42548664e10",
+  "instance_continuity": "PASS",
+  "elapsed_seconds": 154.807,
+  "case_timeout_seconds": 600,
+  "cases": [
+    {
+      "name": "one_file",
+      "status": "PASS",
+      "observed_tool_calls": 1
+    },
+    {
+      "name": "two_files",
+      "status": "PASS",
+      "observed_tool_calls": 2
+    },
+    {
+      "name": "edit_and_validate",
+      "status": "PASS",
+      "observed_tool_calls": 3,
+      "final_file_sha256": "b8565dbd1194aa966bfa71c163c86a749dc45561e6a89502ba0a5ee7d2418ac6"
+    },
+    {
+      "name": "transient_tool_recovery",
+      "status": "PASS",
+      "observed_tool_calls": 2
+    }
+  ],
+  "private_report_sha256": "5cd63c652a8ac996e6ddadd9dd0e24e5274cf590338a730a5e9983d8c365aa2e",
+  "limitations": [
+    "This is one four-case bounded run, not repeated overnight reliability.",
+    "The generated runtime capacity is 32K tokens; these short tasks do not certify a 32K input.",
+    "No SVG task, cancellation, disconnect, or concurrent-client gate ran in this result.",
+    "The full private report and workspaces are retained on the client host; their local paths and generated values are not published."
+  ]
+}
