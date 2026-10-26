@@ -26,12 +26,12 @@ class NonflashAttentionOperandsTests(unittest.TestCase):
         self.k = np.array([[[0.5, 0.2]], [[-0.1, 0.7]], [[0.3, -0.2]]], dtype=np.float16)
         self.v = np.array([[[0.1, -0.3]], [[0.8, 0.4]], [[-0.2, 0.6]]], dtype=np.float16)
         scores = np.array([
-            self.k[:, 0].astype(np.float64) @ self.q[-1, head].astype(np.float64)
+            self.k[:, 0].astype(np.float64) @ self.q[-1, head].astype(np.float16).astype(np.float64)
             for head in range(2)
         ])
         weights = np.exp(scores - scores.max(axis=1, keepdims=True))
         weights /= weights.sum(axis=1, keepdims=True)
-        output = weights @ self.v[:, 0].astype(np.float64)
+        output = weights.astype(np.float16).astype(np.float64) @ self.v[:, 0].astype(np.float64)
         self.bundle = write_bundle(
             self.root / "bundle", operation="attention_sliding", provider="fixture",
             contract="CK_ATTN_REDUCTION_F16_REGULAR_NOSCALE", runtime=self.runtime,
@@ -89,7 +89,9 @@ class NonflashAttentionOperandsTests(unittest.TestCase):
             self.assertTrue(result["operand_bitwise_equal"][role])
         self.assertEqual(result["physical_keys"], 8)
         self.assertEqual(result["valid_keys"], 3)
-        self.assertLess(result["oracle_vs_fp64"]["output"]["max_abs"], 1e-7)
+        for role in ("scores", "softmax", "value_output_from_captured_softmax", "connected_output"):
+            self.assertLess(result["oracle_vs_f16_gemm"][role]["max_abs"], 1e-7)
+        self.assertGreater(result["oracle_vs_fp64"]["output"]["max_abs"], 1e-6)
 
     def test_batched_query_rows_use_each_absolute_mask_position(self):
         manifest = json.loads(self.bundle.read_text(encoding="utf-8"))
@@ -103,12 +105,14 @@ class NonflashAttentionOperandsTests(unittest.TestCase):
         for row in range(3):
             mask[0, 0, row, :row + 1] = 0
             for head in range(2):
-                logits = self.k[:row + 1, 0].astype(np.float64) @ self.q[row, head].astype(np.float64)
+                logits = (self.k[:row + 1, 0].astype(np.float64) @
+                          self.q[row, head].astype(np.float16).astype(np.float64))
                 weights = np.exp(logits - logits.max())
                 weights /= weights.sum()
                 scores[0, head, row, :row + 1] = logits
                 probabilities[0, head, row, :row + 1] = weights
-                output[row, head] = weights @ self.v[:row + 1, 0].astype(np.float64)
+                output[row, head] = (weights.astype(np.float16).astype(np.float64) @
+                                     self.v[:row + 1, 0].astype(np.float64))
         stem = "kqv_out-0-token-000002-occ-000"
         self._write_capture(f"{stem}.nonflash_q", q, "q")
         self._write_capture(f"{stem}.nonflash_mask", mask, "mask")
@@ -125,7 +129,7 @@ class NonflashAttentionOperandsTests(unittest.TestCase):
         self.assertEqual(result["query_rows"], 3)
         self.assertTrue(all(result["operand_bitwise_equal"].values()))
         self.assertEqual(result["oracle_masked_probability_max_abs"], 0.0)
-        self.assertLess(result["oracle_vs_fp64"]["output"]["max_abs"], 1e-7)
+        self.assertLess(result["oracle_vs_f16_gemm"]["connected_output"]["max_abs"], 1e-7)
         manifest["context"]["segments"] = [1, 2]
         self.bundle.write_text(json.dumps(manifest), encoding="utf-8")
         with self.assertRaisesRegex(BundleError, "segment boundary"):
@@ -153,6 +157,24 @@ class NonflashAttentionOperandsTests(unittest.TestCase):
         path.write_bytes(path.read_bytes()[:-2])
         with self.assertRaisesRegex(BundleError, "capture bytes"):
             compare(self.bundle, self.capture, 2)
+
+    def test_fp16_gemm_stage_metrics_detect_changed_scores_and_probabilities(self):
+        baseline = compare(self.bundle, self.capture, 2)["oracle_vs_f16_gemm"]
+        score_path = self.capture / "kq-0-token-000002-occ-000.bin"
+        scores = np.fromfile(score_path, dtype="<f4")
+        scores[0] += 0.01
+        scores.tofile(score_path)
+        changed_scores = compare(self.bundle, self.capture, 2)["oracle_vs_f16_gemm"]
+        self.assertGreater(changed_scores["scores"]["max_abs"], 0.009)
+        self.assertLess(baseline["scores"]["max_abs"], 1e-7)
+
+        probability_path = self.capture / "kq_soft_max-0-token-000002-occ-000.bin"
+        probabilities = np.fromfile(probability_path, dtype="<f4")
+        probabilities[0] += 0.01
+        probabilities.tofile(probability_path)
+        changed_probabilities = compare(self.bundle, self.capture, 2)["oracle_vs_f16_gemm"]
+        self.assertGreater(changed_probabilities["softmax"]["max_abs"], 0.009)
+        self.assertGreater(changed_probabilities["value_output_from_captured_softmax"]["max_abs"], 1e-4)
 
     def test_rejects_missing_producer_stage(self):
         (self.capture / "kq-0-token-000002-occ-000.bin").unlink()
