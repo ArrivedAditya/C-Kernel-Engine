@@ -52,6 +52,12 @@ def test_tool_result_must_follow_its_call():
     assert assess(trace, [{"cmd": "cat note.txt", "stdout": "cke-123"}], "cke-123") == (False, "event_order")
 
 
+def test_intervening_assistant_message_is_not_a_completed_tool_round_trip():
+    trace = _trace()
+    trace.insert(1, {"type": "AIMessage", "content": "I already saw the result", "tool_calls": []})
+    assert assess(trace, [{"cmd": "cat note.txt", "stdout": "cke-123"}], "cke-123") == (False, "event_order")
+
+
 def _args(tmp_path):
     return argparse.Namespace(run_dir=tmp_path / "run", base_url="http://localhost:19099/v1",
                               model="nemotron-test", expected_serving_identity="a" * 64,

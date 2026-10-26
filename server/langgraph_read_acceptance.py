@@ -42,7 +42,8 @@ def assess(messages: list[dict], calls: list[dict], expected: str) -> tuple[bool
                         if message.get("type") == "ToolMessage"]
     if (len(call_positions) != 1 or len(result_positions) != 1
             or messages[call_positions[0]].get("type") != "AIMessage"
-            or not call_positions[0] < result_positions[0] < len(messages) - 1):
+            or result_positions[0] != call_positions[0] + 1
+            or len(messages) - 1 != result_positions[0] + 1):
         return False, "event_order"
     results = [messages[result_positions[0]]]
     if not call_id or len(results) != 1 or results[0].get("tool_call_id") != call_id:
