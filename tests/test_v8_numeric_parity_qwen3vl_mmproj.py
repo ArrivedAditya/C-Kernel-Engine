@@ -75,6 +75,31 @@ class NumericParityQwen3VLMmprojV8Tests(unittest.TestCase):
         attention = npv8._normalize_ck_hidden_dump_tensor_for_llama(values, "attn_pregate@0", layout)
         self.assertEqual(list(attention), list(canonical))
 
+    def test_qkv_capture_uses_declared_q_and_kv_head_counts(self) -> None:
+        layout = {"config": {"num_heads": 4, "num_kv_heads": 2, "head_dim": 2}}
+        q = npv8._normalize_ck_hidden_dump_tensor_for_llama(
+            array("f", range(16)), "q_proj@0", layout,
+        )
+        self.assertEqual(list(q), [0, 1, 4, 5, 8, 9, 12, 13, 2, 3, 6, 7, 10, 11, 14, 15])
+        v = npv8._normalize_ck_hidden_dump_tensor_for_llama(
+            array("f", range(12)), "v_proj@0", layout,
+        )
+        self.assertEqual(list(v), [0, 1, 6, 7, 2, 3, 8, 9, 4, 5, 10, 11])
+
+    def test_qkv_capture_rejects_missing_or_malformed_geometry(self) -> None:
+        values = array("f", range(12))
+        bad_layouts = (
+            {"config": {"head_dim": 2}},
+            {"config": {"num_heads": 0, "head_dim": 2}},
+            {"config": {"num_heads": True, "head_dim": 2}},
+            {"config": {"num_heads": 2, "head_dim": 2.5}},
+            {"config": {"num_heads": 2, "head_dim": 5}},
+        )
+        for layout in bad_layouts:
+            with self.subTest(layout=layout):
+                with self.assertRaisesRegex(RuntimeError, "capture layout|head-major capture"):
+                    npv8._normalize_ck_hidden_dump_tensor_for_llama(values, "q_proj@0", layout)
+
     def test_smart_resize_half_step_matches_independent_oracle_geometry(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             image = Path(tmpdir) / "square.ppm"

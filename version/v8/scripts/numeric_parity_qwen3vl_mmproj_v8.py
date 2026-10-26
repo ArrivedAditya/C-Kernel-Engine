@@ -820,10 +820,15 @@ def _ck_head_major_to_llama_token_major(
     head_dim: int,
 ) -> array:
     if num_heads <= 0 or head_dim <= 0:
-        return data
+        raise RuntimeError(
+            f"cannot canonicalize head-major capture with num_heads={num_heads}, head_dim={head_dim}"
+        )
     row_width = num_heads * head_dim
-    if row_width <= 0 or len(data) % row_width != 0:
-        return data
+    if not data or len(data) % row_width != 0:
+        raise RuntimeError(
+            f"head-major capture extent {len(data)} is not a positive multiple of "
+            f"num_heads={num_heads} * head_dim={head_dim}"
+        )
     num_tokens = len(data) // row_width
     out = array("f", [0.0]) * len(data)
     for token in range(num_tokens):
@@ -833,6 +838,17 @@ def _ck_head_major_to_llama_token_major(
             dst = token_base + head * head_dim
             out[dst:dst + head_dim] = data[src:src + head_dim]
     return out
+
+
+def _required_capture_dimension(config: dict[str, Any], *names: str) -> int:
+    for name in names:
+        if name not in config:
+            continue
+        value = config[name]
+        if type(value) is not int or value <= 0:
+            raise RuntimeError(f"capture layout requires positive integer {name}, got {value!r}")
+        return value
+    raise RuntimeError(f"capture layout is missing required dimension: {', '.join(names)}")
 
 
 def _normalize_ck_hidden_dump_tensor_for_llama(
@@ -850,11 +866,11 @@ def _normalize_ck_hidden_dump_tensor_for_llama(
         )
     if base_name not in {"q_proj", "k_proj", "v_proj", "qk_norm_q", "qk_norm_k", "rope_q", "rope_k", "attn_pregate", "attn_out_head_major"}:
         return data
-    head_dim = _config_int(config, "head_dim", "aligned_head_dim", "rotary_dim")
+    head_dim = _required_capture_dimension(config, "head_dim", "aligned_head_dim", "rotary_dim")
     if base_name in {"q_proj", "qk_norm_q", "rope_q", "attn_pregate", "attn_out_head_major"}:
-        heads = _config_int(config, "num_heads", "vision_num_heads")
+        heads = _required_capture_dimension(config, "num_heads", "vision_num_heads")
     else:
-        heads = _config_int(config, "num_kv_heads", "vision_num_kv_heads", "num_heads", "vision_num_heads")
+        heads = _required_capture_dimension(config, "num_kv_heads", "vision_num_kv_heads", "num_heads", "vision_num_heads")
     return _ck_head_major_to_llama_token_major(data, num_heads=heads, head_dim=head_dim)
 
 
