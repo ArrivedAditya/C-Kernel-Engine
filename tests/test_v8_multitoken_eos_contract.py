@@ -1457,8 +1457,13 @@ class MultitokenEOSContractTests(unittest.TestCase):
                  },
              ), \
              mock.patch.object(self.runner.first_token.compare_first_token_logits_v7, "compare_logits", return_value=comparison), \
-             mock.patch.object(self.runner, "_decode_topk", return_value=[]):
+             mock.patch.object(self.runner, "_decode_topk", return_value=[]), \
+             mock.patch.object(self.runner.first_token, "_sha256_file", return_value="f" * 64):
             report = self.runner.run_multimodal_multitoken_parity(args)
+            inputs["separate_prefixes"] = True
+            inputs["prefix_provenance"] = {"encoder_prefix_status": "fail"}
+            inputs["llama_prefix_path"] = Path("oracle-prefix.f32")
+            independent_report = self.runner.run_multimodal_multitoken_parity(args)
 
         self.assertEqual(report["status"], "pass")
         self.assertFalse(report["execution_modes"]["ck_strict_parity"])
@@ -1475,6 +1480,88 @@ class MultitokenEOSContractTests(unittest.TestCase):
             self.runner._logits_sha256(np.zeros(3, dtype=np.float32)),
         )
         self.assertEqual(library.decode_calls, 0)
+        self.assertEqual(independent_report["status"], "fail")
+        self.assertFalse(independent_report["pass"])
+        self.assertEqual(independent_report["comparison_scope"], "independent_image_to_multitoken_logits")
+        self.assertEqual(independent_report["encoder_prefix_status"], "fail")
+
+    def test_independent_prefix_never_inherits_shared_prefix_pass(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ck_prefix = root / "ck.f32"
+            oracle_prefix = root / "oracle.f32"
+            ck_prefix.write_bytes(array("f", [1.0] * 4).tobytes())
+            oracle_prefix.write_bytes(array("f", [2.0] * 4).tobytes())
+            bridge = {
+                "decoder_runtime": {"gguf": str(root / "model.gguf")},
+                "decoder_context_len": 32,
+                "prefix_tokens": 1,
+                "prefix_dump_path": str(ck_prefix),
+            }
+            args = Namespace(
+                bridge_report=root / "bridge.json", workdir=root / "work",
+                reuse_bridge_decoder_runtime=False,
+                reuse_bridge_decoder_runtime_exact=False,
+                ck_runtime_so=None, ck_runtime_manifest_map=None,
+                ctx_len=32, max_new_tokens=2, prefix_f32=None,
+                llama_prefix_f32=oracle_prefix,
+                encoder_prefix_report=root / "encoder.json",
+                prefix_row_dim=None, prefix_grid_x=None, prefix_grid_y=None,
+                prefix_text_pos=None, ck_engine_so=None,
+            )
+            runtime = {"embed_dim": 4, "input_embed_dim": 4,
+                       "context_length": 32, "so_path": root / "decoder.so"}
+            with mock.patch.object(self.runner.first_token, "_load_bridge_report", return_value=bridge), \
+                 mock.patch.object(self.runner.first_token.bridge_runner_v8, "_prepare_decoder_runtime", return_value=runtime), \
+                 mock.patch.object(self.runner, "GGUFTokenizer") as tokenizer_cls, \
+                 mock.patch.object(self.runner.first_token, "_resolve_prompt_token_segments", return_value=(None, [1], [2], {})), \
+                 mock.patch.object(self.runner.first_token, "_verify_bridge_prefix_binding"), \
+                 mock.patch.object(self.runner.first_token, "_verify_encoder_prefix_report", return_value={"encoder_prefix_status": "fail"}) as verify:
+                tokenizer_cls.from_gguf.return_value = object()
+                inputs = self.runner._prepare_inputs(args)
+            self.assertTrue(inputs["separate_prefixes"])
+            self.assertEqual(inputs["llama_prefix_path"], oracle_prefix)
+            verify.assert_called_once()
+            self.assertEqual(verify.call_args.args[1:3], (ck_prefix, oracle_prefix))
+
+            args.llama_prefix_f32 = ck_prefix
+            with mock.patch.object(self.runner.first_token, "_load_bridge_report", return_value=bridge), \
+                 mock.patch.object(self.runner.first_token.bridge_runner_v8, "_prepare_decoder_runtime", return_value=runtime), \
+                 mock.patch.object(self.runner, "GGUFTokenizer") as tokenizer_cls, \
+                 mock.patch.object(self.runner.first_token, "_resolve_prompt_token_segments", return_value=(None, [1], [2], {})):
+                tokenizer_cls.from_gguf.return_value = object()
+                with self.assertRaisesRegex(ValueError, "distinct prefix files"):
+                    self.runner._prepare_inputs(args)
+
+            args.llama_prefix_f32 = oracle_prefix
+            args.encoder_prefix_report = None
+            with mock.patch.object(self.runner.first_token, "_load_bridge_report", return_value=bridge), \
+                 mock.patch.object(self.runner.first_token.bridge_runner_v8, "_prepare_decoder_runtime") as prepare:
+                with self.assertRaisesRegex(ValueError, "requires both"):
+                    self.runner._prepare_inputs(args)
+                prepare.assert_not_called()
+
+            self.assertEqual(self.runner._trajectory_verdict(
+                separate_prefixes=True, encoder_prefix_status="fail",
+                first_divergence=None, mode_compatible=True,
+            ), ("fail", False))
+            self.assertEqual(self.runner._trajectory_verdict(
+                separate_prefixes=True, encoder_prefix_status="pass",
+                first_divergence=None, mode_compatible=True,
+            ), ("incomplete", False))
+
+    def test_trajectory_rejects_changed_prefix_after_oracle_replay(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            prefix = Path(tmp) / "oracle.f32"
+            prefix.write_bytes(array("f", [1.0, 2.0]).tobytes())
+            inputs = {
+                "llama_prefix_path": prefix,
+                "llama_prefix_sha256": self.runner.first_token._sha256_file(prefix),
+            }
+            self.runner._verify_prefix_inputs_unchanged(inputs)
+            prefix.write_bytes(array("f", [2.0, 1.0]).tobytes())
+            with self.assertRaisesRegex(RuntimeError, "llama_prefix_path changed"):
+                self.runner._verify_prefix_inputs_unchanged(inputs)
 
     def test_execution_evidence_marks_hidden_state_capture_as_diagnostic(self) -> None:
         args = Namespace(hidden_state_step=0)
