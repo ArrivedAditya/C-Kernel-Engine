@@ -1,0 +1,60 @@
+{
+  "schema": "cke.tts.accessibility_technical_text.v1",
+  "description": "Retained source text for technical speech evaluation. Spoken expansions are optional, explicit inputs, not silent rewrites.",
+  "cases": [
+    {
+      "id": "plain_update",
+      "category": "normal_prose",
+      "source_text": "Hello, this is a short update from CKE.",
+      "critical_facts": ["CKE"]
+    },
+    {
+      "id": "literal_path_signed",
+      "category": "path_and_signed_numbers",
+      "source_text": "Read /home/antshiv/Workspace/C-Kernel-Engine/server_summary.txt. The value is -3.5, not +3.5.",
+      "critical_facts": ["/home/antshiv/Workspace/C-Kernel-Engine/server_summary.txt", "-3.5", "+3.5"]
+    },
+    {
+      "id": "signed_numbers",
+      "category": "signed_numbers",
+      "source_text": "The value is -3.5, not +3.5.",
+      "spoken_expansion": "The value is minus three point five, not plus three point five.",
+      "expansion_reason": "Speak signs and decimal point explicitly while preserving both quantities and the negation.",
+      "spoken_critical_facts": ["minus three point five", "plus three point five", "not"],
+      "critical_facts": ["-3.5", "+3.5", "not"]
+    },
+    {
+      "id": "decimal_latency",
+      "category": "decimals",
+      "source_text": "Latency is 0.25 seconds, not 2.5 seconds.",
+      "spoken_expansion": "Latency is zero point two five seconds, not two point five seconds.",
+      "expansion_reason": "Distinguish the two decimal magnitudes when spoken.",
+      "spoken_critical_facts": ["zero point two five", "two point five", "not"],
+      "critical_facts": ["0.25", "2.5", "not"]
+    },
+    {
+      "id": "date_build",
+      "category": "dates",
+      "source_text": "The build finished on October 26, 2026.",
+      "critical_facts": ["October 26, 2026"]
+    },
+    {
+      "id": "http_error",
+      "category": "error_codes",
+      "source_text": "The request failed with HTTP 503, then recovered.",
+      "critical_facts": ["HTTP 503", "recovered"]
+    },
+    {
+      "id": "command_filename",
+      "category": "commands_and_filenames",
+      "source_text": "Run git status --short, then open server_summary.txt.",
+      "critical_facts": ["git status --short", "server_summary.txt"]
+    },
+    {
+      "id": "normal_paragraph",
+      "category": "normal_prose",
+      "source_text": "The server is ready. Please read the latest summary aloud.",
+      "critical_facts": ["server", "summary"]
+    }
+  ]
+}

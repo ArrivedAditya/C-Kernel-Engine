@@ -743,6 +743,10 @@ TEST_SUITES = {
         "Qwen3-TTS 0.6B CustomVoice Pinned Oracle Contract", "inference",
         ROOT / "tests" / "test_v8_qwen3_tts_oracle_capture.py",
     ),
+    "tts_qwen3_accessibility_reference_contract": TestSuite(
+        "Qwen3-TTS Technical Text and Reference Stop Contract", "inference",
+        ROOT / "tests" / "test_v8_qwen3_tts_accessibility_reference_contract.py",
+    ),
     "tts_qwen3_customvoice_generated_projection": TestSuite(
         "Qwen3-TTS Generated Text Projection", "inference",
         ROOT / "tests" / "test_v8_qwen3_tts_projection.py",
