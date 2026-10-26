@@ -1048,8 +1048,8 @@ artifact boundary as of 25 October 2026. Consult the
         <td>Artifact-bound read → edit → test → summary tasks and HTTP recovery on the tested bundle.</td>
         <td><strong>Bounded PASS.</strong> Use its exact resolved Qwen Code serving variant and a context profile no larger than the compiled runtime. Other Qwen artifacts require their own run.</td></tr>
       <tr><td>Gemma4 E4B, explicit tools variant</td><td><a href="https://antigravity.google/docs/sdk/local-models/">Antigravity SDK</a></td>
-        <td>Four bounded local SDK tasks, including edit/validation and tool-error recovery, on a 2,048-token bundle.</td>
-        <td><strong>Bounded PASS.</strong> The chat-only variant rejects tools. Larger contexts and overnight reliability are separate gates.</td></tr>
+        <td>Four bounded local SDK tasks passed on the historical 2K bundle and on one identified 32K-capacity bundle on 26 October 2026. The fresh run took 154.8 seconds; see <code>version/v8/reports/gemma4_antigravity_32k_20261026.json</code> for per-case evidence.</td>
+        <td><strong>Bounded PASS for short tasks.</strong> The 32K build capacity is not a 32K-input result. The chat-only variant rejects tools; overnight reliability remains untested.</td></tr>
       <tr><td>Muse Glimmer</td><td>Muse Code is the intended family client; a generic OpenAI-compatible client is useful for diagnosis.</td>
         <td>A short CKE tool call and correlated continuation passed. A complete 32K Muse Code task has not passed.</td>
         <td><strong>Not certified.</strong> Do not treat an installed Muse Code CLI or rendered template as proof that it targets this CKE endpoint.</td></tr>
