@@ -645,9 +645,11 @@ void moe_swiglu_expert_forward_pytorch_bf16_storage(
     }
 }
 
-/* oneDNN 3.12 uses the same BF16 projection reduction as the pinned
- * publisher runtime. CKE's tensor staging is caller-owned; oneDNN still
- * creates descriptors/primitives and uses library-managed scratchpad. */
+/* Group all rows routed to an expert before its oneDNN projections. PyTorch's
+ * expert implementation changes reduction order when M changes, so invoking
+ * M=1 for every row is not numerically equivalent to a multirow prefill.
+ * CKE's tensor staging is caller-owned; oneDNN still creates
+ * descriptors/primitives and uses library-managed scratchpad. */
 int moe_swiglu_expert_forward_pytorch_onednn_3_12_bf16_storage_workspace(
     const float *hidden, const int *indices, const float *routing_weights,
     const uint16_t *expert_gate, const uint16_t *expert_up,
@@ -661,74 +663,99 @@ int moe_swiglu_expert_forward_pytorch_onednn_3_12_bf16_storage_workspace(
         n_experts <= 0 || top_k <= 0 || top_k > n_experts ||
         hidden_dim % 32 || intermediate_dim % 32 ||
         (uintptr_t)workspace % 64 ||
-        (size_t)intermediate_dim > SIZE_MAX / 16u ||
+        (size_t)intermediate_dim > (SIZE_MAX - 8u) / 16u ||
         (size_t)hidden_dim >
-            (SIZE_MAX - 16u * (size_t)intermediate_dim) / 8u ||
+            (SIZE_MAX - 8u - 16u * (size_t)intermediate_dim) / 12u ||
         (size_t)rows > SIZE_MAX / (size_t)hidden_dim / sizeof(float) ||
         (size_t)n_experts > SIZE_MAX /
-            ((size_t)intermediate_dim * (size_t)hidden_dim) ||
-        workspace_bytes < 8u * (size_t)hidden_dim +
-                          16u * (size_t)intermediate_dim) {
+            ((size_t)intermediate_dim * (size_t)hidden_dim)) {
         return -1;
     }
+    const size_t h = (size_t)hidden_dim;
+    const size_t i = (size_t)intermediate_dim;
+    const size_t r = (size_t)rows;
+    const size_t per_row = 12u * h + 16u * i + 8u;
+    if (r > (SIZE_MAX - 8u * i) / per_row ||
+        workspace_bytes < r * per_row + 8u * i) return -1;
     for (int r = 0; r < rows; ++r) {
         for (int slot = 0; slot < top_k; ++slot) {
-            const int expert = indices[(size_t)r * (size_t)top_k + (size_t)slot];
-            if (expert < 0 || expert >= n_experts) return -2;
+            const size_t route = (size_t)r * (size_t)top_k + (size_t)slot;
+            const int expert = indices[route];
+            if (expert < 0 || expert >= n_experts ||
+                !isfinite(routing_weights[route])) return -2;
+            for (int prior = 0; prior < slot; ++prior) {
+                if (indices[(size_t)r * (size_t)top_k + (size_t)prior] == expert)
+                    return -2;
+            }
         }
     }
 
     uint8_t *cursor = (uint8_t *)workspace;
-    uint16_t *hidden_input = (uint16_t *)cursor;
-    cursor += 2u * (size_t)hidden_dim;
-    uint16_t *intermediate_input = (uint16_t *)cursor;
-    cursor += 2u * (size_t)intermediate_dim;
-    uint16_t *intermediate_output = (uint16_t *)cursor;
-    cursor += 2u * (size_t)intermediate_dim;
-    uint16_t *hidden_output = (uint16_t *)cursor;
-    cursor += 2u * (size_t)hidden_dim;
-    float *projection = (float *)cursor;
-    cursor += 2u * (size_t)intermediate_dim * sizeof(float);
-    float *activation = (float *)cursor;
-    cursor += (size_t)intermediate_dim * sizeof(float);
-    float *expert_output = (float *)cursor;
+    float *group_input = (float *)cursor; cursor += 4u * r * h;
+    float *gate_output = (float *)cursor; cursor += 4u * r * i;
+    float *up_output = (float *)cursor; cursor += 4u * r * i;
+    float *projection = (float *)cursor; cursor += 8u * i;
+    float *activation = (float *)cursor; cursor += 4u * r * i;
+    float *expert_output = (float *)cursor; cursor += 4u * r * h;
+    const size_t stage_width = h > i ? h : i;
+    uint16_t *stage_input = (uint16_t *)cursor;
+    cursor += 2u * r * stage_width;
+    uint16_t *stage_output = (uint16_t *)cursor;
+    cursor += 2u * r * stage_width;
+    int *group_rows = (int *)cursor; cursor += 4u * r;
+    int *group_slots = (int *)cursor;
 
-    const size_t up_stride = (size_t)intermediate_dim * (size_t)hidden_dim;
-    const size_t down_stride = (size_t)hidden_dim * (size_t)intermediate_dim;
-    memset(output, 0, (size_t)rows * (size_t)hidden_dim * sizeof(float));
-    for (int r = 0; r < rows; ++r) {
-        const float *x = hidden + (size_t)r * (size_t)hidden_dim;
-        float *y = output + (size_t)r * (size_t)hidden_dim;
-        for (int e = 0; e < n_experts; ++e) {
-            for (int slot = 0; slot < top_k; ++slot) {
-                const size_t route = (size_t)r * (size_t)top_k + (size_t)slot;
-                if (indices[route] != e) continue;
-                gemm_nt_bf16_pytorch_onednn_3_12_brgemm_bf16_storage_workspace(
-                    x, expert_gate + (size_t)e * up_stride, NULL,
-                    projection, 1, intermediate_dim, hidden_dim,
-                    hidden_input, 2u * (size_t)hidden_dim,
-                    intermediate_output, 2u * (size_t)intermediate_dim,
-                    NULL, 0);
-                gemm_nt_bf16_pytorch_onednn_3_12_brgemm_bf16_storage_workspace(
-                    x, expert_up + (size_t)e * up_stride, NULL,
-                    projection + intermediate_dim, 1, intermediate_dim,
-                    hidden_dim, hidden_input, 2u * (size_t)hidden_dim,
-                    intermediate_output, 2u * (size_t)intermediate_dim,
-                    NULL, 0);
-                swiglu_forward_pytorch_bf16_storage(
-                    projection, activation, 1, intermediate_dim);
-                gemm_nt_bf16_pytorch_onednn_3_12_brgemm_bf16_storage_workspace(
-                    activation, expert_down + (size_t)e * down_stride, NULL,
-                    expert_output, 1, hidden_dim, intermediate_dim,
-                    intermediate_input, 2u * (size_t)intermediate_dim,
-                    hidden_output, 2u * (size_t)hidden_dim,
-                    NULL, 0);
-                const float route_weight = routing_weights[route];
-                for (int h = 0; h < hidden_dim; ++h) {
-                    const float weighted = ck_moe_bf16_round(
-                        expert_output[h] * route_weight);
-                    y[h] = ck_moe_bf16_round(y[h] + weighted);
-                }
+    const size_t up_stride = i * h;
+    const size_t down_stride = h * i;
+    memset(output, 0, r * h * sizeof(float));
+    for (int e = 0; e < n_experts; ++e) {
+        int count = 0;
+        /* Slot-major order matches torch.where on the publisher expert mask. */
+        for (int slot = 0; slot < top_k; ++slot) {
+            for (int row = 0; row < rows; ++row) {
+                if (indices[(size_t)row * (size_t)top_k + (size_t)slot] != e)
+                    continue;
+                group_rows[count] = row;
+                group_slots[count] = slot;
+                memcpy(group_input + (size_t)count * h,
+                       hidden + (size_t)row * h, h * sizeof(float));
+                ++count;
+            }
+        }
+        if (!count) continue;
+        const size_t grouped = (size_t)count;
+        gemm_nt_bf16_pytorch_onednn_3_12_brgemm_bf16_storage_workspace(
+            group_input, expert_gate + (size_t)e * up_stride, NULL,
+            gate_output, count, intermediate_dim, hidden_dim,
+            stage_input, 2u * grouped * h,
+            stage_output, 2u * grouped * i, NULL, 0);
+        gemm_nt_bf16_pytorch_onednn_3_12_brgemm_bf16_storage_workspace(
+            group_input, expert_up + (size_t)e * up_stride, NULL,
+            up_output, count, intermediate_dim, hidden_dim,
+            stage_input, 2u * grouped * h,
+            stage_output, 2u * grouped * i, NULL, 0);
+        for (int row = 0; row < count; ++row) {
+            memcpy(projection, gate_output + (size_t)row * i, i * sizeof(float));
+            memcpy(projection + i, up_output + (size_t)row * i,
+                   i * sizeof(float));
+            swiglu_forward_pytorch_bf16_storage(
+                projection, activation + (size_t)row * i, 1, intermediate_dim);
+        }
+        gemm_nt_bf16_pytorch_onednn_3_12_brgemm_bf16_storage_workspace(
+            activation, expert_down + (size_t)e * down_stride, NULL,
+            expert_output, count, hidden_dim, intermediate_dim,
+            stage_input, 2u * grouped * i,
+            stage_output, 2u * grouped * h, NULL, 0);
+        for (int row = 0; row < count; ++row) {
+            const int owner = group_rows[row];
+            const int slot = group_slots[row];
+            const float route_weight = routing_weights[
+                (size_t)owner * (size_t)top_k + (size_t)slot];
+            float *y = output + (size_t)owner * h;
+            for (int channel = 0; channel < hidden_dim; ++channel) {
+                const float weighted = ck_moe_bf16_round(
+                    expert_output[(size_t)row * h + (size_t)channel] * route_weight);
+                y[channel] = ck_moe_bf16_round(y[channel] + weighted);
             }
         }
     }
