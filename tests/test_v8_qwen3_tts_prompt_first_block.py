@@ -40,7 +40,8 @@ def expected_weight_shapes(graph):
     return shapes
 
 
-def compile_entry(folder: Path, graph: dict, shapes: dict):
+def compile_entry(folder: Path, graph: dict, shapes: dict,
+                  *, extra_sources: tuple[str, ...] = ()):
     folder.mkdir(parents=True, exist_ok=True)
     circuit = folder / "circuit.json"
     circuit.write_text(json.dumps(graph), encoding="utf-8")
@@ -99,7 +100,7 @@ def compile_entry(folder: Path, graph: dict, shapes: dict):
             "src/kernels/attention_flash_true.c", "src/ck_threadpool.c",
             "src/ckernel_strict.c",
             "src/kernels/attention_decode_append_checked.c",
-            "src/kernels/runtime_extent.c")),
+            "src/kernels/runtime_extent.c", *extra_sources)),
         "-I", str(ROOT / "include"), "-lm", "-ldl", "-lpthread",
         "-o", str(library),
     ], check=True, capture_output=True, text=True)
