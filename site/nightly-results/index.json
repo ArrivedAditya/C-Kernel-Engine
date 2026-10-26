@@ -1,6 +1,22 @@
 {
-  "updated": "2026-10-25T10:16:17.961008Z",
+  "updated": "2026-10-26T09:17:24.468047Z",
   "reports": [
+    {
+      "date": "2026-10-26",
+      "file": "report-2026-10-26.json",
+      "summary": {
+        "total": 292,
+        "passed": 272,
+        "failed": 0,
+        "skipped": 20,
+        "timeout": 0,
+        "sub_tests_total": 1878,
+        "sub_tests_passed": 1725,
+        "sub_tests_failed": 35,
+        "sub_tests_not_tested": 118
+      },
+      "duration_sec": 5794.02724981308
+    },
     {
       "date": "2026-10-25",
       "file": "report-2026-10-25.json",
