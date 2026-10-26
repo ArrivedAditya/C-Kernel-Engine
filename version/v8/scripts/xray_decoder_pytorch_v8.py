@@ -643,6 +643,10 @@ def capture_pytorch(
                     captured[layer]["moe_router_logits_full"] = (
                         logits[0].cpu().contiguous()
                     )
+                    captured[layer]["moe_selected_experts_full"] = (
+                        output[2].reshape(hidden.shape[1], -1)
+                        .float().cpu().contiguous()
+                    )
                     captured[layer]["moe_routing_weights_full"] = (
                         output[1].reshape(hidden.shape[1], -1)
                         .float().cpu().contiguous()
@@ -825,9 +829,14 @@ def capture_ck(
         if weights is None:
             raise RuntimeError(f"{path} has no paired routing weights")
         top_k = int(weights["shape"][-1])
-        selected = _selected_experts_last(
-            np.fromfile(path, dtype=np.int32), len(token_ids), top_k
-        )
+        all_selected = np.fromfile(path, dtype=np.int32)
+        selected = _selected_experts_last(all_selected, len(token_ids), top_k)
+        if (layer == mla_replay_layer
+                and all_selected.size == len(token_ids) * top_k):
+            tensors[layer]["moe_selected_experts_full"] = _write_tensor(
+                output_dir / f"layer_{layer:03d}_moe_selected_experts_full.f32",
+                all_selected.reshape(len(token_ids), top_k),
+            )
         tensors[layer]["moe_selected_experts"] = _write_tensor(
             output_dir / f"layer_{layer:03d}_moe_selected_experts.f32",
             selected,

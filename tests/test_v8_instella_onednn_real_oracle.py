@@ -74,14 +74,15 @@ def _run_child(library: Path, report_path: Path) -> None:
     counter.ck_alloc_counter_calls.restype = ctypes.c_ulonglong
     counter.ck_alloc_counter_bytes.restype = ctypes.c_ulonglong
 
-    workspace_bytes = 8 * h + 16 * i
+    workspace_bytes = rows * (12 * h + 16 * i + 8) + 8 * i
     raw = np.empty(workspace_bytes + 64, dtype=np.uint8)
     workspace = (raw.ctypes.data + 63) & ~63
     output = np.full((rows, h), -777, dtype=np.float32)
 
-    def invoke(function, count=rows, weights=down_bits):
+    def invoke(function, count=rows, weights=down_bits,
+               selected=indices, route_weights=routing):
         return function(
-            hidden.ctypes.data, indices.ctypes.data, routing.ctypes.data,
+            hidden.ctypes.data, selected.ctypes.data, route_weights.ctypes.data,
             gate_bits.ctypes.data, up_bits.ctypes.data, weights.ctypes.data,
             output.ctypes.data, count, h, i, experts, top_k,
             workspace, workspace_bytes,
@@ -138,6 +139,13 @@ def _run_child(library: Path, report_path: Path) -> None:
     assert np.array_equal(full_output, isolated), "rowwise BF16 oracle mismatch"
     assert np.array_equal(full_output, grouped), "grouped multirow BF16 oracle mismatch"
 
+    reversed_indices = np.ascontiguousarray(indices[:, ::-1])
+    reversed_routing = np.ascontiguousarray(routing[:, ::-1])
+    output.fill(-777)
+    assert invoke(run, selected=reversed_indices,
+                  route_weights=reversed_routing) == 0
+    assert np.array_equal(output, grouped), "route-slot permutation changed grouped output"
+
     output.fill(-777)
     assert invoke(run, count=1) == 0
     assert np.array_equal(output[0], isolated[0]), "single-row BF16 oracle mismatch"
@@ -165,6 +173,7 @@ def _run_child(library: Path, report_path: Path) -> None:
         "rowwise_multirow_total": full_output.size,
         "grouped_multirow_exact": full_output.size,
         "grouped_multirow_total": full_output.size,
+        "slot_permutation_exact": full_output.size,
         "perturbation_changed_elements": changed,
         "cke_staging_workspace_bytes": workspace_bytes,
         "backend_allocation_profile": {

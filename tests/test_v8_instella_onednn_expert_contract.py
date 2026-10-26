@@ -19,7 +19,10 @@ class InstellaOneDNNExpertContractTests(unittest.TestCase):
             data["constraints"]["source_hash"],
             "80afa71049cd69a3df32adcccb623b12cd7baa22",
         )
-        self.assertEqual(data["scratch"][0]["size_bytes"], "8 * H + 16 * I")
+        self.assertEqual(
+            data["scratch"][0]["size_bytes"],
+            "R * (12 * H + 16 * I + 8) + 8 * I",
+        )
         self.assertEqual(data["scratch"][0]["alignment"], 64)
         self.assertEqual(
             data["impl"]["function"],
