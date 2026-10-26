@@ -138,7 +138,9 @@ class DecoderPyTorchXRayTests(unittest.TestCase):
                 return {"logits": [np.asarray([1.0], dtype=np.float32)]}
 
             with mock.patch.object(MODULE, "load_ck_greedy_trajectory", side_effect=capture):
-                tensors, _ = MODULE.capture_ck(root, [10, 11], root / "ck")
+                tensors, _ = MODULE.capture_ck(
+                    root, [10, 11], root / "ck", mla_replay_layer=5
+                )
             np.testing.assert_array_equal(
                 np.fromfile(tensors[5]["moe_selected_experts"]["path"], dtype=np.float32),
                 [5, 2],
@@ -146,6 +148,11 @@ class DecoderPyTorchXRayTests(unittest.TestCase):
             np.testing.assert_array_equal(
                 np.fromfile(tensors[5]["moe_routing_weights"]["path"], dtype=np.float32),
                 np.asarray([.3, .4], dtype=np.float32),
+            )
+            np.testing.assert_array_equal(
+                np.fromfile(tensors[5]["moe_selected_experts_full"]["path"], dtype=np.float32)
+                .reshape(2, 2),
+                [[9, 1], [5, 2]],
             )
 
     def test_router_comparison_binds_weights_to_expert_ids(self) -> None:

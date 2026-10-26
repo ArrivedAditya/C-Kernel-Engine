@@ -1582,6 +1582,12 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_instella_onednn_real_oracle.py",
         timeout_sec=180,
     ),
+    "v8_instella_onednn_grouping_oracle": TestSuite(
+        "Instella Pinned Grouped-Row Expert Oracle",
+        "inference",
+        ROOT / "tests" / "test_v8_instella_onednn_grouping_oracle.py",
+        timeout_sec=180,
+    ),
     "v8_instella_onednn_generated_replay": TestSuite(
         "Instella Generated oneDNN Expert Replay",
         "inference",

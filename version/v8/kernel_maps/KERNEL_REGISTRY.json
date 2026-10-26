@@ -59016,8 +59016,8 @@
           }
         ]
       },
-      "notes": "Experimental diagnostic provider. Pinned oneDNN 3.12 BF16 expert projection reduction with publisher BF16 stage/weighted accumulation. Exactness depends on shape, row grouping, ISA, and OpenMP threads. The three-token normal generated Instella run differs at layer-2 routed output (6134/6144 exact); it does not certify multirow prefill. Requires caller-owned 64-byte aligned workspace. The generated-call wrapper hard-fails on invalid routing or workspace; direct native callers can use the status-returning workspace function. The 8*H+16*I workspace bounds CKE staging only; oneDNN allocates descriptors, primitives, and library scratchpad. The pinned real-backend oracle reports cold/warm malloc-family requests.",
-      "numerical_contract": "moe_expert_pytorch_onednn_3_12_bf16_stages_fp32_route_bf16_accum",
+      "notes": "Experimental diagnostic provider. Rows routed to each expert execute together through pinned oneDNN 3.12 BF16 gate, up, and down projections, preserving publisher row grouping and BF16 stage/weighted accumulation. A pinned three-token Ryzen generated replay is exact through layer 2, but full-model logits still diverge. Exactness remains artifact-, shape-, ISA-, and thread-specific. Requires caller-owned 64-byte aligned workspace and unique selected expert IDs per row. The generated-call wrapper hard-fails on invalid routing or workspace; direct native callers can use the status-returning workspace function. R*(12*H+16*I+8)+8*I bounds CKE staging only; a 32K-row build reserves about 1.54 GB, and oneDNN allocations are additional.",
+      "numerical_contract": "moe_expert_pytorch_onednn_3_12_grouped_rows_bf16_stages_fp32_route_bf16_accum",
       "scratch": [
         {
           "name": "workspace",
@@ -59025,8 +59025,8 @@
           "alignment": 64,
           "lifetime": "kernel_call",
           "size_resolution": "required",
-          "size_bytes": "8 * H + 16 * I",
-          "desc": "Planner-owned CKE BF16 projection staging and FP32 expert intermediates only; does not include oneDNN allocations or scratchpad."
+          "size_bytes": "R * (12 * H + 16 * I + 8) + 8 * I",
+          "desc": "Planner-owned upper bound for grouped-row BF16 staging, FP32 expert intermediates, and row/slot indices; does not include oneDNN allocations or scratchpad."
         }
       ],
       "constraints": {
@@ -59041,7 +59041,7 @@
       "selection": {
         "status": "candidate",
         "priority": 180,
-        "equivalence_group": "moe_expert_pytorch_onednn_3_12_bf16_stages_fp32_route_bf16_accum",
+        "equivalence_group": "moe_expert_pytorch_onednn_3_12_grouped_rows_bf16_stages_fp32_route_bf16_accum",
         "phases": [
           "prefill",
           "decode"
@@ -59053,10 +59053,11 @@
           "tests/test_v8_instella_onednn_expert_contract.py"
         ],
         "asset_backed": [
-          "Pinned Ryzen same-input layer-2 routed expert output: 2048/2048 exact at eight OpenMP threads; three-token normal generated prefill: 6134/6144 exact at layer-2 routed output and final logits diverge."
+          "tests/fixtures/instella_onednn_expert/ryzen_grouped_20261026.json: pinned Ryzen three-token old rowwise path 6134/6144 exact at layer-2 routed output; grouped same-input replay and rebuilt generated bundle 6144/6144 exact at layer-2 routed output and complete output. Full logits still diverge."
         ],
         "real_backend": [
           "tests/test_v8_instella_onednn_real_oracle.py",
+          "tests/test_v8_instella_onednn_grouping_oracle.py",
           "tests/test_v8_instella_onednn_generated_replay.py"
         ]
       },
