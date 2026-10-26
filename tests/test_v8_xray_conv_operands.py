@@ -175,6 +175,27 @@ class ConvOperandTests(unittest.TestCase):
             tensors["conv_im2col"][0][0, 0, 0],
             np.array([0, 100 / 7, 0, 105 / 7, 0, 115 / 7, 0, 120 / 7], dtype=np.float16),
         )
+        replay = self.root / "projection_replay"
+        replay_source = ROOT / "version/v8/scripts/ggml_conv_projection_packet_v8.c"
+        subprocess.run(["cc", "-std=c11", "-O2", f"-I{ROOT / 'llama.cpp/ggml/include'}",
+                        str(replay_source), f"-L{lib_dir}", "-lggml-cpu", "-lggml-base",
+                        f"-Wl,-rpath,{lib_dir}", "-o", str(replay)], check=True,
+                       capture_output=True, text=True)
+        weight = capture / "conv_1_conv_weight.raw"
+        patches = capture / "conv_1_conv_im2col.raw"
+        replayed = self.root / "replayed.f32"
+        replay_args = [str(replay), str(weight), str(patches), str(replayed), "f32", "6", "3", "8", "1"]
+        execution = subprocess.run(replay_args, capture_output=True, text=True)
+        self.assertEqual(execution.returncode, 0, execution.stderr)
+        self.assertEqual(replayed.read_bytes(), (capture / "conv_1_conv_result.raw").read_bytes())
+        altered = self.root / "altered_patches.f16"
+        changed = bytearray(patches.read_bytes())
+        changed[2:4] = struct.pack("<e", 25.0)
+        altered.write_bytes(changed)
+        execution = subprocess.run([*replay_args[:2], str(altered), *replay_args[3:]],
+                                   capture_output=True, text=True)
+        self.assertEqual(execution.returncode, 0, execution.stderr)
+        self.assertNotEqual(replayed.read_bytes(), (capture / "conv_1_conv_result.raw").read_bytes())
         oracle_packet = import_oracle_capture(capture, 1, self.runtime,
                                               self.root / "oracle_packet", "synthetic_conv")
         cke_packet = write_bundle(
