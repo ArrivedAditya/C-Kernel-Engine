@@ -116,6 +116,9 @@ def run(config_path: Path, state_dir: Path) -> dict:
                 name = client["name"]
                 status, reason, instance = _preflight(client)
                 row = {"name": name, "status": status, "reason": reason,
+                       "endpoint": client["endpoint"], "model": client["model"],
+                       "serving_identity": client["serving_identity"],
+                       "session_library_sha256": client["session_library_sha256"],
                        "server_instance_id": instance}
                 if status == "READY":
                     directory = run_dir / name
@@ -141,7 +144,14 @@ def run(config_path: Path, state_dir: Path) -> dict:
                             original = json.loads(summary_path.read_text())
                             if (reassessed.get("status") == "pass"
                                     and original.get("status") == "pass"
-                                    and original.get("source_commit") == report["source_commit"]):
+                                    and original.get("source_commit") == report["source_commit"]
+                                    and reassessed.get("reassessment_source_commit") == report["source_commit"]
+                                    and len(original.get("steps", [])) == 3 + config["attempts"]
+                                    and len(reassessed.get("steps", [])) == 3 + config["attempts"]
+                                    and all(step.get("server_instance_id") == instance
+                                            for step in original["steps"])
+                                    and all(step.get("server_instance_id") == instance
+                                            for step in reassessed.get("steps", []))):
                                 row.update(status="PASS", reason="", steps=len(original.get("steps", [])))
                     if row["status"] != "PASS":
                         row.update(status="FAIL", reason="repeatability or reassessment failed",
@@ -150,7 +160,8 @@ def run(config_path: Path, state_dir: Path) -> dict:
                 _write(run_dir / "summary.json", report)
             statuses = {item["status"] for item in report["clients"]}
             report["status"] = ("FAIL" if "FAIL" in statuses else
-                                "PASS" if statuses == {"PASS"} else "INCOMPLETE")
+                                "PASS" if statuses == {"PASS"} else
+                                "NOT_TESTED" if statuses == {"NOT_TESTED"} else "INCOMPLETE")
     report["finished_at"] = datetime.now(timezone.utc).isoformat()
     _write(run_dir / "summary.json", report)
     _write(state_dir / "latest.json", report)

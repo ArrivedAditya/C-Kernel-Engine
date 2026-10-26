@@ -1,5 +1,6 @@
 """A local harness night cannot turn missing execution into PASS."""
 import json
+from pathlib import Path
 
 from scripts import local_harness_nightly as lane
 
@@ -29,7 +30,7 @@ def test_unavailable_endpoint_cannot_pass(tmp_path, monkeypatch):
     _config(config)
     monkeypatch.setattr(lane, "_preflight", lambda _: ("NOT_TESTED", "connection refused", None))
     report = lane.run(config, tmp_path / "state")
-    assert report["status"] == "INCOMPLETE"
+    assert report["status"] == "NOT_TESTED"
     assert report["clients"][0]["status"] == "NOT_TESTED"
 
 
@@ -62,6 +63,34 @@ def test_child_exit_alone_cannot_pass_without_reports(tmp_path, monkeypatch):
     report = lane.run(config, tmp_path / "state")
     assert report["status"] == "FAIL"
     assert report["clients"][0]["reason"] == "repeatability or reassessment failed"
+
+
+def test_restarted_instance_cannot_pass_reassessment(tmp_path, monkeypatch):
+    monkeypatch.setattr(lane, "_source_commit", lambda: "c" * 40)
+    config = tmp_path / "config.json"
+    _config(config)
+    monkeypatch.setattr(lane, "_preflight", lambda _: ("READY", "", "original"))
+
+    def fake_invoke(command, **_kwargs):
+        flag = "--output-dir" if "--output-dir" in command else "--reassess-dir"
+        target = Path(command[command.index(flag) + 1])
+        target.mkdir(parents=True, exist_ok=True)
+        if flag == "--output-dir":
+            (target / "summary.json").write_text(json.dumps({
+                "status": "pass", "source_commit": "c" * 40,
+                "steps": [{"server_instance_id": "restarted"}] * 4,
+            }))
+        else:
+            (target / "reassessment.json").write_text(json.dumps({
+                "status": "pass", "reassessment_source_commit": "c" * 40,
+                "steps": [{"server_instance_id": "restarted"}] * 4,
+            }))
+        return 0
+
+    monkeypatch.setattr(lane, "_invoke", fake_invoke)
+    report = lane.run(config, tmp_path / "state")
+    assert report["status"] == "FAIL"
+    assert report["clients"][0]["server_instance_id"] == "original"
 
 
 def test_pause_retains_missing_run(tmp_path, monkeypatch):
