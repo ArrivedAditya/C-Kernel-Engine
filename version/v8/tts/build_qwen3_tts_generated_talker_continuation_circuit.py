@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Connect a generated speech-code frame to the first talker continuation.
+"""Connect a generated speech-code frame to a checked talker continuation.
 
 This bounded circuit reuses the predictor's fifteen distinct codebook
 embeddings, adds the projected TTS pad row, and executes the next talker step
@@ -40,7 +40,7 @@ def build_circuit(*, talker_layers: int = 28,
     graph["native_entry"]["function"] = "ck_" + graph["name"]
     graph["contract"]["runtime_invariants"].update({
         "generated_talker_continuation_steps": 1,
-        "continuation_position": 18,
+        "continuation_positions": [18, 20],
         "codebook_feedback_rows": continuation_steps + 2,
         "oracle_fed_model_intermediates": False,
         "complete_text_to_wav": False,
@@ -48,6 +48,22 @@ def build_circuit(*, talker_layers: int = 28,
     shapes, bindings = graph["activation_buffers"], graph["activation_bindings"]
     shapes["talker_continuation_valid"] = {"shape": [1]}
     bindings["talker_continuation_valid"] = "talker_continuation_valid"
+    for name in ("talker_step_index_input", "talker_step_raw_checked",
+                 "talker_step_index_checked",
+                 "talker_decode_position_checked"):
+        shapes[name] = {"shape": [1]}
+        bindings[name] = name
+    graph["runtime_lengths"].update({
+        "talker_step_raw": {
+            "producer": "check_talker_step_raw", "result": "valid_extent",
+            "capacity": continuation_steps, "allow_zero": True},
+        "talker_step_index": {
+            "producer": "check_talker_step_index", "result": "valid_extent",
+            "capacity": 2, "allow_zero": True},
+        "talker_decode_position": {
+            "producer": "check_talker_decode_position", "result": "valid_extent",
+            "capacity": 20, "allow_zero": False},
+    })
     graph["block_types"][graph["sequence"][0]]["header"].insert(0, {
         "id": "clear_talker_continuation_valid",
         "op": "runtime_extent_affine", "kernel": "runtime_extent_affine_i32",
@@ -58,6 +74,33 @@ def build_circuit(*, talker_layers: int = 28,
         "graph_slots": {"inputs": {},
                         "outputs": {"valid_extent": "talker_continuation_valid"}},
     })
+    graph["block_types"][graph["sequence"][0]]["header"][1:1] = [
+        {"id": "check_talker_step_raw", "op": "runtime_extent_sum",
+         "kernel": "runtime_extent_sum_i32", "returns_status": True,
+         "produces_runtime_lengths": {"talker_step_raw": "valid_extent"},
+         "graph_slots": {"inputs": {"values": "external:talker_step_index_input"},
+                         "outputs": {"valid_extent": "talker_step_raw_checked"}}},
+        {"id": "check_talker_step_index", "op": "runtime_extent_affine",
+         "kernel": "runtime_extent_affine_i32", "returns_status": True,
+         "consumes_runtime_lengths": ["talker_step_raw"],
+         "produces_runtime_lengths": {"talker_step_index": "valid_extent"},
+         "runtime_scalar_bindings": {"extent_affine_source": "talker_step_raw"},
+         "params": {"call_constants": {
+             "extent_affine_factor": 1, "extent_affine_offset": 0,
+             "extent_affine_capacity": 2}},
+         "graph_slots": {"inputs": {},
+                         "outputs": {"valid_extent": "talker_step_index_checked"}}},
+        {"id": "check_talker_decode_position", "op": "runtime_extent_affine",
+         "kernel": "runtime_extent_affine_i32", "returns_status": True,
+         "consumes_runtime_lengths": ["talker_step_index"],
+         "produces_runtime_lengths": {"talker_decode_position": "valid_extent"},
+         "runtime_scalar_bindings": {"extent_affine_source": "talker_step_index"},
+         "params": {"call_constants": {
+             "extent_affine_factor": 1, "extent_affine_offset": 18,
+             "extent_affine_capacity": 20}},
+         "graph_slots": {"inputs": {},
+                         "outputs": {"valid_extent": "talker_decode_position_checked"}}},
+    ]
 
     # Seed state immediately after the prefill. Its Q/K/V producers must remain
     # alive until this point, before predictor work can reuse their arena space.
@@ -161,7 +204,7 @@ def build_circuit(*, talker_layers: int = 28,
         bindings[mapped] = mapped
     for block_name in continuation["sequence"]:
         block = copy.deepcopy(continuation["block_types"][block_name])
-        block["header"] = []  # fixed first continuation position is map-checked
+        block["header"] = []  # checked position is bound to each consumer below
         for op in block.get("body", {}).get("ops", []):
             op["id"] = "cont_" + op["id"]
             for direction in ("inputs", "outputs"):
@@ -169,13 +212,15 @@ def build_circuit(*, talker_layers: int = 28,
                     port: slot(name) for port, name in
                     op["graph_slots"][direction].items()}
             if op["op"] == "rope_qk_bounded":
-                op.pop("consumes_runtime_lengths", None)
-                op.pop("runtime_scalar_bindings", None)
-                op["params"]["call_constants"]["pos_offset"] = 18
+                op["params"]["call_constants"].pop("pos_offset", None)
+                op["consumes_runtime_lengths"] = ["talker_decode_position"]
+                op["runtime_scalar_bindings"] = {
+                    "pos_offset": "talker_decode_position"}
             if op["op"] == "attention_decode_append_checked":
-                op.pop("consumes_runtime_lengths", None)
-                op.pop("runtime_scalar_bindings", None)
-                op["params"]["call_constants"]["position"] = 18
+                op["params"]["call_constants"].pop("position", None)
+                op["consumes_runtime_lengths"] = ["talker_decode_position"]
+                op["runtime_scalar_bindings"] = {
+                    "position": "talker_decode_position"}
         mapped = "cont_" + block_name
         graph["sequence"].append(mapped)
         graph["block_types"][mapped] = block

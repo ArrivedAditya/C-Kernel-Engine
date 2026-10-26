@@ -75,7 +75,10 @@
       "oracle_fed_model_intermediates": false,
       "complete_text_to_wav": false,
       "generated_talker_continuation_steps": 1,
-      "continuation_position": 18,
+      "continuation_positions": [
+        18,
+        20
+      ],
       "codebook_feedback_rows": 16
     }
   },
@@ -14336,6 +14339,26 @@
         1
       ]
     },
+    "talker_step_index_input": {
+      "shape": [
+        1
+      ]
+    },
+    "talker_step_raw_checked": {
+      "shape": [
+        1
+      ]
+    },
+    "talker_step_index_checked": {
+      "shape": [
+        1
+      ]
+    },
+    "talker_decode_position_checked": {
+      "shape": [
+        1
+      ]
+    },
     "talker_layer0_cache_k": {
       "shape": [
         8,
@@ -20983,6 +21006,10 @@
     "pred_step14_selected_id": "pred_step14_selected_id",
     "pred_predictor_valid_code_count": "pred_predictor_valid_code_count",
     "talker_continuation_valid": "talker_continuation_valid",
+    "talker_step_index_input": "talker_step_index_input",
+    "talker_step_raw_checked": "talker_step_raw_checked",
+    "talker_step_index_checked": "talker_step_index_checked",
+    "talker_decode_position_checked": "talker_decode_position_checked",
     "talker_layer0_cache_k": "talker_layer0_cache_k",
     "talker_layer0_cache_v": "talker_layer0_cache_v",
     "talker_layer1_cache_k": "talker_layer1_cache_k",
@@ -21891,6 +21918,79 @@
             "inputs": {},
             "outputs": {
               "valid_extent": "talker_continuation_valid"
+            }
+          }
+        },
+        {
+          "id": "check_talker_step_raw",
+          "op": "runtime_extent_sum",
+          "kernel": "runtime_extent_sum_i32",
+          "returns_status": true,
+          "produces_runtime_lengths": {
+            "talker_step_raw": "valid_extent"
+          },
+          "graph_slots": {
+            "inputs": {
+              "values": "external:talker_step_index_input"
+            },
+            "outputs": {
+              "valid_extent": "talker_step_raw_checked"
+            }
+          }
+        },
+        {
+          "id": "check_talker_step_index",
+          "op": "runtime_extent_affine",
+          "kernel": "runtime_extent_affine_i32",
+          "returns_status": true,
+          "consumes_runtime_lengths": [
+            "talker_step_raw"
+          ],
+          "produces_runtime_lengths": {
+            "talker_step_index": "valid_extent"
+          },
+          "runtime_scalar_bindings": {
+            "extent_affine_source": "talker_step_raw"
+          },
+          "params": {
+            "call_constants": {
+              "extent_affine_factor": 1,
+              "extent_affine_offset": 0,
+              "extent_affine_capacity": 2
+            }
+          },
+          "graph_slots": {
+            "inputs": {},
+            "outputs": {
+              "valid_extent": "talker_step_index_checked"
+            }
+          }
+        },
+        {
+          "id": "check_talker_decode_position",
+          "op": "runtime_extent_affine",
+          "kernel": "runtime_extent_affine_i32",
+          "returns_status": true,
+          "consumes_runtime_lengths": [
+            "talker_step_index"
+          ],
+          "produces_runtime_lengths": {
+            "talker_decode_position": "valid_extent"
+          },
+          "runtime_scalar_bindings": {
+            "extent_affine_source": "talker_step_index"
+          },
+          "params": {
+            "call_constants": {
+              "extent_affine_factor": 1,
+              "extent_affine_offset": 18,
+              "extent_affine_capacity": 20
+            }
+          },
+          "graph_slots": {
+            "inputs": {},
+            "outputs": {
+              "valid_extent": "talker_decode_position_checked"
             }
           }
         },
@@ -90181,9 +90281,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "tokens": 1,
-                "head_dim": 128,
-                "pos_offset": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "pos_offset": "talker_decode_position"
             }
           },
           {
@@ -90224,9 +90329,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "cache_capacity": 21,
-                "head_dim": 128,
-                "position": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "position": "talker_decode_position"
             }
           },
           {
@@ -90801,9 +90911,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "tokens": 1,
-                "head_dim": 128,
-                "pos_offset": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "pos_offset": "talker_decode_position"
             }
           },
           {
@@ -90844,9 +90959,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "cache_capacity": 21,
-                "head_dim": 128,
-                "position": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "position": "talker_decode_position"
             }
           },
           {
@@ -91421,9 +91541,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "tokens": 1,
-                "head_dim": 128,
-                "pos_offset": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "pos_offset": "talker_decode_position"
             }
           },
           {
@@ -91464,9 +91589,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "cache_capacity": 21,
-                "head_dim": 128,
-                "position": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "position": "talker_decode_position"
             }
           },
           {
@@ -92041,9 +92171,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "tokens": 1,
-                "head_dim": 128,
-                "pos_offset": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "pos_offset": "talker_decode_position"
             }
           },
           {
@@ -92084,9 +92219,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "cache_capacity": 21,
-                "head_dim": 128,
-                "position": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "position": "talker_decode_position"
             }
           },
           {
@@ -92661,9 +92801,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "tokens": 1,
-                "head_dim": 128,
-                "pos_offset": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "pos_offset": "talker_decode_position"
             }
           },
           {
@@ -92704,9 +92849,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "cache_capacity": 21,
-                "head_dim": 128,
-                "position": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "position": "talker_decode_position"
             }
           },
           {
@@ -93281,9 +93431,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "tokens": 1,
-                "head_dim": 128,
-                "pos_offset": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "pos_offset": "talker_decode_position"
             }
           },
           {
@@ -93324,9 +93479,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "cache_capacity": 21,
-                "head_dim": 128,
-                "position": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "position": "talker_decode_position"
             }
           },
           {
@@ -93901,9 +94061,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "tokens": 1,
-                "head_dim": 128,
-                "pos_offset": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "pos_offset": "talker_decode_position"
             }
           },
           {
@@ -93944,9 +94109,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "cache_capacity": 21,
-                "head_dim": 128,
-                "position": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "position": "talker_decode_position"
             }
           },
           {
@@ -94521,9 +94691,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "tokens": 1,
-                "head_dim": 128,
-                "pos_offset": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "pos_offset": "talker_decode_position"
             }
           },
           {
@@ -94564,9 +94739,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "cache_capacity": 21,
-                "head_dim": 128,
-                "position": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "position": "talker_decode_position"
             }
           },
           {
@@ -95141,9 +95321,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "tokens": 1,
-                "head_dim": 128,
-                "pos_offset": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "pos_offset": "talker_decode_position"
             }
           },
           {
@@ -95184,9 +95369,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "cache_capacity": 21,
-                "head_dim": 128,
-                "position": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "position": "talker_decode_position"
             }
           },
           {
@@ -95761,9 +95951,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "tokens": 1,
-                "head_dim": 128,
-                "pos_offset": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "pos_offset": "talker_decode_position"
             }
           },
           {
@@ -95804,9 +95999,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "cache_capacity": 21,
-                "head_dim": 128,
-                "position": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "position": "talker_decode_position"
             }
           },
           {
@@ -96381,9 +96581,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "tokens": 1,
-                "head_dim": 128,
-                "pos_offset": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "pos_offset": "talker_decode_position"
             }
           },
           {
@@ -96424,9 +96629,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "cache_capacity": 21,
-                "head_dim": 128,
-                "position": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "position": "talker_decode_position"
             }
           },
           {
@@ -97001,9 +97211,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "tokens": 1,
-                "head_dim": 128,
-                "pos_offset": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "pos_offset": "talker_decode_position"
             }
           },
           {
@@ -97044,9 +97259,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "cache_capacity": 21,
-                "head_dim": 128,
-                "position": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "position": "talker_decode_position"
             }
           },
           {
@@ -97621,9 +97841,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "tokens": 1,
-                "head_dim": 128,
-                "pos_offset": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "pos_offset": "talker_decode_position"
             }
           },
           {
@@ -97664,9 +97889,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "cache_capacity": 21,
-                "head_dim": 128,
-                "position": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "position": "talker_decode_position"
             }
           },
           {
@@ -98241,9 +98471,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "tokens": 1,
-                "head_dim": 128,
-                "pos_offset": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "pos_offset": "talker_decode_position"
             }
           },
           {
@@ -98284,9 +98519,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "cache_capacity": 21,
-                "head_dim": 128,
-                "position": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "position": "talker_decode_position"
             }
           },
           {
@@ -98861,9 +99101,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "tokens": 1,
-                "head_dim": 128,
-                "pos_offset": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "pos_offset": "talker_decode_position"
             }
           },
           {
@@ -98904,9 +99149,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "cache_capacity": 21,
-                "head_dim": 128,
-                "position": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "position": "talker_decode_position"
             }
           },
           {
@@ -99481,9 +99731,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "tokens": 1,
-                "head_dim": 128,
-                "pos_offset": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "pos_offset": "talker_decode_position"
             }
           },
           {
@@ -99524,9 +99779,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "cache_capacity": 21,
-                "head_dim": 128,
-                "position": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "position": "talker_decode_position"
             }
           },
           {
@@ -100101,9 +100361,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "tokens": 1,
-                "head_dim": 128,
-                "pos_offset": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "pos_offset": "talker_decode_position"
             }
           },
           {
@@ -100144,9 +100409,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "cache_capacity": 21,
-                "head_dim": 128,
-                "position": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "position": "talker_decode_position"
             }
           },
           {
@@ -100721,9 +100991,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "tokens": 1,
-                "head_dim": 128,
-                "pos_offset": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "pos_offset": "talker_decode_position"
             }
           },
           {
@@ -100764,9 +101039,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "cache_capacity": 21,
-                "head_dim": 128,
-                "position": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "position": "talker_decode_position"
             }
           },
           {
@@ -101341,9 +101621,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "tokens": 1,
-                "head_dim": 128,
-                "pos_offset": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "pos_offset": "talker_decode_position"
             }
           },
           {
@@ -101384,9 +101669,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "cache_capacity": 21,
-                "head_dim": 128,
-                "position": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "position": "talker_decode_position"
             }
           },
           {
@@ -101961,9 +102251,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "tokens": 1,
-                "head_dim": 128,
-                "pos_offset": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "pos_offset": "talker_decode_position"
             }
           },
           {
@@ -102004,9 +102299,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "cache_capacity": 21,
-                "head_dim": 128,
-                "position": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "position": "talker_decode_position"
             }
           },
           {
@@ -102581,9 +102881,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "tokens": 1,
-                "head_dim": 128,
-                "pos_offset": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "pos_offset": "talker_decode_position"
             }
           },
           {
@@ -102624,9 +102929,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "cache_capacity": 21,
-                "head_dim": 128,
-                "position": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "position": "talker_decode_position"
             }
           },
           {
@@ -103201,9 +103511,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "tokens": 1,
-                "head_dim": 128,
-                "pos_offset": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "pos_offset": "talker_decode_position"
             }
           },
           {
@@ -103244,9 +103559,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "cache_capacity": 21,
-                "head_dim": 128,
-                "position": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "position": "talker_decode_position"
             }
           },
           {
@@ -103821,9 +104141,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "tokens": 1,
-                "head_dim": 128,
-                "pos_offset": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "pos_offset": "talker_decode_position"
             }
           },
           {
@@ -103864,9 +104189,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "cache_capacity": 21,
-                "head_dim": 128,
-                "position": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "position": "talker_decode_position"
             }
           },
           {
@@ -104441,9 +104771,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "tokens": 1,
-                "head_dim": 128,
-                "pos_offset": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "pos_offset": "talker_decode_position"
             }
           },
           {
@@ -104484,9 +104819,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "cache_capacity": 21,
-                "head_dim": 128,
-                "position": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "position": "talker_decode_position"
             }
           },
           {
@@ -105061,9 +105401,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "tokens": 1,
-                "head_dim": 128,
-                "pos_offset": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "pos_offset": "talker_decode_position"
             }
           },
           {
@@ -105104,9 +105449,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "cache_capacity": 21,
-                "head_dim": 128,
-                "position": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "position": "talker_decode_position"
             }
           },
           {
@@ -105681,9 +106031,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "tokens": 1,
-                "head_dim": 128,
-                "pos_offset": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "pos_offset": "talker_decode_position"
             }
           },
           {
@@ -105724,9 +106079,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "cache_capacity": 21,
-                "head_dim": 128,
-                "position": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "position": "talker_decode_position"
             }
           },
           {
@@ -106301,9 +106661,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "tokens": 1,
-                "head_dim": 128,
-                "pos_offset": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "pos_offset": "talker_decode_position"
             }
           },
           {
@@ -106344,9 +106709,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "cache_capacity": 21,
-                "head_dim": 128,
-                "position": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "position": "talker_decode_position"
             }
           },
           {
@@ -106921,9 +107291,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "tokens": 1,
-                "head_dim": 128,
-                "pos_offset": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "pos_offset": "talker_decode_position"
             }
           },
           {
@@ -106964,9 +107339,14 @@
                 "heads": 16,
                 "kv_heads": 8,
                 "cache_capacity": 21,
-                "head_dim": 128,
-                "position": 18
+                "head_dim": 128
               }
+            },
+            "consumes_runtime_lengths": [
+              "talker_decode_position"
+            ],
+            "runtime_scalar_bindings": {
+              "position": "talker_decode_position"
             }
           },
           {
@@ -108036,6 +108416,24 @@
       "producer": "pred_feedback_check_position",
       "result": "valid_extent",
       "capacity": 15,
+      "allow_zero": false
+    },
+    "talker_step_raw": {
+      "producer": "check_talker_step_raw",
+      "result": "valid_extent",
+      "capacity": 14,
+      "allow_zero": true
+    },
+    "talker_step_index": {
+      "producer": "check_talker_step_index",
+      "result": "valid_extent",
+      "capacity": 2,
+      "allow_zero": true
+    },
+    "talker_decode_position": {
+      "producer": "check_talker_decode_position",
+      "result": "valid_extent",
+      "capacity": 20,
       "allow_zero": false
     }
   }
