@@ -37,6 +37,86 @@ decoder_parity_v8 = _load_module("decoder_first_token_parity_v8_tests", V8_DECOD
 
 
 class V8DecoderFirstTokenParityTests(unittest.TestCase):
+    def test_composed_decoder_replay_preserves_declared_runtime_contract(self) -> None:
+        contract = {
+            "id": "fixture_bridge",
+            "decoder_runtime_config": {"recurrent_ssm_arithmetic": "llama_fma"},
+        }
+        report = {
+            "composition_circuit": {"name": "fixture", "version": 1, "status": "validated"},
+            "bridge_contract": contract,
+        }
+        with mock.patch.object(
+            decoder_parity_v8.bridge_runner_v8,
+            "_load_explicit_composition_circuit",
+            return_value={"name": "fixture", "version": 1},
+        ), mock.patch.object(
+            decoder_parity_v8.bridge_runner_v8,
+            "_composition_bridge_contract",
+            return_value=contract,
+        ):
+            self.assertEqual(
+                decoder_parity_v8._decoder_runtime_overrides(report),
+                {
+                    "multimodal_bridge_contract": contract,
+                    "recurrent_ssm_arithmetic": "llama_fma",
+                },
+            )
+            with self.assertRaisesRegex(ValueError, "differs"):
+                decoder_parity_v8._decoder_runtime_overrides({
+                    **report, "bridge_contract": {"id": "stale"},
+                })
+            with self.assertRaisesRegex(ValueError, "version differs"):
+                decoder_parity_v8._decoder_runtime_overrides({
+                    **report,
+                    "composition_circuit": {"name": "fixture", "version": 0, "status": "validated"},
+                })
+        self.assertIsNone(decoder_parity_v8._decoder_runtime_overrides(None))
+        with self.assertRaisesRegex(ValueError, "validated"):
+            decoder_parity_v8._decoder_runtime_overrides({
+                **report, "composition_circuit": {"name": "fixture", "status": "failed"},
+            })
+
+    def test_composed_bridge_passes_overrides_to_runtime_preparation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            gguf = root / "decoder.gguf"
+            gguf.write_bytes(b"fixture")
+            prefix = root / "prefix.f32"
+            prefix.write_bytes(array("f", [1.0] * 64).tobytes())
+            report_path = root / "bridge_report.json"
+            contract = {"id": "fixture_bridge"}
+            report_path.write_text(json.dumps({
+                "decoder_runtime": {"gguf": str(gguf)},
+                "prefix_decode_policy": "causal_mixed_prefix",
+                "prefix_tokens": 1,
+                "prefix_dump_path": str(prefix),
+                "composition_circuit": {"name": "fixture", "version": 1, "status": "validated"},
+                "bridge_contract": contract,
+            }), encoding="utf-8")
+            with mock.patch.object(
+                decoder_parity_v8.bridge_runner_v8,
+                "_load_explicit_composition_circuit",
+                return_value={"name": "fixture", "version": 1},
+            ), mock.patch.object(
+                decoder_parity_v8.bridge_runner_v8,
+                "_composition_bridge_contract",
+                return_value=contract,
+            ), mock.patch.object(
+                decoder_parity_v8.bridge_runner_v8,
+                "_prepare_decoder_runtime",
+                side_effect=RuntimeError("stop before execution"),
+            ) as prepare:
+                with self.assertRaisesRegex(RuntimeError, "stop before execution"):
+                    decoder_parity_v8.main([
+                        "--bridge-report", str(report_path),
+                        "--workdir", str(root / "work"),
+                    ])
+                self.assertEqual(
+                    prepare.call_args.kwargs["runtime_config_overrides"],
+                    {"multimodal_bridge_contract": contract},
+                )
+
     def test_capture_numerical_failure_cannot_be_hidden_by_logit_pass(self) -> None:
         status = decoder_parity_v8._capture_aware_status
         self.assertEqual(status("pass", None), "pass")
