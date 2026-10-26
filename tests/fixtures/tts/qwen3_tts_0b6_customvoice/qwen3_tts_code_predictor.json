@@ -1,0 +1,2039 @@
+{
+  "schema": 1,
+  "scope": "pinned PyTorch first speech frame: two-token predictor prefill plus fourteen greedy continuation calls",
+  "model_revision": "85e237c12c027371202489a0ec509ded67b5e4b5",
+  "model_files_sha256": {
+    "config.json": "81aca2b6fac304944d8acf345272d8a9a727d5fc2e2e66b222ab4729340c7455",
+    "generation_config.json": "f1b90b4513f3b34c62851049e2492d7b4c5940daf1276f89c82b8ef04127f3aa",
+    "merges.txt": "599bab54075088774b1733fde865d5bd747cbcc7a547c5bc12610e874e26f5e3",
+    "model.safetensors": "bc3c7e785eb961179c25450d1acff03f839e0002f2f3a5aeb67b5735c0fa2adb",
+    "preprocessor_config.json": "efdde1022ea9d76928bf7a9cd53139138f5ba2e466e837f08f6105ab1af1c119",
+    "speech_tokenizer/config.json": "ee65bb901c876664ab8707c487157aa1a6ee57c65969b28fb5ec9dc211e68167",
+    "speech_tokenizer/configuration.json": "6bc26d64eb5024b4d1dab5a52371958b429256d6c9d59787f1f5294a54e0cebd",
+    "speech_tokenizer/model.safetensors": "836b7b357f5ea43e889936a3709af68dfe3751881acefe4ecf0dbd30ba571258",
+    "speech_tokenizer/preprocessor_config.json": "fcb3805e597e786d4067706e602f6688524640f8d3396790e2e09b5942fcbdfb",
+    "tokenizer_config.json": "dc3c31c3bdaedd5016382bb3cbe07323026775ad51f5a4fb564505992ae4a670",
+    "vocab.json": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910"
+  },
+  "reference_revision": "022e286b98fbec7e1e916cb940cdf532cd9f488e",
+  "reference_files_sha256": {
+    "inference/qwen3_tts_model.py": "e1da450732857c1f5fe3e36ebab85db2f6dc6a48caaff6973f463384e30275e4",
+    "core/models/modeling_qwen3_tts.py": "25c42656bcf810f06ef6bc1839bd7083f3c8cfedac3a147c4060b4262b1c96a0",
+    "core/tokenizer_12hz/modeling_qwen3_tts_tokenizer_v2.py": "844e8dd8c0182ef9c6463c874631c22ef3c5a4fd1899dd657016164cc5379628"
+  },
+  "runtime": {
+    "python": "3.12.15",
+    "torch": "2.14.1+cpu",
+    "numpy": "2.5.4",
+    "machine": "x86_64",
+    "device": "cpu",
+    "dtype": "float32",
+    "attention": "eager",
+    "threads": 4
+  },
+  "request": {
+    "text": "Hello, this is CKE.",
+    "speaker": "Ryan",
+    "language": "English",
+    "seed": 20261022,
+    "do_sample": false,
+    "subtalker_dosample": false,
+    "max_new_tokens": 2,
+    "non_streaming_mode": true
+  },
+  "selected_ids": [
+    117,
+    1114,
+    1723,
+    1443,
+    1543,
+    1751,
+    240,
+    1242,
+    329,
+    293,
+    1347,
+    747,
+    2027,
+    180,
+    1187
+  ],
+  "shapes": {
+    "talker_first_code_id": [
+      1,
+      1
+    ],
+    "talker_past_hidden": [
+      1,
+      1,
+      1024
+    ],
+    "call0_inputs_embeds": [
+      1,
+      2,
+      1024
+    ],
+    "call0_cache_position": [
+      2
+    ],
+    "call0_attention_mask": [
+      1,
+      2
+    ],
+    "call0_position_ids": [
+      1,
+      2
+    ],
+    "call0_generation_steps": [
+      1
+    ],
+    "call0_model_inputs_embeds": [
+      1,
+      2,
+      1024
+    ],
+    "call0_model_cache_position": [
+      2
+    ],
+    "call0_model_position_ids": [
+      1,
+      2
+    ],
+    "call0_layer0_output": [
+      1,
+      2,
+      1024
+    ],
+    "call0_layer1_output": [
+      1,
+      2,
+      1024
+    ],
+    "call0_layer2_input_layernorm": [
+      1,
+      2,
+      1024
+    ],
+    "call0_layer2_self_attn_q_proj": [
+      1,
+      2,
+      2048
+    ],
+    "call0_layer2_self_attn_k_proj": [
+      1,
+      2,
+      1024
+    ],
+    "call0_layer2_self_attn_v_proj": [
+      1,
+      2,
+      1024
+    ],
+    "call0_layer2_self_attn": [
+      1,
+      2,
+      1024
+    ],
+    "call0_layer2_post_attention_layernorm": [
+      1,
+      2,
+      1024
+    ],
+    "call0_layer2_mlp_gate_proj": [
+      1,
+      2,
+      3072
+    ],
+    "call0_layer2_mlp_up_proj": [
+      1,
+      2,
+      3072
+    ],
+    "call0_layer2_mlp": [
+      1,
+      2,
+      1024
+    ],
+    "call0_layer2_output": [
+      1,
+      2,
+      1024
+    ],
+    "call0_layer3_output": [
+      1,
+      2,
+      1024
+    ],
+    "call0_layer4_output": [
+      1,
+      2,
+      1024
+    ],
+    "call0_final_norm": [
+      1,
+      2,
+      1024
+    ],
+    "call0_layer0_k_cache": [
+      1,
+      8,
+      2,
+      128
+    ],
+    "call0_layer0_v_cache": [
+      1,
+      8,
+      2,
+      128
+    ],
+    "call0_layer1_k_cache": [
+      1,
+      8,
+      2,
+      128
+    ],
+    "call0_layer1_v_cache": [
+      1,
+      8,
+      2,
+      128
+    ],
+    "call0_layer2_k_cache": [
+      1,
+      8,
+      2,
+      128
+    ],
+    "call0_layer2_v_cache": [
+      1,
+      8,
+      2,
+      128
+    ],
+    "call0_layer3_k_cache": [
+      1,
+      8,
+      2,
+      128
+    ],
+    "call0_layer3_v_cache": [
+      1,
+      8,
+      2,
+      128
+    ],
+    "call0_layer4_k_cache": [
+      1,
+      8,
+      2,
+      128
+    ],
+    "call0_layer4_v_cache": [
+      1,
+      8,
+      2,
+      128
+    ],
+    "call0_logits": [
+      1,
+      2,
+      2048
+    ],
+    "call0_selected_id": [
+      1
+    ],
+    "call1_input_ids": [
+      1,
+      1
+    ],
+    "call1_cache_position": [
+      1
+    ],
+    "call1_attention_mask": [
+      1,
+      3
+    ],
+    "call1_position_ids": [
+      1,
+      1
+    ],
+    "call1_generation_steps": [
+      1
+    ],
+    "call1_model_inputs_embeds": [
+      1,
+      1,
+      1024
+    ],
+    "call1_model_cache_position": [
+      1
+    ],
+    "call1_model_position_ids": [
+      1,
+      1
+    ],
+    "call1_layer0_output": [
+      1,
+      1,
+      1024
+    ],
+    "call1_layer1_output": [
+      1,
+      1,
+      1024
+    ],
+    "call1_layer2_output": [
+      1,
+      1,
+      1024
+    ],
+    "call1_layer3_output": [
+      1,
+      1,
+      1024
+    ],
+    "call1_layer4_output": [
+      1,
+      1,
+      1024
+    ],
+    "call1_final_norm": [
+      1,
+      1,
+      1024
+    ],
+    "call1_layer0_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call1_layer0_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call1_layer1_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call1_layer1_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call1_layer2_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call1_layer2_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call1_layer3_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call1_layer3_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call1_layer4_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call1_layer4_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call1_logits": [
+      1,
+      1,
+      2048
+    ],
+    "call1_selected_id": [
+      1
+    ],
+    "call2_input_ids": [
+      1,
+      1
+    ],
+    "call2_cache_position": [
+      1
+    ],
+    "call2_attention_mask": [
+      1,
+      4
+    ],
+    "call2_position_ids": [
+      1,
+      1
+    ],
+    "call2_generation_steps": [
+      1
+    ],
+    "call2_model_inputs_embeds": [
+      1,
+      1,
+      1024
+    ],
+    "call2_model_cache_position": [
+      1
+    ],
+    "call2_model_position_ids": [
+      1,
+      1
+    ],
+    "call2_layer0_output": [
+      1,
+      1,
+      1024
+    ],
+    "call2_layer1_output": [
+      1,
+      1,
+      1024
+    ],
+    "call2_layer2_output": [
+      1,
+      1,
+      1024
+    ],
+    "call2_layer3_output": [
+      1,
+      1,
+      1024
+    ],
+    "call2_layer4_output": [
+      1,
+      1,
+      1024
+    ],
+    "call2_final_norm": [
+      1,
+      1,
+      1024
+    ],
+    "call2_layer0_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call2_layer0_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call2_layer1_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call2_layer1_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call2_layer2_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call2_layer2_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call2_layer3_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call2_layer3_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call2_layer4_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call2_layer4_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call2_logits": [
+      1,
+      1,
+      2048
+    ],
+    "call2_selected_id": [
+      1
+    ],
+    "call3_input_ids": [
+      1,
+      1
+    ],
+    "call3_cache_position": [
+      1
+    ],
+    "call3_attention_mask": [
+      1,
+      5
+    ],
+    "call3_position_ids": [
+      1,
+      1
+    ],
+    "call3_generation_steps": [
+      1
+    ],
+    "call3_model_inputs_embeds": [
+      1,
+      1,
+      1024
+    ],
+    "call3_model_cache_position": [
+      1
+    ],
+    "call3_model_position_ids": [
+      1,
+      1
+    ],
+    "call3_layer0_output": [
+      1,
+      1,
+      1024
+    ],
+    "call3_layer1_output": [
+      1,
+      1,
+      1024
+    ],
+    "call3_layer2_output": [
+      1,
+      1,
+      1024
+    ],
+    "call3_layer3_output": [
+      1,
+      1,
+      1024
+    ],
+    "call3_layer4_output": [
+      1,
+      1,
+      1024
+    ],
+    "call3_final_norm": [
+      1,
+      1,
+      1024
+    ],
+    "call3_layer0_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call3_layer0_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call3_layer1_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call3_layer1_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call3_layer2_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call3_layer2_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call3_layer3_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call3_layer3_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call3_layer4_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call3_layer4_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call3_logits": [
+      1,
+      1,
+      2048
+    ],
+    "call3_selected_id": [
+      1
+    ],
+    "call4_input_ids": [
+      1,
+      1
+    ],
+    "call4_cache_position": [
+      1
+    ],
+    "call4_attention_mask": [
+      1,
+      6
+    ],
+    "call4_position_ids": [
+      1,
+      1
+    ],
+    "call4_generation_steps": [
+      1
+    ],
+    "call4_model_inputs_embeds": [
+      1,
+      1,
+      1024
+    ],
+    "call4_model_cache_position": [
+      1
+    ],
+    "call4_model_position_ids": [
+      1,
+      1
+    ],
+    "call4_layer0_output": [
+      1,
+      1,
+      1024
+    ],
+    "call4_layer1_output": [
+      1,
+      1,
+      1024
+    ],
+    "call4_layer2_output": [
+      1,
+      1,
+      1024
+    ],
+    "call4_layer3_output": [
+      1,
+      1,
+      1024
+    ],
+    "call4_layer4_output": [
+      1,
+      1,
+      1024
+    ],
+    "call4_final_norm": [
+      1,
+      1,
+      1024
+    ],
+    "call4_layer0_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call4_layer0_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call4_layer1_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call4_layer1_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call4_layer2_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call4_layer2_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call4_layer3_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call4_layer3_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call4_layer4_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call4_layer4_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call4_logits": [
+      1,
+      1,
+      2048
+    ],
+    "call4_selected_id": [
+      1
+    ],
+    "call5_input_ids": [
+      1,
+      1
+    ],
+    "call5_cache_position": [
+      1
+    ],
+    "call5_attention_mask": [
+      1,
+      7
+    ],
+    "call5_position_ids": [
+      1,
+      1
+    ],
+    "call5_generation_steps": [
+      1
+    ],
+    "call5_model_inputs_embeds": [
+      1,
+      1,
+      1024
+    ],
+    "call5_model_cache_position": [
+      1
+    ],
+    "call5_model_position_ids": [
+      1,
+      1
+    ],
+    "call5_layer0_output": [
+      1,
+      1,
+      1024
+    ],
+    "call5_layer1_output": [
+      1,
+      1,
+      1024
+    ],
+    "call5_layer2_output": [
+      1,
+      1,
+      1024
+    ],
+    "call5_layer3_output": [
+      1,
+      1,
+      1024
+    ],
+    "call5_layer4_output": [
+      1,
+      1,
+      1024
+    ],
+    "call5_final_norm": [
+      1,
+      1,
+      1024
+    ],
+    "call5_layer0_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call5_layer0_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call5_layer1_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call5_layer1_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call5_layer2_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call5_layer2_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call5_layer3_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call5_layer3_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call5_layer4_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call5_layer4_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call5_logits": [
+      1,
+      1,
+      2048
+    ],
+    "call5_selected_id": [
+      1
+    ],
+    "call6_input_ids": [
+      1,
+      1
+    ],
+    "call6_cache_position": [
+      1
+    ],
+    "call6_attention_mask": [
+      1,
+      8
+    ],
+    "call6_position_ids": [
+      1,
+      1
+    ],
+    "call6_generation_steps": [
+      1
+    ],
+    "call6_model_inputs_embeds": [
+      1,
+      1,
+      1024
+    ],
+    "call6_model_cache_position": [
+      1
+    ],
+    "call6_model_position_ids": [
+      1,
+      1
+    ],
+    "call6_layer0_output": [
+      1,
+      1,
+      1024
+    ],
+    "call6_layer1_output": [
+      1,
+      1,
+      1024
+    ],
+    "call6_layer2_output": [
+      1,
+      1,
+      1024
+    ],
+    "call6_layer3_output": [
+      1,
+      1,
+      1024
+    ],
+    "call6_layer4_output": [
+      1,
+      1,
+      1024
+    ],
+    "call6_final_norm": [
+      1,
+      1,
+      1024
+    ],
+    "call6_layer0_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call6_layer0_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call6_layer1_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call6_layer1_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call6_layer2_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call6_layer2_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call6_layer3_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call6_layer3_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call6_layer4_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call6_layer4_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call6_logits": [
+      1,
+      1,
+      2048
+    ],
+    "call6_selected_id": [
+      1
+    ],
+    "call7_input_ids": [
+      1,
+      1
+    ],
+    "call7_cache_position": [
+      1
+    ],
+    "call7_attention_mask": [
+      1,
+      9
+    ],
+    "call7_position_ids": [
+      1,
+      1
+    ],
+    "call7_generation_steps": [
+      1
+    ],
+    "call7_model_inputs_embeds": [
+      1,
+      1,
+      1024
+    ],
+    "call7_model_cache_position": [
+      1
+    ],
+    "call7_model_position_ids": [
+      1,
+      1
+    ],
+    "call7_layer0_output": [
+      1,
+      1,
+      1024
+    ],
+    "call7_layer1_output": [
+      1,
+      1,
+      1024
+    ],
+    "call7_layer2_output": [
+      1,
+      1,
+      1024
+    ],
+    "call7_layer3_output": [
+      1,
+      1,
+      1024
+    ],
+    "call7_layer4_output": [
+      1,
+      1,
+      1024
+    ],
+    "call7_final_norm": [
+      1,
+      1,
+      1024
+    ],
+    "call7_layer0_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call7_layer0_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call7_layer1_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call7_layer1_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call7_layer2_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call7_layer2_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call7_layer3_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call7_layer3_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call7_layer4_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call7_layer4_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call7_logits": [
+      1,
+      1,
+      2048
+    ],
+    "call7_selected_id": [
+      1
+    ],
+    "call8_input_ids": [
+      1,
+      1
+    ],
+    "call8_cache_position": [
+      1
+    ],
+    "call8_attention_mask": [
+      1,
+      10
+    ],
+    "call8_position_ids": [
+      1,
+      1
+    ],
+    "call8_generation_steps": [
+      1
+    ],
+    "call8_model_inputs_embeds": [
+      1,
+      1,
+      1024
+    ],
+    "call8_model_cache_position": [
+      1
+    ],
+    "call8_model_position_ids": [
+      1,
+      1
+    ],
+    "call8_layer0_output": [
+      1,
+      1,
+      1024
+    ],
+    "call8_layer1_output": [
+      1,
+      1,
+      1024
+    ],
+    "call8_layer2_output": [
+      1,
+      1,
+      1024
+    ],
+    "call8_layer3_output": [
+      1,
+      1,
+      1024
+    ],
+    "call8_layer4_output": [
+      1,
+      1,
+      1024
+    ],
+    "call8_final_norm": [
+      1,
+      1,
+      1024
+    ],
+    "call8_layer0_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call8_layer0_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call8_layer1_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call8_layer1_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call8_layer2_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call8_layer2_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call8_layer3_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call8_layer3_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call8_layer4_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call8_layer4_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call8_logits": [
+      1,
+      1,
+      2048
+    ],
+    "call8_selected_id": [
+      1
+    ],
+    "call9_input_ids": [
+      1,
+      1
+    ],
+    "call9_cache_position": [
+      1
+    ],
+    "call9_attention_mask": [
+      1,
+      11
+    ],
+    "call9_position_ids": [
+      1,
+      1
+    ],
+    "call9_generation_steps": [
+      1
+    ],
+    "call9_model_inputs_embeds": [
+      1,
+      1,
+      1024
+    ],
+    "call9_model_cache_position": [
+      1
+    ],
+    "call9_model_position_ids": [
+      1,
+      1
+    ],
+    "call9_layer0_output": [
+      1,
+      1,
+      1024
+    ],
+    "call9_layer1_output": [
+      1,
+      1,
+      1024
+    ],
+    "call9_layer2_output": [
+      1,
+      1,
+      1024
+    ],
+    "call9_layer3_output": [
+      1,
+      1,
+      1024
+    ],
+    "call9_layer4_output": [
+      1,
+      1,
+      1024
+    ],
+    "call9_final_norm": [
+      1,
+      1,
+      1024
+    ],
+    "call9_layer0_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call9_layer0_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call9_layer1_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call9_layer1_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call9_layer2_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call9_layer2_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call9_layer3_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call9_layer3_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call9_layer4_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call9_layer4_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call9_logits": [
+      1,
+      1,
+      2048
+    ],
+    "call9_selected_id": [
+      1
+    ],
+    "call10_input_ids": [
+      1,
+      1
+    ],
+    "call10_cache_position": [
+      1
+    ],
+    "call10_attention_mask": [
+      1,
+      12
+    ],
+    "call10_position_ids": [
+      1,
+      1
+    ],
+    "call10_generation_steps": [
+      1
+    ],
+    "call10_model_inputs_embeds": [
+      1,
+      1,
+      1024
+    ],
+    "call10_model_cache_position": [
+      1
+    ],
+    "call10_model_position_ids": [
+      1,
+      1
+    ],
+    "call10_layer0_output": [
+      1,
+      1,
+      1024
+    ],
+    "call10_layer1_output": [
+      1,
+      1,
+      1024
+    ],
+    "call10_layer2_output": [
+      1,
+      1,
+      1024
+    ],
+    "call10_layer3_output": [
+      1,
+      1,
+      1024
+    ],
+    "call10_layer4_output": [
+      1,
+      1,
+      1024
+    ],
+    "call10_final_norm": [
+      1,
+      1,
+      1024
+    ],
+    "call10_layer0_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call10_layer0_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call10_layer1_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call10_layer1_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call10_layer2_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call10_layer2_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call10_layer3_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call10_layer3_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call10_layer4_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call10_layer4_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call10_logits": [
+      1,
+      1,
+      2048
+    ],
+    "call10_selected_id": [
+      1
+    ],
+    "call11_input_ids": [
+      1,
+      1
+    ],
+    "call11_cache_position": [
+      1
+    ],
+    "call11_attention_mask": [
+      1,
+      13
+    ],
+    "call11_position_ids": [
+      1,
+      1
+    ],
+    "call11_generation_steps": [
+      1
+    ],
+    "call11_model_inputs_embeds": [
+      1,
+      1,
+      1024
+    ],
+    "call11_model_cache_position": [
+      1
+    ],
+    "call11_model_position_ids": [
+      1,
+      1
+    ],
+    "call11_layer0_output": [
+      1,
+      1,
+      1024
+    ],
+    "call11_layer1_output": [
+      1,
+      1,
+      1024
+    ],
+    "call11_layer2_output": [
+      1,
+      1,
+      1024
+    ],
+    "call11_layer3_output": [
+      1,
+      1,
+      1024
+    ],
+    "call11_layer4_output": [
+      1,
+      1,
+      1024
+    ],
+    "call11_final_norm": [
+      1,
+      1,
+      1024
+    ],
+    "call11_layer0_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call11_layer0_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call11_layer1_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call11_layer1_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call11_layer2_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call11_layer2_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call11_layer3_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call11_layer3_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call11_layer4_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call11_layer4_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call11_logits": [
+      1,
+      1,
+      2048
+    ],
+    "call11_selected_id": [
+      1
+    ],
+    "call12_input_ids": [
+      1,
+      1
+    ],
+    "call12_cache_position": [
+      1
+    ],
+    "call12_attention_mask": [
+      1,
+      14
+    ],
+    "call12_position_ids": [
+      1,
+      1
+    ],
+    "call12_generation_steps": [
+      1
+    ],
+    "call12_model_inputs_embeds": [
+      1,
+      1,
+      1024
+    ],
+    "call12_model_cache_position": [
+      1
+    ],
+    "call12_model_position_ids": [
+      1,
+      1
+    ],
+    "call12_layer0_output": [
+      1,
+      1,
+      1024
+    ],
+    "call12_layer1_output": [
+      1,
+      1,
+      1024
+    ],
+    "call12_layer2_output": [
+      1,
+      1,
+      1024
+    ],
+    "call12_layer3_output": [
+      1,
+      1,
+      1024
+    ],
+    "call12_layer4_output": [
+      1,
+      1,
+      1024
+    ],
+    "call12_final_norm": [
+      1,
+      1,
+      1024
+    ],
+    "call12_layer0_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call12_layer0_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call12_layer1_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call12_layer1_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call12_layer2_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call12_layer2_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call12_layer3_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call12_layer3_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call12_layer4_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call12_layer4_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call12_logits": [
+      1,
+      1,
+      2048
+    ],
+    "call12_selected_id": [
+      1
+    ],
+    "call13_input_ids": [
+      1,
+      1
+    ],
+    "call13_cache_position": [
+      1
+    ],
+    "call13_attention_mask": [
+      1,
+      15
+    ],
+    "call13_position_ids": [
+      1,
+      1
+    ],
+    "call13_generation_steps": [
+      1
+    ],
+    "call13_model_inputs_embeds": [
+      1,
+      1,
+      1024
+    ],
+    "call13_model_cache_position": [
+      1
+    ],
+    "call13_model_position_ids": [
+      1,
+      1
+    ],
+    "call13_layer0_output": [
+      1,
+      1,
+      1024
+    ],
+    "call13_layer1_output": [
+      1,
+      1,
+      1024
+    ],
+    "call13_layer2_output": [
+      1,
+      1,
+      1024
+    ],
+    "call13_layer3_output": [
+      1,
+      1,
+      1024
+    ],
+    "call13_layer4_output": [
+      1,
+      1,
+      1024
+    ],
+    "call13_final_norm": [
+      1,
+      1,
+      1024
+    ],
+    "call13_layer0_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call13_layer0_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call13_layer1_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call13_layer1_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call13_layer2_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call13_layer2_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call13_layer3_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call13_layer3_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call13_layer4_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call13_layer4_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call13_logits": [
+      1,
+      1,
+      2048
+    ],
+    "call13_selected_id": [
+      1
+    ],
+    "call14_input_ids": [
+      1,
+      1
+    ],
+    "call14_cache_position": [
+      1
+    ],
+    "call14_attention_mask": [
+      1,
+      16
+    ],
+    "call14_position_ids": [
+      1,
+      1
+    ],
+    "call14_generation_steps": [
+      1
+    ],
+    "call14_model_inputs_embeds": [
+      1,
+      1,
+      1024
+    ],
+    "call14_model_cache_position": [
+      1
+    ],
+    "call14_model_position_ids": [
+      1,
+      1
+    ],
+    "call14_layer0_output": [
+      1,
+      1,
+      1024
+    ],
+    "call14_layer1_output": [
+      1,
+      1,
+      1024
+    ],
+    "call14_layer2_output": [
+      1,
+      1,
+      1024
+    ],
+    "call14_layer3_output": [
+      1,
+      1,
+      1024
+    ],
+    "call14_layer4_output": [
+      1,
+      1,
+      1024
+    ],
+    "call14_final_norm": [
+      1,
+      1,
+      1024
+    ],
+    "call14_layer0_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call14_layer0_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call14_layer1_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call14_layer1_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call14_layer2_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call14_layer2_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call14_layer3_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call14_layer3_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call14_layer4_k_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call14_layer4_v_new": [
+      1,
+      8,
+      1,
+      128
+    ],
+    "call14_logits": [
+      1,
+      1,
+      2048
+    ],
+    "call14_selected_id": [
+      1
+    ]
+  },
+  "npz_sha256": "11d94d83bf504c6473d76043a4c55f1df78862f9c523e5b5dbc19cccf1099498"
+}
