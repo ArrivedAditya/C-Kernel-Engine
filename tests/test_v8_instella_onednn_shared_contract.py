@@ -57,32 +57,32 @@ class InstellaOneDNNSharedContractTests(unittest.TestCase):
                 _bind_farskip_shared_width, _kernel_scratch_size_bytes,
                 generate_ir_lower_3,
             )
+            kernel_map = json.loads(MAP.read_text())
+            observed = json.loads((ROOT / 'tests/fixtures/instella_onednn_expert/shared_lowered_op.json').read_text())
+            for name in ('moe_shared_intermediate_size',
+                         'moe_shared_expert_intermediate_size'):
+                with self.subTest(config_key=name):
+                    config = {'embed_dim': 2048, 'moe_intermediate_size': 1408,
+                              'n_shared_experts': 2, name: 2816}
+                    op = copy.deepcopy(observed)
+                    op['params'].update({'_m': 3, 'R': 3, 'I': 1408,
+                                         'seq_len': 3})
+                    _bind_farskip_shared_width(op['params'], config)
+                    expected_bytes = _kernel_scratch_size_bytes(
+                        kernel_map['scratch'][0], op['params'], config,
+                    )
+                    op['scratch'][0]['size'] = expected_bytes
+                    call = generate_ir_lower_3(
+                        {'config': config, 'operations': [op]}, 'prefill',
+                    )['operations'][0]
+                    self.assertEqual(call['errors'], [])
+                    args = {arg['name']: arg['expr'] for arg in call['args']}
+                    self.assertEqual(args['intermediate_dim'], '2816')
+                    self.assertEqual(args['workspace_bytes'], str(expected_bytes))
+                    self.assertEqual(expected_bytes,
+                                     3 * (16 * 2816 + 8 * 2048) + 8 * 2816)
         finally:
             sys.path.pop(0)
-        kernel_map = json.loads(MAP.read_text())
-        observed = json.loads((ROOT / 'tests/fixtures/instella_onednn_expert/shared_lowered_op.json').read_text())
-        for name in ('moe_shared_intermediate_size',
-                     'moe_shared_expert_intermediate_size'):
-            with self.subTest(config_key=name):
-                config = {'embed_dim': 2048, 'moe_intermediate_size': 1408,
-                          'n_shared_experts': 2, name: 2816}
-                op = copy.deepcopy(observed)
-                op['params'].update({'_m': 3, 'R': 3, 'I': 1408,
-                                     'seq_len': 3})
-                _bind_farskip_shared_width(op['params'], config)
-                expected_bytes = _kernel_scratch_size_bytes(
-                    kernel_map['scratch'][0], op['params'], config,
-                )
-                op['scratch'][0]['size'] = expected_bytes
-                call = generate_ir_lower_3(
-                    {'config': config, 'operations': [op]}, 'prefill',
-                )['operations'][0]
-                self.assertEqual(call['errors'], [])
-                args = {arg['name']: arg['expr'] for arg in call['args']}
-                self.assertEqual(args['intermediate_dim'], '2816')
-                self.assertEqual(args['workspace_bytes'], str(expected_bytes))
-                self.assertEqual(expected_bytes,
-                                 3 * (16 * 2816 + 8 * 2048) + 8 * 2816)
 
     def test_compiled_group_and_rejection_contract(self):
         with tempfile.TemporaryDirectory() as directory:
