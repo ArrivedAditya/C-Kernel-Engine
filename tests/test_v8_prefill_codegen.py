@@ -58,6 +58,10 @@ class TestV8PrefillCodegen(unittest.TestCase):
         emitted = codegen_prefill_v8.emit_prefill_function(ops, config)
         self.assertNotIn("Continue through decode", emitted)
         self.assertIn("ck_prefill_range(model, tokens + consumed, chunk, start_pos + consumed)", emitted)
+        unknown = codegen_prefill_v8.emit_prefill_function(
+            ops + [{"op": "attention_future", "function": "future_attention",
+                    "layer": 1, "args": []}], config)
+        self.assertIn("Continue through decode", unknown)
         ops[0]["prefill_history_scope"] = "current_chunk"
         fallback = codegen_prefill_v8.emit_prefill_function(ops, config)
         self.assertIn("Continue through decode", fallback)

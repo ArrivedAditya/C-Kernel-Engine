@@ -1825,7 +1825,8 @@ def emit_prefill_function(ops: List[Dict], config: Dict, profile: bool = False, 
     }
     unknown_attention_history = any(
         str(op.get("op", "")) in attention_ops
-        or str(op.get("op", "")).startswith("attention_forward")
+        or (str(op.get("op", "")).startswith("attention")
+            and str(op.get("op", "")) != "attention_gate_projection")
         for op in ops if op.get("prefill_history_scope") is None
     )
     requires_decode_continuation = (
