@@ -83,7 +83,11 @@
   "same_loaded_identity_before_after": true,
   "schema": "cke.harness_practical_sweep.v1",
   "scope": "Two restricted LangChain Deep Agents tasks on P3 via ordinary CKE HTTP: read/edit/validator and failed-tool recovery; no batching claim",
-  "source_commit": "409822528ce9",
+  "server_source_at_run": {
+    "local_commit_before_rebase": "409822528ce9",
+    "public_source_equivalent_commit": "39e1be7ac27a461bfa461a041f5821d8cd0928d5",
+    "server_live_sha256": "24e93ba1b6c5c182dfdb0365fd7c7c62428086626c83772148a421e6069d7bc2"
+  },
   "status": "PASS",
   "tool_sequence": [
     "read_fixture",
