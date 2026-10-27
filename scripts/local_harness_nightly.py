@@ -86,6 +86,30 @@ def _source_commit() -> str:
     ).strip()
 
 
+def _refresh_main() -> str:
+    """Advance an otherwise untouched dedicated checkout to fetched main."""
+    if subprocess.run(["git", "symbolic-ref", "-q", "HEAD"], cwd=ROOT,
+                      capture_output=True, check=False).returncode == 0:
+        raise ValueError("source refresh requires a detached worktree")
+    if subprocess.check_output(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            cwd=ROOT, text=True).strip():
+        raise ValueError("source refresh requires a clean worktree")
+    subprocess.run(
+        ["git", "fetch", "--quiet", "--no-tags", "origin",
+         "+refs/heads/main:refs/remotes/origin/main"],
+        cwd=ROOT, check=True, timeout=90,
+    )
+    target = subprocess.check_output(
+        ["git", "rev-parse", "refs/remotes/origin/main"], cwd=ROOT, text=True,
+    ).strip()
+    subprocess.run(["git", "checkout", "--detach", target], cwd=ROOT,
+                   check=True, timeout=30, capture_output=True)
+    if _source_commit() != target:
+        raise RuntimeError("source refresh did not load fetched main")
+    return target
+
+
 def _http_dependencies_ready() -> bool:
     """The coordinator launches HTTP probes with this same Python interpreter."""
     try:
@@ -95,7 +119,7 @@ def _http_dependencies_ready() -> bool:
     return True
 
 
-def run(config_path: Path, state_dir: Path) -> dict:
+def run(config_path: Path, state_dir: Path, *, refresh_main: bool = False) -> dict:
     state_dir.mkdir(parents=True, exist_ok=True)
     started = datetime.now(timezone.utc)
     run_dir = state_dir / "runs" / (started.strftime("%Y%m%dT%H%M%S%fZ"))
@@ -114,6 +138,15 @@ def run(config_path: Path, state_dir: Path) -> dict:
     stage = "source_commit"
     try:
         report["source_commit"] = _source_commit()
+        if refresh_main:
+            if (state_dir / "PAUSE").exists():
+                report["source_refresh"] = "skipped_paused"
+            else:
+                stage = "source_refresh"
+                report["source_commit_before_refresh"] = report["source_commit"]
+                report["source_commit"] = _refresh_main()
+                report["source_refresh"] = "fetched_origin_main"
+                publish()
         if str(ROOT) not in sys.path:
             sys.path.insert(0, str(ROOT))
         from server.harness_repeatability import _validate
@@ -209,6 +242,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--state-dir", type=Path, required=True)
+    parser.add_argument("--refresh-main", action="store_true",
+                        help="fetch origin/main in a clean detached worktree before testing")
     args = parser.parse_args()
     args.state_dir.mkdir(parents=True, exist_ok=True)
     with (args.state_dir / "LOCK").open("a+") as lock:
@@ -218,7 +253,7 @@ def main() -> int:
             print("another local harness nightly owns this state directory")
             return 2
         try:
-            result = run(args.config, args.state_dir)
+            result = run(args.config, args.state_dir, refresh_main=args.refresh_main)
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             print(f"local harness nightly configuration or report error: {exc}")
             return 1

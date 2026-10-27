@@ -1,6 +1,9 @@
 """A local harness night cannot turn missing execution into PASS."""
 import json
 from pathlib import Path
+import subprocess
+
+import pytest
 
 from scripts import local_harness_nightly as lane
 
@@ -175,3 +178,81 @@ def test_malformed_reassessment_replaces_previous_pass(tmp_path, monkeypatch):
     assert latest["run_id"] != "yesterday"
     assert latest["failure_stage"] == "reassessment:qwen-control"
     assert latest["clients"][0]["status"] == "FAIL"
+
+
+def test_refreshed_source_is_recorded_before_endpoint_probe(tmp_path, monkeypatch):
+    monkeypatch.setattr(lane, "_source_commit", lambda: "a" * 40)
+    monkeypatch.setattr(lane, "_refresh_main", lambda: "b" * 40)
+    monkeypatch.setattr(lane, "_preflight", lambda _: ("NOT_TESTED", "offline", None))
+    config = tmp_path / "config.json"
+    _config(config)
+    report = lane.run(config, tmp_path / "state", refresh_main=True)
+    assert report["status"] == "NOT_TESTED"
+    assert report["source_commit"] == "b" * 40
+    assert report["source_commit_before_refresh"] == "a" * 40
+    assert report["source_refresh"] == "fetched_origin_main"
+
+
+def test_refresh_failure_replaces_prior_pass_without_probing(tmp_path, monkeypatch):
+    monkeypatch.setattr(lane, "_source_commit", lambda: "a" * 40)
+    monkeypatch.setattr(lane, "_refresh_main", lambda: (_ for _ in ()).throw(
+        ValueError("dirty worktree")))
+    monkeypatch.setattr(lane, "_preflight", lambda _: (_ for _ in ()).throw(
+        AssertionError("must not probe after refresh failure")))
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "latest.json").write_text(json.dumps({"status": "PASS", "run_id": "yesterday"}))
+    config = tmp_path / "config.json"
+    _config(config)
+    report = lane.run(config, state, refresh_main=True)
+    latest = json.loads((state / "latest.json").read_text())
+    assert report["status"] == latest["status"] == "FAIL"
+    assert latest["failure_stage"] == "source_refresh"
+    assert latest["run_id"] != "yesterday"
+
+
+def test_pause_skips_source_fetch(tmp_path, monkeypatch):
+    monkeypatch.setattr(lane, "_source_commit", lambda: "a" * 40)
+    monkeypatch.setattr(lane, "_refresh_main", lambda: (_ for _ in ()).throw(
+        AssertionError("paused run must not fetch")))
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "PAUSE").touch()
+    config = tmp_path / "config.json"
+    _config(config)
+    report = lane.run(config, state, refresh_main=True)
+    assert report["status"] == "NOT_TESTED"
+    assert report["source_refresh"] == "skipped_paused"
+
+
+def test_refresh_requires_clean_detached_checkout_and_fetches_main(tmp_path, monkeypatch):
+    source = tmp_path / "source"
+    origin = tmp_path / "origin.git"
+    worker = tmp_path / "worker"
+
+    def git(*args, cwd=None):
+        return subprocess.check_output(["git", *args], cwd=cwd, text=True,
+                                       stderr=subprocess.DEVNULL).strip()
+
+    git("init", "-b", "main", str(source))
+    git("config", "user.email", "test@example.invalid", cwd=source)
+    git("config", "user.name", "Test", cwd=source)
+    (source / "fixture.txt").write_text("old\n")
+    git("add", "fixture.txt", cwd=source)
+    git("commit", "-m", "old", cwd=source)
+    git("clone", "--bare", str(source), str(origin))
+    git("clone", str(origin), str(worker))
+    monkeypatch.setattr(lane, "ROOT", worker)
+    with pytest.raises(ValueError, match="detached"):
+        lane._refresh_main()
+    git("checkout", "--detach", cwd=worker)
+    (worker / "fixture.txt").write_text("dirty\n")
+    with pytest.raises(ValueError, match="clean"):
+        lane._refresh_main()
+    git("checkout", "--", "fixture.txt", cwd=worker)
+    (source / "fixture.txt").write_text("new\n")
+    git("add", "fixture.txt", cwd=source)
+    git("commit", "-m", "new", cwd=source)
+    git("push", str(origin), "main", cwd=source)
+    assert lane._refresh_main() == git("rev-parse", "HEAD", cwd=source)
+    assert (worker / "fixture.txt").read_text() == "new\n"
