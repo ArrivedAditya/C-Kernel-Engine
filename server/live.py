@@ -38,7 +38,7 @@ from pathlib import Path
 from typing import Any
 
 from .gemma_tool_protocol import GemmaToolSyntaxError, parse_gemma_tool_calls
-from .muse_atem_protocol import MuseSyntaxError, parse_muse_turn
+from .muse_atem_protocol import MuseSyntaxError, parse_muse_turn, truncated_plain_text
 
 import anyio
 from fastapi import APIRouter, FastAPI, HTTPException, Request
@@ -992,7 +992,7 @@ _TOOL_SCHEMA_KEYS = {
     "type", "properties", "required", "additionalProperties", "items",
     "enum", "description", "title", "default", "minimum", "maximum",
     "exclusiveMinimum", "exclusiveMaximum",
-    "minLength", "maxLength", "anyOf", "$schema",
+    "minLength", "maxLength", "maxItems", "anyOf", "$schema",
 }
 
 
@@ -1047,8 +1047,13 @@ def _validate_tool_schema_subset(schema: Any, path: str = "parameters") -> None:
                 raise ValueError(f"{path}.{bound} must be a nonnegative integer")
     if "minLength" in schema and "maxLength" in schema and schema["minLength"] > schema["maxLength"]:
         raise ValueError(f"{path}.minLength exceeds maxLength")
+    if "maxItems" in schema:
+        if kind is None or "array" not in kinds:
+            raise ValueError(f"{path}.maxItems requires an array type")
+        if type(schema["maxItems"]) is not int or schema["maxItems"] < 0:
+            raise ValueError(f"{path}.maxItems must be a nonnegative integer")
     if "properties" in schema:
-        if kind not in (None, "object") or not isinstance(schema["properties"], dict):
+        if (kind is not None and "object" not in kinds) or not isinstance(schema["properties"], dict):
             raise ValueError(f"{path}.properties requires an object schema")
         for key, child in schema["properties"].items():
             if not isinstance(key, str):
@@ -1056,14 +1061,14 @@ def _validate_tool_schema_subset(schema: Any, path: str = "parameters") -> None:
             _validate_tool_schema_subset(child, f"{path}.properties.{key}")
     if "required" in schema:
         required = schema["required"]
-        if kind not in (None, "object") or not isinstance(required, list) or not all(
+        if (kind is not None and "object" not in kinds) or not isinstance(required, list) or not all(
             isinstance(key, str) for key in required
         ):
             raise ValueError(f"{path}.required must be an array of property names")
     if "additionalProperties" in schema and not isinstance(schema["additionalProperties"], bool):
         raise ValueError(f"{path}.additionalProperties must be boolean")
     if "items" in schema:
-        if kind not in (None, "array"):
+        if kind is not None and "array" not in kinds:
             raise ValueError(f"{path}.items requires an array schema")
         _validate_tool_schema_subset(schema["items"], f"{path}.items")
     if "anyOf" in schema:
@@ -1120,8 +1125,12 @@ def _tool_value_matches_schema(value: Any, schema: dict[str, Any]) -> bool:
             for key, item in value.items() if key in properties
         ):
             return False
-    if isinstance(value, list) and "items" in schema:
-        if any(not _tool_value_matches_schema(item, schema["items"]) for item in value):
+    if isinstance(value, list):
+        if "maxItems" in schema and len(value) > schema["maxItems"]:
+            return False
+        if "items" in schema and any(
+            not _tool_value_matches_schema(item, schema["items"]) for item in value
+        ):
             return False
     return True
 
@@ -2404,6 +2413,9 @@ def create_app(
             return "", "", f"malformed Muse turn: {exc}"
         return turn.reasoning, turn.final_text, None
 
+    def _muse_limited_text(raw: str) -> str:
+        return truncated_plain_text(raw)
+
     def stream_events(
         body,
         prompt,
@@ -2736,7 +2748,15 @@ def create_app(
                     text = raw_text
                     thinking = None
                     channel_error = None
-                    if tool_syntax == _TOOL_SYNTAX_MUSE_ATEM_V1:
+                    muse_output_limit = (
+                        tool_syntax == _TOOL_SYNTAX_MUSE_ATEM_V1
+                        and stop_reason_val == 2
+                    )
+                    if muse_output_limit:
+                        # A bounded Muse turn may end inside a reasoning or ATEM
+                        # envelope. No channel or tool call is complete yet.
+                        text = _muse_limited_text(raw_text)
+                    elif tool_syntax == _TOOL_SYNTAX_MUSE_ATEM_V1:
                         muse_reasoning, text, channel_error = _muse_channels(raw_text)
                         thinking = muse_reasoning or None if think_enabled else None
                     elif think_enabled:
@@ -2745,14 +2765,17 @@ def create_app(
                     input_tokens = int(result.get("prompt_tokens") or 0)
                     output_tokens = int(result.get("generated_tokens") or len(complete))
                     message_index = 1 if think_enabled else 0
-                    tool_calls, tool_error_code, tool_error_msg = _parse_tool_result(
-                        raw_text if tool_syntax in {
-                            _TOOL_SYNTAX_MUSE_ATEM_V1,
-                            _TOOL_SYNTAX_NEMOTRON_TOOLCALL_V1,
-                        } else text,
-                        body,
-                        prompt_opens_thinking=_prompt_opens_thinking(generation_prefix),
-                    )
+                    if muse_output_limit:
+                        tool_calls, tool_error_code, tool_error_msg = None, None, None
+                    else:
+                        tool_calls, tool_error_code, tool_error_msg = _parse_tool_result(
+                            raw_text if tool_syntax in {
+                                _TOOL_SYNTAX_MUSE_ATEM_V1,
+                                _TOOL_SYNTAX_NEMOTRON_TOOLCALL_V1,
+                            } else text,
+                            body,
+                            prompt_opens_thinking=_prompt_opens_thinking(generation_prefix),
+                        )
                     if channel_error is not None:
                         tool_calls, tool_error_code, tool_error_msg = None, "malformed", channel_error
                     if tool_error_code is None:
@@ -3383,7 +3406,16 @@ def create_app(
         thinking = None
         reasoning_tokens = 0
         channel_error = None
-        if tool_syntax == _TOOL_SYNTAX_MUSE_ATEM_V1:
+        stop_reason_val = int(result.get("stop_reason") or 0) if result else 0
+        muse_output_limit = (
+            tool_syntax == _TOOL_SYNTAX_MUSE_ATEM_V1
+            and stop_reason_val == 2
+        )
+        if muse_output_limit:
+            # A token limit can cut a channel delimiter or tool envelope in
+            # half. Keep its partial bytes out of the public response.
+            text = _muse_limited_text(raw_text)
+        elif tool_syntax == _TOOL_SYNTAX_MUSE_ATEM_V1:
             muse_reasoning, text, channel_error = _muse_channels(raw_text)
             thinking = (muse_reasoning or None) if think_enabled else None
         elif think_enabled:
@@ -3391,14 +3423,17 @@ def create_app(
             thinking = thinking or None
         if thinking is not None:
             reasoning_tokens = max(0, len(thinking) // 4)
-        tool_calls, tool_error_code, tool_error_msg = _parse_tool_result(
-            raw_text if tool_syntax in {
-                _TOOL_SYNTAX_MUSE_ATEM_V1,
-                _TOOL_SYNTAX_NEMOTRON_TOOLCALL_V1,
-            } else text,
-            body,
-            prompt_opens_thinking=_prompt_opens_thinking(generation_prefix),
-        )
+        if muse_output_limit:
+            tool_calls, tool_error_code, tool_error_msg = None, None, None
+        else:
+            tool_calls, tool_error_code, tool_error_msg = _parse_tool_result(
+                raw_text if tool_syntax in {
+                    _TOOL_SYNTAX_MUSE_ATEM_V1,
+                    _TOOL_SYNTAX_NEMOTRON_TOOLCALL_V1,
+                } else text,
+                body,
+                prompt_opens_thinking=_prompt_opens_thinking(generation_prefix),
+            )
         if channel_error is not None:
             tool_calls, tool_error_code, tool_error_msg = None, "malformed", channel_error
         if tool_error_code is None:
@@ -3420,7 +3455,6 @@ def create_app(
             if result
             else len(chunks)
         )
-        stop_reason_val = int(result.get("stop_reason") or 0) if result else 0
         incomplete_details = None
         final_status = ResponseStatus.completed
         item_status = "completed"
