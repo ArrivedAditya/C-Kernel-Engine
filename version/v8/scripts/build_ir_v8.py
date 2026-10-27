@@ -2090,6 +2090,10 @@ OP_DATAFLOW = {
         "inputs": {"values": "external:values"},
         "outputs": {"index": {"slot": "selected_index", "dtype": "i32"}},
     },
+    "concat_i32_checked": {
+        "inputs": {"left": "external:left", "right": "external:right"},
+        "outputs": {"output": {"slot": "concatenated_ids", "dtype": "i32"}},
+    },
     "audio_duration_logits_to_frames": {
         "inputs": {"logits": "external:audio_duration_logits"},
         "outputs": {
@@ -4950,6 +4954,7 @@ TEMPLATE_TO_KERNEL_OP = {
     "embedding_lookup_checked": "embedding_lookup_checked",
     "embedding_lookup_token_major_checked": "embedding_lookup_token_major_checked",
     "argmax_last_row_checked": "argmax_last_row_checked",
+    "concat_i32_checked": "concat_i32_checked",
     "audio_duration_logits_to_frames": "audio_duration_logits_to_frames",
     "runtime_extent_sum": "runtime_extent_sum",
     "runtime_extent_scale": "runtime_extent_scale",

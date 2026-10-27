@@ -95,6 +95,7 @@
             "audio_adain_instance_norm",
             "audio_scaled_sum_strided_checked",
             "audio_concat_channels_checked",
+            "concat_i32_checked",
             "audio_relative_attention",
             "audio_scaled_residual_add",
             "audio_relu",

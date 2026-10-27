@@ -34,7 +34,6 @@ SAMPLES = 1920
 
 def build_circuit() -> dict:
     graph = generated_codes()
-    codec = codec_waveform(frames=1)
     graph["name"] = "qwen3_tts_first_frame_waveform_bounded"
     graph["native_entry"]["function"] = "ck_qwen3_tts_first_frame_waveform_bounded"
     graph["contract"]["runtime_invariants"].update({
@@ -48,6 +47,13 @@ def build_circuit() -> dict:
     ids.update({f"acoustic_ids_{i}": (
         "pred_predictor_codebook0_selected_id" if i == 0 else
         f"pred_step{i}_selected_id") for i in range(15)})
+    return attach_codec(graph, frames=1, ids=ids)
+
+
+def attach_codec(graph: dict, *, frames: int, ids: dict[str, str]) -> dict:
+    """Append codec operations with explicit, already-produced codebook spans."""
+    codec = codec_waveform(frames=frames)
+    samples = frames * SAMPLES
     shapes, bindings = graph["activation_buffers"], graph["activation_bindings"]
 
     def slot(value: str) -> str:
@@ -59,7 +65,7 @@ def build_circuit() -> dict:
 
     for name, shape in codec["activation_buffers"].items():
         if name in ids:
-            if shape["shape"] != [1] or shapes[ids[name]]["shape"] != [1]:
+            if shape["shape"] != [frames] or shapes[ids[name]]["shape"] != [frames]:
                 raise ValueError(f"codec ID geometry differs: {name}")
             continue
         mapped = "codec_" + name
@@ -96,7 +102,7 @@ def build_circuit() -> dict:
         "returns_status": True,
         "params": {"call_constants": {
             "extent_affine_source": 0, "extent_affine_factor": 1,
-            "extent_affine_offset": 0, "extent_affine_capacity": SAMPLES}},
+            "extent_affine_offset": 0, "extent_affine_capacity": samples}},
         "graph_slots": {"inputs": {},
                         "outputs": {"valid_extent": "waveform_valid_samples"}},
     })
@@ -109,8 +115,8 @@ def build_circuit() -> dict:
             "returns_status": True,
             "params": {"call_constants": {
                 "extent_affine_source": 0, "extent_affine_factor": 1,
-                "extent_affine_offset": SAMPLES,
-                "extent_affine_capacity": SAMPLES}},
+                "extent_affine_offset": samples,
+                "extent_affine_capacity": samples}},
             "graph_slots": {"inputs": {},
                             "outputs": {"valid_extent": "waveform_valid_samples"}},
         }

@@ -806,6 +806,15 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_qwen3_tts_second_generated_frame.py",
         timeout_sec=360,
     ),
+    "tts_concat_i32_checked": TestSuite(
+        "Checked Integer Span Concatenation", "kernels",
+        ROOT / "tests" / "test_v8_concat_i32_checked.py",
+    ),
+    "tts_qwen3_customvoice_two_frame_waveform": TestSuite(
+        "Qwen3-TTS Generated Two Frames to PCM", "inference",
+        ROOT / "tests" / "test_v8_qwen3_tts_two_frame_waveform.py",
+        timeout_sec=360,
+    ),
     "tts_attention_decode_append_checked": TestSuite(
         "Checked GQA Decode and KV Append", "kernels",
         ROOT / "tests" / "test_v8_attention_decode_append_checked.py",
