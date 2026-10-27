@@ -810,6 +810,10 @@ TEST_SUITES = {
         "Checked Speech-Code Stop and Budget Selection", "kernels",
         ROOT / "tests" / "test_v8_select_next_id_checked.py",
     ),
+    "tts_repetition_penalty_checked": TestSuite(
+        "Checked Speech-Code Repetition Penalty", "kernels",
+        ROOT / "tests" / "test_v8_repetition_penalty_checked.py",
+    ),
     "tts_concat_i32_checked": TestSuite(
         "Checked Integer Span Concatenation", "kernels",
         ROOT / "tests" / "test_v8_concat_i32_checked.py",

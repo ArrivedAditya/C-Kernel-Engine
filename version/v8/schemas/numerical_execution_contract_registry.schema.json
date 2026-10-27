@@ -102,6 +102,7 @@
             "leaky_relu",
             "silu",
             "audio_argmax",
+            "repetition_penalty",
             "audio_duration_expand",
             "audio_duration_logits_to_frames",
             "embedding_three_table_layer_norm",
