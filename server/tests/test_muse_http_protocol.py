@@ -475,6 +475,47 @@ def test_muse_plain_text_output_limit_keeps_safe_partial_text() -> None:
     assert response.json()["output_text"] == "A partial plain answer"
 
 
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("fragment", [
+    "<", "<|", "<|sta", "<|start", "<|mes", "<|eo", "<|end_",
+    "<atem", "<atem:", "<atem:function", "<atem:inv", "<atem:para",
+    "</atem", " to=",
+])
+def test_muse_output_limit_hides_truncated_framing_prefix(
+    fragment: str, stream: bool,
+) -> None:
+    client, _ = _client([fragment], stop_reasons=[2])
+    response = client.post("/v1/responses", json={
+        "model": "muse-test", "input": "Read it", "tools": [TOOL],
+        "stream": stream, "max_output_tokens": 32,
+    })
+    assert response.status_code == 200, response.text
+    if stream:
+        events = _events(response)
+        assert not any(event["type"] == "response.output_text.delta" for event in events)
+        assert not any(event.get("item", {}).get("type") == "function_call"
+                       for event in events)
+        payload = next(event["response"] for event in events
+                       if event["type"] == "response.incomplete")
+    else:
+        payload = response.json()
+    assert payload["status"] == "incomplete"
+    assert payload["output_text"] == ""
+    assert not any(item["type"] == "function_call" for item in payload["output"])
+
+
+@pytest.mark.parametrize("partial", ["to", "to be", "A partial plain answer",
+                                      "The label <atem is incomplete"])
+def test_muse_output_limit_preserves_unframed_text(partial: str) -> None:
+    client, _ = _client([partial], stop_reasons=[2])
+    response = client.post("/v1/responses", json={
+        "model": "muse-test", "input": "Say hello", "max_output_tokens": 32,
+    })
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "incomplete"
+    assert response.json()["output_text"] == partial
+
+
 def test_muse_completed_turn_missing_reasoning_boundary_still_fails() -> None:
     client, _ = _client([" to=self<|message|>unfinished thought"], stop_reasons=[1])
     response = client.post("/v1/responses", json={

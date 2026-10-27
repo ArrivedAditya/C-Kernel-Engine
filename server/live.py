@@ -38,7 +38,7 @@ from pathlib import Path
 from typing import Any
 
 from .gemma_tool_protocol import GemmaToolSyntaxError, parse_gemma_tool_calls
-from .muse_atem_protocol import MuseSyntaxError, parse_muse_turn
+from .muse_atem_protocol import MuseSyntaxError, parse_muse_turn, truncated_plain_text
 
 import anyio
 from fastapi import APIRouter, FastAPI, HTTPException, Request
@@ -2414,15 +2414,7 @@ def create_app(
         return turn.reasoning, turn.final_text, None
 
     def _muse_limited_text(raw: str) -> str:
-        # Plain unframed text can be shown as a partial answer. A cut channel
-        # or ATEM envelope has no verified recipient or tool arguments yet.
-        if raw.lstrip().startswith("to=") or any(
-            marker in raw for marker in
-            ("<|start|>", "<|message|>", "<|eom|>", "<|eot|>",
-             "<|end_of_text|>", "<atem:")
-        ):
-            return ""
-        return raw.strip()
+        return truncated_plain_text(raw)
 
     def stream_events(
         body,
