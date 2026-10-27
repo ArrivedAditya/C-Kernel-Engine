@@ -35,7 +35,7 @@ def build_circuit() -> dict:
         "generated_codec_frames": FRAMES,
         "generated_sample_count": SAMPLES,
         "two_frame_codec_connected": True,
-        "generation_policy": "greedy_fixed_non_eos_prefix",
+        "generation_policy": "greedy_fixed_non_eos_prefix_with_repetition_penalty",
         "complete_text_to_wav": False,
         "audible_speech": False,
     })

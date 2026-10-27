@@ -4681,6 +4681,17 @@
       "position_transform": null,
       "description": "Argmax over nonempty finite FP32 values with NumPy-compatible first-index tie selection."
     },
+    "repetition_penalty_sign_dependent_fp32": {
+      "operator_family": "repetition_penalty",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "none", "output": "fp32"},
+      "compute": {"input": "fp32", "weight": "none", "accumulator": "fp32", "contraction": "disabled", "evaluation_order": "last_row_then_ascending_channels_with_distinct_history_membership_and_sign_dependent_penalty"},
+      "rounding": {"mode": "rne", "points": ["input_load", "pointwise_product", "output_divide", "output_store"]},
+      "reduction": {"kind": "none", "order": "none", "partial_accumulator": "fp32", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Checked last-row repetition penalty: negative scores for previously selected IDs multiply by the declared positive penalty; nonnegative scores divide. Duplicate history IDs are penalized once. Invalid inputs and nonfinite results leave output unchanged."
+    },
     "select_next_id_first_index_stop_policy_fp32": {
       "operator_family": "audio_argmax",
       "status": "validated",

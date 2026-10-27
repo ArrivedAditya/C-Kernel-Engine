@@ -87,7 +87,8 @@
         19,
         20
       ],
-      "generation_policy": "greedy_fixed_non_eos_prefix",
+      "generation_policy": "greedy_fixed_non_eos_prefix_with_repetition_penalty",
+      "repetition_penalty": "105/100 sign-dependent on generated-code history",
       "minimum_new_frames": 2,
       "maximum_new_frames": 64,
       "codec_eos_token_id": 2150
@@ -18722,6 +18723,11 @@
         3072
       ]
     },
+    "second_talker_adjusted_logits": {
+      "shape": [
+        3072
+      ]
+    },
     "second_talker_first_code_id": {
       "shape": [
         1
@@ -32385,6 +32391,7 @@
     "cont_layer27_attention_decode_staged": "cont_layer27_attention_decode_staged",
     "cont_talker_final_norm": "cont_talker_final_norm",
     "cont_talker_logits": "cont_talker_logits",
+    "second_talker_adjusted_logits": "second_talker_adjusted_logits",
     "second_talker_first_code_id": "second_talker_first_code_id",
     "second_talker_first_code_embedding": "second_talker_first_code_embedding",
     "second_bridge_left_indices": "second_bridge_left_indices",
@@ -120265,13 +120272,44 @@
         "type": "dense",
         "ops": [
           {
+            "id": "second_talker_repetition_penalty",
+            "op": "repetition_penalty_last_row_checked",
+            "kernel": "repetition_penalty_last_row_checked_f32",
+            "returns_status": true,
+            "graph_slots": {
+              "inputs": {
+                "values": "cont_talker_logits",
+                "history": "talker_first_code_id"
+              },
+              "outputs": {
+                "output": "second_talker_adjusted_logits"
+              }
+            },
+            "params": {
+              "R": 1,
+              "C": 3072,
+              "H": 1,
+              "call_constants": {
+                "values_elements": 3072,
+                "rows": 1,
+                "channels": 3072,
+                "row_stride": 3072,
+                "history_elements": 1,
+                "history_count": 1,
+                "penalty_numerator": 105,
+                "penalty_denominator": 100,
+                "output_elements": 3072
+              }
+            }
+          },
+          {
             "id": "second_talker_select_first_code",
             "op": "select_next_id_checked",
             "kernel": "select_next_id_checked_f32",
             "returns_status": true,
             "graph_slots": {
               "inputs": {
-                "values": "cont_talker_logits"
+                "values": "second_talker_adjusted_logits"
               },
               "outputs": {
                 "index": "second_talker_first_code_id"

@@ -5,7 +5,7 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "version/v8/kernel_maps",
     "counts": {
-      "total": 466,
+      "total": 467,
       "by_op": {
         "add_backward": 1,
         "add_rows_checked": 1,
@@ -159,6 +159,7 @@
         "recurrent_split_qkv": 1,
         "recurrent_split_qkv_backward": 1,
         "relu2": 2,
+        "repetition_penalty_last_row_checked": 1,
         "residual_add": 2,
         "residual_save": 1,
         "rmsnorm": 12,
@@ -77123,6 +77124,234 @@
       },
       "name": "relu2_forward",
       "_source_file": "relu2_forward.json"
+    },
+    {
+      "id": "repetition_penalty_last_row_checked_f32",
+      "op": "repetition_penalty_last_row_checked",
+      "operation_interface": "tensor.repetition_penalty.last_row.checked.fp32.v1",
+      "variant": "finite_sign_dependent_history_once",
+      "selection": {
+        "status": "candidate",
+        "priority": 100,
+        "equivalence_group": "tensor.repetition_penalty.last_row.checked.fp32.v1",
+        "phases": [
+          "prefill",
+          "decode"
+        ]
+      },
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "values",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "C"
+          ],
+          "layout": "row_major_strided",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        },
+        {
+          "name": "history",
+          "dtype": "i32",
+          "shape": [
+            "H"
+          ],
+          "layout": "contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "C"
+          ],
+          "layout": "contiguous",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "R",
+        "C",
+        "H"
+      ],
+      "impl": {
+        "function": "ck_repetition_penalty_last_row_checked_f32",
+        "c_declaration": "int ck_repetition_penalty_last_row_checked_f32(const float *values, size_t values_elements, size_t rows, size_t channels, size_t row_stride, const int32_t *history, size_t history_elements, size_t history_count, size_t penalty_numerator, size_t penalty_denominator, float *output, size_t output_elements);",
+        "sources": [
+          "src/kernels/repetition_penalty_checked.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "repetition_penalty_sign_dependent_fp32",
+          "status": "validated",
+          "phases": [
+            "prefill",
+            "decode"
+          ],
+          "function": "ck_repetition_penalty_last_row_checked_f32",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "contract_defined"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp32",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "serial"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "values",
+            "source": "activation:values",
+            "cast": "const float*",
+            "ports": [
+              "input:values"
+            ]
+          },
+          {
+            "name": "values_elements",
+            "source": "runtime:values_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "rows",
+            "source": "runtime:rows",
+            "value_type": "size_t"
+          },
+          {
+            "name": "channels",
+            "source": "runtime:channels",
+            "value_type": "size_t"
+          },
+          {
+            "name": "row_stride",
+            "source": "runtime:row_stride",
+            "value_type": "size_t"
+          },
+          {
+            "name": "history",
+            "source": "activation:history",
+            "cast": "const int32_t*",
+            "ports": [
+              "input:history"
+            ]
+          },
+          {
+            "name": "history_elements",
+            "source": "runtime:history_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "history_count",
+            "source": "runtime:history_count",
+            "value_type": "size_t"
+          },
+          {
+            "name": "penalty_numerator",
+            "source": "runtime:penalty_numerator",
+            "value_type": "size_t"
+          },
+          {
+            "name": "penalty_denominator",
+            "source": "runtime:penalty_denominator",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output",
+            "source": "output:output",
+            "cast": "float*",
+            "ports": [
+              "output:output"
+            ]
+          },
+          {
+            "name": "output_elements",
+            "source": "runtime:output_elements",
+            "value_type": "size_t"
+          }
+        ]
+      },
+      "call_constant_contract": {
+        "shape_symbols": {
+          "R": "rows",
+          "C": "channels",
+          "H": "history_count"
+        },
+        "buffer_spans": [
+          {
+            "pointer": "values",
+            "elements": "values_elements",
+            "rows": "rows",
+            "width": "channels",
+            "stride": "row_stride",
+            "physical_row_stride": true,
+            "element_bytes": 4
+          },
+          {
+            "pointer": "history",
+            "elements": "history_elements",
+            "rows": 1,
+            "width": "history_count",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "output",
+            "elements": "output_elements",
+            "rows": 1,
+            "width": "channels",
+            "element_bytes": 4
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "tests/test_v8_repetition_penalty_checked.py",
+          "tests/test_v8_qwen3_tts_second_generated_frame.py"
+        ],
+        "oracle": "Independent NumPy implementation of Transformers sign-dependent repetition penalty"
+      },
+      "notes": "Applies FP32 score multiplication for negative seen IDs and division for nonnegative seen IDs, once per distinct history ID. Penalty is a declared rational scalar. Rejection leaves output unchanged.",
+      "name": "repetition_penalty_last_row_checked_f32",
+      "_source_file": "repetition_penalty_last_row_checked_f32.json"
     },
     {
       "id": "residual_add_backward_f32",

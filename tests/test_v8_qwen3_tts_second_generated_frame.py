@@ -54,15 +54,24 @@ class Qwen3TTSSecondGeneratedFrameTest(unittest.TestCase):
         self.assertLess(blocks.index("second_talker_predictor_bridge"),
                         blocks.index("second_first_block"))
         bridge = graph["block_types"]["second_talker_predictor_bridge"]["body"]["ops"]
-        self.assertEqual(bridge[0]["kernel"], "select_next_id_checked_f32")
-        self.assertEqual({name: bridge[0]["params"]["call_constants"][name]
+        self.assertEqual(bridge[0]["kernel"],
+                         "repetition_penalty_last_row_checked_f32")
+        self.assertEqual(bridge[0]["graph_slots"]["inputs"],
+                         {"values": "cont_talker_logits",
+                          "history": "talker_first_code_id"})
+        self.assertEqual(bridge[0]["params"]["call_constants"]
+                         ["penalty_numerator"], 105)
+        self.assertEqual(bridge[0]["params"]["call_constants"]
+                         ["penalty_denominator"], 100)
+        self.assertEqual(bridge[1]["kernel"], "select_next_id_checked_f32")
+        self.assertEqual({name: bridge[1]["params"]["call_constants"][name]
                           for name in ("emitted_frames", "min_frames", "max_frames",
                                        "stop_id", "suppressed_begin", "suppressed_end")},
                          {"emitted_frames": 1, "min_frames": 2, "max_frames": 64,
                           "stop_id": 2150, "suppressed_begin": 2048,
                           "suppressed_end": 3072})
-        self.assertEqual(bridge[0]["graph_slots"]["inputs"]["values"],
-                         "cont_talker_logits")
+        self.assertEqual(bridge[1]["graph_slots"]["inputs"]["values"],
+                         "second_talker_adjusted_logits")
         self.assertEqual(bridge[-1]["graph_slots"]["inputs"]["left"],
                          "cont_talker_final_norm")
         self.assertEqual(graph["runtime_lengths"]["second_decode_position"]["producer"],
@@ -75,7 +84,8 @@ class Qwen3TTSSecondGeneratedFrameTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             fn, acts, _, layout, _, _ = compile_entry(
                 Path(temp), graph, weight_shapes(graph),
-                extra_sources=("src/kernels/select_next_id_checked.c",))
+                extra_sources=("src/kernels/select_next_id_checked.c",
+                               "src/kernels/repetition_penalty_checked.c"))
             size = layout["memory"]["arena"]["total_size"]
             raw = (ctypes.c_uint8 * (size + 63))()
             arena = (ctypes.c_uint8 * size).from_buffer(
@@ -126,7 +136,8 @@ class Qwen3TTSSecondGeneratedFrameTest(unittest.TestCase):
              np.load(CAPTURE) as oracle, tempfile.TemporaryDirectory() as temp:
             fn, acts, weights, layout, calls, library = compile_entry(
                 Path(temp), graph, weight_shapes(graph),
-                extra_sources=("src/kernels/select_next_id_checked.c",))
+                extra_sources=("src/kernels/select_next_id_checked.c",
+                               "src/kernels/repetition_penalty_checked.c"))
             self.assertGreater(len(calls["operations"]), 3000)
             size = layout["memory"]["arena"]["total_size"]
             raw = (ctypes.c_uint8 * (size + 63))()
@@ -156,6 +167,17 @@ class Qwen3TTSSecondGeneratedFrameTest(unittest.TestCase):
                                  np.int32, (1,))[0])
             self.assertEqual(second_id, 215)
             self.assertEqual(second_id, int(np.argmax(oracle["step1_logits"])))
+            adjusted = view(arena, acts, "second_talker_adjusted_logits",
+                            np.float32, (3072,))
+            expected_adjusted = oracle["step1_logits"].astype(np.float32).reshape(-1).copy()
+            first_id = int(view(arena, acts, "talker_first_code_id",
+                                np.int32, (1,))[0])
+            self.assertEqual(first_id, int(request["codec_tokens"][0, 0]))
+            expected_adjusted[first_id] = (expected_adjusted[first_id] *
+                np.float32(1.05) if expected_adjusted[first_id] < 0 else
+                expected_adjusted[first_id] / np.float32(1.05))
+            adjusted_error = float(np.max(np.abs(adjusted - expected_adjusted)))
+            self.assertLessEqual(adjusted_error, 1e-4)
             selected = ["second_talker_first_code_id",
                         "second_predictor_codebook0_selected_id"] + [
                 f"second_step{i}_selected_id" for i in range(1, 15)]
@@ -177,6 +199,7 @@ class Qwen3TTSSecondGeneratedFrameTest(unittest.TestCase):
             self.assertLessEqual(bridge_error, 1e-4)
             print("QWEN3_TTS_SECOND_GENERATED_FRAME " + json.dumps({
                 "second_codes": codes, "bridge_max_abs": bridge_error,
+                "adjusted_logits_max_abs": adjusted_error,
                 "library_sha256": hashlib.sha256(library.read_bytes()).hexdigest(),
                 "complete_text_to_wav": "NOT_TESTED",
             }, sort_keys=True))
