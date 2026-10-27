@@ -432,21 +432,33 @@ class TextRecurrentXRayTests(unittest.TestCase):
     def test_named_axis_state_transform_prevents_flat_layout_false_positive(self) -> None:
         ck = np.arange(2 * 128 * 128, dtype=np.float32).reshape(2, 128, 128)
         oracle = ck.transpose(0, 2, 1).copy()
-        result = XRAY.compare_arrays("new_state", ck.reshape(-1), oracle.reshape(-1))
-        self.assertEqual(result["status"], "exact")
-        self.assertIn("head,value,key", result["axis_transform"])
+        for name in ("state_predelta", "new_state"):
+            with self.subTest(name=name):
+                result = XRAY.compare_arrays(name, ck.reshape(-1), oracle.reshape(-1))
+                self.assertEqual(result["status"], "exact")
+                self.assertIn("head,value,key", result["axis_transform"])
+
+                wrong_layout = XRAY.compare_arrays(
+                    name,
+                    ck.reshape(-1),
+                    oracle.reshape(-1),
+                    recurrent_state_physical_layout="head_value_key_contiguous",
+                )
+                self.assertNotEqual(wrong_layout["status"], "exact")
 
     def test_llama_physical_state_layout_is_compared_without_transpose(self) -> None:
         values = np.arange(2 * 4 * 4, dtype=np.float32)
-        result = XRAY.compare_arrays(
-            "new_state",
-            values,
-            values.copy(),
-            state_size=4,
-            recurrent_state_physical_layout="head_value_key_contiguous",
-        )
-        self.assertEqual(result["status"], "exact")
-        self.assertEqual(result["axis_transform"], "identity:[head,value,key]")
+        for name in ("state_predelta", "new_state"):
+            with self.subTest(name=name):
+                result = XRAY.compare_arrays(
+                    name,
+                    values,
+                    values.copy(),
+                    state_size=4,
+                    recurrent_state_physical_layout="head_value_key_contiguous",
+                )
+                self.assertEqual(result["status"], "exact")
+                self.assertEqual(result["axis_transform"], "identity:[head,value,key]")
 
     def test_unknown_state_layout_fails_closed(self) -> None:
         with self.assertRaisesRegex(

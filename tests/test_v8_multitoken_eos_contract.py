@@ -314,37 +314,33 @@ class MultitokenEOSContractTests(unittest.TestCase):
             )
 
     def test_recurrent_state_layout_is_normalized_to_llama_axes(self) -> None:
-        dump = self.runner.first_token.parity_test_v7.ParityDump(
-            1,
-            "new_state",
-            np.arange(8, dtype=np.float32),
-            7,
-            "fp32",
-        )
-
-        result = self.runner._normalize_ck_recurrent_state_layout(
-            [dump], {"recurrent_num_heads": 2, "recurrent_head_dim": 2}
-        )
-
-        expected = np.arange(8, dtype=np.float32).reshape(2, 2, 2).transpose(0, 2, 1)
-        np.testing.assert_array_equal(result[0].data, expected)
+        for name in ("state_predelta", "new_state"):
+            with self.subTest(name=name):
+                dump = self.runner.first_token.parity_test_v7.ParityDump(
+                    1, name, np.arange(8, dtype=np.float32), 7, "fp32"
+                )
+                result = self.runner._normalize_ck_recurrent_state_layout(
+                    [dump], {"recurrent_num_heads": 2, "recurrent_head_dim": 2}
+                )
+                expected = np.arange(8, dtype=np.float32).reshape(2, 2, 2).transpose(0, 2, 1)
+                np.testing.assert_array_equal(result[0].data, expected)
 
     def test_llama_physical_recurrent_state_layout_is_not_transposed(self) -> None:
         values = np.arange(8, dtype=np.float32)
-        dump = self.runner.first_token.parity_test_v7.ParityDump(
-            1, "new_state", values.copy(), 7, "fp32"
-        )
-
-        result = self.runner._normalize_ck_recurrent_state_layout(
-            [dump],
-            {
-                "recurrent_num_heads": 2,
-                "recurrent_head_dim": 2,
-                "recurrent_state_physical_layout": "head_value_key_contiguous",
-            },
-        )
-
-        np.testing.assert_array_equal(result[0].data, values)
+        for name in ("state_predelta", "new_state"):
+            with self.subTest(name=name):
+                dump = self.runner.first_token.parity_test_v7.ParityDump(
+                    1, name, values.copy(), 7, "fp32"
+                )
+                result = self.runner._normalize_ck_recurrent_state_layout(
+                    [dump],
+                    {
+                        "recurrent_num_heads": 2,
+                        "recurrent_head_dim": 2,
+                        "recurrent_state_physical_layout": "head_value_key_contiguous",
+                    },
+                )
+                np.testing.assert_array_equal(result[0].data, values)
 
     def test_unknown_recurrent_state_layout_fails_closed(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsupported recurrent_state_physical_layout"):

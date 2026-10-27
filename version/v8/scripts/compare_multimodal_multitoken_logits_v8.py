@@ -336,7 +336,7 @@ def _load_ck_hidden_export_occurrences(
 def _normalize_ck_recurrent_state_layout(
     dumps: list[Any], runtime_config: dict[str, Any]
 ) -> list[Any]:
-    """Map the selected CKE state provider layout to llama's physical axes."""
+    """Map captured pre- and post-DeltaNet state to llama's physical axes."""
     physical_layout = str(
         runtime_config.get(
             "recurrent_state_physical_layout", "head_key_value_contiguous"
@@ -358,7 +358,7 @@ def _normalize_ck_recurrent_state_layout(
         return dumps
     expected = heads * dim * dim
     for dump in dumps:
-        if str(dump.op_name) != "new_state":
+        if str(dump.op_name) not in {"state_predelta", "new_state"}:
             continue
         values = np.asarray(dump.data, dtype=np.float32)
         if values.size != expected:
