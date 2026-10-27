@@ -1,0 +1,77 @@
+{
+  "schema": "cke.v8.muse_append_full_model_prefill.v1",
+  "status": "PASS",
+  "scope": "12-token isolated generated-model prefill only; not Muse Code task or long-context certification",
+  "source_revision": "77ac71974",
+  "model": "Muse-Glimmer-30B",
+  "cpu_model": "AMD Ryzen 9 9950X3D 16-Core Processor",
+  "prompt_tokens": 12,
+  "token_ids_sha256": "343af6c9f620c5dcdb70b35ad576fab395a0c60fae25e4bb7d6f12409f05d119",
+  "weights_same_target": true,
+  "weights_size_bytes": 55720785941,
+  "baseline": {
+    "calls": [
+      {
+        "start": 0,
+        "count": 12
+      }
+    ],
+    "loaded_libraries": {
+      "libmodel.so": "a9af52ce6b36a2ab2244dabf890d017a9c118dfff916889a89cd4518d2ae7ea8",
+      "libckernel_engine.so": "fc8b51b9ab87c9f2067c93ae0e526a5794f0d6ec177e9a1349cae91af839ff53",
+      "libckernel_tokenizer.so": "ac94e41160f7f441c3aa1f11a2a26b23e3f8bf4495aa82faf92f496057c8cbe5"
+    },
+    "top_token": 34,
+    "logits_sha256": "00d9f4f12285ae00459a8bbfd1a2527c4cc3d8658171227907aa925387c2af4f"
+  },
+  "append": {
+    "calls": [
+      {
+        "start": 0,
+        "count": 6
+      },
+      {
+        "start": 6,
+        "count": 6
+      }
+    ],
+    "loaded_libraries": {
+      "libmodel.so": "4c2b4b02ef5bb3d2e54cded12d9d00e9eaf71c0a930f9285c187be5eb311bb16",
+      "libckernel_engine.so": "0ec0c4f7a2097ceb41e4f5983b5e22d5c1686381749395fc1b2d96b507fdb301",
+      "libckernel_tokenizer.so": "ac94e41160f7f441c3aa1f11a2a26b23e3f8bf4495aa82faf92f496057c8cbe5"
+    },
+    "top_token": 34,
+    "logits_sha256": "00d9f4f12285ae00459a8bbfd1a2527c4cc3d8658171227907aa925387c2af4f"
+  },
+  "full_vocab_logits": {
+    "count": 202048,
+    "max_abs": 0.0,
+    "rmse": 0.0,
+    "nonzero_elements": 0
+  },
+  "kv": {
+    "matching_layers": 52,
+    "total_layers": 52
+  },
+  "native_threads": 4,
+  "token_ids": [
+    1,
+    416,
+    2087,
+    34,
+    987,
+    41,
+    223,
+    570,
+    1205,
+    63,
+    54,
+    2
+  ],
+  "bundle_paths": {
+    "baseline": "/data/cke/runs/muse-glimmer-cli-64k-20261027",
+    "append": "/data/cke/runs/muse-glimmer-append-diag-20261027"
+  },
+  "comparison_script": "version/v8/scripts/compare_chunked_prefill_v8.py --child",
+  "comparison_note": "Baseline one 12-token prefill; candidate two six-token append calls. Both use the same symlink-resolved weights.bump. Diagnostic bundle is isolated from the live Muse Code server."
+}
