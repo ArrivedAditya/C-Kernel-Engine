@@ -44,6 +44,17 @@ class Qwen3TTSGeneratedTalkerContinuationTest(unittest.TestCase):
                          "projection_output")
         self.assertEqual(graph["block_types"]["cont_first_block"]["body"]["ops"][0]
                          ["graph_slots"]["inputs"]["input"], "feedback_next_input")
+        self.assertEqual(graph["runtime_lengths"]["talker_decode_position"]["capacity"], 20)
+        for block_name in ("cont_first_block", "cont_talker_head"):
+            for op in graph["block_types"][block_name]["body"]["ops"]:
+                if op["op"] == "rope_qk_bounded":
+                    self.assertEqual(op["runtime_scalar_bindings"],
+                                     {"pos_offset": "talker_decode_position"})
+                    self.assertNotIn("pos_offset", op["params"]["call_constants"])
+                if op["op"] == "attention_decode_append_checked":
+                    self.assertEqual(op["runtime_scalar_bindings"],
+                                     {"position": "talker_decode_position"})
+                    self.assertNotIn("position", op["params"]["call_constants"])
 
     def test_asset_free_generated_feedback_and_recovery(self):
         graph = build_circuit(talker_layers=1, continuation_steps=2)
@@ -72,15 +83,40 @@ class Qwen3TTSGeneratedTalkerContinuationTest(unittest.TestCase):
             view(arena, acts, "pred_feedback_step_index_input", np.int32, (1,))[0] = 0
             view(arena, acts, "feedback_left_indices", np.int32, (1,))[0] = 0
             view(arena, acts, "feedback_right_indices", np.int32, (1,))[0] = 3
+            step = view(arena, acts, "talker_step_index_input", np.int32, (1,))
+            step[0] = 0
             valid = view(arena, acts, "talker_continuation_valid", np.int32, (1,))
             logits = view(arena, acts, "cont_talker_logits", np.float32, (1, 3072))
+            cache_k = view(arena, acts, "talker_layer0_cache_k", np.float32,
+                           (8, 21, 128))
+            cache_k[:, 18:, :] = 7
             logits[:] = -719
             self.assertEqual(fn(arena, size), 0)
             self.assertEqual(int(valid[0]), 1)
+            self.assertFalse(np.all(cache_k[:, 18, :] == 7))
+            np.testing.assert_array_equal(cache_k[:, 19:, :], 7)
             self.assertAlmostEqual(float(view(
                 arena, acts, "feedback_next_input", np.float32, (1, 1024))[0, 0]),
                 1.0, places=6)
             baseline = logits.copy()
+            for index in (1, 2):
+                step[0] = index
+                self.assertEqual(fn(arena, size), 0)
+                self.assertFalse(np.all(cache_k[:, 18 + index, :] == 7))
+                if index < 2:
+                    np.testing.assert_array_equal(cache_k[:, 19 + index:, :], 7)
+                self.assertEqual(int(valid[0]), 1)
+                self.assertTrue(np.isfinite(logits).all())
+            previous = logits.copy()
+            for invalid in (-1, 3):
+                step[0] = invalid
+                self.assertNotEqual(fn(arena, size), 0)
+                self.assertEqual(int(valid[0]), 0)
+                np.testing.assert_array_equal(logits, previous)
+            step[0] = 0
+            self.assertEqual(fn(arena, size), 0)
+            self.assertEqual(int(valid[0]), 1)
+            np.testing.assert_array_equal(logits, baseline)
             table = np.ndarray((2048, 1024), dtype=np.float32, buffer=arena,
                                offset=weights[
                                    "talker.code_predictor.model.codec_embedding.2.weight"
@@ -127,6 +163,7 @@ class Qwen3TTSGeneratedTalkerContinuationTest(unittest.TestCase):
             view(arena, acts, "pred_feedback_step_index_input", np.int32, (1,))[0] = 0
             view(arena, acts, "feedback_left_indices", np.int32, (1,))[0] = 0
             view(arena, acts, "feedback_right_indices", np.int32, (1,))[0] = 3
+            view(arena, acts, "talker_step_index_input", np.int32, (1,))[0] = 0
             self.assertEqual(fn(arena, size), 0)
             valid = view(arena, acts, "talker_continuation_valid", np.int32, (1,))
             self.assertEqual(int(valid[0]), 1)
