@@ -947,6 +947,10 @@ def _trajectory_context_length(
 
 def _prepare_inputs(args: argparse.Namespace, *, parity_dump: bool = False) -> dict[str, Any]:
     bridge_report = first_token._load_bridge_report(args.bridge_report.resolve())
+    separate_prefix_path = getattr(args, "llama_prefix_f32", None)
+    encoder_prefix_report = getattr(args, "encoder_prefix_report", None)
+    if bool(separate_prefix_path) != bool(encoder_prefix_report):
+        raise ValueError("independent-prefix replay requires both --llama-prefix-f32 and --encoder-prefix-report")
     runtime_overrides = first_token._decoder_runtime_overrides(bridge_report)
     gguf_value = str(((bridge_report.get("decoder_runtime") or {}).get("gguf") or "")).strip()
     if not gguf_value:
@@ -1060,11 +1064,34 @@ def _prepare_inputs(args: argparse.Namespace, *, parity_dump: bool = False) -> d
         .lower()
         or "causal_mixed_prefix"
     )
-    llama_prefix_path = first_token._materialize_llama_prefix(
-        prefix_embeddings,
-        int(prefix_tokens),
-        workdir,
-        prefix_path=prefix_path,
+    prefix_provenance = None
+    if separate_prefix_path is not None:
+        if prefix_path is None or prefix_tokens <= 0:
+            raise ValueError("independent-prefix replay requires a nonempty CKE bridge prefix")
+        llama_prefix_path = Path(separate_prefix_path).resolve()
+        if llama_prefix_path == prefix_path:
+            raise ValueError("independent-prefix replay requires distinct prefix files")
+        _, llama_tokens, llama_row_dim, _ = first_token._load_prefix_embeddings(
+            llama_prefix_path, 0, int(runtime["embed_dim"]),
+            int(runtime.get("input_embed_dim", 0) or 0), int(prefix_row_dim),
+        )
+        if (llama_tokens, llama_row_dim) != (prefix_tokens, prefix_row_dim):
+            raise ValueError("independent-prefix replay has mismatched prefix geometry")
+        first_token._verify_bridge_prefix_binding(
+            bridge_report, prefix_path, int(prefix_tokens), int(prefix_row_dim),
+        )
+        prefix_provenance = first_token._verify_encoder_prefix_report(
+            Path(encoder_prefix_report).resolve(), prefix_path, llama_prefix_path,
+            int(prefix_tokens), int(prefix_row_dim), args.bridge_report.resolve(),
+        )
+    else:
+        llama_prefix_path = first_token._materialize_llama_prefix(
+            prefix_embeddings, int(prefix_tokens), workdir, prefix_path=prefix_path,
+        )
+    ck_prefix_sha256 = first_token._sha256_file(prefix_path) if prefix_path is not None else None
+    llama_prefix_sha256 = (
+        first_token._sha256_file(llama_prefix_path)
+        if llama_prefix_path is not None else None
     )
     return {
         "bridge_report": bridge_report,
@@ -1082,6 +1109,10 @@ def _prepare_inputs(args: argparse.Namespace, *, parity_dump: bool = False) -> d
         "prefix_source": prefix_source,
         "prefix_path": prefix_path,
         "llama_prefix_path": llama_prefix_path,
+        "ck_prefix_sha256": ck_prefix_sha256,
+        "llama_prefix_sha256": llama_prefix_sha256,
+        "separate_prefixes": separate_prefix_path is not None,
+        "prefix_provenance": prefix_provenance,
         "prefix_grid": prefix_grid,
         "prefix_text_pos": int(prefix_text_pos),
         "prefix_decode_policy": prefix_decode_policy,
@@ -1925,6 +1956,29 @@ def _init_ck_state(
     return lib, logits, vocab_size
 
 
+def _trajectory_verdict(
+    *, separate_prefixes: bool, encoder_prefix_status: str | None,
+    first_divergence: dict[str, Any] | None, mode_compatible: bool,
+) -> tuple[str, bool]:
+    if first_divergence is not None or encoder_prefix_status == "fail":
+        return "fail", False
+    if separate_prefixes:
+        return "incomplete", False
+    return ("pass", True) if mode_compatible else ("diagnostic_only", False)
+
+
+def _verify_prefix_inputs_unchanged(inputs: dict[str, Any]) -> None:
+    for path_key, hash_key in (
+        ("prefix_path", "ck_prefix_sha256"),
+        ("llama_prefix_path", "llama_prefix_sha256"),
+    ):
+        path = inputs.get(path_key)
+        expected = inputs.get(hash_key)
+        if path is not None and expected is not None:
+            if first_token._sha256_file(path) != expected:
+                raise RuntimeError(f"{path_key} changed during trajectory replay")
+
+
 def run_multimodal_multitoken_parity(args: argparse.Namespace) -> dict[str, Any]:
     inputs = _prepare_inputs(args)
     _configure_hidden_oracle_capture(inputs, args)
@@ -1943,6 +1997,7 @@ def run_multimodal_multitoken_parity(args: argparse.Namespace) -> dict[str, Any]
     compiler_provenance = _validate_runtime_compiler_provenance(runtime_evidence)
     tokenizer: GGUFTokenizer = inputs["tokenizer"]
     llama_seq = _run_llama_greedy_sequence(inputs, args)
+    _verify_prefix_inputs_unchanged(inputs)
     lib, logits_buf, vocab_size = _init_ck_state(
         inputs, bool(args.ck_strict_parity), getattr(args, "ck_engine_so", None),
         getattr(args, "gemm_schedule", "auto"),
@@ -2015,14 +2070,28 @@ def run_multimodal_multitoken_parity(args: argparse.Namespace) -> dict[str, Any]
             except Exception:
                 pass
 
-    production_pass = first_divergence is None and bool(mode_contract["compatible"])
+    separate_prefixes = bool(inputs.get("separate_prefixes", False))
+    encoder_prefix_status = (inputs.get("prefix_provenance") or {}).get("encoder_prefix_status")
+    status, production_pass = _trajectory_verdict(
+        separate_prefixes=separate_prefixes,
+        encoder_prefix_status=encoder_prefix_status,
+        first_divergence=first_divergence,
+        mode_compatible=bool(mode_contract["compatible"]),
+    )
     return {
-        "status": (
-            "pass" if production_pass else
-            "diagnostic_only" if first_divergence is None else
-            "fail"
-        ),
+        "status": status,
         "pass": production_pass,
+        "comparison_scope": (
+            "independent_image_to_multitoken_logits" if separate_prefixes
+            else "shared_prefix_decoder_multitoken"
+        ),
+        "acceptance_contract": (
+            "independent_prefix_diagnostic_no_logit_threshold" if separate_prefixes
+            else "shared_prefix_greedy_top1"
+        ),
+        "logit_numerical_contract_declared": False,
+        "encoder_prefix_status": encoder_prefix_status,
+        "prefix_provenance": inputs.get("prefix_provenance"),
         "bridge_report_path": str(args.bridge_report.resolve()),
         "gguf_path": str(inputs["gguf_path"]),
         "workdir": str(inputs["workdir"]),
@@ -2054,6 +2123,13 @@ def run_multimodal_multitoken_parity(args: argparse.Namespace) -> dict[str, Any]
         "llama_greedy_generated": llama_generated,
         "llama_oracle": llama_seq["oracle_evidence"],
         "append_on_divergence": str(args.append_on_divergence),
+        "continuation_history_policy": (
+            "oracle_tokens_after_divergence"
+            if args.append_on_divergence == "llama" else
+            "cke_tokens_after_divergence"
+            if args.append_on_divergence == "ck" else
+            "stop_at_first_divergence"
+        ),
         "ck_runtime": runtime_evidence,
         "compiler_provenance": compiler_provenance,
         "stop_token_ids": sorted(stop_token_ids),
@@ -2067,6 +2143,19 @@ def run_multimodal_multitoken_parity(args: argparse.Namespace) -> dict[str, Any]
             "path": None if inputs["prefix_path"] is None else str(inputs["prefix_path"]),
             "grid": None if inputs["prefix_grid"] is None else [int(inputs["prefix_grid"][0]), int(inputs["prefix_grid"][1])],
             "text_pos": int(inputs["prefix_text_pos"]),
+            "input_scope": "independent" if separate_prefixes else "shared",
+            "ck_sha256": (
+                inputs.get("ck_prefix_sha256")
+                if inputs.get("ck_prefix_sha256") is not None else
+                first_token._sha256_file(inputs["prefix_path"])
+                if inputs["prefix_path"] is not None else None
+            ),
+            "llama_sha256": (
+                inputs.get("llama_prefix_sha256")
+                if inputs.get("llama_prefix_sha256") is not None else
+                first_token._sha256_file(inputs["llama_prefix_path"])
+                if inputs.get("llama_prefix_path") is not None else None
+            ),
         },
         "generated_shared_tokens": [int(t) for t in generated],
         "generated_shared_text": tokenizer.decode(generated, skip_special=False) if generated else "",
@@ -2356,6 +2445,10 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Multimodal multi-token greedy parity (CK vs llama.cpp)")
     ap.add_argument("--bridge-report", required=True, type=Path)
     ap.add_argument("--prefix-f32", type=Path, default=None)
+    ap.add_argument("--llama-prefix-f32", type=Path, default=None,
+                    help="Independently produced oracle prefix for image-to-logit diagnostics")
+    ap.add_argument("--encoder-prefix-report", type=Path, default=None,
+                    help="Current independent encoder report binding both prefix exports")
     ap.add_argument("--prefix-row-dim", type=int, default=None)
     ap.add_argument("--prefix-grid-x", type=int, default=None)
     ap.add_argument("--prefix-grid-y", type=int, default=None)
@@ -2492,6 +2585,10 @@ def main() -> int:
     )
     ap.add_argument("--summary", action="store_true")
     args = ap.parse_args()
+    if args.llama_prefix_f32 is not None and (
+        _diagnostic_tensor_dump_requested(args) or args.full_replay_step is not None
+    ):
+        ap.error("independent-prefix replay does not support same-input tensor attribution")
     if args.dump_step is not None or args.dump_first_divergence:
         early_dump_dir = args.dump_dir
         if early_dump_dir is None:
@@ -2538,7 +2635,7 @@ def main() -> int:
             )
         else:
             print(
-                "status=pass "
+                f"status={report['status']} "
                 f"steps={len(report.get('steps', []))} "
                 f"generated={report.get('generated_shared_text', '')!r}"
             )
