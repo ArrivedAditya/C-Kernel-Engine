@@ -9105,12 +9105,15 @@ static void ck_attention_muse_eager_bf16_storage_impl(
     const float *q,
     const float *k,
     const float *v,
+    const float *k_new,
+    const float *v_new,
     float *output,
     int num_heads,
     int num_kv_heads,
     int query_tokens,
     int kv_tokens,
     int kv_stride_tokens,
+    int past_tokens,
     int head_dim,
     int aligned_head_dim,
     int sliding_window,
@@ -9129,7 +9132,9 @@ static void ck_attention_muse_eager_bf16_storage_impl(
     if (!q || !k || !v || !output || num_heads <= 0 || num_kv_heads <= 0 ||
         query_tokens <= 0 || kv_tokens < query_tokens ||
         kv_stride_tokens < kv_tokens || head_dim <= 0 ||
-        aligned_head_dim != head_dim || num_heads % num_kv_heads != 0) {
+        aligned_head_dim != head_dim || num_heads % num_kv_heads != 0 ||
+        (!!k_new != !!v_new) ||
+        (k_new && (past_tokens < 0 || past_tokens != kv_tokens - query_tokens))) {
         fprintf(stderr, "HARD KERNEL CONTRACT FAULT: invalid Muse eager attention dimensions\n");
         abort();
     }
@@ -9187,10 +9192,16 @@ static void ck_attention_muse_eager_bf16_storage_impl(
         const float *key_head = k + (size_t)kv_head * kv_head_stride;
         const float *value_head = v + (size_t)kv_head * kv_head_stride;
         for (int token = 0; token < kv_tokens; ++token) {
-            const float *key_row = key_head +
-                (size_t)token * (size_t)aligned_head_dim;
-            const float *value_row = value_head +
-                (size_t)token * (size_t)aligned_head_dim;
+            const float *key_row = token < past_tokens ?
+                key_head + (size_t)token * (size_t)aligned_head_dim :
+                (k_new ? k_new + ((size_t)kv_head * (size_t)query_tokens +
+                    (size_t)(token - past_tokens)) * (size_t)aligned_head_dim :
+                    key_head + (size_t)token * (size_t)aligned_head_dim);
+            const float *value_row = token < past_tokens ?
+                value_head + (size_t)token * (size_t)aligned_head_dim :
+                (v_new ? v_new + ((size_t)kv_head * (size_t)query_tokens +
+                    (size_t)(token - past_tokens)) * (size_t)aligned_head_dim :
+                    value_head + (size_t)token * (size_t)aligned_head_dim);
             for (int dim = 0; dim < head_dim; ++dim) {
                 key_rows[(size_t)token * (size_t)head_dim + (size_t)dim] =
                     float_to_bf16(key_row[dim]);
@@ -9239,9 +9250,9 @@ static void ck_attention_muse_eager_bf16_storage_impl(
         }
     }
 #else
-    (void)q; (void)k; (void)v; (void)output; (void)num_heads;
+    (void)q; (void)k; (void)v; (void)k_new; (void)v_new; (void)output; (void)num_heads;
     (void)num_kv_heads; (void)query_tokens; (void)kv_tokens;
-    (void)kv_stride_tokens; (void)head_dim; (void)aligned_head_dim;
+    (void)kv_stride_tokens; (void)past_tokens; (void)head_dim; (void)aligned_head_dim;
     (void)sliding_window;
     (void)scores; (void)scores_bytes; (void)key_rows; (void)key_rows_bytes;
     (void)value_columns; (void)value_columns_bytes;
@@ -9265,8 +9276,8 @@ void attention_forward_causal_head_major_gqa_muse_eager_bf16_storage(
     uint16_t *gemm_scores, size_t gemm_scores_bytes)
 {
     ck_attention_muse_eager_bf16_storage_impl(
-        q, k, v, output, num_heads, num_kv_heads, num_tokens, num_tokens,
-        kv_stride_tokens, head_dim, aligned_head_dim, 0,
+        q, k, v, NULL, NULL, output, num_heads, num_kv_heads, num_tokens, num_tokens,
+        kv_stride_tokens, 0, head_dim, aligned_head_dim, 0,
         scores, scores_bytes, key_rows, key_rows_bytes,
         value_columns, value_columns_bytes, gemm_rows, gemm_rows_bytes,
         gemm_scores, gemm_scores_bytes);
@@ -9283,8 +9294,8 @@ void attention_forward_causal_head_major_gqa_muse_eager_bf16_storage_sliding(
     uint16_t *gemm_scores, size_t gemm_scores_bytes)
 {
     ck_attention_muse_eager_bf16_storage_impl(
-        q, k, v, output, num_heads, num_kv_heads, num_tokens, num_tokens,
-        kv_stride_tokens, head_dim, aligned_head_dim, sliding_window,
+        q, k, v, NULL, NULL, output, num_heads, num_kv_heads, num_tokens, num_tokens,
+        kv_stride_tokens, 0, head_dim, aligned_head_dim, sliding_window,
         scores, scores_bytes, key_rows, key_rows_bytes,
         value_columns, value_columns_bytes, gemm_rows, gemm_rows_bytes,
         gemm_scores, gemm_scores_bytes);
@@ -9301,8 +9312,8 @@ void attention_forward_decode_head_major_gqa_muse_eager_bf16_storage(
     uint16_t *gemm_scores, size_t gemm_scores_bytes)
 {
     ck_attention_muse_eager_bf16_storage_impl(
-        q_token, k_cache, v_cache, out_token, num_heads, num_kv_heads,
-        1, kv_tokens, cache_capacity, head_dim, aligned_head_dim, 0,
+        q_token, k_cache, v_cache, NULL, NULL, out_token, num_heads, num_kv_heads,
+        1, kv_tokens, cache_capacity, 0, head_dim, aligned_head_dim, 0,
         scores, scores_bytes, key_rows, key_rows_bytes,
         value_columns, value_columns_bytes, gemm_rows, gemm_rows_bytes,
         gemm_scores, gemm_scores_bytes);
@@ -9319,9 +9330,35 @@ void attention_forward_decode_head_major_gqa_muse_eager_bf16_storage_sliding(
     uint16_t *gemm_scores, size_t gemm_scores_bytes)
 {
     ck_attention_muse_eager_bf16_storage_impl(
-        q_token, k_cache, v_cache, out_token, num_heads, num_kv_heads,
-        1, kv_tokens, cache_capacity, head_dim, aligned_head_dim,
+        q_token, k_cache, v_cache, NULL, NULL, out_token, num_heads, num_kv_heads,
+        1, kv_tokens, cache_capacity, 0, head_dim, aligned_head_dim,
         sliding_window, scores, scores_bytes, key_rows, key_rows_bytes,
+        value_columns, value_columns_bytes, gemm_rows, gemm_rows_bytes,
+        gemm_scores, gemm_scores_bytes);
+}
+
+void attention_forward_causal_head_major_gqa_muse_eager_bf16_storage_append(
+    const float *q, const float *k_new, const float *v_new,
+    const float *k_cache, const float *v_cache, float *output,
+    int num_heads, int num_kv_heads, int query_tokens, int past_tokens,
+    int cache_capacity, int head_dim, int aligned_head_dim, int sliding_window,
+    float *scores, size_t scores_bytes,
+    uint16_t *key_rows, size_t key_rows_bytes,
+    uint16_t *value_columns, size_t value_columns_bytes,
+    uint16_t *gemm_rows, size_t gemm_rows_bytes,
+    uint16_t *gemm_scores, size_t gemm_scores_bytes)
+{
+    if (!k_new || !v_new || !k_cache || !v_cache ||
+        past_tokens < 0 || query_tokens <= 0 ||
+        past_tokens > INT_MAX - query_tokens) {
+        fprintf(stderr, "HARD KERNEL CONTRACT FAULT: invalid Muse append positions\n");
+        abort();
+    }
+    ck_attention_muse_eager_bf16_storage_impl(
+        q, k_cache, v_cache, k_new, v_new, output, num_heads, num_kv_heads,
+        query_tokens, past_tokens + query_tokens, cache_capacity, past_tokens,
+        head_dim, aligned_head_dim, sliding_window,
+        scores, scores_bytes, key_rows, key_rows_bytes,
         value_columns, value_columns_bytes, gemm_rows, gemm_rows_bytes,
         gemm_scores, gemm_scores_bytes);
 }

@@ -353,6 +353,30 @@ def _attention_input_port_name(
         if isinstance(port, dict)
     }
     matches = [alias for alias in aliases if alias in names]
+    if provider.get("prefill_history_scope") == "prior_cache" and semantic in {"k", "v"}:
+        current = "k" if semantic == "k" else "v"
+        prior = "k_cache" if semantic == "k" else "v_cache"
+        ports_by_name = {
+            str(port.get("name", "")): port for port in ports
+            if isinstance(port, dict)
+        }
+        prior_port = ports_by_name.get(prior, {})
+        prior_bindings = [
+            param for param in (provider.get("call_abi") or {}).get("params", [])
+            if f"input:{prior}" in param.get("ports", [])
+        ]
+        expected_source = "runtime:kv_cache_k_layer" if semantic == "k" else "runtime:kv_cache_v_layer"
+        if (set(matches) != {current, prior}
+                or prior_port.get("storage_class") != "state"
+                or prior_port.get("access") != "read"
+                or len(prior_bindings) != 1
+                or prior_bindings[0].get("source") != expected_source):
+            raise RuntimeError(
+                f"HARD PHYSICAL CONTRACT FAULT: prior-cache attention provider {kernel_id!r} "
+                f"requires current {current!r} and read-only state {prior!r} "
+                f"bound to {expected_source!r}."
+            )
+        return current
     if len(matches) != 1:
         raise RuntimeError(
             f"HARD PHYSICAL CONTRACT FAULT: attention provider {kernel_id!r} "
@@ -16891,7 +16915,7 @@ def load_kernel_call_abis(
             raise RuntimeError(f"HARD CALL ABI FAULT: duplicate call ABI owner for {kernel_id!r}.")
         _validate_kernel_call_abi(kernel_id, function, call_abi, path)
         prefill_history_scope = doc.get("prefill_history_scope")
-        if prefill_history_scope not in {None, "current_chunk"}:
+        if prefill_history_scope not in {None, "current_chunk", "prior_cache"}:
             raise RuntimeError(
                 f"HARD CALL ABI FAULT: kernel {kernel_id!r} in {path.name} declares "
                 f"unsupported prefill_history_scope={prefill_history_scope!r}."

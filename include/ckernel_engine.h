@@ -2022,6 +2022,16 @@ void attention_forward_causal_head_major_gqa_muse_eager_bf16_storage_sliding(
     uint16_t *value_columns, size_t value_columns_bytes,
     uint16_t *gemm_rows, size_t gemm_rows_bytes,
     uint16_t *gemm_scores, size_t gemm_scores_bytes);
+void attention_forward_causal_head_major_gqa_muse_eager_bf16_storage_append(
+    const float *q, const float *k_new, const float *v_new,
+    const float *k_cache, const float *v_cache, float *output,
+    int num_heads, int num_kv_heads, int query_tokens, int past_tokens,
+    int cache_capacity, int head_dim, int aligned_head_dim, int sliding_window,
+    float *scores, size_t scores_bytes,
+    uint16_t *key_rows, size_t key_rows_bytes,
+    uint16_t *value_columns, size_t value_columns_bytes,
+    uint16_t *gemm_rows, size_t gemm_rows_bytes,
+    uint16_t *gemm_scores, size_t gemm_scores_bytes);
 
 void attention_forward_causal_head_major_gqa_flash_strided_token_output(
     const float *q,
