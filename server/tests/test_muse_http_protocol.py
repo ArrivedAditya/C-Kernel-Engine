@@ -31,8 +31,9 @@ NAMESPACE_CALL = CALL.replace("to=read_file", "to=muse.read_file").replace(
 
 
 class _Session:
-    def __init__(self, outputs: list[str]):
+    def __init__(self, outputs: list[str], stop_reasons: list[int] | None = None):
         self.outputs = iter(outputs)
+        self.stop_reasons = iter(stop_reasons or [1] * len(outputs))
         self.prompts: list[str] = []
         self.stops: list[tuple[str, ...]] = []
         self.max_tokens_seen: list[int] = []
@@ -45,14 +46,16 @@ class _Session:
         output = next(self.outputs)
         for index, part in enumerate((output[:7], output[7:29], output[29:])):
             on_token(index, part)
-        return {"prompt_tokens": 10, "generated_tokens": 3, "stop_reason": 1}
+        return {"prompt_tokens": 10, "generated_tokens": 3,
+                "stop_reason": next(self.stop_reasons)}
 
     def cancel(self):
         pass
 
 
-def _client(outputs: list[str], *, request_output_cap: int | None = None) -> tuple[TestClient, _Session]:
-    session = _Session(outputs)
+def _client(outputs: list[str], *, request_output_cap: int | None = None,
+            stop_reasons: list[int] | None = None) -> tuple[TestClient, _Session]:
+    session = _Session(outputs, stop_reasons)
     return TestClient(create_app(
         session, model="muse-test", chat_template=TEMPLATE,
         tool_protocol="muse_atem_v1", renderer_tokens=TOKENS,
@@ -418,6 +421,68 @@ def test_muse_bad_tool_then_follow_up_recovers(stream: bool) -> None:
         assert any(event["type"] == "response.completed" for event in _events(second))
     else:
         assert second.json()["status"] == "completed"
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_muse_output_limit_inside_reasoning_is_incomplete_and_recovers(stream: bool) -> None:
+    partial = " to=self<|message|>I should inspect the file before answering"
+    client, _ = _client([partial, FINAL], stop_reasons=[2, 1])
+    request = {"model": "muse-test", "input": "Read it", "tools": [TOOL],
+               "stream": stream, "max_output_tokens": 32}
+    first = client.post("/v1/responses", json=request)
+    assert first.status_code == 200, first.text
+    if stream:
+        events = _events(first)
+        assert any(event["type"] == "response.incomplete" for event in events)
+        assert not any(event.get("item", {}).get("type") == "function_call"
+                       for event in events)
+        assert not any("<|message|>" in json.dumps(event) for event in events)
+        payload = next(event["response"] for event in events
+                       if event["type"] == "response.incomplete")
+    else:
+        payload = first.json()
+    assert payload["status"] == "incomplete"
+    assert payload["incomplete_details"]["reason"] == "max_output_tokens"
+    assert payload["output_text"] == ""
+    assert not any(item["type"] == "function_call" for item in payload["output"])
+    second = client.post("/v1/responses", json=request)
+    assert second.status_code == 200, second.text
+    if stream:
+        assert any(event["type"] == "response.completed" for event in _events(second))
+    else:
+        assert second.json()["status"] == "completed"
+
+
+def test_muse_chat_output_limit_does_not_escape_as_http_error() -> None:
+    client, _ = _client([" to=self<|message|>unfinished thought"], stop_reasons=[2])
+    response = client.post("/v1/chat/completions", json={
+        "model": "muse-test", "messages": [{"role": "user", "content": "Hello"}],
+        "max_tokens": 32,
+    })
+    assert response.status_code == 200, response.text
+    choice = response.json()["choices"][0]
+    assert choice["finish_reason"] == "length"
+    assert choice["message"]["content"] in ("", None)
+
+
+def test_muse_plain_text_output_limit_keeps_safe_partial_text() -> None:
+    client, _ = _client(["A partial plain answer"], stop_reasons=[2])
+    response = client.post("/v1/responses", json={
+        "model": "muse-test", "input": "Say hello", "max_output_tokens": 32,
+    })
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "incomplete"
+    assert response.json()["output_text"] == "A partial plain answer"
+
+
+def test_muse_completed_turn_missing_reasoning_boundary_still_fails() -> None:
+    client, _ = _client([" to=self<|message|>unfinished thought"], stop_reasons=[1])
+    response = client.post("/v1/responses", json={
+        "model": "muse-test", "input": "Hello", "max_output_tokens": 32,
+    })
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "failed"
+    assert not any(item["type"] == "function_call" for item in response.json()["output"])
 
 
 @pytest.mark.parametrize("stream", [False, True])

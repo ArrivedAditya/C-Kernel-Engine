@@ -2404,6 +2404,17 @@ def create_app(
             return "", "", f"malformed Muse turn: {exc}"
         return turn.reasoning, turn.final_text, None
 
+    def _muse_limited_text(raw: str) -> str:
+        # Plain unframed text can be shown as a partial answer. A cut channel
+        # or ATEM envelope has no verified recipient or tool arguments yet.
+        if raw.lstrip().startswith("to=") or any(
+            marker in raw for marker in
+            ("<|start|>", "<|message|>", "<|eom|>", "<|eot|>",
+             "<|end_of_text|>", "<atem:")
+        ):
+            return ""
+        return raw.strip()
+
     def stream_events(
         body,
         prompt,
@@ -2736,7 +2747,15 @@ def create_app(
                     text = raw_text
                     thinking = None
                     channel_error = None
-                    if tool_syntax == _TOOL_SYNTAX_MUSE_ATEM_V1:
+                    muse_output_limit = (
+                        tool_syntax == _TOOL_SYNTAX_MUSE_ATEM_V1
+                        and stop_reason_val == 2
+                    )
+                    if muse_output_limit:
+                        # A bounded Muse turn may end inside a reasoning or ATEM
+                        # envelope. No channel or tool call is complete yet.
+                        text = _muse_limited_text(raw_text)
+                    elif tool_syntax == _TOOL_SYNTAX_MUSE_ATEM_V1:
                         muse_reasoning, text, channel_error = _muse_channels(raw_text)
                         thinking = muse_reasoning or None if think_enabled else None
                     elif think_enabled:
@@ -2745,14 +2764,17 @@ def create_app(
                     input_tokens = int(result.get("prompt_tokens") or 0)
                     output_tokens = int(result.get("generated_tokens") or len(complete))
                     message_index = 1 if think_enabled else 0
-                    tool_calls, tool_error_code, tool_error_msg = _parse_tool_result(
-                        raw_text if tool_syntax in {
-                            _TOOL_SYNTAX_MUSE_ATEM_V1,
-                            _TOOL_SYNTAX_NEMOTRON_TOOLCALL_V1,
-                        } else text,
-                        body,
-                        prompt_opens_thinking=_prompt_opens_thinking(generation_prefix),
-                    )
+                    if muse_output_limit:
+                        tool_calls, tool_error_code, tool_error_msg = None, None, None
+                    else:
+                        tool_calls, tool_error_code, tool_error_msg = _parse_tool_result(
+                            raw_text if tool_syntax in {
+                                _TOOL_SYNTAX_MUSE_ATEM_V1,
+                                _TOOL_SYNTAX_NEMOTRON_TOOLCALL_V1,
+                            } else text,
+                            body,
+                            prompt_opens_thinking=_prompt_opens_thinking(generation_prefix),
+                        )
                     if channel_error is not None:
                         tool_calls, tool_error_code, tool_error_msg = None, "malformed", channel_error
                     if tool_error_code is None:
@@ -3383,7 +3405,16 @@ def create_app(
         thinking = None
         reasoning_tokens = 0
         channel_error = None
-        if tool_syntax == _TOOL_SYNTAX_MUSE_ATEM_V1:
+        stop_reason_val = int(result.get("stop_reason") or 0) if result else 0
+        muse_output_limit = (
+            tool_syntax == _TOOL_SYNTAX_MUSE_ATEM_V1
+            and stop_reason_val == 2
+        )
+        if muse_output_limit:
+            # A token limit can cut a channel delimiter or tool envelope in
+            # half. Keep its partial bytes out of the public response.
+            text = _muse_limited_text(raw_text)
+        elif tool_syntax == _TOOL_SYNTAX_MUSE_ATEM_V1:
             muse_reasoning, text, channel_error = _muse_channels(raw_text)
             thinking = (muse_reasoning or None) if think_enabled else None
         elif think_enabled:
@@ -3391,14 +3422,17 @@ def create_app(
             thinking = thinking or None
         if thinking is not None:
             reasoning_tokens = max(0, len(thinking) // 4)
-        tool_calls, tool_error_code, tool_error_msg = _parse_tool_result(
-            raw_text if tool_syntax in {
-                _TOOL_SYNTAX_MUSE_ATEM_V1,
-                _TOOL_SYNTAX_NEMOTRON_TOOLCALL_V1,
-            } else text,
-            body,
-            prompt_opens_thinking=_prompt_opens_thinking(generation_prefix),
-        )
+        if muse_output_limit:
+            tool_calls, tool_error_code, tool_error_msg = None, None, None
+        else:
+            tool_calls, tool_error_code, tool_error_msg = _parse_tool_result(
+                raw_text if tool_syntax in {
+                    _TOOL_SYNTAX_MUSE_ATEM_V1,
+                    _TOOL_SYNTAX_NEMOTRON_TOOLCALL_V1,
+                } else text,
+                body,
+                prompt_opens_thinking=_prompt_opens_thinking(generation_prefix),
+            )
         if channel_error is not None:
             tool_calls, tool_error_code, tool_error_msg = None, "malformed", channel_error
         if tool_error_code is None:
@@ -3420,7 +3454,6 @@ def create_app(
             if result
             else len(chunks)
         )
-        stop_reason_val = int(result.get("stop_reason") or 0) if result else 0
         incomplete_details = None
         final_status = ResponseStatus.completed
         item_status = "completed"
