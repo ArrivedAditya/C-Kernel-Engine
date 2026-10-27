@@ -1874,6 +1874,7 @@ make test-v8-kimi-highmem</pre>
   --context-len 1024 --force-compile --force-convert \
   --generate-visualizer</pre>
     </div>
+    <p class="mini-note">Issue #833's bounded Q4_K_M chunked-prefill reproducer uses 429 prompt tokens and three continuation steps. A captured Q4_K &times; Q8_K projection had identical input and weights but different one-row and four-row reductions on ARM and x86. The checked four-row and residual-row continuation paths produce exact full logits, positions, and all 24 KV layers on final-code, same-weight ARM and x86 bundles at chunk size 127, including three decode steps; earlier ARM runs also passed at chunk sizes 128 and 256. ARM lengths 125–128 and x86 lengths 125–132 also match; x86 aligned nonzero-position appends at 120 match for lengths 125–128. The earlier same-weight x86 run without residual-row handling differed first at KV layer 18; its failing report is retained as a negative control. The new ARM and x86 reports verify loaded model, engine, and tokenizer mappings and matching full/chunked engine hashes. Reports are retained in <code>docs/notes/issue833/qwen2-q4k-*.json</code>. Issue #833 is closed for its reported one-call multi-chunk defect. A separate X-Ray execution-equivalence sweep on x86 now shows that explicit 127-token append calls can diverge even while the one-call 127-token chunk path remains exact; the first observed mismatch is at prefill layer 9 KV in the retained <code>qwen2-q4k-x86-execution-equivalence-20261023.json</code> report. Staged append, other artifacts, longer contexts, and mixed-request batching remain separate certification gates.</p>
 
     <h3>Qwen3 0.6B</h3>
     <div class="cmd-block">
@@ -2544,6 +2545,30 @@ make test-native-session-v8</pre>
         edit in a disposable worktree. That does not certify general edit-and-test
         reliability, cancellation recovery, or 262K actual input.
     </p>
+    <p>
+        The Nemotron Nano 9B v2 and Cohere Command R7B Q4_K_M GGUF circuits now
+        reference publisher-template serving profiles. Fresh 2,048-token generated
+        bundles matched pinned short prompt token IDs: two Nemotron chat cases and
+        its 223-token tool-declaration case against the publisher tokenizer, plus
+        one Cohere chat case against llama.cpp's GGUF tokenizer. These are tokenization
+        checks, not full-model numerical or harness certification.
+        Nemotron's optional <code>tools</code> variant selects the publisher's
+        <code>&lt;TOOLCALL&gt;</code> JSON-array protocol. Deterministic HTTP tests cover
+        streaming, argument preservation, tool-result continuation, malformed calls,
+        and recovery. A separately rebuilt P3 Nemotron bundle completed a real
+        short HTTP tool call for <code>read_file</code> with preserved arguments,
+        accepted a correlated result, and returned a final answer. Short chat and
+        streaming Responses also completed with the publisher's
+        <code>/no_think</code> control. This is a bounded 2,048-token tool round trip;
+        a coding harness task, repeated recovery, longer prompts, and full-model
+        numerical certification remain untested.
+        A fresh P3 Cohere bundle completed short Chat Completions and streaming
+        Responses, both answering <code>Hello!</code>. Its undeclared tool request
+        returned 501, and the next chat request succeeded on the same server.
+        The imported Cohere GGUF default template does not render supplied function
+        tools, so its profile remains chat-only. A usable Cohere tool harness requires
+        a verified publisher tool variant and an independently tested output parser.
+    </p>
     <div class="cmd-block">
         <button class="copy-btn" type="button">Copy</button>
 <pre>RUN_DIR=/path/to/dedicated/qwen38-generated-runtime
@@ -2734,9 +2759,17 @@ version/v8/scripts/ck_serve_v8.py "$RUN_DIR" --run "$RUN_DIR" \
         <code>--compare-ordinary</code> flag records this as a failing,
         artifact-bound diagnostic in
         <code>version/v8/reports/batch_prefill_gemma3_270m_20261011.json</code>.
-        The cause and which path matches the publisher reference remain
-        unverified. Mixed-step parity against decode replay does not certify
-        ordinary-prefill parity or a resolved serving deployment.
+        This older decode-replay result remains a regression diagnostic. The
+        optional <code>--batch-http-prefill-phase</code> instead selects
+        map-resolved prefill-phase arithmetic for both standalone staged rows
+        and mixed rows. Startup requires the relevant loaded entries and a row-group
+        contract of one; unsupported bundles reject the option before serving.
+        The rebuilt Gemma3-270M Q5_K_M native report in
+        <code>version/v8/reports/batch_mixed_prefill_phase_gemma3_270m_20261024.json</code>
+        compares full logits, complete KV and positions at every 10- and
+        12-token prefix in both slots. A separate isolated HTTP test observed
+        two attributed mixed streams, cancellation and a successful follow-up.
+        This does not certify longer prompts, model tools or a performance gain.
     </p>
     <p>
         The optional <code>--compare-ordinary --oracle-gguf GGUF_PATH</code>
@@ -3239,6 +3272,33 @@ python3 server/harness_repeatability.py \
         time, complete server request time, and time outside native generation. Client tool execution
         occurs between requests and must be timed separately.
     </p>
+    <h4>Optional local harness nightly</h4>
+    <p>On a client host with active, identified Qwen and Gemma endpoints and an HTTP client environment containing <code>httpx</code>, run the
+        same repeatability config through <code>scripts/local_harness_nightly.py</code>.
+        It reuses the existing HTTP and harness runners, one exact endpoint at a
+        time, then checks their retained reports again without replaying tools.
+        A missing endpoint is <code>NOT_TESTED</code>, a wrong loaded identity is
+        <code>FAIL</code>, and a zero child exit without a passing reassessment is
+        <code>FAIL</code>. The local job does not start or replace model servers.</p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>.venv/bin/python3 scripts/local_harness_nightly.py \
+  --config /path/to/local-serving-matrix.json \
+  --state-dir /path/to/private-harness-nightly-state
+
+# After verifying the one-off command, schedule it on the client host:
+0 2 * * * cd /path/to/C-Kernel-Engine &amp;&amp; .venv/bin/python3 scripts/local_harness_nightly.py --config /path/to/local-serving-matrix.json --state-dir /path/to/private-harness-nightly-state &gt;&gt; /path/to/private-harness-nightly-state/cron.log 2&gt;&amp;1</pre>
+    </div>
+    <p class="mini-note">Create <code>PAUSE</code> in the private state directory
+        before the next scheduled start. It does not stop a sweep already running;
+        cancel that process explicitly if needed. A lock prevents overlapping
+        invocations. Each start immediately replaces <code>latest.json</code> with
+        <code>INCOMPLETE</code>; configuration and child-report errors leave a retained
+        terminal <code>FAIL</code> for the current run. The current repeatability config covers the Qwen Code and
+        Antigravity adapters. Nemotron's smaller LangGraph file-read probe and
+        chat-only family diagnostics have separate evidence; they do not inherit
+        this nightly's task PASS. A larger SVG edit-and-validator sweep requires
+        its own frozen task tier and artifact-specific results.</p>
 </div>
 
 <div class="card">
@@ -3716,7 +3776,7 @@ make v8-visualizer-vision-artifacts</pre>
             </div>
             <div style="text-align: right;">
                 <p style="color: #606060; font-size: 0.75rem; margin: 0;">Static docs · C-first execution</p>
-                <p style="color: #606060; font-size: 0.75rem; margin: 0.5rem 0 0 0;">2026-10-21</p>
+                <p style="color: #606060; font-size: 0.75rem; margin: 0.5rem 0 0 0;">2026-10-27</p>
             </div>
         </div>
     </footer>
