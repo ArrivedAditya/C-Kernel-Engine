@@ -15,6 +15,35 @@
     "langchain-openai": "1.7.2"
   },
   "elapsed_seconds": 1184.5211431263015,
+  "failed_tool_recovery": {
+    "elapsed_seconds": 702.4431708538905,
+    "final_answer_acknowledged_error_and_exact_value": true,
+    "fixture_sha256": "cd4cc292679577837459ba1f6ff4fa5e14cc25a28e17303c2935188fc3c37a7b",
+    "input_tokens_by_turn": [
+      3044,
+      3101,
+      3167
+    ],
+    "output_tokens_by_turn": [
+      30,
+      30,
+      55
+    ],
+    "private_trace_sha256": "9a7f30554829669e8ad1cc38eede0f603315e56a159a5fc61babbf112c3ed11b",
+    "prompt_sha256": "1651a822051874eec3a01cfde454b36d7c502cef1b1c0ecf2519910cdf1a00db",
+    "same_loaded_identity_before_after": true,
+    "status": "PASS",
+    "tool_results": [
+      [
+        "missing.txt",
+        "ERROR"
+      ],
+      [
+        "note.txt",
+        "PASS"
+      ]
+    ]
+  },
   "fixture_sha256": {
     "module.py": "e1a894022d1a082987b87adecb623438c9e386d86b2b621cff4a5fe7fdf7edc8",
     "note.txt": "8b586a62b2dddc43df5dca5461a5b700f7a9dfef668d68a08d4680c230a6d645",
@@ -35,7 +64,7 @@
     3519
   ],
   "limitations": [
-    "One attempt only; no repeatability or failed-tool recovery result in this report.",
+    "Two bounded tasks on one P3 server instance; no repeated or unattended reliability claim.",
     "No long-context, cancellation, concurrency, native batching, or full-model numerical parity certification.",
     "P3 32K bundle exceeded the available memory and did not launch; this 20K artifact is a separate rebuild.",
     "Before the schema fix, the same client was rejected before generation by an anyOf tool parameter."
@@ -53,7 +82,7 @@
   "run_date": "2026-10-27",
   "same_loaded_identity_before_after": true,
   "schema": "cke.harness_practical_sweep.v1",
-  "scope": "One restricted LangChain Deep Agents read/edit/validator task on P3 via ordinary CKE HTTP; no batching claim",
+  "scope": "Two restricted LangChain Deep Agents tasks on P3 via ordinary CKE HTTP: read/edit/validator and failed-tool recovery; no batching claim",
   "source_commit": "409822528ce9",
   "status": "PASS",
   "tool_sequence": [
