@@ -4552,6 +4552,17 @@
       "position_transform": null,
       "description": "Checked channel-major two-input sum followed by FP32 scale over valid columns with independently declared physical strides. No FMA, heap or scratch. Rejects nonfinite values and results before writes; leaves padding untouched. Inference only."
     },
+    "concat_two_spans_exact_i32": {
+      "operator_family": "concat_i32_checked",
+      "status": "validated",
+      "storage": {"input": "int32", "weight": "none", "output": "int32"},
+      "compute": {"input": "int32", "weight": "none", "accumulator": "int32", "contraction": "disabled", "evaluation_order": "validate_then_copy_left_then_right"},
+      "rounding": {"mode": "none", "points": ["input_load", "output_store"]},
+      "reduction": {"kind": "none", "order": "none", "partial_accumulator": "none", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Exact checked concatenation of two nonempty contiguous int32 spans into disjoint caller-owned output. Rejects invalid capacities and aliasing before writes; preserves output padding. Inference only."
+    },
     "audio_concat_channels_exact_copy_fp32": {
       "operator_family": "audio_concat_channels_checked",
       "status": "validated",
