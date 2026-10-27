@@ -54,6 +54,13 @@ class Qwen3TTSSecondGeneratedFrameTest(unittest.TestCase):
         self.assertLess(blocks.index("second_talker_predictor_bridge"),
                         blocks.index("second_first_block"))
         bridge = graph["block_types"]["second_talker_predictor_bridge"]["body"]["ops"]
+        self.assertEqual(bridge[0]["kernel"], "select_next_id_checked_f32")
+        self.assertEqual({name: bridge[0]["params"]["call_constants"][name]
+                          for name in ("emitted_frames", "min_frames", "max_frames",
+                                       "stop_id", "suppressed_begin", "suppressed_end")},
+                         {"emitted_frames": 1, "min_frames": 2, "max_frames": 64,
+                          "stop_id": 2150, "suppressed_begin": 2048,
+                          "suppressed_end": 3072})
         self.assertEqual(bridge[0]["graph_slots"]["inputs"]["values"],
                          "cont_talker_logits")
         self.assertEqual(bridge[-1]["graph_slots"]["inputs"]["left"],
@@ -67,7 +74,8 @@ class Qwen3TTSSecondGeneratedFrameTest(unittest.TestCase):
         graph = build_circuit(talker_layers=1, continuation_steps=2)
         with tempfile.TemporaryDirectory() as temp:
             fn, acts, _, layout, _, _ = compile_entry(
-                Path(temp), graph, weight_shapes(graph))
+                Path(temp), graph, weight_shapes(graph),
+                extra_sources=("src/kernels/select_next_id_checked.c",))
             size = layout["memory"]["arena"]["total_size"]
             raw = (ctypes.c_uint8 * (size + 63))()
             arena = (ctypes.c_uint8 * size).from_buffer(
@@ -109,12 +117,16 @@ class Qwen3TTSSecondGeneratedFrameTest(unittest.TestCase):
 
         model_dir = Path(os.environ["CKE_QWEN3_TTS_MODEL_DIR"])
         verify_model_dir(model_dir)
+        pinned_talker = json.loads((model_dir / "config.json").read_text())["talker_config"]
+        self.assertEqual((pinned_talker["vocab_size"],
+                          pinned_talker["codec_eos_token_id"]), (3072, 2150))
         graph = build_circuit()
         with safe_open(model_dir / "model.safetensors", framework="pt", device="cpu") as source, \
              np.load(FIXTURE / "qwen3_tts_customvoice_reference.npz") as request, \
              np.load(CAPTURE) as oracle, tempfile.TemporaryDirectory() as temp:
             fn, acts, weights, layout, calls, library = compile_entry(
-                Path(temp), graph, weight_shapes(graph))
+                Path(temp), graph, weight_shapes(graph),
+                extra_sources=("src/kernels/select_next_id_checked.c",))
             self.assertGreater(len(calls["operations"]), 3000)
             size = layout["memory"]["arena"]["total_size"]
             raw = (ctypes.c_uint8 * (size + 63))()

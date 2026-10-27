@@ -806,6 +806,10 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_qwen3_tts_second_generated_frame.py",
         timeout_sec=360,
     ),
+    "tts_select_next_id_checked": TestSuite(
+        "Checked Speech-Code Stop and Budget Selection", "kernels",
+        ROOT / "tests" / "test_v8_select_next_id_checked.py",
+    ),
     "tts_concat_i32_checked": TestSuite(
         "Checked Integer Span Concatenation", "kernels",
         ROOT / "tests" / "test_v8_concat_i32_checked.py",

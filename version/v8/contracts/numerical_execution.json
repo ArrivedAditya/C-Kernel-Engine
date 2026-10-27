@@ -4681,6 +4681,17 @@
       "position_transform": null,
       "description": "Argmax over nonempty finite FP32 values with NumPy-compatible first-index tie selection."
     },
+    "select_next_id_first_index_stop_policy_fp32": {
+      "operator_family": "audio_argmax",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "none", "output": "int32"},
+      "compute": {"input": "fp32", "weight": "none", "accumulator": "fp32", "contraction": "disabled", "evaluation_order": "validate_geometry_and_budget_then_select_final_finite_row_with_declared_id_suppression_minimum_frame_stop_exception_and_first_index_tie"},
+      "rounding": {"mode": "none", "points": ["input_load", "output_store"]},
+      "reduction": {"kind": "argmax", "order": "ascending_index", "partial_accumulator": "fp32", "merge_order": "first_index_on_tie"},
+      "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Checked first-index argmax of the final finite FP32 row. A declared ID range is suppressed except for the stop ID once the minimum emitted-frame count is met. Return status 1 signals selected EOS, status 2 signals frame-budget exhaustion without selecting, and negative status signals invalid input. Positive statuses stop dependent generated calls; no model-specific scheduling is implied."
+    },
     "argmax_last_row_finite_first_index_fp32": {
       "operator_family": "audio_argmax",
       "status": "validated",
