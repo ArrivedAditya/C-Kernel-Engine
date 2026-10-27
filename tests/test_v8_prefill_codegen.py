@@ -171,6 +171,21 @@ int main(void) {
             write(["kv_cache", "recurrent_ssm_state"])
             with self.assertRaisesRegex(RuntimeError, "unexported persistent"):
                 chunked_compare._kv_only_state_contract(bundle)
+            layout.write_text(json.dumps({"memory": {"activations": {"buffers": [
+                {"name": "kv_cache", "lifetime": "sequence", "mutable": True},
+                {"name": "recurrent_ssm_state", "lifetime": "sequence",
+                 "mutable": True, "shape": "[4, 0, 0]"},
+            ]}}}), encoding="utf-8")
+            for mode in ("decode", "prefill"):
+                (bundle / f"lowered_{mode}_call.json").write_text(
+                    json.dumps({"operations": []}), encoding="utf-8")
+            self.assertEqual(chunked_compare._kv_only_state_contract(bundle)[
+                "exported_state"], ["kv_cache"])
+            (bundle / "lowered_prefill_call.json").write_text(json.dumps({
+                "operations": [{"op": "state_update", "buffer_ref": "recurrent_ssm_state"}]
+            }), encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "unexported persistent"):
+                chunked_compare._kv_only_state_contract(bundle)
 
     def test_loaded_library_identity_rejects_replaced_backing(self):
         if not Path("/proc/self/maps").exists():
