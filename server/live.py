@@ -992,7 +992,7 @@ _TOOL_SCHEMA_KEYS = {
     "type", "properties", "required", "additionalProperties", "items",
     "enum", "description", "title", "default", "minimum", "maximum",
     "exclusiveMinimum", "exclusiveMaximum",
-    "minLength", "maxLength", "anyOf", "$schema",
+    "minLength", "maxLength", "maxItems", "anyOf", "$schema",
 }
 
 
@@ -1047,8 +1047,13 @@ def _validate_tool_schema_subset(schema: Any, path: str = "parameters") -> None:
                 raise ValueError(f"{path}.{bound} must be a nonnegative integer")
     if "minLength" in schema and "maxLength" in schema and schema["minLength"] > schema["maxLength"]:
         raise ValueError(f"{path}.minLength exceeds maxLength")
+    if "maxItems" in schema:
+        if kind is None or "array" not in kinds:
+            raise ValueError(f"{path}.maxItems requires an array type")
+        if type(schema["maxItems"]) is not int or schema["maxItems"] < 0:
+            raise ValueError(f"{path}.maxItems must be a nonnegative integer")
     if "properties" in schema:
-        if kind not in (None, "object") or not isinstance(schema["properties"], dict):
+        if (kind is not None and "object" not in kinds) or not isinstance(schema["properties"], dict):
             raise ValueError(f"{path}.properties requires an object schema")
         for key, child in schema["properties"].items():
             if not isinstance(key, str):
@@ -1056,14 +1061,14 @@ def _validate_tool_schema_subset(schema: Any, path: str = "parameters") -> None:
             _validate_tool_schema_subset(child, f"{path}.properties.{key}")
     if "required" in schema:
         required = schema["required"]
-        if kind not in (None, "object") or not isinstance(required, list) or not all(
+        if (kind is not None and "object" not in kinds) or not isinstance(required, list) or not all(
             isinstance(key, str) for key in required
         ):
             raise ValueError(f"{path}.required must be an array of property names")
     if "additionalProperties" in schema and not isinstance(schema["additionalProperties"], bool):
         raise ValueError(f"{path}.additionalProperties must be boolean")
     if "items" in schema:
-        if kind not in (None, "array"):
+        if kind is not None and "array" not in kinds:
             raise ValueError(f"{path}.items requires an array schema")
         _validate_tool_schema_subset(schema["items"], f"{path}.items")
     if "anyOf" in schema:
@@ -1120,8 +1125,12 @@ def _tool_value_matches_schema(value: Any, schema: dict[str, Any]) -> bool:
             for key, item in value.items() if key in properties
         ):
             return False
-    if isinstance(value, list) and "items" in schema:
-        if any(not _tool_value_matches_schema(item, schema["items"]) for item in value):
+    if isinstance(value, list):
+        if "maxItems" in schema and len(value) > schema["maxItems"]:
+            return False
+        if "items" in schema and any(
+            not _tool_value_matches_schema(item, schema["items"]) for item in value
+        ):
             return False
     return True
 
