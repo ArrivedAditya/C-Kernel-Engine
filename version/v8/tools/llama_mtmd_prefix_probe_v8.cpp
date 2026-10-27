@@ -1,3 +1,4 @@
+#include <array>
 #include <cctype>
 #include <cstdint>
 #include <cstring>
@@ -21,6 +22,11 @@ struct CaptureStage {
     bool seen = false;
     int64_t columns = 0;
     int64_t rows = 0;
+    int source_index = -1;
+    std::string tensor_name;
+    std::string tensor_dtype;
+    std::array<int64_t, 4> tensor_shape{};
+    std::array<size_t, 4> tensor_strides{};
 };
 
 static bool capture_stage(ggml_tensor * tensor, bool ask, void * opaque) {
@@ -30,6 +36,17 @@ static bool capture_stage(ggml_tensor * tensor, bool ask, void * opaque) {
     if (capture.seen) {
         capture.error = "selected MTMD stage appeared more than once";
         return true;
+    }
+    tensor = ck_mtmd_capture_tensor(tensor, capture.source_index);
+    if (!tensor) {
+        capture.error = "selected MTMD stage has no requested source edge";
+        return true;
+    }
+    capture.tensor_name = tensor->name;
+    capture.tensor_dtype = ggml_type_name(tensor->type);
+    for (int axis = 0; axis < 4; ++axis) {
+        capture.tensor_shape[axis] = tensor->ne[axis];
+        capture.tensor_strides[axis] = tensor->nb[axis];
     }
     const int64_t count = ggml_nelements(tensor);
     if (count <= 0 || count > 64 * 1024 * 1024 ||
@@ -92,19 +109,26 @@ static std::string ppm_token(std::istream & stream) {
 }
 
 int main(int argc, char ** argv) {
-    if (argc != 6 && argc != 9) {
+    if (argc != 6 && argc != 9 && argc != 11) {
         std::cerr << "usage: llama_mtmd_prefix_probe_v8 MODEL MMPROJ IMAGE OUTPUT_F32 OUTPUT_RGB8"
-                     " [--capture-stage NAME OUTPUT_F32]\n";
+                     " [--capture-stage NAME OUTPUT_F32 [--source-index 0..3]]\n";
         return 2;
     }
     try {
         CaptureStage capture;
-        if (argc == 9) {
+        if (argc >= 9) {
             if (std::strcmp(argv[6], "--capture-stage") != 0 || !*argv[7] || !*argv[8]) {
                 throw std::runtime_error("invalid MTMD stage capture arguments");
             }
             capture.name = argv[7];
             capture.path = argv[8];
+            if (argc == 11) {
+                if (std::strcmp(argv[9], "--source-index") != 0 ||
+                    std::strlen(argv[10]) != 1 || argv[10][0] < '0' || argv[10][0] > '3') {
+                    throw std::runtime_error("invalid MTMD source index");
+                }
+                capture.source_index = argv[10][0] - '0';
+            }
         }
         std::ifstream image(argv[3], std::ios::binary);
         if (!image) throw std::runtime_error("cannot open image");
@@ -218,7 +242,14 @@ int main(int argc, char ** argv) {
         std::cout << "tokens=" << prefix.size() / dim << " dim=" << dim
                   << " image_chunks=" << image_chunks;
         if (capture.seen) {
-            std::cout << " capture_columns=" << capture.columns << " capture_rows=" << capture.rows;
+            std::cout << " capture_columns=" << capture.columns << " capture_rows=" << capture.rows
+                      << " capture_node=" << capture.name << " capture_tensor=" << capture.tensor_name
+                      << " capture_source_index=" << capture.source_index
+                      << " capture_dtype=" << capture.tensor_dtype
+                      << " capture_shape=" << capture.tensor_shape[0] << ',' << capture.tensor_shape[1]
+                      << ',' << capture.tensor_shape[2] << ',' << capture.tensor_shape[3]
+                      << " capture_strides=" << capture.tensor_strides[0] << ',' << capture.tensor_strides[1]
+                      << ',' << capture.tensor_strides[2] << ',' << capture.tensor_strides[3];
         }
         std::cout << "\n";
     } catch (const std::exception & error) {

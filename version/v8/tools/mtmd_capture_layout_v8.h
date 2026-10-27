@@ -7,6 +7,13 @@
 #include <limits>
 #include <vector>
 
+template <typename Tensor>
+inline Tensor *ck_mtmd_capture_tensor(Tensor *node, int source_index) {
+    if (!node || source_index < -1 || source_index >= 4) return nullptr;
+    if (source_index < 0) return node;
+    return node->src[source_index];
+}
+
 inline bool ck_mtmd_gather_strided_elements(
     const uint8_t *storage, size_t storage_bytes, const int64_t ne[4],
     const size_t nb[4], size_t element_bytes, std::vector<uint8_t> &dense) {
