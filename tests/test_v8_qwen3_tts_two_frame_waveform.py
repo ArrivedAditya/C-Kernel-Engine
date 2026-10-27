@@ -72,7 +72,8 @@ class Qwen3TTSTwoFrameWaveformTest(unittest.TestCase):
             shapes = _weight_shapes(graph, main, codec)
             fn, acts, weights, layout, calls, library = compile_entry(
                 Path(temp), graph, shapes,
-                extra_sources=("src/kernels/concat_i32_checked.c",) + CODEC_SOURCES)
+                extra_sources=("src/kernels/concat_i32_checked.c",
+                               "src/kernels/select_next_id_checked.c") + CODEC_SOURCES)
             self.assertGreater(len(calls["operations"]), 3000)
             size = layout["memory"]["arena"]["total_size"]
             raw = (ctypes.c_uint8 * (size + 63))()

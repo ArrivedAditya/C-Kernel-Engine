@@ -29,6 +29,7 @@ else:
 
 OUTPUT = ROOT / "version/v8/circuits/qwen3_tts_second_generated_frame_bounded.json"
 TALKER_VOCAB = 3072
+TALKER_EOS_ID = 2150
 PREFIX = "second_"
 
 
@@ -48,6 +49,9 @@ def build_circuit(*, talker_layers: int = 28,
         "second_frame_pinned_talker_position": 18,
         "later_continuation_positions_safety_only": [19, 20],
         "generation_policy": "greedy_fixed_non_eos_prefix",
+        "minimum_new_frames": 2,
+        "maximum_new_frames": 64,
+        "codec_eos_token_id": TALKER_EOS_ID,
         "oracle_fed_model_intermediates": False,
         "complete_text_to_wav": False,
     })
@@ -66,14 +70,18 @@ def build_circuit(*, talker_layers: int = 28,
         "sequence": ["header", "body", "footer"], "header": [],
         "body": {"type": "dense", "ops": [
             {"id": "second_talker_select_first_code",
-             "op": "argmax_last_row_checked",
-             "kernel": "audio_argmax_last_row_checked_f32",
+             "op": "select_next_id_checked",
+             "kernel": "select_next_id_checked_f32",
              "returns_status": True,
              "graph_slots": {"inputs": {"values": "cont_talker_logits"},
                              "outputs": {"index": "second_talker_first_code_id"}},
              "params": {"R": 1, "C": TALKER_VOCAB, "call_constants": {
                  "values_elements": TALKER_VOCAB, "rows": 1,
                  "channels": TALKER_VOCAB, "row_stride": TALKER_VOCAB,
+                 "emitted_frames": 1, "min_frames": 2,
+                 "max_frames": 64, "stop_id": TALKER_EOS_ID,
+                 "suppressed_begin": TALKER_VOCAB - 1024,
+                 "suppressed_end": TALKER_VOCAB,
                  "selected_elements": 1}}},
             {"id": "second_talker_first_code_embedding_lookup",
              "op": "embedding_lookup_token_major_checked",

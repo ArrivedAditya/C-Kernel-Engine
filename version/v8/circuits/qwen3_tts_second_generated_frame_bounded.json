@@ -87,7 +87,10 @@
         19,
         20
       ],
-      "generation_policy": "greedy_fixed_non_eos_prefix"
+      "generation_policy": "greedy_fixed_non_eos_prefix",
+      "minimum_new_frames": 2,
+      "maximum_new_frames": 64,
+      "codec_eos_token_id": 2150
     }
   },
   "activation_buffers": {
@@ -120263,8 +120266,8 @@
         "ops": [
           {
             "id": "second_talker_select_first_code",
-            "op": "argmax_last_row_checked",
-            "kernel": "audio_argmax_last_row_checked_f32",
+            "op": "select_next_id_checked",
+            "kernel": "select_next_id_checked_f32",
             "returns_status": true,
             "graph_slots": {
               "inputs": {
@@ -120282,6 +120285,12 @@
                 "rows": 1,
                 "channels": 3072,
                 "row_stride": 3072,
+                "emitted_frames": 1,
+                "min_frames": 2,
+                "max_frames": 64,
+                "stop_id": 2150,
+                "suppressed_begin": 2048,
+                "suppressed_end": 3072,
                 "selected_elements": 1
               }
             }
