@@ -14,6 +14,11 @@ int main() {
     assert(ck_mtmd_capture_tensor(&parent, 1) == nullptr);
     assert(ck_mtmd_capture_tensor(&parent, -2) == nullptr);
     assert(ck_mtmd_capture_tensor(&parent, 4) == nullptr);
+    char storage[16]{};
+    assert(ck_mtmd_capture_storage_overlaps(storage, 8, storage + 7, 4));
+    assert(ck_mtmd_capture_storage_overlaps(storage + 7, 4, storage, 8));
+    assert(!ck_mtmd_capture_storage_overlaps(storage, 8, storage + 8, 4));
+    assert(!ck_mtmd_capture_storage_overlaps(nullptr, 8, storage, 4));
     const float source[] = {0, 1, 2, 3, 4, 5};
     const int64_t transposed_ne[] = {2, 3, 1, 1};
     const size_t transposed_nb[] = {12, 4, 24, 24};

@@ -37,11 +37,21 @@ static bool capture_stage(ggml_tensor * tensor, bool ask, void * opaque) {
         capture.error = "selected MTMD stage appeared more than once";
         return true;
     }
-    tensor = ck_mtmd_capture_tensor(tensor, capture.source_index);
-    if (!tensor) {
+    ggml_tensor * selected = ck_mtmd_capture_tensor(tensor, capture.source_index);
+    if (!selected) {
         capture.error = "selected MTMD stage has no requested source edge";
         return true;
     }
+    if (capture.source_index >= 0) {
+        // The callback runs after evaluation; an in-place node may have overwritten its source.
+        if (!tensor->data || !selected->data ||
+            ck_mtmd_capture_storage_overlaps(
+                tensor->data, ggml_nbytes(tensor), selected->data, ggml_nbytes(selected))) {
+            capture.error = "MTMD source storage may be overwritten; capture its producer node directly";
+            return true;
+        }
+    }
+    tensor = selected;
     capture.tensor_name = tensor->name;
     capture.tensor_dtype = ggml_type_name(tensor->type);
     for (int axis = 0; axis < 4; ++axis) {
