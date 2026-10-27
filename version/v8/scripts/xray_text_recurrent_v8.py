@@ -518,10 +518,10 @@ def canonicalize_named_axes(
     state_size: int,
     recurrent_state_physical_layout: str = "head_key_value_contiguous",
 ) -> tuple[np.ndarray, np.ndarray, str]:
-    if name == "new_state":
+    if name in {"state_predelta", "new_state"}:
         state_elements = state_size * state_size
         if state_size <= 0 or ck.size != oracle.size or ck.size % state_elements != 0:
-            raise ValueError("new_state requires matching [head, key, value] extents")
+            raise ValueError(f"{name} requires matching [head, key, value] extents")
         if recurrent_state_physical_layout == "head_value_key_contiguous":
             return ck.reshape(-1), oracle.reshape(-1), "identity:[head,value,key]"
         if recurrent_state_physical_layout != "head_key_value_contiguous":
