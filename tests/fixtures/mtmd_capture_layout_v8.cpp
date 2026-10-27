@@ -7,6 +7,13 @@
 #include "mtmd_capture_layout_v8.h"
 
 int main() {
+    struct Node { Node *src[4]{}; } parent, child;
+    parent.src[0] = &child;
+    assert(ck_mtmd_capture_tensor(&parent, -1) == &parent);
+    assert(ck_mtmd_capture_tensor(&parent, 0) == &child);
+    assert(ck_mtmd_capture_tensor(&parent, 1) == nullptr);
+    assert(ck_mtmd_capture_tensor(&parent, -2) == nullptr);
+    assert(ck_mtmd_capture_tensor(&parent, 4) == nullptr);
     const float source[] = {0, 1, 2, 3, 4, 5};
     const int64_t transposed_ne[] = {2, 3, 1, 1};
     const size_t transposed_nb[] = {12, 4, 24, 24};
