@@ -192,6 +192,39 @@ def build_circuit(*, talker_layers: int = 28,
                         "outputs": {"valid_extent":
                                     "second_predictor_valid_code_count"}},
     })
+    # Keep the original full-call ABI as a checked wrapper while also exposing
+    # prefill and frame entries over the same compiler-planned arena.
+    entry = graph["native_entry"]
+    entry["segments"] = [
+        {"function": entry["function"] + "_prefill",
+         "last_op": "publish_talker_continuation_valid"},
+        {"function": entry["function"] + "_frame",
+         "last_op": "second_predictor_publish_code_count"},
+    ]
+    graph["contract"]["runtime_invariants"].update({
+        "shared_arena_entries": [item["function"] for item in entry["segments"]],
+        "second_entry_requires_first_entry_valid": True,
+        "repeatable_generation_step": False,
+    })
+    clear = copy.deepcopy(graph["block_types"][graph["sequence"][0]]["header"][0])
+    clear["id"] = "clear_second_count_on_frame_entry"
+    bridge = graph["block_types"]["second_talker_predictor_bridge"]
+    bridge["header"].append(clear)
+    shapes["two_phase_ready_scalar"] = {"shape": [1]}
+    bindings["two_phase_ready_scalar"] = "two_phase_ready_scalar"
+    graph["runtime_lengths"]["two_phase_ready"] = {
+        "producer": "check_two_phase_ready", "result": "valid_extent",
+        "capacity": 1, "allow_zero": False,
+    }
+    bridge["header"].append({
+        "id": "check_two_phase_ready", "op": "runtime_extent_sum",
+        "kernel": "runtime_extent_sum_i32", "returns_status": True,
+        "produces_runtime_lengths": {"two_phase_ready": "valid_extent"},
+        "graph_slots": {"inputs": {"values": "talker_continuation_valid"},
+                        "outputs": {"valid_extent": "two_phase_ready_scalar"}},
+        "params": {"T": 1},
+    })
+    bridge["body"]["ops"][0]["consumes_runtime_lengths"] = ["two_phase_ready"]
     return graph
 
 

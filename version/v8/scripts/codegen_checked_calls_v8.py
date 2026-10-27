@@ -53,6 +53,33 @@ def emit_checked_calls(call_ir: dict, root: Path) -> str:
     if not isinstance(contract, dict):
         raise CheckedCallCodegenError("runtime_extent_contract is required")
     function_name = _ident(entry.get("function"), "entry function")
+    segment_specs = entry.get("segments")
+    if segment_specs is None:
+        segments = [(function_name, 0, len(ops))]
+    else:
+        if not isinstance(segment_specs, list) or len(segment_specs) < 2:
+            raise CheckedCallCodegenError("entry segments require at least two ordered functions")
+        identifiers = [op.get("template_op_id") for op in ops]
+        segments = []
+        start = 0
+        names = set()
+        for segment in segment_specs:
+            if not isinstance(segment, dict) or set(segment) != {"function", "last_op"}:
+                raise CheckedCallCodegenError("entry segment requires function and last_op")
+            name = _ident(segment["function"], "segment function")
+            last_op = _ident(segment["last_op"], "segment last_op")
+            if name in names or identifiers.count(last_op) != 1:
+                raise CheckedCallCodegenError("duplicate segment function or unresolved last_op")
+            names.add(name)
+            end = identifiers.index(last_op) + 1
+            if end <= start:
+                raise CheckedCallCodegenError("entry segments must be nonempty and ordered")
+            segments.append((name, start, end))
+            start = end
+        if start != len(ops):
+            raise CheckedCallCodegenError("entry segments must cover every resolved call")
+        if function_name in names and segments[0][0] != function_name:
+            raise CheckedCallCodegenError("declared native entry collides with a later segment")
     params = entry.get("params")
     if not isinstance(params, list) or not params:
         raise CheckedCallCodegenError("entry params are required")
@@ -168,53 +195,81 @@ def emit_checked_calls(call_ir: dict, root: Path) -> str:
             lines.append(declaration)
             declarations_seen.add(declaration)
         map_docs.append(kernel)
+    provider_functions = {op["function"] for op in ops}
+    if function_name in provider_functions:
+        raise CheckedCallCodegenError("entry function collides with provider function")
+    for name, _, _ in segments:
+        if name in provider_functions:
+            raise CheckedCallCodegenError("entry function collides with provider function")
     if lengths:
         lines.append("typedef struct CKRuntimeExtents {")
         for name in lengths:
             lines.append(f"    int32_t {_ident(name, 'runtime length')};")
         lines.append("} CKRuntimeExtents;")
-    lines.append(f"int {function_name}({', '.join(declarations)}) {{")
-    if lengths:
-        lines.append("    CKRuntimeExtents runtime_extents = {0};")
-    lines.append("    int status = 0;")
-    lines.extend(arena_check)
-    for parameter_name in length_outputs.values():
-        lines.append(f"    if (!{parameter_name}) return -1;")
-    produced = set()
-    for index, (op, kernel) in enumerate(zip(ops, map_docs)):
-        expected = [p["name"] for p in kernel["call_abi"]["params"]]
-        expected_sources = [p["source"] for p in kernel["call_abi"]["params"]]
-        args = op.get("args")
-        if not isinstance(args, list) or [a.get("name") for a in args] != expected:
-            raise CheckedCallCodegenError(f"call {index} differs from canonical ABI order")
-        if [a.get("source") for a in args] != expected_sources:
-            raise CheckedCallCodegenError(f"call {index} differs from canonical ABI sources")
-        for name in op.get("consumes_runtime_lengths", []):
-            if name not in produced:
-                raise CheckedCallCodegenError(f"call {index} consumes unproduced length {name}")
-        arg_exprs = []
-        for arg in args:
-            expr = arg.get("expr")
-            if not isinstance(expr, str) or not expr.strip():
-                raise CheckedCallCodegenError(f"call {index} has unresolved argument")
-            arg_exprs.append(expr)
-        lines.append(f"    status = {op['function']}({', '.join(arg_exprs)});")
-        lines.append("    if (status != 0) return status;")
-        for name, result in op.get("produces_runtime_lengths", {}).items():
-            if name not in lengths or name in produced:
-                raise CheckedCallCodegenError(f"invalid runtime length producer {name}")
-            if not any(a.get("source") == f"output:{result}" and
-                       a.get("expr") == f"&runtime_extents.{name}" for a in args):
-                raise CheckedCallCodegenError(f"producer {name} is not bound to output {result}")
-            capacity = lengths[name]["capacity"]
-            lines.append(f"    if (runtime_extents.{name} < 0 || "
-                         f"(size_t)runtime_extents.{name} > {capacity}u) return -2;")
-            if not lengths[name].get("allow_zero", False):
-                lines.append(f"    if (runtime_extents.{name} == 0) return -1;")
-            produced.add(name)
-    if produced != set(lengths):
+    all_produced = set()
+    for segment_function, first, end in segments:
+        lines.append(f"int {segment_function}({', '.join(declarations)}) {{")
+        if lengths:
+            lines.append("    CKRuntimeExtents runtime_extents = {0};")
+        lines.append("    int status = 0;")
+        lines.extend(arena_check)
+        segment_produced = {
+            name for op in ops[first:end]
+            for name in op.get("produces_runtime_lengths", {})
+        }
+        for name, parameter_name in length_outputs.items():
+            if name in segment_produced:
+                lines.append(f"    if (!{parameter_name}) return -1;")
+        produced = set()
+        for index in range(first, end):
+            op, kernel = ops[index], map_docs[index]
+            expected = [p["name"] for p in kernel["call_abi"]["params"]]
+            expected_sources = [p["source"] for p in kernel["call_abi"]["params"]]
+            args = op.get("args")
+            if not isinstance(args, list) or [a.get("name") for a in args] != expected:
+                raise CheckedCallCodegenError(f"call {index} differs from canonical ABI order")
+            if [a.get("source") for a in args] != expected_sources:
+                raise CheckedCallCodegenError(f"call {index} differs from canonical ABI sources")
+            for name in op.get("consumes_runtime_lengths", []):
+                if name not in produced:
+                    raise CheckedCallCodegenError(f"call {index} consumes unproduced length {name}")
+            arg_exprs = []
+            for arg in args:
+                expr = arg.get("expr")
+                if not isinstance(expr, str) or not expr.strip():
+                    raise CheckedCallCodegenError(f"call {index} has unresolved argument")
+                arg_exprs.append(expr)
+            lines.append(f"    status = {op['function']}({', '.join(arg_exprs)});")
+            lines.append("    if (status != 0) return status;")
+            for name, result in op.get("produces_runtime_lengths", {}).items():
+                if name not in lengths or name in produced:
+                    raise CheckedCallCodegenError(f"invalid runtime length producer {name}")
+                if not any(a.get("source") == f"output:{result}" and
+                           a.get("expr") == f"&runtime_extents.{name}" for a in args):
+                    raise CheckedCallCodegenError(f"producer {name} is not bound to output {result}")
+                capacity = lengths[name]["capacity"]
+                lines.append(f"    if (runtime_extents.{name} < 0 || "
+                             f"(size_t)runtime_extents.{name} > {capacity}u) return -2;")
+                if not lengths[name].get("allow_zero", False):
+                    lines.append(f"    if (runtime_extents.{name} == 0) return -1;")
+                produced.add(name)
+        if produced != segment_produced:
+            raise CheckedCallCodegenError("segment has an unvalidated runtime length")
+        if all_produced.intersection(produced):
+            raise CheckedCallCodegenError("runtime length is produced in multiple segments")
+        all_produced.update(produced)
+        for name, parameter_name in length_outputs.items():
+            if name in produced:
+                lines.append(f"    *{parameter_name} = runtime_extents.{name};")
+        lines += ["    return 0;", "}", ""]
+    if all_produced != set(lengths):
         raise CheckedCallCodegenError("not every declared runtime length is produced")
-    for name, parameter_name in length_outputs.items():
-        lines.append(f"    *{parameter_name} = runtime_extents.{name};")
-    lines += ["    return 0;", "}", ""]
+    if segments[0][0] != function_name:
+        names = [param["name"] for param in params]
+        lines.append(f"int {function_name}({', '.join(declarations)}) {{")
+        lines.append("    int status = 0;")
+        for name, _, _ in segments:
+            lines.append(f"    status = {name}({', '.join(names)});")
+            lines.append("    if (status != 0) return status;")
+        lines += ["    return 0;", "}", ""]
     return "\n".join(lines)

@@ -806,6 +806,15 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_qwen3_tts_second_generated_frame.py",
         timeout_sec=360,
     ),
+    "tts_checked_multi_entry": TestSuite(
+        "Checked Shared-Arena Multi-Entry Composition", "inference",
+        ROOT / "tests" / "test_v8_checked_multi_entry.py",
+    ),
+    "tts_qwen3_customvoice_two_phase_speech": TestSuite(
+        "Qwen3-TTS Checked Prefill and Second-Frame Entries", "inference",
+        ROOT / "tests" / "test_v8_qwen3_tts_two_phase_speech.py",
+        timeout_sec=360,
+    ),
     "tts_select_next_id_checked": TestSuite(
         "Checked Speech-Code Stop and Budget Selection", "kernels",
         ROOT / "tests" / "test_v8_select_next_id_checked.py",
