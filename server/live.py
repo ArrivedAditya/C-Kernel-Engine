@@ -992,7 +992,7 @@ _TOOL_SCHEMA_KEYS = {
     "type", "properties", "required", "additionalProperties", "items",
     "enum", "description", "title", "default", "minimum", "maximum",
     "exclusiveMinimum", "exclusiveMaximum",
-    "minLength", "maxLength", "$schema",
+    "minLength", "maxLength", "anyOf", "$schema",
 }
 
 
@@ -1066,9 +1066,20 @@ def _validate_tool_schema_subset(schema: Any, path: str = "parameters") -> None:
         if kind not in (None, "array"):
             raise ValueError(f"{path}.items requires an array schema")
         _validate_tool_schema_subset(schema["items"], f"{path}.items")
+    if "anyOf" in schema:
+        alternatives = schema["anyOf"]
+        if not isinstance(alternatives, list) or not alternatives:
+            raise ValueError(f"{path}.anyOf must be a nonempty array of schemas")
+        for index, alternative in enumerate(alternatives):
+            _validate_tool_schema_subset(alternative, f"{path}.anyOf[{index}]")
 
 
 def _tool_value_matches_schema(value: Any, schema: dict[str, Any]) -> bool:
+    if "anyOf" in schema and not any(
+        _tool_value_matches_schema(value, alternative)
+        for alternative in schema["anyOf"]
+    ):
+        return False
     kind = schema.get("type")
     kinds = kind if isinstance(kind, list) else [kind]
     matches = {
