@@ -38,6 +38,24 @@ def segment_function(library: Path, graph: dict, index: int):
 
 
 class Qwen3TTSTwoPhaseSpeechTest(unittest.TestCase):
+    def test_declared_frame_capacity_boundaries(self):
+        for frames in (2, 5, 64):
+            with self.subTest(frames=frames):
+                graph = build_circuit(talker_layers=1, continuation_steps=2,
+                                      max_generated_frames=frames)
+                self.assertEqual(graph["activation_buffers"]["talker_history_ids"]
+                                 ["shape"], [frames])
+                self.assertEqual(graph["activation_buffers"]["talker_layer0_cache_k"]
+                                 ["shape"], [8, 17 + frames, 128])
+                self.assertEqual(graph["contract"]["runtime_invariants"]
+                                 ["supported_frame_positions"],
+                                 [18, 16 + frames])
+        for invalid in (1, 65, True, 4.5):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ValueError):
+                    build_circuit(talker_layers=1, continuation_steps=2,
+                                  max_generated_frames=invalid)
+
     def test_generated_state_and_recovery_without_assets(self):
         graph = build_circuit(talker_layers=1, continuation_steps=2)
         with tempfile.TemporaryDirectory() as temp:
@@ -60,7 +78,9 @@ class Qwen3TTSTwoPhaseSpeechTest(unittest.TestCase):
                                np.int32, (1,))
             expected_step = view(arena, acts, "expected_step_index",
                                  np.int32, (1,))
-            history = view(arena, acts, "talker_history_ids", np.int32, (4,))
+            history_capacity = graph["activation_buffers"]["talker_history_ids"]["shape"][0]
+            history = view(arena, acts, "talker_history_ids", np.int32,
+                           (history_capacity,))
             step = view(arena, acts, "talker_step_index_input", np.int32, (1,))
             self.assertNotEqual(frame(arena, size), 0)
             self.assertEqual(int(second_valid[0]), 0)
@@ -179,7 +199,9 @@ class Qwen3TTSTwoPhaseSpeechTest(unittest.TestCase):
             state_codes = [int(view(arena, acts, name, np.int32, (1,))[0])
                            for name in state_names]
             np.testing.assert_array_equal(state_codes, codes)
-            history = view(arena, acts, "talker_history_ids", np.int32, (4,))
+            history_capacity = graph["activation_buffers"]["talker_history_ids"]["shape"][0]
+            history = view(arena, acts, "talker_history_ids", np.int32,
+                           (history_capacity,))
             np.testing.assert_array_equal(history[:2], request["codec_tokens"][:2, 0])
             step = view(arena, acts, "talker_step_index_input", np.int32, (1,))
             step[0] = 1
@@ -194,15 +216,29 @@ class Qwen3TTSTwoPhaseSpeechTest(unittest.TestCase):
                 [int(view(arena, acts, name, np.int32, (1,))[0])
                  for name in state_names], third_codes)
             np.testing.assert_array_equal(history[:3], request["codec_tokens"][:3, 0])
+            later_codes = []
+            for step_index in (2, 3):
+                step[0] = step_index
+                self.assertEqual(frame(arena, size), 0)
+                emitted = [int(view(arena, acts, name, np.int32, (1,))[0])
+                           for name in names]
+                np.testing.assert_array_equal(
+                    emitted, request["codec_tokens"][step_index + 1])
+                later_codes.append(emitted)
+            np.testing.assert_array_equal(history[:5], request["codec_tokens"][:5, 0])
+            self.assertEqual(int(view(arena, acts, "expected_step_index",
+                                      np.int32, (1,))[0]), 4)
+            cache_capacity = graph["activation_buffers"]["talker_layer0_cache_k"]["shape"][1]
             cache = view(arena, acts, "talker_layer0_cache_k",
-                         np.float32, (8, 21, 128))
+                         np.float32, (8, cache_capacity, 128))
             self.assertTrue(np.isfinite(cache[:, 19, :]).all())
             self.assertTrue(np.any(cache[:, 19, :] != 0))
             print("QWEN3_TTS_TWO_PHASE_FRAME " + json.dumps({
                 "codes": codes, "third_codes": third_codes,
+                "later_codes": later_codes,
                 "arena_bytes": size,
                 "library_sha256": hashlib.sha256(library.read_bytes()).hexdigest(),
-                "repeatable_generation_step": "THREE_FRAMES_TESTED",
+                "repeatable_generation_step": "FIVE_FRAMES_TESTED",
             }, sort_keys=True))
 
 
