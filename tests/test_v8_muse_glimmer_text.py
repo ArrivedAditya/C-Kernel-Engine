@@ -2,6 +2,7 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -221,7 +222,10 @@ def test_muse_model_map_accounts_for_text_and_defers_vision_explicitly() -> None
     assert any(row.get("prefix") == "model.vision_tower." for row in ignored)
 
 
-def test_muse_tiny_checkpoint_converts_lowers_and_emits_strict_c(tmp_path: Path) -> None:
+@pytest.mark.parametrize("append", [False, True])
+def test_muse_tiny_checkpoint_converts_lowers_and_emits_strict_c(
+    tmp_path: Path, append: bool,
+) -> None:
     torch = pytest.importorskip("torch")
     safetensors = pytest.importorskip("safetensors.torch")
     checkpoint = tmp_path / "checkpoint"
@@ -338,6 +342,10 @@ def test_muse_tiny_checkpoint_converts_lowers_and_emits_strict_c(tmp_path: Path)
     assert audit["verdict"] == "pass"
     assert audit["unmapped_source_tensors"] == []
     manifest = json.loads((output / "weights_manifest.json").read_text())
+    if append:
+        for kind in ("attn", "attn_sliding"):
+            manifest["template"]["kernels"][kind] += "_append"
+        (output / "weights_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     entries = {entry["name"]: entry for entry in manifest["entries"]}
     assert entries["layer.0.w1"]["shape"] == [2 * intermediate, hidden]
     assert entries["layer.0.w1"]["source_name"].endswith(
@@ -418,7 +426,23 @@ def test_muse_tiny_checkpoint_converts_lowers_and_emits_strict_c(tmp_path: Path)
     assert "final_logit_softcap_muse_pytorch_bf16_storage" in emitted
     assert "gemm_nt_bf16_pytorch_onednn_3_12_brgemm_bf16_storage" in emitted
     assert "attention_forward_causal_head_major_gqa_muse_eager_bf16_storage" in emitted
-    assert "attention_forward_causal_head_major_gqa_muse_eager_bf16_storage_sliding" in emitted
+    if append:
+        assert "attention_forward_causal_head_major_gqa_muse_eager_bf16_storage_append(" in emitted
+        assert "Continue through decode" not in emitted
+        assert "ck_prefill_range(model, tokens + consumed, chunk, start_pos + consumed)" in emitted
+        prefill_ops = json.loads((output / "prefill.call.json").read_text())["operations"]
+        attention_ops = [op for op in prefill_ops if op["op"] in {"attn", "attn_sliding"}]
+        assert len(attention_ops) == layers
+        assert all(op["prefill_history_scope"] == "prior_cache" for op in attention_ops)
+        compiler = shutil.which("cc")
+        if compiler:
+            subprocess.run(
+                [compiler, "-std=gnu11", "-fsyntax-only", "-Iinclude",
+                 "-Iversion/v8/src", str(generated)],
+                cwd=ROOT, check=True, capture_output=True, text=True,
+            )
+    else:
+        assert "attention_forward_causal_head_major_gqa_muse_eager_bf16_storage_sliding" in emitted
     assert "attention_forward_decode_head_major_gqa_muse_eager_bf16_storage" in emitted
     assert "attention_forward_decode_head_major_gqa_muse_eager_bf16_storage_sliding" in emitted
 

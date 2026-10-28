@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -15,8 +16,8 @@ SCHEMA = ROOT / "version" / "v8" / "schemas" / "kernel_call_abi.schema.json"
 REGISTRY = MAPS / "KERNEL_REGISTRY.json"
 EXCLUDED = {"KERNEL_REGISTRY.json", "kernel_bindings.json", "kernel_bindings.overlay.json"}
 BUILD_IR = ROOT / "version" / "v8" / "scripts" / "build_ir_v8.py"
-EXPECTED_GOVERNED_MAP_COUNT = 248
-EXPECTED_MAP_OWNED_ABI_COUNT = 340
+EXPECTED_GOVERNED_MAP_COUNT = 250
+EXPECTED_MAP_OWNED_ABI_COUNT = 342
 GLM4_PARITY_PROVIDERS = {
     "rope_forward_qk_pairwise_llama_cpu",
     "rope_precompute_cache_llama_cpu",
@@ -62,6 +63,57 @@ def load_json(path: Path) -> dict:
 
 
 class V8KernelCallABITests(unittest.TestCase):
+    def test_muse_prior_cache_ports_and_call_order(self) -> None:
+        registry = build_ir_v8.load_kernel_registry()
+        names = (
+            "attention_forward_causal_head_major_gqa_muse_eager_bf16_storage_append",
+            "attention_forward_causal_head_major_gqa_muse_eager_bf16_storage_sliding_append",
+        )
+        expected = [
+            "q", "k_new", "v_new", "k_cache", "v_cache", "output",
+            "num_heads", "num_kv_heads", "query_tokens", "past_tokens",
+            "cache_capacity", "head_dim", "aligned_head_dim", "sliding_window",
+            "scores", "scores_bytes", "key_rows", "key_rows_bytes",
+            "value_columns", "value_columns_bytes", "gemm_rows", "gemm_rows_bytes",
+            "gemm_scores", "gemm_scores_bytes",
+        ]
+        header = (ROOT / "include" / "ckernel_engine.h").read_text(encoding="utf-8")
+        signature = re.search(
+            r"void attention_forward_causal_head_major_gqa_muse_eager_bf16_storage_append\((.*?)\);",
+            header, re.S,
+        )
+        self.assertIsNotNone(signature)
+        declared = [part.strip().split()[-1].lstrip("*") for part in signature.group(1).split(",")]
+        self.assertEqual(declared, expected)
+        for name in names:
+            with self.subTest(name=name):
+                provider = load_json(MAPS / f"{name}.json")
+                self.assertEqual(provider["prefill_history_scope"], "prior_cache")
+                self.assertEqual([entry["name"] for entry in provider["call_abi"]["params"]], expected)
+                self.assertEqual(build_ir_v8._attention_input_port_name(registry, name, "k"), "k")
+                self.assertEqual(build_ir_v8._attention_input_port_name(registry, name, "v"), "v")
+                broken = dict(provider)
+                broken["inputs"] = [dict(port) for port in provider["inputs"]]
+                next(port for port in broken["inputs"] if port["name"] == "k_cache")["access"] = "write"
+                original_lookup = build_ir_v8._kernel_map_by_id
+                try:
+                    build_ir_v8._kernel_map_by_id = lambda _registry, _id: broken
+                    with self.assertRaisesRegex(RuntimeError, "read-only state"):
+                        build_ir_v8._attention_input_port_name(registry, name, "k")
+                finally:
+                    build_ir_v8._kernel_map_by_id = original_lookup
+                broken = dict(provider)
+                broken["call_abi"] = dict(provider["call_abi"])
+                broken["call_abi"]["params"] = [dict(param) for param in provider["call_abi"]["params"]]
+                next(param for param in broken["call_abi"]["params"]
+                     if param["name"] == "k_cache")["source"] = "scratch:k_scratch"
+                try:
+                    build_ir_v8._kernel_map_by_id = lambda _registry, _id: broken
+                    with self.assertRaisesRegex(RuntimeError, "runtime:kv_cache_k_layer"):
+                        build_ir_v8._attention_input_port_name(registry, name, "k")
+                finally:
+                    build_ir_v8._kernel_map_by_id = original_lookup
+
     def test_rwkv7_projection_metadata_matches_each_explicit_layer_graph(self) -> None:
         circuit = load_json(ROOT / "version/v8/circuits/rwkv7.json")
         kinds = circuit["block_types"]["decoder"]["body"]["ops_by_kind"]

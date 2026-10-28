@@ -24,6 +24,7 @@ not certify mixed-request packing or the HTTP decode-replay prefill path.
 from __future__ import annotations
 
 import argparse
+import ast
 import ctypes
 import hashlib
 import json
@@ -176,8 +177,34 @@ def _kv_only_state_contract(bundle: Path) -> dict:
                      or (buffer.get("lifetime") == "model" and buffer.get("mutable", True)))
     if unknown:
         raise RuntimeError(f"unknown persistent mutable state: {unknown!r}")
+    call_ops = []
+    have_calls = True
+    for name in ("lowered_decode_call.json", "lowered_prefill_call.json"):
+        call_path = bundle / name
+        if call_path.is_file():
+            call_ops.extend(json.loads(call_path.read_text(encoding="utf-8")).get("operations", []))
+        else:
+            have_calls = False
+    call_references = json.dumps(call_ops)
+
+    def inert_placeholder(buffer: dict) -> bool:
+        if not have_calls:
+            return False
+        shape = buffer.get("shape")
+        if not isinstance(shape, str):
+            return False
+        try:
+            dimensions = ast.literal_eval(shape)
+        except (ValueError, SyntaxError):
+            return False
+        if not isinstance(dimensions, list) or 0 not in dimensions:
+            return False
+        name = str(buffer.get("name", ""))
+        return bool(name) and name not in call_references
+
     sequence = sorted(buffer["name"] for buffer in buffers
-                      if buffer.get("lifetime") == "sequence" and buffer.get("mutable", True))
+                      if buffer.get("lifetime") == "sequence" and buffer.get("mutable", True)
+                      and not inert_placeholder(buffer))
     if sequence != ["kv_cache"]:
         raise RuntimeError(f"unexported persistent sequence state: {sequence!r}")
     return {"exported_state": sequence, "layout_decode_sha256": _sha256(path)}
