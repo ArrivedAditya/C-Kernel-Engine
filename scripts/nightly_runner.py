@@ -819,6 +819,11 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_qwen3_tts_two_phase_speech.py",
         timeout_sec=360,
     ),
+    "tts_checked_frame_loop": TestSuite(
+        "Checked Bounded Speech Frame Loop", "inference",
+        ROOT / "tests" / "test_v8_checked_frame_loop.py",
+        timeout_sec=120,
+    ),
     "tts_copy_i32_span_checked": TestSuite(
         "Checked Integer Span State Copy", "kernels",
         ROOT / "tests" / "test_v8_copy_i32_span_checked.py",

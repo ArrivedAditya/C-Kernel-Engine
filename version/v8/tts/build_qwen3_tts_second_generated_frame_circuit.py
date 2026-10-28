@@ -58,9 +58,17 @@ def copy_ids(op_id: str, source: str, destination: str,
 
 
 def build_circuit(*, talker_layers: int = 28,
-                  continuation_steps: int = 14) -> dict:
+                  continuation_steps: int = 14,
+                  max_generated_frames: int = 64) -> dict:
+    if (isinstance(max_generated_frames, bool)
+            or not isinstance(max_generated_frames, int)
+            or not 2 <= max_generated_frames <= 64):
+        raise ValueError("max_generated_frames must be in 2..64")
+    cache_capacity = 17 + max_generated_frames
+    max_step_index = max_generated_frames - 2
     graph = first_continuation(talker_layers=talker_layers,
-                               continuation_steps=continuation_steps)
+                               continuation_steps=continuation_steps,
+                               max_generated_frames=max_generated_frames)
     predictor = predictor_frame(continuation_steps=continuation_steps)
     full = talker_layers == 28 and continuation_steps == 14
     graph["name"] = ("qwen3_tts_second_generated_frame_bounded" if full else
@@ -71,11 +79,11 @@ def build_circuit(*, talker_layers: int = 28,
         "generated_speech_code_frames": 2,
         "second_frame_requires_non_eos_talker_id": True,
         "second_frame_pinned_talker_position": 18,
-        "later_continuation_positions_safety_only": [19, 20],
+        "later_continuation_positions_safety_only": [19, cache_capacity - 1],
         "generation_policy": "greedy_fixed_non_eos_prefix_with_repetition_penalty",
         "repetition_penalty": "105/100 sign-dependent on generated-code history",
         "minimum_new_frames": 2,
-        "maximum_new_frames": 64,
+        "maximum_new_frames": max_generated_frames,
         "codec_eos_token_id": TALKER_EOS_ID,
         "oracle_fed_model_intermediates": False,
         "complete_text_to_wav": False,
@@ -121,7 +129,7 @@ def build_circuit(*, talker_layers: int = 28,
                  "values_elements": TALKER_VOCAB, "rows": 1,
                  "channels": TALKER_VOCAB, "row_stride": TALKER_VOCAB,
                  "emitted_frames": 1, "min_frames": 2,
-                 "max_frames": 64, "stop_id": TALKER_EOS_ID,
+                 "max_frames": max_generated_frames, "stop_id": TALKER_EOS_ID,
                  "suppressed_begin": TALKER_VOCAB - 1024,
                  "suppressed_end": TALKER_VOCAB,
                  "selected_elements": 1}}},
@@ -230,7 +238,7 @@ def build_circuit(*, talker_layers: int = 28,
     for name in state_ids:
         shapes[name] = {"shape": [1], "lifetime": "sequence"}
         bindings[name] = name
-    shapes["talker_history_ids"] = {"shape": [4], "lifetime": "sequence"}
+    shapes["talker_history_ids"] = {"shape": [max_generated_frames], "lifetime": "sequence"}
     bindings["talker_history_ids"] = "talker_history_ids"
     shapes["generation_state_valid"] = {"shape": [1], "lifetime": "sequence"}
     bindings["generation_state_valid"] = "generation_state_valid"
@@ -249,7 +257,7 @@ def build_circuit(*, talker_layers: int = 28,
             "capacity": 1, "allow_zero": False},
         "history_valid_count": {
             "producer": "check_history_count", "result": "valid_extent",
-            "capacity": 3, "allow_zero": False},
+            "capacity": max_generated_frames - 1, "allow_zero": False},
     })
     prefill_header = graph["block_types"][graph["sequence"][0]]["header"]
     step_ids = {"clear_talker_continuation_valid", "check_talker_step_raw",
@@ -278,13 +286,13 @@ def build_circuit(*, talker_layers: int = 28,
         enumerate(zip(first_ids, state_ids))]
     state_publish_ops.extend([
         copy_ids("seed_talker_history", first_ids[0],
-                 "external:talker_history_ids", 1, 4),
+                 "external:talker_history_ids", 1, max_generated_frames),
         {"id": "initialize_expected_step_index",
          "op": "runtime_extent_affine", "kernel": "runtime_extent_affine_i32",
          "returns_status": True,
          "params": {"call_constants": {
              "extent_affine_source": 0, "extent_affine_factor": 1,
-             "extent_affine_offset": 0, "extent_affine_capacity": 3}},
+             "extent_affine_offset": 0, "extent_affine_capacity": max_step_index + 1}},
          "graph_slots": {"inputs": {},
                          "outputs": {"valid_extent": "external:expected_step_index"}}},
         {"id": "publish_generation_state_valid",
@@ -330,7 +338,7 @@ def build_circuit(*, talker_layers: int = 28,
          "runtime_scalar_bindings": {"extent_affine_source": "talker_step_index"},
          "params": {"call_constants": {
              "extent_affine_factor": 1, "extent_affine_offset": 1,
-             "extent_affine_capacity": 3}},
+             "extent_affine_capacity": max_generated_frames - 1}},
          "graph_slots": {"inputs": {},
                          "outputs": {"valid_extent": "history_count_checked"}}},
     ]
@@ -394,7 +402,7 @@ def build_circuit(*, talker_layers: int = 28,
         "shared_arena_entries": [item["function"] for item in entry["segments"]],
         "second_entry_requires_first_entry_valid": True,
         "repeatable_generation_step": True,
-        "supported_frame_positions": [18, 19, 20],
+        "supported_frame_positions": [18, cache_capacity - 1],
     })
     clear = copy.deepcopy(next(
         op for op in graph["block_types"][graph["sequence"][0]]["header"]
@@ -420,8 +428,8 @@ def build_circuit(*, talker_layers: int = 28,
 
     penalty = bridge["body"]["ops"][0]
     penalty["graph_slots"]["inputs"]["history"] = "external:talker_history_ids"
-    penalty["params"]["H"] = 4
-    penalty["params"]["call_constants"]["history_elements"] = 4
+    penalty["params"]["H"] = max_generated_frames
+    penalty["params"]["call_constants"]["history_elements"] = max_generated_frames
     penalty["params"]["call_constants"].pop("history_count")
     penalty["consumes_runtime_lengths"].append("history_valid_count")
     penalty["runtime_scalar_bindings"] = {"history_count": "history_valid_count"}
@@ -442,7 +450,7 @@ def build_circuit(*, talker_layers: int = 28,
     if publish is None:
         raise ValueError("second frame publisher missing")
     commit_ops = [copy_ids("append_talker_history", next_ids[0],
-                           "external:talker_history_ids", 1, 4,
+                           "external:talker_history_ids", 1, max_generated_frames,
                            runtime_destination_offset="history_valid_count")]
     for index, (source, destination) in enumerate(zip(next_ids, state_ids)):
         commit_ops.append(copy_ids(f"commit_rolling_code_{index}", source,
@@ -456,7 +464,7 @@ def build_circuit(*, talker_layers: int = 28,
              "extent_affine_source": "talker_step_index"},
          "params": {"call_constants": {
              "extent_affine_factor": 1, "extent_affine_offset": 1,
-             "extent_affine_capacity": 3}},
+             "extent_affine_capacity": max_generated_frames - 1}},
          "graph_slots": {"inputs": {},
                          "outputs": {"valid_extent":
                                      "external:expected_step_index"}}},

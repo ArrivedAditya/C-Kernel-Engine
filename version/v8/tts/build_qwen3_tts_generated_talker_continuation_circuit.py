@@ -31,7 +31,14 @@ VOCAB = 2048
 
 
 def build_circuit(*, talker_layers: int = 28,
-                  continuation_steps: int = 14) -> dict:
+                  continuation_steps: int = 14,
+                  max_generated_frames: int = 4) -> dict:
+    if (isinstance(max_generated_frames, bool)
+            or not isinstance(max_generated_frames, int)
+            or not 2 <= max_generated_frames <= 64):
+        raise ValueError("max_generated_frames must be in 2..64")
+    cache_capacity = 17 + max_generated_frames
+    max_step_index = max_generated_frames - 2
     graph = generated_frame(talker_layers=talker_layers,
                             continuation_steps=continuation_steps)
     graph["name"] = ("qwen3_tts_generated_talker_continuation_bounded" if
@@ -40,7 +47,7 @@ def build_circuit(*, talker_layers: int = 28,
     graph["native_entry"]["function"] = "ck_" + graph["name"]
     graph["contract"]["runtime_invariants"].update({
         "generated_talker_continuation_steps": 1,
-        "continuation_positions": [18, 20],
+        "continuation_positions": [18, cache_capacity - 1],
         "codebook_feedback_rows": continuation_steps + 2,
         "oracle_fed_model_intermediates": False,
         "complete_text_to_wav": False,
@@ -56,13 +63,13 @@ def build_circuit(*, talker_layers: int = 28,
     graph["runtime_lengths"].update({
         "talker_step_raw": {
             "producer": "check_talker_step_raw", "result": "valid_extent",
-            "capacity": continuation_steps, "allow_zero": True},
+            "capacity": max(continuation_steps, max_step_index), "allow_zero": True},
         "talker_step_index": {
             "producer": "check_talker_step_index", "result": "valid_extent",
-            "capacity": 2, "allow_zero": True},
+            "capacity": max_step_index, "allow_zero": True},
         "talker_decode_position": {
             "producer": "check_talker_decode_position", "result": "valid_extent",
-            "capacity": 20, "allow_zero": False},
+            "capacity": cache_capacity - 1, "allow_zero": False},
     })
     graph["block_types"][graph["sequence"][0]]["header"].insert(0, {
         "id": "clear_talker_continuation_valid",
@@ -87,7 +94,7 @@ def build_circuit(*, talker_layers: int = 28,
          "runtime_scalar_bindings": {"extent_affine_source": "talker_step_raw"},
          "params": {"call_constants": {
              "extent_affine_factor": 1, "extent_affine_offset": 0,
-             "extent_affine_capacity": 2}},
+             "extent_affine_capacity": max_step_index}},
          "graph_slots": {"inputs": {},
                          "outputs": {"valid_extent": "talker_step_index_checked"}}},
         {"id": "check_talker_decode_position", "op": "runtime_extent_affine",
@@ -97,19 +104,19 @@ def build_circuit(*, talker_layers: int = 28,
          "runtime_scalar_bindings": {"extent_affine_source": "talker_step_index"},
          "params": {"call_constants": {
              "extent_affine_factor": 1, "extent_affine_offset": 18,
-             "extent_affine_capacity": 20}},
+             "extent_affine_capacity": cache_capacity - 1}},
          "graph_slots": {"inputs": {},
                          "outputs": {"valid_extent": "talker_decode_position_checked"}}},
     ]
 
     # Seed state immediately after the prefill. Its Q/K/V producers must remain
     # alive until this point, before predictor work can reuse their arena space.
-    seed = cached_prefill()["block_types"]["talker_cache_seed"]
+    seed = cached_prefill(cache_capacity=cache_capacity)["block_types"]["talker_cache_seed"]
     seed_ops = copy.deepcopy(seed["body"]["ops"][:talker_layers])
     for layer in range(talker_layers):
         for kind in ("k", "v"):
             name = f"talker_layer{layer}_cache_{kind}"
-            shapes[name] = {"shape": [8, 21, 128]}
+            shapes[name] = {"shape": [8, cache_capacity, 128]}
             bindings[name] = name
     graph["block_types"]["talker_cache_seed"] = {
         "sequence": ["header", "body", "footer"], "header": [],
@@ -182,7 +189,8 @@ def build_circuit(*, talker_layers: int = 28,
         "body": {"type": "dense", "ops": ops}, "footer": [],
     }
 
-    continuation = talker_decode(layers=talker_layers)
+    continuation = talker_decode(layers=talker_layers,
+                                 cache_capacity=cache_capacity)
     caches = {f"talker_layer{layer}_cache_{kind}"
               for layer in range(talker_layers) for kind in ("k", "v")}
 
