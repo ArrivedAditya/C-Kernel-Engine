@@ -4563,6 +4563,28 @@
       "position_transform": null,
       "description": "Exact checked concatenation of two nonempty contiguous int32 spans into disjoint caller-owned output. Rejects invalid capacities and aliasing before writes; preserves output padding. Inference only."
     },
+    "copy_i32_disjoint_span_exact": {
+      "operator_family": "copy_i32_span_checked",
+      "status": "validated",
+      "storage": {"input": "int32", "weight": "none", "output": "int32"},
+      "compute": {"input": "int32", "weight": "none", "accumulator": "int32", "contraction": "disabled", "evaluation_order": "validate_then_copy_selected_span"},
+      "rounding": {"mode": "none", "points": ["input_load", "output_store"]},
+      "reduction": {"kind": "none", "order": "none", "partial_accumulator": "none", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Exact checked copy of a nonempty contiguous int32 span into disjoint caller-owned storage. Validates offsets, capacities and overlap before writes; preserves untouched destination elements. Inference only."
+    },
+    "equal_i32_scalar_exact": {
+      "operator_family": "equal_i32_scalar_checked",
+      "status": "validated",
+      "storage": {"input": "int32", "weight": "none", "output": "int32"},
+      "compute": {"input": "int32", "weight": "none", "accumulator": "int32", "contraction": "disabled", "evaluation_order": "validate_then_compare_then_copy_if_equal"},
+      "rounding": {"mode": "none", "points": ["input_load", "output_store"]},
+      "reduction": {"kind": "none", "order": "none", "partial_accumulator": "none", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Exact checked comparison of requested and expected int32 scalar state. A mismatch rejects before writing the checked output; no reduction or heap use. Inference only."
+    },
     "audio_concat_channels_exact_copy_fp32": {
       "operator_family": "audio_concat_channels_checked",
       "status": "validated",

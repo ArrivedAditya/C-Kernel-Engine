@@ -1,0 +1,56 @@
+{
+  "id": "equal_i32_scalar_checked",
+  "op": "equal_i32_scalar_checked",
+  "operation_interface": "tensor.equal.scalar.checked.i32.v1",
+  "variant": "exact_scalar_match",
+  "selection": {"status": "candidate", "priority": 100,
+    "equivalence_group": "tensor.equal.scalar.checked.i32.v1",
+    "phases": ["prefill", "decode"]},
+  "quant": {"weight": "none", "activation": "i32", "output": "i32"},
+  "inputs": [
+    {"name": "requested", "dtype": "i32", "shape": [1],
+     "layout": "contiguous", "placement": "local", "access": "read",
+     "storage_class": "activation", "consumption": "required"},
+    {"name": "expected", "dtype": "i32", "shape": [1],
+     "layout": "contiguous", "placement": "local", "access": "read",
+     "storage_class": "activation", "consumption": "required"}
+  ],
+  "weights": [],
+  "outputs": [{"name": "checked", "dtype": "i32", "shape": [1],
+    "layout": "contiguous", "placement": "local", "access": "write",
+    "storage_class": "activation", "consumption": "required"}],
+  "scratch": [],
+  "dims": [],
+  "impl": {"function": "ck_equal_i32_scalar_checked",
+    "c_declaration": "int ck_equal_i32_scalar_checked(const int32_t *requested, size_t requested_elements, const int32_t *expected, size_t expected_elements, int32_t *checked, size_t checked_elements);",
+    "sources": ["src/kernels/equal_i32_scalar_checked.c"]},
+  "modes": {"inference": true, "training": false, "backward": false},
+  "numerical_capabilities": [{"contract_id": "equal_i32_scalar_exact",
+    "status": "validated", "phases": ["prefill", "decode"],
+    "function": "ck_equal_i32_scalar_checked", "explicit_selector": true,
+    "implementation": {"isa_dispatch": "scalar", "threading": {
+      "runtime": "serial", "work_partition": ["serial"],
+      "dispatch": ["inline"], "reduction_order_effect": "none"}},
+    "arithmetic": {"partial_accumulator": "none", "merge_order": "none",
+      "deterministic": true, "thread_count_changes_arithmetic_order": false,
+      "split_strategy": "serial"}}],
+  "call_abi": {"version": 1, "params": [
+    {"name": "requested", "source": "activation:requested", "cast": "const int32_t*", "ports": ["input:requested"]},
+    {"name": "requested_elements", "source": "runtime:requested_elements", "value_type": "size_t"},
+    {"name": "expected", "source": "activation:expected", "cast": "const int32_t*", "ports": ["input:expected"]},
+    {"name": "expected_elements", "source": "runtime:expected_elements", "value_type": "size_t"},
+    {"name": "checked", "source": "output:checked", "cast": "int32_t*", "ports": ["output:checked"]},
+    {"name": "checked_elements", "source": "runtime:checked_elements", "value_type": "size_t"}
+  ]},
+  "call_constant_contract": {"buffer_spans": [
+    {"pointer": "requested", "elements": "requested_elements", "rows": 1,
+     "width": 1, "element_bytes": 4},
+    {"pointer": "expected", "elements": "expected_elements", "rows": 1,
+     "width": 1, "element_bytes": 4},
+    {"pointer": "checked", "elements": "checked_elements", "rows": 1,
+     "width": 1, "element_bytes": 4}
+  ]},
+  "tests": {"unit": ["tests/test_v8_equal_i32_scalar_checked.py"],
+    "oracle": "Exact int32 equality, with unchanged checked output on rejection"},
+  "notes": "Checks one caller-owned scalar against expected sequence state before dependent execution. Rejected input never writes output."
+}

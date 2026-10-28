@@ -2126,6 +2126,15 @@ OP_DATAFLOW = {
         "inputs": {"left": "external:left", "right": "external:right"},
         "outputs": {"output": {"slot": "concatenated_ids", "dtype": "i32"}},
     },
+    "copy_i32_span_checked": {
+        "inputs": {"source": "external:source"},
+        "outputs": {"destination": {"slot": "copied_ids", "dtype": "i32"}},
+    },
+    "equal_i32_scalar_checked": {
+        "inputs": {"requested": "external:requested",
+                   "expected": "external:expected"},
+        "outputs": {"checked": {"slot": "checked_scalar", "dtype": "i32"}},
+    },
     "audio_duration_logits_to_frames": {
         "inputs": {"logits": "external:audio_duration_logits"},
         "outputs": {
@@ -4433,6 +4442,15 @@ def _template_activation_buffer_specs(
                 f"HARD CIRCUIT BUFFER FAULT: activation_buffers.{name}.dtype "
                 f"uses unsupported storage type {dtype!r}"
             )
+        lifetime = declaration.get("lifetime", "call")
+        mutable = declaration.get("mutable", True)
+        if (not isinstance(lifetime, str)
+                or lifetime not in {"call", "sequence", "model"}
+                or not isinstance(mutable, bool)):
+            raise RuntimeError(
+                f"HARD CIRCUIT BUFFER FAULT: activation_buffers.{name} "
+                "requires a call, sequence or model lifetime and boolean mutable"
+            )
         elem_bytes = _dtype_size_bytes(dtype)
         size = elem_bytes
         for extent in shape:
@@ -4442,6 +4460,8 @@ def _template_activation_buffer_specs(
             "size": size,
             "shape": f"[{', '.join(str(extent) for extent in shape)}]",
             "dtype": dtype,
+            "lifetime": lifetime,
+            "mutable": mutable,
         }
     return result
 
@@ -4899,7 +4919,8 @@ def build_activation_specs(
             raise RuntimeError(
                 f"HARD CIRCUIT BUFFER FAULT: activation buffer {spec['name']!r} duplicates a built-in region"
             )
-        add(spec["name"], spec["size"], spec["shape"], spec["dtype"])
+        add(spec["name"], spec["size"], spec["shape"], spec["dtype"],
+            spec["lifetime"], spec["mutable"])
 
     return specs
 
@@ -4989,6 +5010,8 @@ TEMPLATE_TO_KERNEL_OP = {
     "select_next_id_checked": "select_next_id_checked",
     "repetition_penalty_last_row_checked": "repetition_penalty_last_row_checked",
     "concat_i32_checked": "concat_i32_checked",
+    "copy_i32_span_checked": "copy_i32_span_checked",
+    "equal_i32_scalar_checked": "equal_i32_scalar_checked",
     "audio_duration_logits_to_frames": "audio_duration_logits_to_frames",
     "runtime_extent_sum": "runtime_extent_sum",
     "runtime_extent_scale": "runtime_extent_scale",
@@ -14031,7 +14054,8 @@ def generate_memory_layout(
             raise RuntimeError(
                 f"HARD CIRCUIT BUFFER FAULT: activation buffer {spec['name']!r} duplicates a built-in region"
             )
-        add_buffer(spec["name"], spec["size"], spec["shape"], spec["dtype"])
+        add_buffer(spec["name"], spec["size"], spec["shape"], spec["dtype"],
+                   spec["lifetime"], spec["mutable"])
         allocated_names.add(spec["name"])
 
     total_activation_size = current_offset
