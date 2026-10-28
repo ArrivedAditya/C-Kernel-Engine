@@ -26,5 +26,9 @@
     "name": "position_embeddings_add_gemma4v_xy",
     "header": "include/ckernel_engine.h",
     "source": "src/kernels/vision_kernels.c"
+  },
+  "tests": {
+    "unit": ["tests/test_v8_gemma4v_position_add_order.py"],
+    "oracle": "Pinned llama.cpp Gemma4V graph: FP32 (patch + X) + Y as two separately rounded additions"
   }
 }
