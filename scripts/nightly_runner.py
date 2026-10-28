@@ -728,6 +728,10 @@ TEST_SUITES = {
         "Gemma4 BF16 Projection Reduction Oracle", "parity",
         ROOT / "tests" / "test_v8_gemma4_bf16_reduction_oracle.py",
     ),
+    "gemma4v_position_add_order": TestSuite(
+        "Gemma4V Position Addition Order", "parity",
+        ROOT / "tests" / "test_v8_gemma4v_position_add_order.py",
+    ),
     "vision": TestSuite("Vision", "kernels", UNITTEST_DIR / "test_vision.py"),
     "audio_frontend": TestSuite(
         "Audio Log-Mel Frontend", "kernels", UNITTEST_DIR / "test_audio.py"
