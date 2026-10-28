@@ -5,7 +5,7 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "version/v8/kernel_maps",
     "counts": {
-      "total": 469,
+      "total": 471,
       "by_op": {
         "add_backward": 1,
         "add_rows_checked": 1,
@@ -73,12 +73,14 @@
         "channel_scale_rows_checked": 1,
         "clip_strided_checked": 1,
         "concat_i32_checked": 1,
+        "copy_i32_span_checked": 1,
         "copy_last_logits": 1,
         "embedding": 7,
         "embedding_backward": 1,
         "embedding_lookup_checked": 1,
         "embedding_lookup_token_major_checked": 1,
         "embedding_three_table_layer_norm": 1,
+        "equal_i32_scalar_checked": 1,
         "farskip_routed_shared_combine": 3,
         "feature_concat": 1,
         "feature_concat_broadcast_rows": 1,
@@ -31853,6 +31855,181 @@
       "_source_file": "concat_i32_checked.json"
     },
     {
+      "id": "copy_i32_span_checked",
+      "op": "copy_i32_span_checked",
+      "operation_interface": "tensor.copy.span.checked.i32.v1",
+      "variant": "exact_disjoint_span_copy",
+      "selection": {
+        "status": "candidate",
+        "priority": 100,
+        "equivalence_group": "tensor.copy.span.checked.i32.v1",
+        "phases": [
+          "prefill",
+          "decode"
+        ]
+      },
+      "quant": {
+        "weight": "none",
+        "activation": "i32",
+        "output": "i32"
+      },
+      "inputs": [
+        {
+          "name": "source",
+          "dtype": "i32",
+          "shape": [
+            "S"
+          ],
+          "layout": "contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "destination",
+          "dtype": "i32",
+          "shape": [
+            "D"
+          ],
+          "layout": "contiguous",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "S",
+        "D"
+      ],
+      "impl": {
+        "function": "ck_copy_i32_span_checked",
+        "c_declaration": "int ck_copy_i32_span_checked(const int32_t *source, size_t source_elements, size_t source_offset, int32_t *destination, size_t destination_elements, size_t destination_offset, size_t count);",
+        "sources": [
+          "src/kernels/copy_i32_span_checked.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "copy_i32_disjoint_span_exact",
+          "status": "validated",
+          "phases": [
+            "prefill",
+            "decode"
+          ],
+          "function": "ck_copy_i32_span_checked",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "none",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "serial"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "source",
+            "source": "activation:source",
+            "cast": "const int32_t*",
+            "ports": [
+              "input:source"
+            ]
+          },
+          {
+            "name": "source_elements",
+            "source": "runtime:source_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "source_offset",
+            "source": "runtime:source_offset",
+            "value_type": "size_t"
+          },
+          {
+            "name": "destination",
+            "source": "output:destination",
+            "cast": "int32_t*",
+            "ports": [
+              "output:destination"
+            ]
+          },
+          {
+            "name": "destination_elements",
+            "source": "runtime:destination_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "destination_offset",
+            "source": "runtime:destination_offset",
+            "value_type": "size_t"
+          },
+          {
+            "name": "count",
+            "source": "runtime:count",
+            "value_type": "size_t"
+          }
+        ]
+      },
+      "call_constant_contract": {
+        "shape_symbols": {
+          "S": "source_elements",
+          "D": "destination_elements"
+        },
+        "buffer_spans": [
+          {
+            "pointer": "source",
+            "elements": "source_elements",
+            "rows": 1,
+            "width": "source_elements",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "destination",
+            "elements": "destination_elements",
+            "rows": 1,
+            "width": "destination_elements",
+            "element_bytes": 4
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "tests/test_v8_copy_i32_span_checked.py"
+        ],
+        "oracle": "Exact integer span copy with unchanged destination on rejection"
+      },
+      "notes": "Copies one bounded disjoint integer span without allocation. Offsets and count are checked before writing; untouched destination elements remain unchanged.",
+      "name": "copy_i32_span_checked",
+      "_source_file": "copy_i32_span_checked.json"
+    },
+    {
       "id": "copy_last_logits",
       "op": "copy_last_logits",
       "operation_interface": "copy_last_logits.fp32.v1",
@@ -35522,6 +35699,191 @@
       "notes": "Reusable three-table embedding and LayerNorm; Kokoro is one consumer. This provider only certifies the embedding boundary, not the full encoder or waveform. Inference only.",
       "name": "embedding_three_table_layer_norm_f32",
       "_source_file": "embedding_three_table_layer_norm_f32.json"
+    },
+    {
+      "id": "equal_i32_scalar_checked",
+      "op": "equal_i32_scalar_checked",
+      "operation_interface": "tensor.equal.scalar.checked.i32.v1",
+      "variant": "exact_scalar_match",
+      "selection": {
+        "status": "candidate",
+        "priority": 100,
+        "equivalence_group": "tensor.equal.scalar.checked.i32.v1",
+        "phases": [
+          "prefill",
+          "decode"
+        ]
+      },
+      "quant": {
+        "weight": "none",
+        "activation": "i32",
+        "output": "i32"
+      },
+      "inputs": [
+        {
+          "name": "requested",
+          "dtype": "i32",
+          "shape": [
+            1
+          ],
+          "layout": "contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        },
+        {
+          "name": "expected",
+          "dtype": "i32",
+          "shape": [
+            1
+          ],
+          "layout": "contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "checked",
+          "dtype": "i32",
+          "shape": [
+            1
+          ],
+          "layout": "contiguous",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "scratch": [],
+      "dims": [],
+      "impl": {
+        "function": "ck_equal_i32_scalar_checked",
+        "c_declaration": "int ck_equal_i32_scalar_checked(const int32_t *requested, size_t requested_elements, const int32_t *expected, size_t expected_elements, int32_t *checked, size_t checked_elements);",
+        "sources": [
+          "src/kernels/equal_i32_scalar_checked.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "equal_i32_scalar_exact",
+          "status": "validated",
+          "phases": [
+            "prefill",
+            "decode"
+          ],
+          "function": "ck_equal_i32_scalar_checked",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "none",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "serial"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "requested",
+            "source": "activation:requested",
+            "cast": "const int32_t*",
+            "ports": [
+              "input:requested"
+            ]
+          },
+          {
+            "name": "requested_elements",
+            "source": "runtime:requested_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "expected",
+            "source": "activation:expected",
+            "cast": "const int32_t*",
+            "ports": [
+              "input:expected"
+            ]
+          },
+          {
+            "name": "expected_elements",
+            "source": "runtime:expected_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "checked",
+            "source": "output:checked",
+            "cast": "int32_t*",
+            "ports": [
+              "output:checked"
+            ]
+          },
+          {
+            "name": "checked_elements",
+            "source": "runtime:checked_elements",
+            "value_type": "size_t"
+          }
+        ]
+      },
+      "call_constant_contract": {
+        "buffer_spans": [
+          {
+            "pointer": "requested",
+            "elements": "requested_elements",
+            "rows": 1,
+            "width": 1,
+            "element_bytes": 4
+          },
+          {
+            "pointer": "expected",
+            "elements": "expected_elements",
+            "rows": 1,
+            "width": 1,
+            "element_bytes": 4
+          },
+          {
+            "pointer": "checked",
+            "elements": "checked_elements",
+            "rows": 1,
+            "width": 1,
+            "element_bytes": 4
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "tests/test_v8_equal_i32_scalar_checked.py"
+        ],
+        "oracle": "Exact int32 equality, with unchanged checked output on rejection"
+      },
+      "notes": "Checks one caller-owned scalar against expected sequence state before dependent execution. Rejected input never writes output.",
+      "name": "equal_i32_scalar_checked",
+      "_source_file": "equal_i32_scalar_checked.json"
     },
     {
       "id": "farskip_swiglu_shared_combine_bf16",
@@ -78187,7 +78549,7 @@
         "shape_symbols": {
           "R": "rows",
           "C": "channels",
-          "H": "history_count"
+          "H": "history_elements"
         },
         "buffer_spans": [
           {
@@ -78203,7 +78565,7 @@
             "pointer": "history",
             "elements": "history_elements",
             "rows": 1,
-            "width": "history_count",
+            "width": "history_elements",
             "element_bytes": 4
           },
           {

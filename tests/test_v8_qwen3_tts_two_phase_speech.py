@@ -24,7 +24,9 @@ from version.v8.tts.build_qwen3_tts_second_generated_frame_circuit import (
 )
 
 SOURCES = ("src/kernels/select_next_id_checked.c",
-           "src/kernels/repetition_penalty_checked.c")
+           "src/kernels/repetition_penalty_checked.c",
+           "src/kernels/copy_i32_span_checked.c",
+           "src/kernels/equal_i32_scalar_checked.c")
 
 
 def segment_function(library: Path, graph: dict, index: int):
@@ -54,30 +56,56 @@ class Qwen3TTSTwoPhaseSpeechTest(unittest.TestCase):
                                np.int32, (1,))
             second_valid = view(arena, acts, "second_predictor_valid_code_count",
                                 np.int32, (1,))
+            state_valid = view(arena, acts, "generation_state_valid",
+                               np.int32, (1,))
+            expected_step = view(arena, acts, "expected_step_index",
+                                 np.int32, (1,))
+            history = view(arena, acts, "talker_history_ids", np.int32, (4,))
+            step = view(arena, acts, "talker_step_index_input", np.int32, (1,))
             self.assertNotEqual(frame(arena, size), 0)
             self.assertEqual(int(second_valid[0]), 0)
             for _ in range(2):
                 self.assertEqual(prefill(arena, size), 0)
-                self.assertEqual(int(first_valid[0]), 1)
+                self.assertEqual(int(state_valid[0]), 1)
+                self.assertEqual(int(expected_step[0]), 0)
+                self.assertEqual(int(first_valid[0]), 0)
                 self.assertEqual(int(second_valid[0]), 0)
+                step[0] = 0
+                self.assertEqual(frame(arena, size), 0)
+                self.assertEqual(int(first_valid[0]), 1)
+                self.assertEqual(int(state_valid[0]), 1)
+                self.assertEqual(int(expected_step[0]), 1)
+                self.assertEqual(int(second_valid[0]), 3)
+                step[0] = 1
                 self.assertEqual(frame(arena, size), 0)
                 self.assertEqual(int(second_valid[0]), 3)
+                self.assertEqual(int(state_valid[0]), 1)
+                self.assertEqual(int(expected_step[0]), 2)
+                self.assertEqual(int(history[2]), 0)
+            step[0] = 0  # stale index is rejected before mutable KV work
+            self.assertNotEqual(frame(arena, size), 0)
+            self.assertEqual(int(second_valid[0]), 0)
+            self.assertEqual(int(state_valid[0]), 1)
+            self.assertEqual(int(expected_step[0]), 2)
+            step[0] = 2
             bridge = view(arena, acts, "second_bridge_left_indices",
                           np.int32, (2,))
             bridge[0] = 1
             self.assertNotEqual(frame(arena, size), 0)
             self.assertEqual(int(second_valid[0]), 0)
+            self.assertEqual(int(state_valid[0]), 0)
             bridge[0] = 0
+            self.assertNotEqual(frame(arena, size), 0)
+            step[0] = 0
+            self.assertEqual(prefill(arena, size), 0)
             self.assertEqual(frame(arena, size), 0)
             self.assertEqual(int(second_valid[0]), 3)
             self.assertEqual(full(arena, size), 0)  # original ABI composes both
             self.assertEqual(int(second_valid[0]), 3)
-            step = view(arena, acts, "talker_step_index_input", np.int32, (1,))
             step[0] = 3
-            self.assertNotEqual(prefill(arena, size), 0)
-            self.assertEqual(int(first_valid[0]), 0)
-            self.assertEqual(int(second_valid[0]), 0)
+            self.assertEqual(prefill(arena, size), 0)
             self.assertNotEqual(frame(arena, size), 0)
+            self.assertEqual(int(first_valid[0]), 0)
             self.assertEqual(int(second_valid[0]), 0)
             self.assertNotEqual(full(arena, size), 0)
             self.assertEqual(int(first_valid[0]), 0)
@@ -94,8 +122,8 @@ class Qwen3TTSTwoPhaseSpeechTest(unittest.TestCase):
         capture = FIXTURE / "qwen3_tts_talker_continuation.npz"
         self.assertEqual(hashlib.sha256(capture.read_bytes()).hexdigest(),
                          manifest["npz_sha256"])
-        self.assertFalse(graph["contract"]["runtime_invariants"]
-                         ["repeatable_generation_step"])
+        self.assertTrue(graph["contract"]["runtime_invariants"]
+                        ["repeatable_generation_step"])
 
     @unittest.skipUnless(os.environ.get("CKE_QWEN3_TTS_MODEL_DIR"),
                          "pinned CustomVoice weights unavailable; two-phase parity NOT_TESTED")
@@ -141,10 +169,40 @@ class Qwen3TTSTwoPhaseSpeechTest(unittest.TestCase):
             codes = [int(view(arena, acts, name, np.int32, (1,))[0])
                      for name in names]
             np.testing.assert_array_equal(codes, request["codec_tokens"][1])
+            first_names = ["talker_first_code_id",
+                           "pred_predictor_codebook0_selected_id"] + [
+                f"pred_step{i}_selected_id" for i in range(1, 15)]
+            original_codes = [int(view(arena, acts, name, np.int32, (1,))[0])
+                              for name in first_names]
+            np.testing.assert_array_equal(original_codes, request["codec_tokens"][0])
+            state_names = [f"rolling_code_state_{i}" for i in range(16)]
+            state_codes = [int(view(arena, acts, name, np.int32, (1,))[0])
+                           for name in state_names]
+            np.testing.assert_array_equal(state_codes, codes)
+            history = view(arena, acts, "talker_history_ids", np.int32, (4,))
+            np.testing.assert_array_equal(history[:2], request["codec_tokens"][:2, 0])
+            step = view(arena, acts, "talker_step_index_input", np.int32, (1,))
+            step[0] = 1
+            self.assertEqual(frame(arena, size), 0)
+            third_codes = [int(view(arena, acts, name, np.int32, (1,))[0])
+                           for name in names]
+            np.testing.assert_array_equal(third_codes, request["codec_tokens"][2])
+            np.testing.assert_array_equal(
+                [int(view(arena, acts, name, np.int32, (1,))[0])
+                 for name in first_names], original_codes)
+            np.testing.assert_array_equal(
+                [int(view(arena, acts, name, np.int32, (1,))[0])
+                 for name in state_names], third_codes)
+            np.testing.assert_array_equal(history[:3], request["codec_tokens"][:3, 0])
+            cache = view(arena, acts, "talker_layer0_cache_k",
+                         np.float32, (8, 21, 128))
+            self.assertTrue(np.isfinite(cache[:, 19, :]).all())
+            self.assertTrue(np.any(cache[:, 19, :] != 0))
             print("QWEN3_TTS_TWO_PHASE_FRAME " + json.dumps({
-                "codes": codes, "arena_bytes": size,
+                "codes": codes, "third_codes": third_codes,
+                "arena_bytes": size,
                 "library_sha256": hashlib.sha256(library.read_bytes()).hexdigest(),
-                "repeatable_generation_step": "NOT_TESTED",
+                "repeatable_generation_step": "THREE_FRAMES_TESTED",
             }, sort_keys=True))
 
 

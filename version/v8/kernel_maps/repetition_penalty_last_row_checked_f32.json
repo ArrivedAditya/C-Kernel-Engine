@@ -49,13 +49,13 @@
     {"name": "output", "source": "output:output", "cast": "float*", "ports": ["output:output"]},
     {"name": "output_elements", "source": "runtime:output_elements", "value_type": "size_t"}
   ]},
-  "call_constant_contract": {"shape_symbols": {"R": "rows", "C": "channels", "H": "history_count"},
+  "call_constant_contract": {"shape_symbols": {"R": "rows", "C": "channels", "H": "history_elements"},
     "buffer_spans": [
       {"pointer": "values", "elements": "values_elements", "rows": "rows",
        "width": "channels", "stride": "row_stride", "physical_row_stride": true,
        "element_bytes": 4},
       {"pointer": "history", "elements": "history_elements", "rows": 1,
-       "width": "history_count", "element_bytes": 4},
+       "width": "history_elements", "element_bytes": 4},
       {"pointer": "output", "elements": "output_elements", "rows": 1,
        "width": "channels", "element_bytes": 4}]},
   "tests": {"unit": ["tests/test_v8_repetition_penalty_checked.py",

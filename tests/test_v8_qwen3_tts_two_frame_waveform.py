@@ -75,7 +75,9 @@ class Qwen3TTSTwoFrameWaveformTest(unittest.TestCase):
                 Path(temp), graph, shapes,
                 extra_sources=("src/kernels/concat_i32_checked.c",
                                "src/kernels/select_next_id_checked.c",
-                               "src/kernels/repetition_penalty_checked.c") + CODEC_SOURCES)
+                               "src/kernels/repetition_penalty_checked.c",
+                               "src/kernels/copy_i32_span_checked.c",
+                               "src/kernels/equal_i32_scalar_checked.c") + CODEC_SOURCES)
             self.assertGreater(len(calls["operations"]), 3000)
             size = layout["memory"]["arena"]["total_size"]
             raw = (ctypes.c_uint8 * (size + 63))()

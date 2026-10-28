@@ -811,9 +811,17 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_checked_multi_entry.py",
     ),
     "tts_qwen3_customvoice_two_phase_speech": TestSuite(
-        "Qwen3-TTS Checked Prefill and Second-Frame Entries", "inference",
+        "Qwen3-TTS Checked Prefill and Rolling Frame Entries", "inference",
         ROOT / "tests" / "test_v8_qwen3_tts_two_phase_speech.py",
         timeout_sec=360,
+    ),
+    "tts_copy_i32_span_checked": TestSuite(
+        "Checked Integer Span State Copy", "kernels",
+        ROOT / "tests" / "test_v8_copy_i32_span_checked.py",
+    ),
+    "tts_equal_i32_scalar_checked": TestSuite(
+        "Checked Integer Expected-State Comparison", "kernels",
+        ROOT / "tests" / "test_v8_equal_i32_scalar_checked.py",
     ),
     "tts_select_next_id_checked": TestSuite(
         "Checked Speech-Code Stop and Budget Selection", "kernels",

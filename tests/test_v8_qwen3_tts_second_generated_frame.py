@@ -58,16 +58,20 @@ class Qwen3TTSSecondGeneratedFrameTest(unittest.TestCase):
                          "repetition_penalty_last_row_checked_f32")
         self.assertEqual(bridge[0]["graph_slots"]["inputs"],
                          {"values": "cont_talker_logits",
-                          "history": "talker_first_code_id"})
+                          "history": "external:talker_history_ids"})
+        self.assertEqual(bridge[0]["runtime_scalar_bindings"],
+                         {"history_count": "history_valid_count"})
         self.assertEqual(bridge[0]["params"]["call_constants"]
                          ["penalty_numerator"], 105)
         self.assertEqual(bridge[0]["params"]["call_constants"]
                          ["penalty_denominator"], 100)
         self.assertEqual(bridge[1]["kernel"], "select_next_id_checked_f32")
+        self.assertEqual(bridge[1]["runtime_scalar_bindings"],
+                         {"emitted_frames": "history_valid_count"})
         self.assertEqual({name: bridge[1]["params"]["call_constants"][name]
-                          for name in ("emitted_frames", "min_frames", "max_frames",
+                          for name in ("min_frames", "max_frames",
                                        "stop_id", "suppressed_begin", "suppressed_end")},
-                         {"emitted_frames": 1, "min_frames": 2, "max_frames": 64,
+                         {"min_frames": 2, "max_frames": 64,
                           "stop_id": 2150, "suppressed_begin": 2048,
                           "suppressed_end": 3072})
         self.assertEqual(bridge[1]["graph_slots"]["inputs"]["values"],
@@ -85,7 +89,9 @@ class Qwen3TTSSecondGeneratedFrameTest(unittest.TestCase):
             fn, acts, _, layout, _, _ = compile_entry(
                 Path(temp), graph, weight_shapes(graph),
                 extra_sources=("src/kernels/select_next_id_checked.c",
-                               "src/kernels/repetition_penalty_checked.c"))
+                               "src/kernels/repetition_penalty_checked.c",
+                               "src/kernels/copy_i32_span_checked.c",
+                               "src/kernels/equal_i32_scalar_checked.c"))
             size = layout["memory"]["arena"]["total_size"]
             raw = (ctypes.c_uint8 * (size + 63))()
             arena = (ctypes.c_uint8 * size).from_buffer(
@@ -137,7 +143,9 @@ class Qwen3TTSSecondGeneratedFrameTest(unittest.TestCase):
             fn, acts, weights, layout, calls, library = compile_entry(
                 Path(temp), graph, weight_shapes(graph),
                 extra_sources=("src/kernels/select_next_id_checked.c",
-                               "src/kernels/repetition_penalty_checked.c"))
+                               "src/kernels/repetition_penalty_checked.c",
+                               "src/kernels/copy_i32_span_checked.c",
+                               "src/kernels/equal_i32_scalar_checked.c"))
             self.assertGreater(len(calls["operations"]), 3000)
             size = layout["memory"]["arena"]["total_size"]
             raw = (ctypes.c_uint8 * (size + 63))()

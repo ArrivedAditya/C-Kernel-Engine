@@ -33,6 +33,30 @@ TALKER_EOS_ID = 2150
 PREFIX = "second_"
 
 
+def copy_ids(op_id: str, source: str, destination: str,
+             source_elements: int, destination_elements: int,
+             *, destination_offset: int = 0,
+             runtime_destination_offset: str | None = None) -> dict:
+    op = {
+        "id": op_id, "op": "copy_i32_span_checked",
+        "kernel": "copy_i32_span_checked", "returns_status": True,
+        "graph_slots": {"inputs": {"source": source},
+                        "outputs": {"destination": destination}},
+        "params": {"S": source_elements, "D": destination_elements,
+                   "call_constants": {
+                       "source_elements": source_elements, "source_offset": 0,
+                       "destination_elements": destination_elements,
+                       "count": 1}},
+    }
+    if runtime_destination_offset is None:
+        op["params"]["call_constants"]["destination_offset"] = destination_offset
+    else:
+        op["consumes_runtime_lengths"] = [runtime_destination_offset]
+        op["runtime_scalar_bindings"] = {
+            "destination_offset": runtime_destination_offset}
+    return op
+
+
 def build_circuit(*, talker_layers: int = 28,
                   continuation_steps: int = 14) -> dict:
     graph = first_continuation(talker_layers=talker_layers,
@@ -192,24 +216,192 @@ def build_circuit(*, talker_layers: int = 28,
                         "outputs": {"valid_extent":
                                     "second_predictor_valid_code_count"}},
     })
+    # The first entry ends after the initial frame and cache seed. Every later
+    # frame must calculate fresh embeddings, append KV at its checked position,
+    # and select a fresh predictor frame from the previous generated IDs.
+    first_ids = (["talker_first_code_id", "pred_predictor_codebook0_selected_id"] +
+                 [f"pred_step{i}_selected_id" for i in range(1, continuation_steps + 1)])
+    next_ids = (["second_talker_first_code_id",
+                 "second_predictor_codebook0_selected_id"] +
+                [f"second_step{i}_selected_id" for i in range(1, continuation_steps + 1)])
+    state_ids = [f"rolling_code_state_{i}" for i in range(len(first_ids))]
+    if len(first_ids) != continuation_steps + 2:
+        raise ValueError("speech codebook state geometry differs")
+    for name in state_ids:
+        shapes[name] = {"shape": [1], "lifetime": "sequence"}
+        bindings[name] = name
+    shapes["talker_history_ids"] = {"shape": [4], "lifetime": "sequence"}
+    bindings["talker_history_ids"] = "talker_history_ids"
+    shapes["generation_state_valid"] = {"shape": [1], "lifetime": "sequence"}
+    bindings["generation_state_valid"] = "generation_state_valid"
+    shapes["expected_step_index"] = {"shape": [1], "lifetime": "sequence"}
+    bindings["expected_step_index"] = "expected_step_index"
+    for layer in range(talker_layers):
+        for kind in ("k", "v"):
+            shapes[f"talker_layer{layer}_cache_{kind}"]["lifetime"] = "sequence"
+    shapes["step_control_verified"] = {"shape": [1]}
+    bindings["step_control_verified"] = "step_control_verified"
+    shapes["history_count_checked"] = {"shape": [1]}
+    bindings["history_count_checked"] = "history_count_checked"
+    graph["runtime_lengths"].update({
+        "generation_state_ready": {
+            "producer": "check_generation_state_ready", "result": "valid_extent",
+            "capacity": 1, "allow_zero": False},
+        "history_valid_count": {
+            "producer": "check_history_count", "result": "valid_extent",
+            "capacity": 3, "allow_zero": False},
+    })
+    prefill_header = graph["block_types"][graph["sequence"][0]]["header"]
+    step_ids = {"clear_talker_continuation_valid", "check_talker_step_raw",
+                "check_talker_step_index", "check_talker_decode_position"}
+    step_header = [op for op in prefill_header if op["id"] in step_ids]
+    if len(step_header) != 4:
+        raise ValueError("talker step checks differ from expected graph")
+    prefill_header[:] = [op for op in prefill_header if op["id"] not in step_ids]
+    prefill_clear_continuation = copy.deepcopy(step_header[0])
+    prefill_clear_continuation["id"] = "clear_continuation_on_prefill"
+    prefill_header.insert(0, prefill_clear_continuation)
+    clear_state = {
+        "id": "clear_generation_state_valid",
+        "op": "runtime_extent_affine", "kernel": "runtime_extent_affine_i32",
+        "returns_status": True,
+        "params": {"call_constants": {
+            "extent_affine_source": 0, "extent_affine_factor": 1,
+            "extent_affine_offset": 0, "extent_affine_capacity": 1}},
+        "graph_slots": {"inputs": {},
+                        "outputs": {"valid_extent": "generation_state_valid"}},
+    }
+    prefill_header.insert(0, clear_state)
+    state_publish_ops = [copy_ids(
+        f"seed_rolling_code_{index}", source, "external:" + destination,
+        1, 1) for index, (source, destination) in
+        enumerate(zip(first_ids, state_ids))]
+    state_publish_ops.extend([
+        copy_ids("seed_talker_history", first_ids[0],
+                 "external:talker_history_ids", 1, 4),
+        {"id": "initialize_expected_step_index",
+         "op": "runtime_extent_affine", "kernel": "runtime_extent_affine_i32",
+         "returns_status": True,
+         "params": {"call_constants": {
+             "extent_affine_source": 0, "extent_affine_factor": 1,
+             "extent_affine_offset": 0, "extent_affine_capacity": 3}},
+         "graph_slots": {"inputs": {},
+                         "outputs": {"valid_extent": "external:expected_step_index"}}},
+        {"id": "publish_generation_state_valid",
+         "op": "runtime_extent_affine", "kernel": "runtime_extent_affine_i32",
+         "returns_status": True,
+         "params": {"call_constants": {
+             "extent_affine_source": 0, "extent_affine_factor": 1,
+             "extent_affine_offset": 1, "extent_affine_capacity": 1}},
+         "graph_slots": {"inputs": {},
+                         "outputs": {"valid_extent": "generation_state_valid"}}},
+    ])
+    graph["sequence"].insert(graph["sequence"].index("talker_code_feedback"),
+                             "publish_prefill_frame_state")
+    graph["block_types"]["publish_prefill_frame_state"] = {
+        "sequence": ["header", "body", "footer"], "header": [],
+        "body": {"type": "dense", "ops": state_publish_ops}, "footer": [],
+    }
+
+    feedback = graph["block_types"]["talker_code_feedback"]
+    feedback["header"] = [
+        {"id": "check_generation_state_ready", "op": "runtime_extent_sum",
+         "kernel": "runtime_extent_sum_i32", "returns_status": True,
+         "produces_runtime_lengths": {"generation_state_ready": "valid_extent"},
+         "graph_slots": {"inputs": {"values": "generation_state_valid"},
+                         "outputs": {"valid_extent": "generation_state_ready_scalar"}},
+         "params": {"T": 1}},
+        {"id": "check_expected_step_index",
+         "op": "equal_i32_scalar_checked",
+         "kernel": "equal_i32_scalar_checked", "returns_status": True,
+         "consumes_runtime_lengths": ["generation_state_ready"],
+         "graph_slots": {"inputs": {
+             "requested": "external:talker_step_index_input",
+             "expected": "external:expected_step_index"},
+             "outputs": {"checked": "step_control_verified"}},
+         "params": {"call_constants": {
+             "requested_elements": 1, "expected_elements": 1,
+             "checked_elements": 1}}},
+        copy.deepcopy(clear_state), *step_header,
+        {"id": "check_history_count", "op": "runtime_extent_affine",
+         "kernel": "runtime_extent_affine_i32", "returns_status": True,
+         "consumes_runtime_lengths": ["talker_step_index"],
+         "produces_runtime_lengths": {"history_valid_count": "valid_extent"},
+         "runtime_scalar_bindings": {"extent_affine_source": "talker_step_index"},
+         "params": {"call_constants": {
+             "extent_affine_factor": 1, "extent_affine_offset": 1,
+             "extent_affine_capacity": 3}},
+         "graph_slots": {"inputs": {},
+                         "outputs": {"valid_extent": "history_count_checked"}}},
+    ]
+    feedback["header"][2]["id"] = "invalidate_generation_state_for_step"
+    feedback["header"][2]["consumes_runtime_lengths"] = ["generation_state_ready"]
+    step_raw = next(op for op in feedback["header"]
+                    if op["id"] == "check_talker_step_raw")
+    step_raw["graph_slots"]["inputs"]["values"] = "step_control_verified"
+    shapes["generation_state_ready_scalar"] = {"shape": [1]}
+    bindings["generation_state_ready_scalar"] = "generation_state_ready_scalar"
+
+    feedback_ops = feedback["body"]["ops"]
+    if feedback_ops[0]["id"] != "feedback_last_embedding_lookup":
+        raise ValueError("feedback embedding order differs")
+    feedback_ops.pop(0)
+    rolling_embeddings = []
+    for index, selected in enumerate(state_ids):
+        name = f"rolling_embedding_{index}"
+        rolling_embeddings.append(name)
+        shapes[name] = {"shape": [1, HIDDEN]}
+        bindings[name] = name
+        vocabulary = TALKER_VOCAB if index == 0 else 2048
+        table = ("talker.model.codec_embedding.weight" if index == 0 else
+                 f"talker.code_predictor.model.codec_embedding.{index - 1}.weight")
+        feedback_ops.insert(index, {
+            "id": f"rolling_embedding_lookup_{index}",
+            "op": "embedding_lookup_token_major_checked",
+            "kernel": "audio_text_embedding_token_major_f32",
+            "returns_status": True,
+            "weight_refs": {"table": table},
+            "graph_slots": {"inputs": {"ids": "external:" + selected},
+                            "outputs": {"output": name}},
+            "params": {"T": 1, "V": vocabulary, "C": HIDDEN,
+                       "call_constants": {
+                           "id_elements": 1,
+                           "table_elements": vocabulary * HIDDEN,
+                           "vocabulary": vocabulary, "channels": HIDDEN,
+                           "table_stride": HIDDEN,
+                           "output_elements": HIDDEN,
+                           "tokens": 1, "output_stride": HIDDEN}},
+        })
+    for index in range(1, len(first_ids)):
+        op = next(item for item in feedback_ops
+                  if item["id"] == f"feedback_code_sum_{index}")
+        op["graph_slots"]["inputs"] = {
+            "left": rolling_embeddings[0] if index == 1 else
+                    f"feedback_code_sum_{index - 1}",
+            "right": rolling_embeddings[index],
+        }
+
     # Keep the original full-call ABI as a checked wrapper while also exposing
-    # prefill and frame entries over the same compiler-planned arena.
+    # prefill and repeatable frame entries over the same planned arena.
     entry = graph["native_entry"]
     entry["segments"] = [
         {"function": entry["function"] + "_prefill",
-         "last_op": "publish_talker_continuation_valid"},
+         "last_op": "publish_generation_state_valid"},
         {"function": entry["function"] + "_frame",
          "last_op": "second_predictor_publish_code_count"},
     ]
     graph["contract"]["runtime_invariants"].update({
         "shared_arena_entries": [item["function"] for item in entry["segments"]],
         "second_entry_requires_first_entry_valid": True,
-        "repeatable_generation_step": False,
+        "repeatable_generation_step": True,
+        "supported_frame_positions": [18, 19, 20],
     })
-    clear = copy.deepcopy(graph["block_types"][graph["sequence"][0]]["header"][0])
+    clear = copy.deepcopy(next(
+        op for op in graph["block_types"][graph["sequence"][0]]["header"]
+        if op["id"] == "clear_second_predictor_code_count"))
     clear["id"] = "clear_second_count_on_frame_entry"
     bridge = graph["block_types"]["second_talker_predictor_bridge"]
-    bridge["header"].append(clear)
+    feedback["header"].insert(0, clear)
     shapes["two_phase_ready_scalar"] = {"shape": [1]}
     bindings["two_phase_ready_scalar"] = "two_phase_ready_scalar"
     graph["runtime_lengths"]["two_phase_ready"] = {
@@ -225,6 +417,64 @@ def build_circuit(*, talker_layers: int = 28,
         "params": {"T": 1},
     })
     bridge["body"]["ops"][0]["consumes_runtime_lengths"] = ["two_phase_ready"]
+
+    penalty = bridge["body"]["ops"][0]
+    penalty["graph_slots"]["inputs"]["history"] = "external:talker_history_ids"
+    penalty["params"]["H"] = 4
+    penalty["params"]["call_constants"]["history_elements"] = 4
+    penalty["params"]["call_constants"].pop("history_count")
+    penalty["consumes_runtime_lengths"].append("history_valid_count")
+    penalty["runtime_scalar_bindings"] = {"history_count": "history_valid_count"}
+    selector = bridge["body"]["ops"][1]
+    selector["params"]["call_constants"].pop("emitted_frames")
+    selector["consumes_runtime_lengths"] = ["history_valid_count"]
+    selector["runtime_scalar_bindings"] = {"emitted_frames": "history_valid_count"}
+
+    publish = None
+    for block_name in graph["sequence"]:
+        block = graph["block_types"][block_name]
+        for container in (block["header"], block["body"]["ops"], block["footer"]):
+            for op in container:
+                if op["id"] == "second_predictor_publish_code_count":
+                    publish = op
+                    container.remove(op)
+                    break
+    if publish is None:
+        raise ValueError("second frame publisher missing")
+    commit_ops = [copy_ids("append_talker_history", next_ids[0],
+                           "external:talker_history_ids", 1, 4,
+                           runtime_destination_offset="history_valid_count")]
+    for index, (source, destination) in enumerate(zip(next_ids, state_ids)):
+        commit_ops.append(copy_ids(f"commit_rolling_code_{index}", source,
+                                   "external:" + destination, 1, 1))
+    commit_ops.extend([
+        {"id": "advance_expected_step_index",
+         "op": "runtime_extent_affine", "kernel": "runtime_extent_affine_i32",
+         "returns_status": True,
+         "consumes_runtime_lengths": ["talker_step_index"],
+         "runtime_scalar_bindings": {
+             "extent_affine_source": "talker_step_index"},
+         "params": {"call_constants": {
+             "extent_affine_factor": 1, "extent_affine_offset": 1,
+             "extent_affine_capacity": 3}},
+         "graph_slots": {"inputs": {},
+                         "outputs": {"valid_extent":
+                                     "external:expected_step_index"}}},
+        {"id": "republish_generation_state_valid",
+         "op": "runtime_extent_affine", "kernel": "runtime_extent_affine_i32",
+         "returns_status": True,
+         "params": {"call_constants": {
+             "extent_affine_source": 0, "extent_affine_factor": 1,
+             "extent_affine_offset": 1, "extent_affine_capacity": 1}},
+         "graph_slots": {"inputs": {},
+                         "outputs": {"valid_extent": "generation_state_valid"}}},
+        publish,
+    ])
+    graph["sequence"].append("commit_rolling_frame_state")
+    graph["block_types"]["commit_rolling_frame_state"] = {
+        "sequence": ["header", "body", "footer"], "header": [],
+        "body": {"type": "dense", "ops": commit_ops}, "footer": [],
+    }
     return graph
 
 
