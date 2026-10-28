@@ -31,6 +31,9 @@ def build_circuit() -> dict:
     graph = generated_frames()
     graph["name"] = "qwen3_tts_two_frame_waveform_bounded"
     graph["native_entry"]["function"] = "ck_qwen3_tts_two_frame_waveform_bounded"
+    # This graph appends codec calls after the second frame. Its full entry owns
+    # that additional schedule; the frame-only segment boundaries do not.
+    graph["native_entry"].pop("segments", None)
     graph["contract"]["runtime_invariants"].update({
         "generated_codec_frames": FRAMES,
         "generated_sample_count": SAMPLES,

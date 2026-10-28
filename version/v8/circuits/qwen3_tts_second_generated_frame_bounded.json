@@ -91,7 +91,13 @@
       "repetition_penalty": "105/100 sign-dependent on generated-code history",
       "minimum_new_frames": 2,
       "maximum_new_frames": 64,
-      "codec_eos_token_id": 2150
+      "codec_eos_token_id": 2150,
+      "shared_arena_entries": [
+        "ck_qwen3_tts_second_generated_frame_bounded_prefill",
+        "ck_qwen3_tts_second_generated_frame_bounded_frame"
+      ],
+      "second_entry_requires_first_entry_valid": true,
+      "repeatable_generation_step": false
     }
   },
   "activation_buffers": {
@@ -29398,6 +29404,11 @@
       "shape": [
         1
       ]
+    },
+    "two_phase_ready_scalar": {
+      "shape": [
+        1
+      ]
     }
   },
   "activation_bindings": {
@@ -34109,7 +34120,8 @@
     "second_step14_predictor_final_norm": "second_step14_predictor_final_norm",
     "second_step14_predictor_logits": "second_step14_predictor_logits",
     "second_step14_selected_id": "second_step14_selected_id",
-    "second_predictor_valid_code_count": "second_predictor_valid_code_count"
+    "second_predictor_valid_code_count": "second_predictor_valid_code_count",
+    "two_phase_ready_scalar": "two_phase_ready_scalar"
   },
   "native_entry": {
     "function": "ck_qwen3_tts_second_generated_frame_bounded",
@@ -34126,7 +34138,17 @@
     "arena": {
       "pointer": "arena",
       "bytes": "arena_bytes"
-    }
+    },
+    "segments": [
+      {
+        "function": "ck_qwen3_tts_second_generated_frame_bounded_prefill",
+        "last_op": "publish_talker_continuation_valid"
+      },
+      {
+        "function": "ck_qwen3_tts_second_generated_frame_bounded_frame",
+        "last_op": "second_predictor_publish_code_count"
+      }
+    ]
   },
   "sequence": [
     "text_projection",
@@ -120267,7 +120289,48 @@
         "body",
         "footer"
       ],
-      "header": [],
+      "header": [
+        {
+          "id": "clear_second_count_on_frame_entry",
+          "op": "runtime_extent_affine",
+          "kernel": "runtime_extent_affine_i32",
+          "returns_status": true,
+          "params": {
+            "call_constants": {
+              "extent_affine_source": 0,
+              "extent_affine_factor": 1,
+              "extent_affine_offset": 0,
+              "extent_affine_capacity": 15
+            }
+          },
+          "graph_slots": {
+            "inputs": {},
+            "outputs": {
+              "valid_extent": "second_predictor_valid_code_count"
+            }
+          }
+        },
+        {
+          "id": "check_two_phase_ready",
+          "op": "runtime_extent_sum",
+          "kernel": "runtime_extent_sum_i32",
+          "returns_status": true,
+          "produces_runtime_lengths": {
+            "two_phase_ready": "valid_extent"
+          },
+          "graph_slots": {
+            "inputs": {
+              "values": "talker_continuation_valid"
+            },
+            "outputs": {
+              "valid_extent": "two_phase_ready_scalar"
+            }
+          },
+          "params": {
+            "T": 1
+          }
+        }
+      ],
       "body": {
         "type": "dense",
         "ops": [
@@ -120300,7 +120363,10 @@
                 "penalty_denominator": 100,
                 "output_elements": 3072
               }
-            }
+            },
+            "consumes_runtime_lengths": [
+              "two_phase_ready"
+            ]
           },
           {
             "id": "second_talker_select_first_code",
@@ -170124,6 +170190,12 @@
       "producer": "second_feedback_check_position",
       "result": "valid_extent",
       "capacity": 15,
+      "allow_zero": false
+    },
+    "two_phase_ready": {
+      "producer": "check_two_phase_ready",
+      "result": "valid_extent",
+      "capacity": 1,
       "allow_zero": false
     }
   }

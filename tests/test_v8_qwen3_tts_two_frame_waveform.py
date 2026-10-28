@@ -31,6 +31,7 @@ class Qwen3TTSTwoFrameWaveformTest(unittest.TestCase):
     def test_graph_and_oracle_integrity_without_assets(self):
         graph = build_circuit()
         self.assertEqual(OUTPUT.read_text(), json.dumps(graph, indent=2) + "\n")
+        self.assertNotIn("segments", graph["native_entry"])
         manifest = json.loads(MANIFEST.read_text())
         self.assertEqual(hashlib.sha256(CAPTURE.read_bytes()).hexdigest(),
                          manifest["npz_sha256"])
