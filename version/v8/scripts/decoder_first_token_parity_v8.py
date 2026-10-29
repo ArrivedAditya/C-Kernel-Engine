@@ -694,11 +694,13 @@ def _comparison_status(
     *, separate_prefixes: bool, producers_verified: bool,
     numerical_contract_declared: bool, numerical_match: bool,
 ) -> str:
-    if not separate_prefixes:
-        return "pass" if numerical_match else "fail"
-    if not producers_verified or not numerical_contract_declared:
+    if separate_prefixes and not producers_verified:
         return "incomplete"
-    return "pass" if numerical_match else "fail"
+    if not numerical_match:
+        return "fail"
+    if not numerical_contract_declared:
+        return "incomplete"
+    return "pass"
 
 
 def _capture_aware_status(
@@ -2560,8 +2562,8 @@ def main(argv: list[str] | None = None) -> int:
 
     overlap_ok = cmp["topk_overlap_ratio"] >= float(args.min_topk_overlap)
     top1_ok = (not bool(args.require_top1_match)) or bool(cmp["top1_match"])
-    max_abs_limit = float(args.max_abs_threshold) if args.max_abs_threshold is not None else 1.0e9
-    max_abs_ok = cmp["max_abs_diff"] <= max_abs_limit
+    max_abs_limit = float(args.max_abs_threshold) if args.max_abs_threshold is not None else None
+    max_abs_ok = max_abs_limit is None or cmp["max_abs_diff"] <= max_abs_limit
     rmse_ok = args.max_rmse_threshold is None or cmp["rmse"] <= float(args.max_rmse_threshold)
     passed = bool(top1_ok and overlap_ok and max_abs_ok and rmse_ok)
     numerical_contract_declared = args.max_abs_threshold is not None and args.max_rmse_threshold is not None
