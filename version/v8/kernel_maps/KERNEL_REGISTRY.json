@@ -85144,6 +85144,10 @@
           }
         ]
       },
+      "call_constant_contract": {
+        "shape_symbols": {},
+        "buffer_spans": []
+      },
       "constraints": {
         "notes": "Capacity is bounded by INT32_MAX. Zero count and zero result are supported. Return status must be checked before any consumer executes."
       },

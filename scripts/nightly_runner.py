@@ -824,6 +824,11 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_checked_frame_loop.py",
         timeout_sec=120,
     ),
+    "tts_qwen3_pinned_natural_eos": TestSuite(
+        "Qwen3-TTS Pinned Natural EOS Codes", "inference",
+        ROOT / "tests" / "test_v8_qwen3_tts_full_code_loop.py",
+        timeout_sec=420,
+    ),
     "tts_qwen3_loop_codec": TestSuite(
         "Qwen3-TTS Generated Code Loop to Codec", "inference",
         ROOT / "tests" / "test_v8_qwen3_tts_loop_codec.py",
