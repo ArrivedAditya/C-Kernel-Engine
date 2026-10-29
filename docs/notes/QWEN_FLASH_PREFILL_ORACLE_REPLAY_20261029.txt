@@ -1,0 +1,46 @@
+Qwen3.8 Flash Next: phase-matched prefill and continuation replay
+2026-10-29 UTC
+
+Status: bounded current-main native PASS; HTTP harness and long-context certification NOT_TESTED.
+
+Artifact and execution
+----------------------
+CKE source worktree: e118197600e3c25a59e7b905257657e0a6abba24.
+CKE runtime: runtime-batched-candidate-20261028 on Ryzen 9 9950X3D.
+Generated model_v8.c SHA-256: 00f730d592be1d68ee90371c520a076bd73ba83cafa7e92df9fae534bf7c1a35.
+Loaded libmodel.so SHA-256: 1dd5859c5a3504b10d7d4e6ca1f7966bb471b8188d9dd97b2d526040db261eda.
+Engine SHA-256: 711ab838d418f8e88dcb1e2c6e5f8c1b715194e0ca6842469c0d739fa896a2b3.
+Tokenizer SHA-256: ac94e41160f7f441c3aa1f11a2a26b23e3f8bf4495aa82faf92f496057c8cbe5.
+Weights manifest SHA-256: 88d474e10a6ca6a80a6304f801d6c3f340b9c863c173f87281d59ef1c08d65ef.
+Oracle: compatible llama.cpp qwen4exp checkout 458681e1d5d4a29a1463c4732e03226cf384b997, CPU only, FP16 K/V, flash attention ENABLED, 16 threads, batched prompt submission. Its loaded-library paths/inodes and effective settings are in each helper.stdout retained on Ryzen.
+Both runtimes used the same GGUF, token IDs, 4,096 context, and greedy continuation. Flash attention mode is part of this comparison contract.
+
+Current-main rebuild: source 757463f0d1f5ca470172ec8b4fa67a584edb8108, separate runtime-current-main-fast-20261029 bundle generated with `ck_run_v8.py run <runtime-dir> --run <runtime-dir> --context-len 4096 --prefill-policy batched --generate-only --force-compile`. Its generated libmodel.so SHA-256 is 227a7e79914ed96e0423ecf666a89f562d8bf1d66fe67f90e0098e2c00c927bb and engine SHA-256 is b783753fcb3a758aab17ab4e215a4625d4302080d450f3f9cd40d5b06d3e0823. The source bundle retained hardlinked immutable weights; the generated prefill call selects CK_ATTN_REDUCTION_F16_FLASH_AUTO_QTILE64.
+
+Full-vocabulary comparison
+--------------------------
+Input                       Steps compared      Full logits             Greedy IDs
+2 tokens                    initial             bit-exact (248,320)     198
+127 tokens                  initial + 2 decode  bit-exact at all steps  21181, 18160, 553
+2,323 tokens                initial + 2 decode  bit-exact at all steps  1, 1696, 1074
+2,323 tokens, current main  initial + 2 decode  bit-exact at all steps  1, 1696, 1074
+
+The 127 and 2,323 token IDs are prefixes of cohere_prefix_2323.ids.json. The latter is a realistic source prompt, not a synthetic repeated-token fixture. The 2,323-token run stays within the tested 4,096-token bundle; it does not certify 262K context.
+
+The deliberately changed prefill reduction in draft #968, f16_online_fp32_merge, matches the two-token flash oracle but fails at 127 tokens: full-logit RMSE 0.8939343, maximum absolute difference 5.0910673. The unchanged flash-auto provider matches the 127-token flash oracle bit-exactly. Therefore #968 is not a valid speed fix. This is a generated-execution regression control, not a tolerance adjustment.
+
+With llama.cpp flash attention DISABLED, the two-token oracle and CKE flash-auto differ at the first full-attention output in layer 3 (second token, max 0.0016365). Q/K projections and post-store FP16 K/V match; the nonflash path uses a different attention reduction. That comparison is diagnostic, not a verdict on flash-path parity. Late Q/K/V dumps at the attention-output callback can contain reused storage; earlier executed checkpoints were used for the operand comparison.
+
+Speed and deployment boundary
+-----------------------------
+One matched Ryzen 127-token CKE run measured 6.337536 seconds for generated batched prefill versus 17.905567 seconds for serialized decode-style prefill. This is a one-run native prefill comparison, not an HTTP throughput result. Model initialization took about a minute and was measured separately. No speed claim is made for 2,323 tokens, 262K context, concurrent HTTP requests, or the dense Qwen3.8 artifact.
+
+The currently served bundle was not replaced. The Muse test endpoint was restarted after the model runs. Before enabling this mode for Qwen Code, test HTTP cancellation/reset and context boundaries, then run the actual harness. Keep flash-auto selected through the circuit/map contract; do not silently substitute decode's reduction.
+
+Retained private evidence
+-------------------------
+Ryzen: /data/cke/runs/qwen-flash-speed-20261029/continuation127 and continuation2323 (oracle and CKE logit rows and reports); oracle-flash-l3-2 and oracle-flash-127; original bundle build.log.
+Ryzen current-main: /data/cke/runs/qwen-flash-speed-20261029/current-main-2323 and runtime-current-main-fast-20261029/build.log.
+P3: artifacts/cohere-qwen-investigation-20261027/continuation127, continuation2323, current-main-2323, oracle-flash-l3-2, oracle-flash-127.logits.f32, phase-consistent-127.logits.f32.
+
+Follow-up: repeat the current-main 127-token and near-boundary cases, then compare HTTP Qwen Code task time and output against the safe service. Do not use the closed draft #968 provider change.
