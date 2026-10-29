@@ -30,6 +30,8 @@ The 127 and 2,323 token IDs are prefixes of cohere_prefix_2323.ids.json. The lat
 
 The deliberately changed prefill reduction in draft #968, f16_online_fp32_merge, matches the two-token flash oracle but fails at 127 tokens: full-logit RMSE 0.8939343, maximum absolute difference 5.0910673. The unchanged flash-auto provider matches the 127-token flash oracle bit-exactly. Therefore #968 is not a valid speed fix. This is a generated-execution regression control, not a tolerance adjustment.
 
+The asset-free generated-consumer regression retains the layer-3 call-ready attention operation from the pinned 4K build in `tests/fixtures/qwen4_exp_flash/prefill_attention_call.json`. It checks the actual prefill emitter output against the circuit-selected kernel-map identity and ordered call ABI, including distinct K/V cache pointers, runtime query count and prior position, workspace pointers, and the flash-auto reduction selector. This checks call construction; it does not execute the 119 GB model in CI or certify chunked append equivalence.
+
 With llama.cpp flash attention DISABLED, the two-token oracle and CKE flash-auto differ at the first full-attention output in layer 3 (second token, max 0.0016365). Q/K projections and post-store FP16 K/V match; the nonflash path uses a different attention reduction. That comparison is diagnostic, not a verdict on flash-path parity. Late Q/K/V dumps at the attention-output callback can contain reused storage; earlier executed checkpoints were used for the operand comparison.
 
 Speed and deployment boundary
