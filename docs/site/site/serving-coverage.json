@@ -4343,7 +4343,7 @@
       "chat_scope_reason": "no independent text-decoder serving path declared",
       "circuit": "qwen3_tts_two_frame_waveform_bounded",
       "circuit_path": "version/v8/circuits/qwen3_tts_two_frame_waveform_bounded.json",
-      "circuit_sha256": "e0aa1b9e43abc5e90f53f6d53832ad2ab04de3c057764d37845fd187e5f4c7dc",
+      "circuit_sha256": "0bcaede0af9d6536aa50499f1a7b451235cc41760e31f70f330b1dc90db2a613",
       "evidence": {
         "cancellation_recovery": "not_assessed",
         "exact_token_ids": "not_assessed",

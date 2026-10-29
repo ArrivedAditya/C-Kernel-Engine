@@ -19,6 +19,19 @@ int ck_run_checked_frame_codec(const ck_checked_frame_codec *request) {
         return CK_FRAME_LOOP_INVALID;
     const ck_checked_frame_loop *loop = request->generation;
     const uintptr_t validity = (uintptr_t)request->valid_samples;
+    if (!loop->valid_frames ||
+        (uintptr_t)loop->valid_frames > UINTPTR_MAX - sizeof(size_t) ||
+        !disjoint(validity, sizeof(size_t),
+                  (uintptr_t)loop->valid_frames, sizeof(size_t)))
+        return CK_FRAME_LOOP_INVALID;
+    /* The generation loop writes its validity before codec success. */
+    if (request->output_samples && request->output_capacity <= SIZE_MAX / sizeof(float) &&
+        (uintptr_t)request->output_samples <= UINTPTR_MAX -
+            request->output_capacity * sizeof(float) &&
+        !disjoint((uintptr_t)loop->valid_frames, sizeof(size_t),
+                  (uintptr_t)request->output_samples,
+                  request->output_capacity * sizeof(float)))
+        return CK_FRAME_LOOP_INVALID;
     if (request->output_samples && request->output_capacity <= SIZE_MAX / sizeof(float) &&
         (uintptr_t)request->output_samples <= UINTPTR_MAX -
             request->output_capacity * sizeof(float) &&

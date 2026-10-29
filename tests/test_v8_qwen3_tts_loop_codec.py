@@ -161,6 +161,19 @@ class Qwen3TTSLoopCodecTest(unittest.TestCase):
                 rtol=0, atol=0)
             baseline = samples.copy()
             samples.fill(-901)
+            frames.value = 77
+            request.valid_samples = ctypes.pointer(frames)
+            self.assertEqual(run(ctypes.byref(request)), -1)
+            self.assertEqual(frames.value, 77)
+            np.testing.assert_array_equal(samples, -901)
+            request.valid_samples = ctypes.pointer(valid)
+            valid.value = 55
+            loop.valid_frames = ctypes.cast(
+                samples.ctypes.data, ctypes.POINTER(ctypes.c_size_t))
+            self.assertEqual(run(ctypes.byref(request)), -1)
+            self.assertEqual(valid.value, 55)
+            np.testing.assert_array_equal(samples, -901)
+            loop.valid_frames = ctypes.pointer(frames)
             request.valid_samples = ctypes.cast(
                 samples.ctypes.data, ctypes.POINTER(ctypes.c_size_t))
             self.assertEqual(run(ctypes.byref(request)), -1)
@@ -176,6 +189,7 @@ class Qwen3TTSLoopCodecTest(unittest.TestCase):
             np.testing.assert_array_equal(samples, -901)
             request.output_capacity = 128
             request.expected_code_frames = 3
+            valid.value = 99
             self.assertEqual(run(ctypes.byref(request)), -4)
             self.assertEqual(valid.value, 0)
             np.testing.assert_array_equal(samples, -901)
@@ -184,11 +198,13 @@ class Qwen3TTSLoopCodecTest(unittest.TestCase):
                                 buffer=arena, offset=weights[FINAL_WEIGHT]["abs_offset"])
             original = weight.copy()
             weight.fill(np.nan)
+            valid.value = 99
             self.assertEqual(run(ctypes.byref(request)), -5)
             self.assertEqual(valid.value, 0)
             np.testing.assert_array_equal(samples, -901)
             weight[:] = original
             self.assertEqual(run(ctypes.byref(request)), 0)
+            self.assertEqual(valid.value, 128)
             np.testing.assert_array_equal(samples, baseline)
             # Distinct values in every codebook/frame expose swapped packing
             # edges even when synthetic talker logits happen to tie.
