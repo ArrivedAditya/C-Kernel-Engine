@@ -1434,7 +1434,7 @@ test-v8-serve-native-jinja:
 
 .PHONY: test-native-session-v8
 test-native-session-v8: $(BUILD_DIR)/libckernel_engine.so ck-cli-v8 ck-session-v8
-	$(PYTHON) $(PYTHONFLAGS) -m pytest -q server/tests/test_native_session_loader.py
+	CK_TEST_BUILD_DIR="$(abspath $(BUILD_DIR))" $(PYTHON) $(PYTHONFLAGS) -m pytest -q server/tests/test_native_session_loader.py
 	$(PYTHON) $(PYTHONFLAGS) -m unittest -v tests.test_v8_native_sampler
 	$(PYTHON) $(PYTHONFLAGS) -m unittest -v tests.test_v8_batch_session_scheduler
 	$(PYTHON) $(PYTHONFLAGS) -m unittest -v \
@@ -5517,13 +5517,13 @@ ck-cli-v7: $(BUILD_DIR)/ck-cli-v7
 	@echo ""
 
 # v8 Native CLI
-$(BUILD_DIR)/ck-cli-v8: $(CK_CLI_V8) $(CK_SAMPLER_V8) include/ck_model_abi_v8.h include/ck_sampler_v8.h include/ck_session_v8.h version/v8/src/ck_session_batch_ticket_v8.h include/ckernel_audio.h $(LIB_TOKENIZER)
+$(BUILD_DIR)/ck-cli-v8: $(CK_CLI_V8) $(CK_SAMPLER_V8) include/ck_model_abi_v8.h include/ck_sampler_v8.h include/ck_session_v8.h version/v8/src/ck_session_batch_ticket_v8.h include/ckernel_audio.h $(LIB_TOKENIZER) Makefile
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) -o $@ $(CK_CLI_V8) $(CK_SAMPLER_V8) -L$(BUILD_DIR) \
 		-Wl,--no-as-needed -lckernel_tokenizer -Wl,--as-needed \
 		-ldl -lpthread -lm -Wl,-rpath,'$$ORIGIN'
 
-$(BUILD_DIR)/libck_session_v8.so: $(CK_CLI_V8) $(CK_SAMPLER_V8) include/ck_model_abi_v8.h include/ck_sampler_v8.h include/ck_session_v8.h version/v8/src/ck_session_batch_ticket_v8.h include/ckernel_audio.h $(LIB_TOKENIZER)
+$(BUILD_DIR)/libck_session_v8.so: $(CK_CLI_V8) $(CK_SAMPLER_V8) include/ck_model_abi_v8.h include/ck_sampler_v8.h include/ck_session_v8.h version/v8/src/ck_session_batch_ticket_v8.h include/ckernel_audio.h $(LIB_TOKENIZER) Makefile
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) -fPIC -shared -DCK_CLI_V8_NO_MAIN=1 -Wl,-soname,libck_session_v8.so \
 		-o $@ $(CK_CLI_V8) $(CK_SAMPLER_V8) -L$(BUILD_DIR) \
