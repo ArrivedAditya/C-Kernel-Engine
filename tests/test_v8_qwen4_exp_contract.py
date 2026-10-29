@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import sys
 from pathlib import Path
@@ -28,8 +29,10 @@ def test_qwen4_exp_q4k_q8_0_moe_scratch_includes_worker_repacking():
 sys.path.insert(0, str(ROOT / "version" / "v8" / "scripts"))
 
 import build_ir_v8  # noqa: E402
+import codegen_prefill_v8  # noqa: E402
 import convert_gguf_to_bump_v8 as gguf_converter  # noqa: E402
 import resolve_numerical_execution_contracts_v8 as numerical_resolver  # noqa: E402
+import resolve_attention_contracts_v8 as attention_resolver  # noqa: E402
 from memory_planner_v8 import plan_memory  # noqa: E402
 
 
@@ -103,6 +106,71 @@ def test_qwen4_exp_declares_phase_specific_full_attention_providers() -> None:
     assert kernels["attn_decode"] == (
         "attention_forward_decode_head_major_gqa_regular"
     )
+
+
+def test_qwen4_exp_quantized_prefill_keeps_flash_auto_reduction() -> None:
+    """The pinned flash oracle diverges if prefill uses decode's reduction."""
+    circuit = json.loads(CIRCUIT.read_text(encoding="utf-8"))
+    contracts = attention_resolver.load_json(attention_resolver.DEFAULT_CONTRACTS)
+    kernels = attention_resolver.load_kernel_capabilities()
+    prefill = attention_resolver.resolve_contract(
+        circuit, contracts, kernels,
+        operation="decoder.attention", phase="prefill", mode="bringup",
+        source_circuit_path=CIRCUIT,
+    )
+    decode = attention_resolver.resolve_contract(
+        circuit, contracts, kernels,
+        operation="decoder.attention", phase="decode", mode="bringup",
+        source_circuit_path=CIRCUIT,
+    )
+    assert prefill["requirements"]["execution.prefill_batching"] == "batch_append"
+    assert prefill["reduction"]["id"] == "f16_flash_auto_qtile64"
+    assert prefill["kernel"]["selector"] == "CK_ATTN_REDUCTION_F16_FLASH_AUTO_QTILE64"
+    assert decode["reduction"]["id"] == "f16_online_fp32_merge"
+
+    wrong_phase = copy.deepcopy(circuit)
+    wrong_phase["required_contracts"]["decoder.attention"]["phases"]["prefill"]["requires"][
+        "numerics.attention_reduction"
+    ] = "f16_online_fp32_merge"
+    with pytest.raises(attention_resolver.ContractError):
+        attention_resolver.resolve_contract(
+            wrong_phase, contracts, kernels,
+            operation="decoder.attention", phase="prefill", mode="bringup",
+            source_circuit_path=CIRCUIT,
+        )
+
+
+def test_qwen4_exp_flash_selector_reaches_emitted_prefill_call() -> None:
+    """Retained call-ready IR from the 4K artifact exercises the real emitter."""
+    circuit = json.loads(CIRCUIT.read_text(encoding="utf-8"))
+    resolved = attention_resolver.resolve_contract(
+        circuit,
+        attention_resolver.load_json(attention_resolver.DEFAULT_CONTRACTS),
+        attention_resolver.load_kernel_capabilities(),
+        operation="decoder.attention", phase="prefill", mode="bringup",
+        source_circuit_path=CIRCUIT,
+    )
+    provider = _load(
+        "attention_forward_causal_head_major_gqa_prefill_append_f16cache_flash_auto_qtile64.json"
+    )
+    call = json.loads((ROOT / "tests/fixtures/qwen4_exp_flash/prefill_attention_call.json").read_text())
+    assert call["call_abi"]["kernel_id"] == resolved["kernel"]["id"] == provider["id"]
+    assert call["function"] == resolved["kernel"]["function"] == provider["impl"]["function"]
+    assert [(arg["name"], arg["source"]) for arg in call["args"]] == [
+        (arg["name"], arg["source"]) for arg in provider["call_abi"]["params"]
+    ]
+
+    emitted = codegen_prefill_v8.emit_prefill_op(call, 1, {})
+    body = emitted.split(f'{provider["impl"]["function"]}(\n', 1)[1].split("\n    );", 1)[0]
+    args = [line.strip().rstrip(",") for line in body.splitlines()]
+    assert len(args) == len(call["args"])
+    assert "kv_cache_f16" in args[1] and "kv_cache_f16" in args[2]
+    assert args[1] != args[2]
+    assert args[6:9] == ["num_tokens", "prefill_start_pos", "4096"]
+    assert args[11] == resolved["kernel"]["selector"]
+    assert args[12].startswith("(float*)(model->bump + ")
+    assert args[14].startswith("(void*)(model->bump + ")
+    assert "CK_ATTN_REDUCTION_F16_ONLINE_FP32_MERGE" not in body
 
 
 def test_qwen4_exp_router_slots_match_fp32_gemm_interface() -> None:

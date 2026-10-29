@@ -7,6 +7,21 @@
 #include <limits>
 #include <vector>
 
+template <typename Tensor>
+inline Tensor *ck_mtmd_capture_tensor(Tensor *node, int source_index) {
+    if (!node || source_index < -1 || source_index >= 4) return nullptr;
+    if (source_index < 0) return node;
+    return node->src[source_index];
+}
+
+inline bool ck_mtmd_capture_storage_overlaps(
+    const void *left, size_t left_bytes, const void *right, size_t right_bytes) {
+    if (!left || !right || !left_bytes || !right_bytes) return false;
+    const uintptr_t l = reinterpret_cast<uintptr_t>(left);
+    const uintptr_t r = reinterpret_cast<uintptr_t>(right);
+    return l <= r ? r - l < left_bytes : l - r < right_bytes;
+}
+
 inline bool ck_mtmd_gather_strided_elements(
     const uint8_t *storage, size_t storage_bytes, const int64_t ne[4],
     const size_t nb[4], size_t element_bytes, std::vector<uint8_t> &dense) {

@@ -353,6 +353,30 @@ def _attention_input_port_name(
         if isinstance(port, dict)
     }
     matches = [alias for alias in aliases if alias in names]
+    if provider.get("prefill_history_scope") == "prior_cache" and semantic in {"k", "v"}:
+        current = "k" if semantic == "k" else "v"
+        prior = "k_cache" if semantic == "k" else "v_cache"
+        ports_by_name = {
+            str(port.get("name", "")): port for port in ports
+            if isinstance(port, dict)
+        }
+        prior_port = ports_by_name.get(prior, {})
+        prior_bindings = [
+            param for param in (provider.get("call_abi") or {}).get("params", [])
+            if f"input:{prior}" in param.get("ports", [])
+        ]
+        expected_source = "runtime:kv_cache_k_layer" if semantic == "k" else "runtime:kv_cache_v_layer"
+        if (set(matches) != {current, prior}
+                or prior_port.get("storage_class") != "state"
+                or prior_port.get("access") != "read"
+                or len(prior_bindings) != 1
+                or prior_bindings[0].get("source") != expected_source):
+            raise RuntimeError(
+                f"HARD PHYSICAL CONTRACT FAULT: prior-cache attention provider {kernel_id!r} "
+                f"requires current {current!r} and read-only state {prior!r} "
+                f"bound to {expected_source!r}."
+            )
+        return current
     if len(matches) != 1:
         raise RuntimeError(
             f"HARD PHYSICAL CONTRACT FAULT: attention provider {kernel_id!r} "
@@ -2090,9 +2114,26 @@ OP_DATAFLOW = {
         "inputs": {"values": "external:values"},
         "outputs": {"index": {"slot": "selected_index", "dtype": "i32"}},
     },
+    "select_next_id_checked": {
+        "inputs": {"values": "external:values"},
+        "outputs": {"index": {"slot": "selected_index", "dtype": "i32"}},
+    },
+    "repetition_penalty_last_row_checked": {
+        "inputs": {"values": "external:values", "history": "external:history"},
+        "outputs": {"output": {"slot": "adjusted_logits", "dtype": "fp32"}},
+    },
     "concat_i32_checked": {
         "inputs": {"left": "external:left", "right": "external:right"},
         "outputs": {"output": {"slot": "concatenated_ids", "dtype": "i32"}},
+    },
+    "copy_i32_span_checked": {
+        "inputs": {"source": "external:source"},
+        "outputs": {"destination": {"slot": "copied_ids", "dtype": "i32"}},
+    },
+    "equal_i32_scalar_checked": {
+        "inputs": {"requested": "external:requested",
+                   "expected": "external:expected"},
+        "outputs": {"checked": {"slot": "checked_scalar", "dtype": "i32"}},
     },
     "audio_duration_logits_to_frames": {
         "inputs": {"logits": "external:audio_duration_logits"},
@@ -4405,6 +4446,15 @@ def _template_activation_buffer_specs(
                 f"HARD CIRCUIT BUFFER FAULT: activation_buffers.{name}.dtype "
                 f"uses unsupported storage type {dtype!r}"
             )
+        lifetime = declaration.get("lifetime", "call")
+        mutable = declaration.get("mutable", True)
+        if (not isinstance(lifetime, str)
+                or lifetime not in {"call", "sequence", "model"}
+                or not isinstance(mutable, bool)):
+            raise RuntimeError(
+                f"HARD CIRCUIT BUFFER FAULT: activation_buffers.{name} "
+                "requires a call, sequence or model lifetime and boolean mutable"
+            )
         elem_bytes = _dtype_size_bytes(dtype)
         size = elem_bytes
         for extent in shape:
@@ -4414,6 +4464,8 @@ def _template_activation_buffer_specs(
             "size": size,
             "shape": f"[{', '.join(str(extent) for extent in shape)}]",
             "dtype": dtype,
+            "lifetime": lifetime,
+            "mutable": mutable,
         }
     return result
 
@@ -4871,7 +4923,8 @@ def build_activation_specs(
             raise RuntimeError(
                 f"HARD CIRCUIT BUFFER FAULT: activation buffer {spec['name']!r} duplicates a built-in region"
             )
-        add(spec["name"], spec["size"], spec["shape"], spec["dtype"])
+        add(spec["name"], spec["size"], spec["shape"], spec["dtype"],
+            spec["lifetime"], spec["mutable"])
 
     return specs
 
@@ -4958,7 +5011,11 @@ TEMPLATE_TO_KERNEL_OP = {
     "embedding_lookup_checked": "embedding_lookup_checked",
     "embedding_lookup_token_major_checked": "embedding_lookup_token_major_checked",
     "argmax_last_row_checked": "argmax_last_row_checked",
+    "select_next_id_checked": "select_next_id_checked",
+    "repetition_penalty_last_row_checked": "repetition_penalty_last_row_checked",
     "concat_i32_checked": "concat_i32_checked",
+    "copy_i32_span_checked": "copy_i32_span_checked",
+    "equal_i32_scalar_checked": "equal_i32_scalar_checked",
     "audio_duration_logits_to_frames": "audio_duration_logits_to_frames",
     "runtime_extent_sum": "runtime_extent_sum",
     "runtime_extent_scale": "runtime_extent_scale",
@@ -14017,7 +14074,8 @@ def generate_memory_layout(
             raise RuntimeError(
                 f"HARD CIRCUIT BUFFER FAULT: activation buffer {spec['name']!r} duplicates a built-in region"
             )
-        add_buffer(spec["name"], spec["size"], spec["shape"], spec["dtype"])
+        add_buffer(spec["name"], spec["size"], spec["shape"], spec["dtype"],
+                   spec["lifetime"], spec["mutable"])
         allocated_names.add(spec["name"])
 
     total_activation_size = current_offset
@@ -16901,7 +16959,7 @@ def load_kernel_call_abis(
             raise RuntimeError(f"HARD CALL ABI FAULT: duplicate call ABI owner for {kernel_id!r}.")
         _validate_kernel_call_abi(kernel_id, function, call_abi, path)
         prefill_history_scope = doc.get("prefill_history_scope")
-        if prefill_history_scope not in {None, "current_chunk"}:
+        if prefill_history_scope not in {None, "current_chunk", "prior_cache"}:
             raise RuntimeError(
                 f"HARD CALL ABI FAULT: kernel {kernel_id!r} in {path.name} declares "
                 f"unsupported prefill_history_scope={prefill_history_scope!r}."

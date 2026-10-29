@@ -5,19 +5,19 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "version/v8/kernel_maps",
     "counts": {
-      "total": 465,
+      "total": 471,
       "by_op": {
         "add_backward": 1,
         "add_rows_checked": 1,
         "add_stream": 2,
         "argmax_last_row_checked": 1,
         "assistant_layer_scale": 1,
-        "attention": 38,
+        "attention": 39,
         "attention_causal_bounded": 1,
         "attention_decode_append_checked": 1,
         "attention_full_token_major_checked": 1,
         "attention_projection": 1,
-        "attention_sliding": 13,
+        "attention_sliding": 14,
         "attention_sliding_bounded": 1,
         "attn_gate_sigmoid_mul": 2,
         "attn_gate_sigmoid_mul_backward": 1,
@@ -73,12 +73,14 @@
         "channel_scale_rows_checked": 1,
         "clip_strided_checked": 1,
         "concat_i32_checked": 1,
+        "copy_i32_span_checked": 1,
         "copy_last_logits": 1,
         "embedding": 7,
         "embedding_backward": 1,
         "embedding_lookup_checked": 1,
         "embedding_lookup_token_major_checked": 1,
         "embedding_three_table_layer_norm": 1,
+        "equal_i32_scalar_checked": 1,
         "farskip_routed_shared_combine": 3,
         "feature_concat": 1,
         "feature_concat_broadcast_rows": 1,
@@ -159,6 +161,7 @@
         "recurrent_split_qkv": 1,
         "recurrent_split_qkv_backward": 1,
         "relu2": 2,
+        "repetition_penalty_last_row_checked": 1,
         "residual_add": 2,
         "residual_save": 1,
         "rmsnorm": 12,
@@ -180,6 +183,7 @@
         "rwkv7_time_mix_shifts": 1,
         "rwkv7_vgate_vmix": 1,
         "rwkv7_wkv_decode": 1,
+        "select_next_id_checked": 1,
         "shared_relu2_expert_mlp": 1,
         "shared_swiglu_expert_mlp": 6,
         "silu_mul_rows_checked": 1,
@@ -4941,6 +4945,444 @@
       "_source_file": "attention_forward_causal_head_major_gqa_muse_eager_bf16_storage.json"
     },
     {
+      "id": "attention_forward_causal_head_major_gqa_muse_eager_bf16_storage_append",
+      "op": "attention",
+      "selection": {
+        "status": "candidate",
+        "priority": 200,
+        "equivalence_group": "attention.muse_eager_bf16_causal.v1",
+        "phases": [
+          "prefill"
+        ]
+      },
+      "variant": "muse_eager_bf16_causal_append",
+      "mode": "prefill",
+      "contract_schema_version": 1,
+      "provides": {
+        "execution.phase": [
+          "prefill"
+        ],
+        "execution.attention_schedule": [
+          "full_matrix_causal"
+        ],
+        "tensor.q.dtype": [
+          "fp32"
+        ],
+        "tensor.kv.dtype": [
+          "fp32"
+        ],
+        "tensor.layout": [
+          "head_major"
+        ],
+        "numerics.attention_reduction": [
+          "muse_eager_bf16"
+        ]
+      },
+      "supported_reductions": {
+        "muse_eager_bf16": {
+          "status": "observed",
+          "function": "attention_forward_causal_head_major_gqa_muse_eager_bf16_storage_append",
+          "explicit_selector": true,
+          "notes": "Muse eager BF16 arithmetic over prior FP32 cache plus current query rows; causal masking uses absolute positions."
+        }
+      },
+      "implementation": {
+        "isa_dispatch": "compile_time",
+        "threading": {
+          "runtime": "external_blas",
+          "work_partition": [
+            "serial"
+          ],
+          "dispatch": [
+            "internal_threaded"
+          ],
+          "reduction_order_effect": "contract_defined"
+        }
+      },
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "desc": "Query tensor [heads, tokens, head_dim]",
+          "layout": "head_major_contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "scratch",
+          "consumption": "required"
+        },
+        {
+          "name": "k",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "T",
+            "D"
+          ],
+          "desc": "Current prefill-chunk key tensor, head-major compact rows",
+          "layout": "head_major_contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "scratch",
+          "consumption": "required"
+        },
+        {
+          "name": "v",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "T",
+            "D"
+          ],
+          "desc": "Current prefill-chunk value tensor, head-major compact rows",
+          "layout": "head_major_contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "scratch",
+          "consumption": "required"
+        },
+        {
+          "name": "k_cache",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "C",
+            "D"
+          ],
+          "desc": "Persistent prior key rows; only positions below past_tokens may be read",
+          "layout": "head_major_contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "state",
+          "consumption": "required"
+        },
+        {
+          "name": "v_cache",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "C",
+            "D"
+          ],
+          "desc": "Persistent prior value rows; only positions below past_tokens may be read",
+          "layout": "head_major_contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "state",
+          "consumption": "required"
+        }
+      ],
+      "weights": [],
+      "activations": [],
+      "outputs": [
+        {
+          "name": "out",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "desc": "Attention output [heads, tokens, head_dim]",
+          "layout": "head_major_contiguous",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "scratch": [
+        {
+          "name": "scores",
+          "dtype": "fp32",
+          "shape": [
+            1024,
+            "C"
+          ],
+          "size_resolution": "required",
+          "aggregate_budget_bytes": 1073741824,
+          "lifetime": "kernel_call",
+          "alignment": 64,
+          "layout": "contiguous",
+          "access": "read_write",
+          "storage_class": "scratch",
+          "consumption": "required"
+        },
+        {
+          "name": "key_rows",
+          "dtype": "bf16",
+          "shape": [
+            "C",
+            "D"
+          ],
+          "size_resolution": "required",
+          "lifetime": "kernel_call",
+          "alignment": 64,
+          "layout": "contiguous",
+          "access": "read_write",
+          "storage_class": "scratch",
+          "consumption": "required"
+        },
+        {
+          "name": "value_columns",
+          "dtype": "bf16",
+          "shape": [
+            "D",
+            "C"
+          ],
+          "size_resolution": "required",
+          "lifetime": "kernel_call",
+          "alignment": 64,
+          "layout": "contiguous",
+          "access": "read_write",
+          "storage_class": "scratch",
+          "consumption": "required"
+        },
+        {
+          "name": "gemm_rows",
+          "dtype": "bf16",
+          "shape": [
+            1024,
+            "D"
+          ],
+          "size_resolution": "required",
+          "lifetime": "kernel_call",
+          "alignment": 64,
+          "layout": "contiguous",
+          "access": "read_write",
+          "storage_class": "scratch",
+          "consumption": "required"
+        },
+        {
+          "name": "gemm_scores",
+          "dtype": "bf16",
+          "shape": [
+            1024,
+            "C"
+          ],
+          "size_resolution": "required",
+          "lifetime": "kernel_call",
+          "alignment": 64,
+          "layout": "contiguous",
+          "access": "read_write",
+          "storage_class": "scratch",
+          "consumption": "required"
+        }
+      ],
+      "dims": [
+        "H",
+        "KV",
+        "T",
+        "D"
+      ],
+      "params": [
+        {
+          "name": "kv_stride_tokens",
+          "dtype": "int32",
+          "desc": "Stride in tokens for KV cache layout"
+        },
+        {
+          "name": "head_dim",
+          "dtype": "int32",
+          "desc": "Head dimension (unpadded)"
+        },
+        {
+          "name": "aligned_head_dim",
+          "dtype": "int32",
+          "desc": "Aligned head dimension for SIMD"
+        }
+      ],
+      "constraints": {
+        "alignment": {
+          "D": 64
+        },
+        "notes": "Query-row tiles of at most 1024 keep the full softmax width while bounding scratch. Requires AVX-512F, oneDNN 3.12.0, PyTorch SLEEF expf16, D == aligned D, and at most 1 GiB of declared call workspace."
+      },
+      "runtime_dependencies": [
+        "sleef_expf16_u10"
+      ],
+      "impl": {
+        "function": "attention_forward_causal_head_major_gqa_muse_eager_bf16_storage_append",
+        "c_declaration": "void attention_forward_causal_head_major_gqa_muse_eager_bf16_storage_append(const float *q, const float *k_new, const float *v_new, const float *k_cache, const float *v_cache, float *output, int num_heads, int num_kv_heads, int query_tokens, int past_tokens, int cache_capacity, int head_dim, int aligned_head_dim, int sliding_window, float *scores, size_t scores_bytes, uint16_t *key_rows, size_t key_rows_bytes, uint16_t *value_columns, size_t value_columns_bytes, uint16_t *gemm_rows, size_t gemm_rows_bytes, uint16_t *gemm_scores, size_t gemm_scores_bytes);",
+        "sources": [
+          "src/kernels/attention_kernels.c",
+          "src/kernels/gemm_kernels_bf16.c",
+          "src/kernels/softmax_kernels.c"
+        ],
+        "variants": [
+          {
+            "name": "avx512_onednn_3_12",
+            "requires": [
+              "avx512f",
+              "onednn_3_12",
+              "pytorch_sleef_expf16"
+            ],
+            "compile_flags": [
+              "-mavx512f",
+              "-DUSE_ONEDNN"
+            ]
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/bf16/test_muse_glimmer_norms_bf16.py"
+        ],
+        "parity": [
+          {
+            "kind": "pytorch_eager_bf16",
+            "command": "python unittest/bf16/test_muse_glimmer_norms_bf16.py",
+            "tolerance": "bit_exact",
+            "notes": "Small multi-KV-head oracle; full-model evidence is recorded separately."
+          }
+        ]
+      },
+      "notes": "Opt-in Muse eager BF16 prefill append. Reads prior persistent FP32 KV plus current chunk scratch; original KV store remains after attention. Requires artifact-backed trajectory parity before circuit promotion.",
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "q",
+            "source": "scratch:q_scratch",
+            "cast": "float*",
+            "ports": [
+              "input:q"
+            ]
+          },
+          {
+            "name": "k_new",
+            "source": "scratch:k_scratch",
+            "cast": "float*",
+            "ports": [
+              "input:k"
+            ]
+          },
+          {
+            "name": "v_new",
+            "source": "scratch:v_scratch",
+            "cast": "float*",
+            "ports": [
+              "input:v"
+            ]
+          },
+          {
+            "name": "k_cache",
+            "source": "runtime:kv_cache_k_layer",
+            "cast": "const float*",
+            "ports": [
+              "input:k_cache"
+            ]
+          },
+          {
+            "name": "v_cache",
+            "source": "runtime:kv_cache_v_layer",
+            "cast": "const float*",
+            "ports": [
+              "input:v_cache"
+            ]
+          },
+          {
+            "name": "output",
+            "source": "output:out",
+            "cast": "float*",
+            "ports": [
+              "output:out"
+            ]
+          },
+          {
+            "name": "num_heads",
+            "source": "dim:num_heads"
+          },
+          {
+            "name": "num_kv_heads",
+            "source": "dim:num_kv_heads"
+          },
+          {
+            "name": "query_tokens",
+            "source": "dim:seq_len"
+          },
+          {
+            "name": "past_tokens",
+            "source": "runtime:prefill_start_pos"
+          },
+          {
+            "name": "cache_capacity",
+            "source": "dim:max_seq_len"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "aligned_head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "sliding_window",
+            "source": "const:0"
+          },
+          {
+            "name": "scores",
+            "source": "scratch:scores",
+            "cast": "float*"
+          },
+          {
+            "name": "scores_bytes",
+            "source": "scratch_size:scores"
+          },
+          {
+            "name": "key_rows",
+            "source": "scratch:key_rows",
+            "cast": "uint16_t*"
+          },
+          {
+            "name": "key_rows_bytes",
+            "source": "scratch_size:key_rows"
+          },
+          {
+            "name": "value_columns",
+            "source": "scratch:value_columns",
+            "cast": "uint16_t*"
+          },
+          {
+            "name": "value_columns_bytes",
+            "source": "scratch_size:value_columns"
+          },
+          {
+            "name": "gemm_rows",
+            "source": "scratch:gemm_rows",
+            "cast": "uint16_t*"
+          },
+          {
+            "name": "gemm_rows_bytes",
+            "source": "scratch_size:gemm_rows"
+          },
+          {
+            "name": "gemm_scores",
+            "source": "scratch:gemm_scores",
+            "cast": "uint16_t*"
+          },
+          {
+            "name": "gemm_scores_bytes",
+            "source": "scratch_size:gemm_scores"
+          }
+        ]
+      },
+      "operation_interface": "attention.muse_eager_bf16.prefill.append.attention.v1",
+      "prefill_history_scope": "prior_cache",
+      "name": "attention_forward_causal_head_major_gqa_muse_eager_bf16_storage_append",
+      "_source_file": "attention_forward_causal_head_major_gqa_muse_eager_bf16_storage_append.json"
+    },
+    {
       "id": "attention_forward_causal_head_major_gqa_muse_eager_bf16_storage_sliding",
       "op": "attention_sliding",
       "variant": "muse_eager_bf16_causal_sliding",
@@ -5323,6 +5765,441 @@
       "operation_interface": "attention.muse_eager_bf16.prefill.attention_sliding.v1",
       "name": "attention_forward_causal_head_major_gqa_muse_eager_bf16_storage_sliding",
       "_source_file": "attention_forward_causal_head_major_gqa_muse_eager_bf16_storage_sliding.json"
+    },
+    {
+      "id": "attention_forward_causal_head_major_gqa_muse_eager_bf16_storage_sliding_append",
+      "op": "attention_sliding",
+      "variant": "muse_eager_bf16_causal_sliding_append",
+      "mode": "prefill",
+      "contract_schema_version": 1,
+      "provides": {
+        "execution.phase": [
+          "prefill"
+        ],
+        "execution.attention_schedule": [
+          "full_matrix_causal"
+        ],
+        "tensor.q.dtype": [
+          "fp32"
+        ],
+        "tensor.kv.dtype": [
+          "fp32"
+        ],
+        "tensor.layout": [
+          "head_major"
+        ],
+        "numerics.attention_reduction": [
+          "muse_eager_bf16"
+        ]
+      },
+      "supported_reductions": {
+        "muse_eager_bf16": {
+          "status": "observed",
+          "function": "attention_forward_causal_head_major_gqa_muse_eager_bf16_storage_append",
+          "explicit_selector": true,
+          "notes": "Muse eager BF16 arithmetic over prior FP32 cache plus current query rows; causal masking uses absolute positions."
+        }
+      },
+      "implementation": {
+        "isa_dispatch": "compile_time",
+        "threading": {
+          "runtime": "external_blas",
+          "work_partition": [
+            "serial"
+          ],
+          "dispatch": [
+            "internal_threaded"
+          ],
+          "reduction_order_effect": "contract_defined"
+        }
+      },
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "desc": "Query tensor [heads, tokens, head_dim]",
+          "layout": "head_major_contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "scratch",
+          "consumption": "required"
+        },
+        {
+          "name": "k",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "T",
+            "D"
+          ],
+          "desc": "Current prefill-chunk key tensor, head-major compact rows",
+          "layout": "head_major_contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "scratch",
+          "consumption": "required"
+        },
+        {
+          "name": "v",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "T",
+            "D"
+          ],
+          "desc": "Current prefill-chunk value tensor, head-major compact rows",
+          "layout": "head_major_contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "scratch",
+          "consumption": "required"
+        },
+        {
+          "name": "k_cache",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "C",
+            "D"
+          ],
+          "desc": "Persistent prior key rows; only positions below past_tokens may be read",
+          "layout": "head_major_contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "state",
+          "consumption": "required"
+        },
+        {
+          "name": "v_cache",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "C",
+            "D"
+          ],
+          "desc": "Persistent prior value rows; only positions below past_tokens may be read",
+          "layout": "head_major_contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "state",
+          "consumption": "required"
+        }
+      ],
+      "weights": [],
+      "activations": [],
+      "outputs": [
+        {
+          "name": "out",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "desc": "Attention output [heads, tokens, head_dim]",
+          "layout": "head_major_contiguous",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "scratch": [
+        {
+          "name": "scores",
+          "dtype": "fp32",
+          "shape": [
+            1024,
+            "C"
+          ],
+          "size_resolution": "required",
+          "aggregate_budget_bytes": 1073741824,
+          "lifetime": "kernel_call",
+          "alignment": 64,
+          "layout": "contiguous",
+          "access": "read_write",
+          "storage_class": "scratch",
+          "consumption": "required"
+        },
+        {
+          "name": "key_rows",
+          "dtype": "bf16",
+          "shape": [
+            "C",
+            "D"
+          ],
+          "size_resolution": "required",
+          "lifetime": "kernel_call",
+          "alignment": 64,
+          "layout": "contiguous",
+          "access": "read_write",
+          "storage_class": "scratch",
+          "consumption": "required"
+        },
+        {
+          "name": "value_columns",
+          "dtype": "bf16",
+          "shape": [
+            "D",
+            "C"
+          ],
+          "size_resolution": "required",
+          "lifetime": "kernel_call",
+          "alignment": 64,
+          "layout": "contiguous",
+          "access": "read_write",
+          "storage_class": "scratch",
+          "consumption": "required"
+        },
+        {
+          "name": "gemm_rows",
+          "dtype": "bf16",
+          "shape": [
+            1024,
+            "D"
+          ],
+          "size_resolution": "required",
+          "lifetime": "kernel_call",
+          "alignment": 64,
+          "layout": "contiguous",
+          "access": "read_write",
+          "storage_class": "scratch",
+          "consumption": "required"
+        },
+        {
+          "name": "gemm_scores",
+          "dtype": "bf16",
+          "shape": [
+            1024,
+            "C"
+          ],
+          "size_resolution": "required",
+          "lifetime": "kernel_call",
+          "alignment": 64,
+          "layout": "contiguous",
+          "access": "read_write",
+          "storage_class": "scratch",
+          "consumption": "required"
+        }
+      ],
+      "dims": [
+        "H",
+        "KV",
+        "T",
+        "D"
+      ],
+      "params": [
+        {
+          "name": "kv_stride_tokens",
+          "dtype": "int32",
+          "desc": "Stride in tokens for KV cache layout"
+        },
+        {
+          "name": "head_dim",
+          "dtype": "int32",
+          "desc": "Head dimension (unpadded)"
+        },
+        {
+          "name": "aligned_head_dim",
+          "dtype": "int32",
+          "desc": "Aligned head dimension for SIMD"
+        },
+        {
+          "name": "sliding_window",
+          "dtype": "int32",
+          "desc": "Sliding window size (0 = no limit)"
+        }
+      ],
+      "constraints": {
+        "alignment": {
+          "D": 64
+        },
+        "notes": "Query-row tiles of at most 1024 keep the full softmax width while bounding scratch. Requires AVX-512F, oneDNN 3.12.0, PyTorch SLEEF expf16, D == aligned D, and at most 1 GiB of declared call workspace. Sliding masks retain full softmax width."
+      },
+      "runtime_dependencies": [
+        "sleef_expf16_u10"
+      ],
+      "impl": {
+        "function": "attention_forward_causal_head_major_gqa_muse_eager_bf16_storage_append",
+        "c_declaration": "void attention_forward_causal_head_major_gqa_muse_eager_bf16_storage_append(const float *q, const float *k_new, const float *v_new, const float *k_cache, const float *v_cache, float *output, int num_heads, int num_kv_heads, int query_tokens, int past_tokens, int cache_capacity, int head_dim, int aligned_head_dim, int sliding_window, float *scores, size_t scores_bytes, uint16_t *key_rows, size_t key_rows_bytes, uint16_t *value_columns, size_t value_columns_bytes, uint16_t *gemm_rows, size_t gemm_rows_bytes, uint16_t *gemm_scores, size_t gemm_scores_bytes);",
+        "sources": [
+          "src/kernels/attention_kernels.c",
+          "src/kernels/gemm_kernels_bf16.c",
+          "src/kernels/softmax_kernels.c"
+        ],
+        "variants": [
+          {
+            "name": "avx512_onednn_3_12",
+            "requires": [
+              "avx512f",
+              "onednn_3_12",
+              "pytorch_sleef_expf16"
+            ],
+            "compile_flags": [
+              "-mavx512f",
+              "-DUSE_ONEDNN"
+            ]
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/bf16/test_muse_glimmer_norms_bf16.py"
+        ],
+        "parity": [
+          {
+            "kind": "pytorch_eager_bf16",
+            "command": "python unittest/bf16/test_muse_glimmer_norms_bf16.py",
+            "tolerance": "bit_exact",
+            "notes": "Small multi-KV-head sliding oracle; full-model evidence is recorded separately."
+          }
+        ]
+      },
+      "notes": "Opt-in Muse eager BF16 prefill append. Reads prior persistent FP32 KV plus current chunk scratch; original KV store remains after attention. Requires artifact-backed trajectory parity before circuit promotion.",
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "q",
+            "source": "scratch:q_scratch",
+            "cast": "float*",
+            "ports": [
+              "input:q"
+            ]
+          },
+          {
+            "name": "k_new",
+            "source": "scratch:k_scratch",
+            "cast": "float*",
+            "ports": [
+              "input:k"
+            ]
+          },
+          {
+            "name": "v_new",
+            "source": "scratch:v_scratch",
+            "cast": "float*",
+            "ports": [
+              "input:v"
+            ]
+          },
+          {
+            "name": "k_cache",
+            "source": "runtime:kv_cache_k_layer",
+            "cast": "const float*",
+            "ports": [
+              "input:k_cache"
+            ]
+          },
+          {
+            "name": "v_cache",
+            "source": "runtime:kv_cache_v_layer",
+            "cast": "const float*",
+            "ports": [
+              "input:v_cache"
+            ]
+          },
+          {
+            "name": "output",
+            "source": "output:out",
+            "cast": "float*",
+            "ports": [
+              "output:out"
+            ]
+          },
+          {
+            "name": "num_heads",
+            "source": "dim:num_heads"
+          },
+          {
+            "name": "num_kv_heads",
+            "source": "dim:num_kv_heads"
+          },
+          {
+            "name": "query_tokens",
+            "source": "dim:seq_len"
+          },
+          {
+            "name": "past_tokens",
+            "source": "runtime:prefill_start_pos"
+          },
+          {
+            "name": "cache_capacity",
+            "source": "dim:max_seq_len"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "aligned_head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "sliding_window",
+            "source": "dim:sliding_window"
+          },
+          {
+            "name": "scores",
+            "source": "scratch:scores",
+            "cast": "float*"
+          },
+          {
+            "name": "scores_bytes",
+            "source": "scratch_size:scores"
+          },
+          {
+            "name": "key_rows",
+            "source": "scratch:key_rows",
+            "cast": "uint16_t*"
+          },
+          {
+            "name": "key_rows_bytes",
+            "source": "scratch_size:key_rows"
+          },
+          {
+            "name": "value_columns",
+            "source": "scratch:value_columns",
+            "cast": "uint16_t*"
+          },
+          {
+            "name": "value_columns_bytes",
+            "source": "scratch_size:value_columns"
+          },
+          {
+            "name": "gemm_rows",
+            "source": "scratch:gemm_rows",
+            "cast": "uint16_t*"
+          },
+          {
+            "name": "gemm_rows_bytes",
+            "source": "scratch_size:gemm_rows"
+          },
+          {
+            "name": "gemm_scores",
+            "source": "scratch:gemm_scores",
+            "cast": "uint16_t*"
+          },
+          {
+            "name": "gemm_scores_bytes",
+            "source": "scratch_size:gemm_scores"
+          }
+        ]
+      },
+      "operation_interface": "attention.muse_eager_bf16.prefill.append.attention_sliding.v1",
+      "prefill_history_scope": "prior_cache",
+      "name": "attention_forward_causal_head_major_gqa_muse_eager_bf16_storage_sliding_append",
+      "_source_file": "attention_forward_causal_head_major_gqa_muse_eager_bf16_storage_sliding_append.json"
     },
     {
       "id": "attention_forward_causal_head_major_gqa_prefill_append_bf16cache_pytorch_contract",
@@ -30978,6 +31855,181 @@
       "_source_file": "concat_i32_checked.json"
     },
     {
+      "id": "copy_i32_span_checked",
+      "op": "copy_i32_span_checked",
+      "operation_interface": "tensor.copy.span.checked.i32.v1",
+      "variant": "exact_disjoint_span_copy",
+      "selection": {
+        "status": "candidate",
+        "priority": 100,
+        "equivalence_group": "tensor.copy.span.checked.i32.v1",
+        "phases": [
+          "prefill",
+          "decode"
+        ]
+      },
+      "quant": {
+        "weight": "none",
+        "activation": "i32",
+        "output": "i32"
+      },
+      "inputs": [
+        {
+          "name": "source",
+          "dtype": "i32",
+          "shape": [
+            "S"
+          ],
+          "layout": "contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "destination",
+          "dtype": "i32",
+          "shape": [
+            "D"
+          ],
+          "layout": "contiguous",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "S",
+        "D"
+      ],
+      "impl": {
+        "function": "ck_copy_i32_span_checked",
+        "c_declaration": "int ck_copy_i32_span_checked(const int32_t *source, size_t source_elements, size_t source_offset, int32_t *destination, size_t destination_elements, size_t destination_offset, size_t count);",
+        "sources": [
+          "src/kernels/copy_i32_span_checked.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "copy_i32_disjoint_span_exact",
+          "status": "validated",
+          "phases": [
+            "prefill",
+            "decode"
+          ],
+          "function": "ck_copy_i32_span_checked",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "none",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "serial"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "source",
+            "source": "activation:source",
+            "cast": "const int32_t*",
+            "ports": [
+              "input:source"
+            ]
+          },
+          {
+            "name": "source_elements",
+            "source": "runtime:source_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "source_offset",
+            "source": "runtime:source_offset",
+            "value_type": "size_t"
+          },
+          {
+            "name": "destination",
+            "source": "output:destination",
+            "cast": "int32_t*",
+            "ports": [
+              "output:destination"
+            ]
+          },
+          {
+            "name": "destination_elements",
+            "source": "runtime:destination_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "destination_offset",
+            "source": "runtime:destination_offset",
+            "value_type": "size_t"
+          },
+          {
+            "name": "count",
+            "source": "runtime:count",
+            "value_type": "size_t"
+          }
+        ]
+      },
+      "call_constant_contract": {
+        "shape_symbols": {
+          "S": "source_elements",
+          "D": "destination_elements"
+        },
+        "buffer_spans": [
+          {
+            "pointer": "source",
+            "elements": "source_elements",
+            "rows": 1,
+            "width": "source_elements",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "destination",
+            "elements": "destination_elements",
+            "rows": 1,
+            "width": "destination_elements",
+            "element_bytes": 4
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "tests/test_v8_copy_i32_span_checked.py"
+        ],
+        "oracle": "Exact integer span copy with unchanged destination on rejection"
+      },
+      "notes": "Copies one bounded disjoint integer span without allocation. Offsets and count are checked before writing; untouched destination elements remain unchanged.",
+      "name": "copy_i32_span_checked",
+      "_source_file": "copy_i32_span_checked.json"
+    },
+    {
       "id": "copy_last_logits",
       "op": "copy_last_logits",
       "operation_interface": "copy_last_logits.fp32.v1",
@@ -34647,6 +35699,191 @@
       "notes": "Reusable three-table embedding and LayerNorm; Kokoro is one consumer. This provider only certifies the embedding boundary, not the full encoder or waveform. Inference only.",
       "name": "embedding_three_table_layer_norm_f32",
       "_source_file": "embedding_three_table_layer_norm_f32.json"
+    },
+    {
+      "id": "equal_i32_scalar_checked",
+      "op": "equal_i32_scalar_checked",
+      "operation_interface": "tensor.equal.scalar.checked.i32.v1",
+      "variant": "exact_scalar_match",
+      "selection": {
+        "status": "candidate",
+        "priority": 100,
+        "equivalence_group": "tensor.equal.scalar.checked.i32.v1",
+        "phases": [
+          "prefill",
+          "decode"
+        ]
+      },
+      "quant": {
+        "weight": "none",
+        "activation": "i32",
+        "output": "i32"
+      },
+      "inputs": [
+        {
+          "name": "requested",
+          "dtype": "i32",
+          "shape": [
+            1
+          ],
+          "layout": "contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        },
+        {
+          "name": "expected",
+          "dtype": "i32",
+          "shape": [
+            1
+          ],
+          "layout": "contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "checked",
+          "dtype": "i32",
+          "shape": [
+            1
+          ],
+          "layout": "contiguous",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "scratch": [],
+      "dims": [],
+      "impl": {
+        "function": "ck_equal_i32_scalar_checked",
+        "c_declaration": "int ck_equal_i32_scalar_checked(const int32_t *requested, size_t requested_elements, const int32_t *expected, size_t expected_elements, int32_t *checked, size_t checked_elements);",
+        "sources": [
+          "src/kernels/equal_i32_scalar_checked.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "equal_i32_scalar_exact",
+          "status": "validated",
+          "phases": [
+            "prefill",
+            "decode"
+          ],
+          "function": "ck_equal_i32_scalar_checked",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "none",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "serial"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "requested",
+            "source": "activation:requested",
+            "cast": "const int32_t*",
+            "ports": [
+              "input:requested"
+            ]
+          },
+          {
+            "name": "requested_elements",
+            "source": "runtime:requested_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "expected",
+            "source": "activation:expected",
+            "cast": "const int32_t*",
+            "ports": [
+              "input:expected"
+            ]
+          },
+          {
+            "name": "expected_elements",
+            "source": "runtime:expected_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "checked",
+            "source": "output:checked",
+            "cast": "int32_t*",
+            "ports": [
+              "output:checked"
+            ]
+          },
+          {
+            "name": "checked_elements",
+            "source": "runtime:checked_elements",
+            "value_type": "size_t"
+          }
+        ]
+      },
+      "call_constant_contract": {
+        "buffer_spans": [
+          {
+            "pointer": "requested",
+            "elements": "requested_elements",
+            "rows": 1,
+            "width": 1,
+            "element_bytes": 4
+          },
+          {
+            "pointer": "expected",
+            "elements": "expected_elements",
+            "rows": 1,
+            "width": 1,
+            "element_bytes": 4
+          },
+          {
+            "pointer": "checked",
+            "elements": "checked_elements",
+            "rows": 1,
+            "width": 1,
+            "element_bytes": 4
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "tests/test_v8_equal_i32_scalar_checked.py"
+        ],
+        "oracle": "Exact int32 equality, with unchanged checked output on rejection"
+      },
+      "notes": "Checks one caller-owned scalar against expected sequence state before dependent execution. Rejected input never writes output.",
+      "name": "equal_i32_scalar_checked",
+      "_source_file": "equal_i32_scalar_checked.json"
     },
     {
       "id": "farskip_swiglu_shared_combine_bf16",
@@ -69439,6 +70676,12 @@
         "header": "include/ckernel_engine.h",
         "source": "src/kernels/vision_kernels.c"
       },
+      "tests": {
+        "unit": [
+          "tests/test_v8_gemma4v_position_add_order.py"
+        ],
+        "oracle": "Pinned llama.cpp Gemma4V graph: FP32 (patch + X) + Y as two separately rounded additions"
+      },
       "name": "position_embeddings_add_gemma4v_xy",
       "_source_file": "position_embeddings_add_gemma4v_xy.json"
     },
@@ -77124,6 +78367,234 @@
       "_source_file": "relu2_forward.json"
     },
     {
+      "id": "repetition_penalty_last_row_checked_f32",
+      "op": "repetition_penalty_last_row_checked",
+      "operation_interface": "tensor.repetition_penalty.last_row.checked.fp32.v1",
+      "variant": "finite_sign_dependent_history_once",
+      "selection": {
+        "status": "candidate",
+        "priority": 100,
+        "equivalence_group": "tensor.repetition_penalty.last_row.checked.fp32.v1",
+        "phases": [
+          "prefill",
+          "decode"
+        ]
+      },
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "values",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "C"
+          ],
+          "layout": "row_major_strided",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        },
+        {
+          "name": "history",
+          "dtype": "i32",
+          "shape": [
+            "H"
+          ],
+          "layout": "contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "C"
+          ],
+          "layout": "contiguous",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "R",
+        "C",
+        "H"
+      ],
+      "impl": {
+        "function": "ck_repetition_penalty_last_row_checked_f32",
+        "c_declaration": "int ck_repetition_penalty_last_row_checked_f32(const float *values, size_t values_elements, size_t rows, size_t channels, size_t row_stride, const int32_t *history, size_t history_elements, size_t history_count, size_t penalty_numerator, size_t penalty_denominator, float *output, size_t output_elements);",
+        "sources": [
+          "src/kernels/repetition_penalty_checked.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "repetition_penalty_sign_dependent_fp32",
+          "status": "validated",
+          "phases": [
+            "prefill",
+            "decode"
+          ],
+          "function": "ck_repetition_penalty_last_row_checked_f32",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "contract_defined"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp32",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "serial"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "values",
+            "source": "activation:values",
+            "cast": "const float*",
+            "ports": [
+              "input:values"
+            ]
+          },
+          {
+            "name": "values_elements",
+            "source": "runtime:values_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "rows",
+            "source": "runtime:rows",
+            "value_type": "size_t"
+          },
+          {
+            "name": "channels",
+            "source": "runtime:channels",
+            "value_type": "size_t"
+          },
+          {
+            "name": "row_stride",
+            "source": "runtime:row_stride",
+            "value_type": "size_t"
+          },
+          {
+            "name": "history",
+            "source": "activation:history",
+            "cast": "const int32_t*",
+            "ports": [
+              "input:history"
+            ]
+          },
+          {
+            "name": "history_elements",
+            "source": "runtime:history_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "history_count",
+            "source": "runtime:history_count",
+            "value_type": "size_t"
+          },
+          {
+            "name": "penalty_numerator",
+            "source": "runtime:penalty_numerator",
+            "value_type": "size_t"
+          },
+          {
+            "name": "penalty_denominator",
+            "source": "runtime:penalty_denominator",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output",
+            "source": "output:output",
+            "cast": "float*",
+            "ports": [
+              "output:output"
+            ]
+          },
+          {
+            "name": "output_elements",
+            "source": "runtime:output_elements",
+            "value_type": "size_t"
+          }
+        ]
+      },
+      "call_constant_contract": {
+        "shape_symbols": {
+          "R": "rows",
+          "C": "channels",
+          "H": "history_elements"
+        },
+        "buffer_spans": [
+          {
+            "pointer": "values",
+            "elements": "values_elements",
+            "rows": "rows",
+            "width": "channels",
+            "stride": "row_stride",
+            "physical_row_stride": true,
+            "element_bytes": 4
+          },
+          {
+            "pointer": "history",
+            "elements": "history_elements",
+            "rows": 1,
+            "width": "history_elements",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "output",
+            "elements": "output_elements",
+            "rows": 1,
+            "width": "channels",
+            "element_bytes": 4
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "tests/test_v8_repetition_penalty_checked.py",
+          "tests/test_v8_qwen3_tts_second_generated_frame.py"
+        ],
+        "oracle": "Independent NumPy implementation of Transformers sign-dependent repetition penalty"
+      },
+      "notes": "Applies FP32 score multiplication for negative seen IDs and division for nonnegative seen IDs, once per distinct history ID. Penalty is a declared rational scalar. Rejection leaves output unchanged.",
+      "name": "repetition_penalty_last_row_checked_f32",
+      "_source_file": "repetition_penalty_last_row_checked_f32.json"
+    },
+    {
       "id": "residual_add_backward_f32",
       "op": "add_backward",
       "operation_interface": "residual_add_backward.fp32.v1",
@@ -83673,6 +85144,10 @@
           }
         ]
       },
+      "call_constant_contract": {
+        "shape_symbols": {},
+        "buffer_spans": []
+      },
       "constraints": {
         "notes": "Capacity is bounded by INT32_MAX. Zero count and zero result are supported. Return status must be checked before any consumer executes."
       },
@@ -86074,6 +87549,215 @@
       },
       "name": "rwkv7_wkv_decode_f32",
       "_source_file": "rwkv7_wkv_decode_f32.json"
+    },
+    {
+      "id": "select_next_id_checked_f32",
+      "op": "select_next_id_checked",
+      "operation_interface": "tensor.argmax.last_row.stop_policy.checked.fp32.v1",
+      "variant": "finite_first_index_min_frames_eos_budget",
+      "selection": {
+        "status": "candidate",
+        "priority": 100,
+        "equivalence_group": "tensor.argmax.last_row.stop_policy.checked.fp32.v1",
+        "phases": [
+          "prefill",
+          "decode"
+        ]
+      },
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "i32"
+      },
+      "inputs": [
+        {
+          "name": "values",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "C"
+          ],
+          "layout": "row_major_strided",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "index",
+          "dtype": "i32",
+          "shape": [
+            1
+          ],
+          "layout": "scalar",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "R",
+        "C"
+      ],
+      "impl": {
+        "function": "ck_select_next_id_checked_f32",
+        "c_declaration": "int ck_select_next_id_checked_f32(const float *values, size_t values_elements, size_t rows, size_t channels, size_t row_stride, size_t emitted_frames, size_t min_frames, size_t max_frames, size_t stop_id, size_t suppressed_begin, size_t suppressed_end, int32_t *selected, size_t selected_elements);",
+        "sources": [
+          "src/kernels/select_next_id_checked.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "select_next_id_first_index_stop_policy_fp32",
+          "status": "validated",
+          "phases": [
+            "prefill",
+            "decode"
+          ],
+          "function": "ck_select_next_id_checked_f32",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "contract_defined"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp32",
+            "merge_order": "first_index_on_tie",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "serial"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "values",
+            "source": "activation:values",
+            "cast": "const float*",
+            "ports": [
+              "input:values"
+            ]
+          },
+          {
+            "name": "values_elements",
+            "source": "runtime:values_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "rows",
+            "source": "runtime:rows",
+            "value_type": "size_t"
+          },
+          {
+            "name": "channels",
+            "source": "runtime:channels",
+            "value_type": "size_t"
+          },
+          {
+            "name": "row_stride",
+            "source": "runtime:row_stride",
+            "value_type": "size_t"
+          },
+          {
+            "name": "emitted_frames",
+            "source": "runtime:emitted_frames",
+            "value_type": "size_t"
+          },
+          {
+            "name": "min_frames",
+            "source": "runtime:min_frames",
+            "value_type": "size_t"
+          },
+          {
+            "name": "max_frames",
+            "source": "runtime:max_frames",
+            "value_type": "size_t"
+          },
+          {
+            "name": "stop_id",
+            "source": "runtime:stop_id",
+            "value_type": "size_t"
+          },
+          {
+            "name": "suppressed_begin",
+            "source": "runtime:suppressed_begin",
+            "value_type": "size_t"
+          },
+          {
+            "name": "suppressed_end",
+            "source": "runtime:suppressed_end",
+            "value_type": "size_t"
+          },
+          {
+            "name": "selected",
+            "source": "output:index",
+            "cast": "int32_t*",
+            "ports": [
+              "output:index"
+            ]
+          },
+          {
+            "name": "selected_elements",
+            "source": "runtime:selected_elements",
+            "value_type": "size_t"
+          }
+        ]
+      },
+      "call_constant_contract": {
+        "shape_symbols": {
+          "R": "rows",
+          "C": "channels"
+        },
+        "buffer_spans": [
+          {
+            "pointer": "values",
+            "elements": "values_elements",
+            "rows": "rows",
+            "width": "channels",
+            "stride": "row_stride",
+            "physical_row_stride": true,
+            "element_bytes": 4
+          },
+          {
+            "pointer": "selected",
+            "elements": "selected_elements",
+            "rows": 1,
+            "width": 1,
+            "element_bytes": 4
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "tests/test_v8_select_next_id_checked.py",
+          "tests/test_v8_qwen3_tts_second_generated_frame.py"
+        ],
+        "oracle": "Independent first-maximum selection with minimum-frame EOS suppression and explicit budget verdict"
+      },
+      "notes": "Return 0 for a non-stop ID, 1 for selected stop ID, 2 for frame-budget exhaustion, and negative for invalid input. A declared suppressed ID range excludes all IDs except the stop ID once min_frames is met. Generated checked calls propagate positive control status and skip dependents. Selection is unchanged on invalid input or budget exhaustion; EOS writes its ID.",
+      "name": "select_next_id_checked_f32",
+      "_source_file": "select_next_id_checked_f32.json"
     },
     {
       "id": "silu_mul_rows_checked_f32",

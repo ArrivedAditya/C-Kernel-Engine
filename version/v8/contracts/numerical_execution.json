@@ -4563,6 +4563,28 @@
       "position_transform": null,
       "description": "Exact checked concatenation of two nonempty contiguous int32 spans into disjoint caller-owned output. Rejects invalid capacities and aliasing before writes; preserves output padding. Inference only."
     },
+    "copy_i32_disjoint_span_exact": {
+      "operator_family": "copy_i32_span_checked",
+      "status": "validated",
+      "storage": {"input": "int32", "weight": "none", "output": "int32"},
+      "compute": {"input": "int32", "weight": "none", "accumulator": "int32", "contraction": "disabled", "evaluation_order": "validate_then_copy_selected_span"},
+      "rounding": {"mode": "none", "points": ["input_load", "output_store"]},
+      "reduction": {"kind": "none", "order": "none", "partial_accumulator": "none", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Exact checked copy of a nonempty contiguous int32 span into disjoint caller-owned storage. Validates offsets, capacities and overlap before writes; preserves untouched destination elements. Inference only."
+    },
+    "equal_i32_scalar_exact": {
+      "operator_family": "equal_i32_scalar_checked",
+      "status": "validated",
+      "storage": {"input": "int32", "weight": "none", "output": "int32"},
+      "compute": {"input": "int32", "weight": "none", "accumulator": "int32", "contraction": "disabled", "evaluation_order": "validate_then_compare_then_copy_if_equal"},
+      "rounding": {"mode": "none", "points": ["input_load", "output_store"]},
+      "reduction": {"kind": "none", "order": "none", "partial_accumulator": "none", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Exact checked comparison of requested and expected int32 scalar state. A mismatch rejects before writing the checked output; no reduction or heap use. Inference only."
+    },
     "audio_concat_channels_exact_copy_fp32": {
       "operator_family": "audio_concat_channels_checked",
       "status": "validated",
@@ -4680,6 +4702,28 @@
       "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},
       "position_transform": null,
       "description": "Argmax over nonempty finite FP32 values with NumPy-compatible first-index tie selection."
+    },
+    "repetition_penalty_sign_dependent_fp32": {
+      "operator_family": "repetition_penalty",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "none", "output": "fp32"},
+      "compute": {"input": "fp32", "weight": "none", "accumulator": "fp32", "contraction": "disabled", "evaluation_order": "last_row_then_ascending_channels_with_distinct_history_membership_and_sign_dependent_penalty"},
+      "rounding": {"mode": "rne", "points": ["input_load", "pointwise_product", "output_divide", "output_store"]},
+      "reduction": {"kind": "none", "order": "none", "partial_accumulator": "fp32", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Checked last-row repetition penalty: negative scores for previously selected IDs multiply by the declared positive penalty; nonnegative scores divide. Duplicate history IDs are penalized once. Invalid inputs and nonfinite results leave output unchanged."
+    },
+    "select_next_id_first_index_stop_policy_fp32": {
+      "operator_family": "audio_argmax",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "none", "output": "int32"},
+      "compute": {"input": "fp32", "weight": "none", "accumulator": "fp32", "contraction": "disabled", "evaluation_order": "validate_geometry_and_budget_then_select_final_finite_row_with_declared_id_suppression_minimum_frame_stop_exception_and_first_index_tie"},
+      "rounding": {"mode": "none", "points": ["input_load", "output_store"]},
+      "reduction": {"kind": "argmax", "order": "ascending_index", "partial_accumulator": "fp32", "merge_order": "first_index_on_tie"},
+      "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Checked first-index argmax of the final finite FP32 row. A declared ID range is suppressed except for the stop ID once the minimum emitted-frame count is met. Return status 1 signals selected EOS, status 2 signals frame-budget exhaustion without selecting, and negative status signals invalid input. Positive statuses stop dependent generated calls; no model-specific scheduling is implied."
     },
     "argmax_last_row_finite_first_index_fp32": {
       "operator_family": "audio_argmax",

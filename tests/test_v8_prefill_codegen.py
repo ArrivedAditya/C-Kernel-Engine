@@ -47,6 +47,25 @@ chunked_compare = _load_module(
 
 
 class TestV8PrefillCodegen(unittest.TestCase):
+    def test_prior_cache_attention_keeps_chunked_prefill_with_gate_projection(self):
+        config = {"context_length": 32, "prefill_chunk_length": 8, "embed_dim": 16}
+        ops = [
+            {"op": "attn_sliding", "function": "append_attention", "layer": 0,
+             "prefill_history_scope": "prior_cache", "args": []},
+            {"op": "attention_gate_projection", "function": "gate_projection",
+             "layer": 0, "args": []},
+        ]
+        emitted = codegen_prefill_v8.emit_prefill_function(ops, config)
+        self.assertNotIn("Continue through decode", emitted)
+        self.assertIn("ck_prefill_range(model, tokens + consumed, chunk, start_pos + consumed)", emitted)
+        unknown = codegen_prefill_v8.emit_prefill_function(
+            ops + [{"op": "attention_future", "function": "future_attention",
+                    "layer": 1, "args": []}], config)
+        self.assertIn("Continue through decode", unknown)
+        ops[0]["prefill_history_scope"] = "current_chunk"
+        fallback = codegen_prefill_v8.emit_prefill_function(ops, config)
+        self.assertIn("Continue through decode", fallback)
+
     def test_selected_prefill_row_groups_define_checked_append_boundary(self):
         self.assertEqual(codegen_v8._prefill_row_group_alignment([]), 1)
         self.assertEqual(codegen_v8._prefill_row_group_alignment([
@@ -154,6 +173,21 @@ int main(void) {
             self.assertEqual(chunked_compare._kv_only_state_contract(bundle)[
                 "exported_state"], ["kv_cache"])
             write(["kv_cache", "recurrent_ssm_state"])
+            with self.assertRaisesRegex(RuntimeError, "unexported persistent"):
+                chunked_compare._kv_only_state_contract(bundle)
+            layout.write_text(json.dumps({"memory": {"activations": {"buffers": [
+                {"name": "kv_cache", "lifetime": "sequence", "mutable": True},
+                {"name": "recurrent_ssm_state", "lifetime": "sequence",
+                 "mutable": True, "shape": "[4, 0, 0]"},
+            ]}}}), encoding="utf-8")
+            for mode in ("decode", "prefill"):
+                (bundle / f"lowered_{mode}_call.json").write_text(
+                    json.dumps({"operations": []}), encoding="utf-8")
+            self.assertEqual(chunked_compare._kv_only_state_contract(bundle)[
+                "exported_state"], ["kv_cache"])
+            (bundle / "lowered_prefill_call.json").write_text(json.dumps({
+                "operations": [{"op": "state_update", "buffer_ref": "recurrent_ssm_state"}]
+            }), encoding="utf-8")
             with self.assertRaisesRegex(RuntimeError, "unexported persistent"):
                 chunked_compare._kv_only_state_contract(bundle)
 

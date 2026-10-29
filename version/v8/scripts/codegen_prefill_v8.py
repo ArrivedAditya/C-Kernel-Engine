@@ -1813,15 +1813,20 @@ def emit_prefill_function(ops: List[Dict], config: Dict, profile: bool = False, 
     lines = []
     history_scopes = {op.get("prefill_history_scope") for op in ops
                       if op.get("prefill_history_scope") is not None}
-    if history_scopes - {"current_chunk"}:
+    if history_scopes - {"current_chunk", "prior_cache"}:
         raise RuntimeError(f"unsupported prefill history scope: {sorted(history_scopes)!r}")
     # A selected attention provider without a history declaration has not
     # proven it can consume KV from a previous prefill chunk. Treat it like a
     # current-chunk-only provider when scheduling continuation. This keeps an
     # omitted map contract from silently dropping prior conversation state.
+    attention_ops = {
+        "attn", "attn_sliding", "attn_shared_kv", "attn_sliding_shared_kv",
+        "qsa_attention", "mla_attention", "attention", "attention_sliding",
+    }
     unknown_attention_history = any(
-        str(op.get("op", "")).startswith("attention") or
-        str(op.get("op", "")) == "mla_attention"
+        str(op.get("op", "")) in attention_ops
+        or (str(op.get("op", "")).startswith("attention")
+            and str(op.get("op", "")) != "attention_gate_projection")
         for op in ops if op.get("prefill_history_scope") is None
     )
     requires_decode_continuation = (

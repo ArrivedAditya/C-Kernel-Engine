@@ -1,0 +1,92 @@
+{
+  "schema": "cke.v8.muse_append_attention_kernel_parity.v1",
+  "status": "PASS",
+  "engine_sha256": "fc8b51b9ab87c9f2067c93ae0e526a5794f0d6ec177e9a1349cae91af839ff53",
+  "append_library_sha256": "c58f4ad6eb6027e1d70e7a25f76b3d4e504ecc6ae9d40d8120110ffd67675cd5",
+  "sleef_library_sha256": "1c8a3daff88e8b396a92af6b070df0bb355024b2e1440d453977f5494a79af88",
+  "source_sha256": "614b9715ca0b441193eaf6e6e6b0f376d9d2501e5d1cd3c3e8cf7d09ec2616c5",
+  "build_flags": "-O2,-std=gnu11,-fPIC,-shared,-mavx512f,-DUSE_ONEDNN",
+  "cpu_model": "AMD Ryzen 9 9950X3D 16-Core Processor",
+  "cases": [
+    {
+      "tokens": 4,
+      "split": 2,
+      "sliding_window": 0,
+      "max_abs_error": 0.0,
+      "corrupted_cache_max_delta": 1.8939208984375,
+      "wrong_position_max_delta": 0.28125,
+      "finite": true,
+      "status": "PASS"
+    },
+    {
+      "tokens": 4,
+      "split": 2,
+      "sliding_window": 3,
+      "max_abs_error": 0.0,
+      "corrupted_cache_max_delta": 3.125,
+      "wrong_position_max_delta": 1.138671875,
+      "finite": true,
+      "status": "PASS"
+    },
+    {
+      "tokens": 10,
+      "split": 6,
+      "sliding_window": 0,
+      "max_abs_error": 0.0,
+      "corrupted_cache_max_delta": 1.64111328125,
+      "wrong_position_max_delta": 0.25,
+      "finite": true,
+      "status": "PASS"
+    },
+    {
+      "tokens": 10,
+      "split": 6,
+      "sliding_window": 3,
+      "max_abs_error": 0.0,
+      "corrupted_cache_max_delta": 2.3359375,
+      "wrong_position_max_delta": 2.0078125,
+      "finite": true,
+      "status": "PASS"
+    },
+    {
+      "tokens": 129,
+      "split": 127,
+      "sliding_window": 0,
+      "max_abs_error": 0.0,
+      "corrupted_cache_max_delta": 1.76025390625,
+      "wrong_position_max_delta": 0.001953125,
+      "finite": true,
+      "status": "PASS"
+    },
+    {
+      "tokens": 129,
+      "split": 127,
+      "sliding_window": 3,
+      "max_abs_error": 0.0,
+      "corrupted_cache_max_delta": 2.45703125,
+      "wrong_position_max_delta": 1.060546875,
+      "finite": true,
+      "status": "PASS"
+    },
+    {
+      "tokens": 257,
+      "split": 256,
+      "sliding_window": 0,
+      "max_abs_error": 0.0,
+      "corrupted_cache_max_delta": 0.00537109375,
+      "wrong_position_max_delta": 0.001953125,
+      "finite": true,
+      "status": "PASS"
+    },
+    {
+      "tokens": 257,
+      "split": 256,
+      "sliding_window": 3,
+      "max_abs_error": 0.0,
+      "corrupted_cache_max_delta": 0.92578125,
+      "wrong_position_max_delta": 0.47265625,
+      "finite": true,
+      "status": "PASS"
+    }
+  ]
+}

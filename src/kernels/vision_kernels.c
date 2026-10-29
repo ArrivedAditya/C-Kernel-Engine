@@ -248,7 +248,8 @@ void position_embeddings_add_gemma4v_xy(float *x,
             const float *row_x = table_x + (size_t) xx * (size_t) embed_dim;
             float *dst = x + ((size_t) y * (size_t) grid_w + (size_t) x_pos) * (size_t) embed_dim;
             for (int d = 0; d < embed_dim; ++d) {
-                dst[d] += row_x[d] + row_y[d];
+                const float with_x = dst[d] + row_x[d];
+                dst[d] = with_x + row_y[d];
             }
         }
     }

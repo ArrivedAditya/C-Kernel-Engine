@@ -31,6 +31,7 @@ class Qwen3TTSTwoFrameWaveformTest(unittest.TestCase):
     def test_graph_and_oracle_integrity_without_assets(self):
         graph = build_circuit()
         self.assertEqual(OUTPUT.read_text(), json.dumps(graph, indent=2) + "\n")
+        self.assertNotIn("segments", graph["native_entry"])
         manifest = json.loads(MANIFEST.read_text())
         self.assertEqual(hashlib.sha256(CAPTURE.read_bytes()).hexdigest(),
                          manifest["npz_sha256"])
@@ -72,7 +73,11 @@ class Qwen3TTSTwoFrameWaveformTest(unittest.TestCase):
             shapes = _weight_shapes(graph, main, codec)
             fn, acts, weights, layout, calls, library = compile_entry(
                 Path(temp), graph, shapes,
-                extra_sources=("src/kernels/concat_i32_checked.c",) + CODEC_SOURCES)
+                extra_sources=("src/kernels/concat_i32_checked.c",
+                               "src/kernels/select_next_id_checked.c",
+                               "src/kernels/repetition_penalty_checked.c",
+                               "src/kernels/copy_i32_span_checked.c",
+                               "src/kernels/equal_i32_scalar_checked.c") + CODEC_SOURCES)
             self.assertGreater(len(calls["operations"]), 3000)
             size = layout["memory"]["arena"]["total_size"]
             raw = (ctypes.c_uint8 * (size + 63))()

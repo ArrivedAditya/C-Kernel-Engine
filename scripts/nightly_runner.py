@@ -728,6 +728,10 @@ TEST_SUITES = {
         "Gemma4 BF16 Projection Reduction Oracle", "parity",
         ROOT / "tests" / "test_v8_gemma4_bf16_reduction_oracle.py",
     ),
+    "gemma4v_position_add_order": TestSuite(
+        "Gemma4V Position Addition Order", "parity",
+        ROOT / "tests" / "test_v8_gemma4v_position_add_order.py",
+    ),
     "vision": TestSuite("Vision", "kernels", UNITTEST_DIR / "test_vision.py"),
     "audio_frontend": TestSuite(
         "Audio Log-Mel Frontend", "kernels", UNITTEST_DIR / "test_audio.py"
@@ -805,6 +809,46 @@ TEST_SUITES = {
         "Qwen3-TTS Connected Second Speech-Code Frame", "inference",
         ROOT / "tests" / "test_v8_qwen3_tts_second_generated_frame.py",
         timeout_sec=360,
+    ),
+    "tts_checked_multi_entry": TestSuite(
+        "Checked Shared-Arena Multi-Entry Composition", "inference",
+        ROOT / "tests" / "test_v8_checked_multi_entry.py",
+    ),
+    "tts_qwen3_customvoice_two_phase_speech": TestSuite(
+        "Qwen3-TTS Checked Prefill and Rolling Frame Entries", "inference",
+        ROOT / "tests" / "test_v8_qwen3_tts_two_phase_speech.py",
+        timeout_sec=360,
+    ),
+    "tts_checked_frame_loop": TestSuite(
+        "Checked Bounded Speech Frame Loop", "inference",
+        ROOT / "tests" / "test_v8_checked_frame_loop.py",
+        timeout_sec=120,
+    ),
+    "tts_qwen3_pinned_natural_eos": TestSuite(
+        "Qwen3-TTS Pinned Natural EOS Codes", "inference",
+        ROOT / "tests" / "test_v8_qwen3_tts_full_code_loop.py",
+        timeout_sec=420,
+    ),
+    "tts_qwen3_loop_codec": TestSuite(
+        "Qwen3-TTS Generated Code Loop to Codec", "inference",
+        ROOT / "tests" / "test_v8_qwen3_tts_loop_codec.py",
+        timeout_sec=180,
+    ),
+    "tts_copy_i32_span_checked": TestSuite(
+        "Checked Integer Span State Copy", "kernels",
+        ROOT / "tests" / "test_v8_copy_i32_span_checked.py",
+    ),
+    "tts_equal_i32_scalar_checked": TestSuite(
+        "Checked Integer Expected-State Comparison", "kernels",
+        ROOT / "tests" / "test_v8_equal_i32_scalar_checked.py",
+    ),
+    "tts_select_next_id_checked": TestSuite(
+        "Checked Speech-Code Stop and Budget Selection", "kernels",
+        ROOT / "tests" / "test_v8_select_next_id_checked.py",
+    ),
+    "tts_repetition_penalty_checked": TestSuite(
+        "Checked Speech-Code Repetition Penalty", "kernels",
+        ROOT / "tests" / "test_v8_repetition_penalty_checked.py",
     ),
     "tts_concat_i32_checked": TestSuite(
         "Checked Integer Span Concatenation", "kernels",

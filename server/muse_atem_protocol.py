@@ -29,6 +29,26 @@ _INVOKE = re.compile(r'<atem:invoke name="([A-Za-z_][\w.-]*)">')
 _PARAM = re.compile(r'<atem:parameter name="([A-Za-z_][\w.-]*)">')
 _NUMBER = re.compile(r"-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?\Z")
 _ENDS = ("<|eom|>", "<|eot|>", "<|end_of_text|>")
+_FRAMING_MARKERS = (
+    "<|start|>", "<|message|>", *_ENDS,
+    "<atem:function_calls>", "<atem:invoke", "<atem:parameter",
+    "</atem:function_calls>", "</atem:invoke>", "</atem:parameter>",
+)
+
+
+def truncated_plain_text(raw: str) -> str:
+    """Return only an unframed partial answer from an output-limited turn.
+
+    A model can stop in the middle of a channel header or ATEM introducer.
+    Recognize prefixes only at the start of the generated suffix (after
+    whitespace); ordinary words such as ``to`` remain answer text.
+    """
+    start = raw.lstrip()
+    if start.startswith("to=") or any(marker in raw for marker in _FRAMING_MARKERS):
+        return ""
+    if start.startswith("<") and any(marker.startswith(start) for marker in _FRAMING_MARKERS):
+        return ""
+    return raw.strip()
 
 
 def _json_value(raw: str) -> Any:
