@@ -37,6 +37,19 @@ decoder_parity_v8 = _load_module("decoder_first_token_parity_v8_tests", V8_DECOD
 
 
 class V8DecoderFirstTokenParityTests(unittest.TestCase):
+    def test_numerical_verdict_requires_declared_bounds_in_both_prefix_lanes(self) -> None:
+        status = decoder_parity_v8._comparison_status
+        self.assertEqual(status(separate_prefixes=False, producers_verified=False,
+                                numerical_contract_declared=False, numerical_match=True), "incomplete")
+        self.assertEqual(status(separate_prefixes=True, producers_verified=True,
+                                numerical_contract_declared=False, numerical_match=True), "incomplete")
+        self.assertEqual(status(separate_prefixes=False, producers_verified=False,
+                                numerical_contract_declared=False, numerical_match=False), "fail")
+        self.assertEqual(status(separate_prefixes=True, producers_verified=False,
+                                numerical_contract_declared=True, numerical_match=True), "incomplete")
+        self.assertEqual(status(separate_prefixes=False, producers_verified=False,
+                                numerical_contract_declared=True, numerical_match=True), "pass")
+
     def test_composed_decoder_replay_preserves_declared_runtime_contract(self) -> None:
         contract = {
             "id": "fixture_bridge",
@@ -1553,20 +1566,22 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
                      },
                  ):
                 with contextlib.redirect_stdout(io.StringIO()):
-                    rc = decoder_parity_v8.main(
-                        [
-                            "--gguf",
-                            str(fake_gguf),
-                            "--workdir",
-                            str(tmp / "work"),
-                            "--prompt",
-                            "Hello",
-                            "--top-k",
-                            "2",
-                            "--json-out",
-                            str(report_path),
-                        ]
-                    )
+                    argv = [
+                        "--gguf", str(fake_gguf), "--workdir", str(tmp / "work"),
+                        "--prompt", "Hello", "--top-k", "2",
+                        "--json-out", str(report_path),
+                    ]
+                    self.assertEqual(decoder_parity_v8.main(argv), 4)
+                    incomplete = json.loads(report_path.read_text(encoding="utf-8"))
+                    self.assertEqual(incomplete["status"], "incomplete")
+                    self.assertIsNone(incomplete["thresholds"]["max_abs_threshold"])
+                    self.assertTrue(incomplete["compare"]["top1_match"])
+                    self.assertEqual(decoder_parity_v8.main([
+                        *argv, "--max-abs-threshold", "0.5",
+                    ]), 4)
+                    rc = decoder_parity_v8.main([
+                        *argv, "--max-abs-threshold", "0.5", "--max-rmse-threshold", "0.5",
+                    ])
 
             self.assertEqual(rc, 0)
             report = json.loads(report_path.read_text(encoding="utf-8"))
@@ -1628,6 +1643,8 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
                             "Hello",
                             "--top-k",
                             "2",
+                            "--max-abs-threshold", "0.5",
+                            "--max-rmse-threshold", "0.5",
                             "--json-out",
                             str(report_path),
                         ]
@@ -1695,6 +1712,8 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
                             str(prefix_path),
                             "--top-k",
                             "2",
+                            "--max-abs-threshold", "0.5",
+                            "--max-rmse-threshold", "0.5",
                             "--json-out",
                             str(report_path),
                         ]
@@ -1758,6 +1777,8 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
                             "3",
                             "--top-k",
                             "2",
+                            "--max-abs-threshold", "0.5",
+                            "--max-rmse-threshold", "0.5",
                             "--json-out",
                             str(report_path),
                         ]
@@ -1836,6 +1857,8 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
                             "7",
                             "--top-k",
                             "2",
+                            "--max-abs-threshold", "0.5",
+                            "--max-rmse-threshold", "0.5",
                             "--json-out",
                             str(report_path),
                         ]
@@ -1957,7 +1980,7 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
                     return_value={"input_provenance": "independently_decoded_and_preprocessed_from_same_p6"},
                 ):
                     with contextlib.redirect_stdout(io.StringIO()):
-                        self.assertEqual(decoder_parity_v8.main(verified_argv), 4)
+                        self.assertEqual(decoder_parity_v8.main(verified_argv), 3)
                     with contextlib.redirect_stdout(io.StringIO()):
                         self.assertEqual(decoder_parity_v8.main([
                             *verified_argv, "--max-abs-threshold", "0.2",
@@ -2017,6 +2040,8 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
                             "Hello",
                             "--ctx-len",
                             "123",
+                            "--max-abs-threshold", "0.5",
+                            "--max-rmse-threshold", "0.5",
                             "--json-out",
                             str(report_path),
                         ]
@@ -2073,6 +2098,8 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
                             "Hello",
                             "--ctx-len",
                             "1",
+                            "--max-abs-threshold", "0.5",
+                            "--max-rmse-threshold", "0.5",
                             "--json-out",
                             str(report_path),
                         ]
@@ -2542,6 +2569,8 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
                             str(tmp / "work"),
                             "--llama-flash-attention",
                             "enabled",
+                            "--max-abs-threshold", "0.5",
+                            "--max-rmse-threshold", "0.5",
                             "--json-out",
                             str(report_path),
                         ]
