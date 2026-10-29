@@ -3,10 +3,10 @@
   "name": "rwkv7",
   "family": "rwkv7",
   "projection_inputs": {
-    "rwkv7_r_proj": {"x": "xr_lane"},
-    "rwkv7_k_proj": {"x": "xk_lane"},
-    "rwkv7_v_proj": {"x": "xv_lane"},
-    "rwkv7_out_proj": {"x": "wkv_out"},
+    "rwkv7_r_proj": {"A": "xr_lane"},
+    "rwkv7_k_proj": {"A": "xk_lane"},
+    "rwkv7_v_proj": {"A": "xv_lane"},
+    "rwkv7_out_proj": {"A": "wkv_out"},
     "rwkv7_channelmix_decode": {"x": "normalized_stream"}
   },
   "flags": {

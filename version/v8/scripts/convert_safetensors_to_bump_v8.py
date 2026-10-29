@@ -2734,12 +2734,22 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
                 raise SystemExit(
                     "RWKV-7 config missing intermediate_size/hidden_ratio"
                 )
-            intermediate_size = int(hidden_size * float(hidden_ratio_value))
+            expanded = hidden_size * float(hidden_ratio_value)
+            if not math.isfinite(expanded) or expanded <= 0 or not expanded.is_integer():
+                raise SystemExit("RWKV-7 hidden_ratio must produce a positive integral intermediate_size")
+            intermediate_size = int(expanded)
         hidden_ratio = (
             float(hidden_ratio_value)
             if hidden_ratio_value is not None
             else intermediate_size / hidden_size
         )
+        if not math.isfinite(hidden_ratio) or hidden_ratio <= 0 or hidden_size * hidden_ratio != intermediate_size:
+            raise SystemExit("RWKV-7 hidden_ratio disagrees with intermediate_size")
+        activation = str(text.get("hidden_act") or "squared_relu")
+        if activation != "squared_relu":
+            raise SystemExit("RWKV-7 circuit requires squared_relu activation")
+        if text.get("tie_word_embeddings", False):
+            raise SystemExit("RWKV-7 importer requires an explicit untied head.weight")
         vocab_size = int(text.get("vocab_size") or hf.get("vocab_size") or 0)
         if vocab_size <= 0:
             raise SystemExit("RWKV-7 config missing vocab_size")
@@ -2753,9 +2763,9 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
         if context_length <= 0:
             context_length = 4096
         layer_kinds = ["layer_0"] + ["layer_gt0"] * max(0, num_layers - 1)
-        layer_eps = float(
-            text.get("layer_norm_eps") or text.get("norm_eps") or 1e-5
-        )
+        layer_eps = float(text.get("layer_norm_eps", text.get("norm_eps", 1e-5)))
+        if not math.isfinite(layer_eps) or layer_eps <= 0:
+            raise SystemExit("RWKV-7 layer norm epsilon must be finite and positive")
         cfg.update({
             "num_layers": num_layers,
             "num_hidden_layers": num_layers,
@@ -2779,7 +2789,7 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
             "has_qk_norm": False,
             "has_attention_biases": False,
             "rope": "none",
-            "activation": str(text.get("hidden_act") or "squared_relu"),
+            "activation": activation,
             "tie_word_embeddings": False,
             "layer_norm_eps": layer_eps,
             "rms_eps": layer_eps,
@@ -2790,6 +2800,8 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
             if rank_value is None:
                 rank_value = hf.get(rank_key)
             if rank_value is not None:
+                if isinstance(rank_value, bool) or int(rank_value) != rank_value or int(rank_value) <= 0:
+                    raise SystemExit(f"RWKV-7 {rank_key} must be a positive integer")
                 cfg[rank_key] = int(rank_value)
     cfg = _inject_runtime_config_defaults(cfg, arch)
     if arch == "gemma4" and "layer_kinds" not in cfg:

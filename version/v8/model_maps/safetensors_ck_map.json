@@ -1565,7 +1565,7 @@
         {"target": "rwkv7.blocks.{L}.ffn.key.weight", "sources": ["rwkv7.blocks.{L}.ffn.key.weight"], "dtype": "fp32"},
         {"target": "rwkv7.blocks.{L}.ffn.value.weight", "sources": ["rwkv7.blocks.{L}.ffn.value.weight"], "dtype": "fp32"}
       ],
-      "notes": "RWKV-7 1.5B (g1j) index mapping. Manifest names preserve the checkpoint names; only the embedding, final norm, and lm head are renamed to the generic tokens. All weights consumed by the declared scalar FP32 RWKV-7 providers are stored FP32; the four attention projections stay on the linear-weight dtype policy. blocks.0.ln0 is a layer-0-only header op. Index-only validation: 798 tensors, 4 shards, 24 layers."
+      "notes": "RWKV-7 G1k 1.5B index mapping. Manifest names preserve the checkpoint names; only the embedding, final norm, and lm head are renamed to the generic tokens. All weights consumed by the declared scalar FP32 RWKV-7 providers are stored FP32; the four attention projections stay on the linear-weight dtype policy. blocks.0.ln0 is a layer-0-only header op. Index-only validation: 798 tensors, 4 shards, 24 layers."
     }
   }
 }

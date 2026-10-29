@@ -3271,3 +3271,91 @@ def test_rwkv7_index_audit_attributes_blocks_to_layers(tmp_path: Path) -> None:
     }
     assert report["tensor_count"] == 6
     assert report["shard_count"] == 2
+
+
+@pytest.mark.parametrize("override,message", [
+    ({"hidden_ratio": -1}, "hidden_ratio"),
+    ({"hidden_ratio": 1.1}, "hidden_ratio"),
+    ({"hidden_ratio": float("nan")}, "hidden_ratio"),
+    ({"intermediate_size": 12, "hidden_ratio": 4}, "hidden_ratio"),
+    ({"hidden_act": "silu"}, "squared_relu"),
+    ({"tie_word_embeddings": True}, "untied"),
+    ({"layer_norm_eps": 0}, "epsilon"),
+    ({"layer_norm_eps": float("inf")}, "epsilon"),
+    ({"decay_rank": 0}, "decay_rank"),
+    ({"gate_rank": 1.5}, "gate_rank"),
+    ({"head_size": 3}, "geometry"),
+])
+def test_rwkv7_rejects_config_incompatible_with_circuit(tmp_path, override, message):
+    config = dict(model_type="rwkv7", num_hidden_layers=2, hidden_size=8,
+                  head_size=4, num_heads=2, hidden_ratio=4, vocab_size=16)
+    config.update(override)
+    (tmp_path / "config.json").write_text(json.dumps(config))
+    with pytest.raises(SystemExit, match=message):
+        _load_converter()._build_config(tmp_path, "rwkv7", None)
+
+
+def test_rwkv7_real_conversion_preserves_nonzero_weights(tmp_path):
+    torch = pytest.importorskip("torch")
+    st = pytest.importorskip("safetensors.torch")
+    checkpoint = tmp_path / "checkpoint"
+    checkpoint.mkdir()
+    output = tmp_path / "out"
+    output.mkdir()
+    config = dict(model_type="rwkv7", num_hidden_layers=2, hidden_size=8,
+                  head_size=4, num_heads=2, hidden_ratio=4, vocab_size=16,
+                  decay_rank=2, key_rank=2, value_rank=2, gate_rank=2)
+    (checkpoint / "config.json").write_text(json.dumps(config))
+    (checkpoint / "tokenizer.json").write_text(json.dumps({
+        "model": {"type": "WordPiece", "vocab": {chr(65+i): i for i in range(16)}}}))
+    (checkpoint / "tokenizer_config.json").write_text(
+        json.dumps({"backend": "rwkv_world_trie"}))
+    tensors = {}
+    for index, name in enumerate(sorted(_rwkv7_inventory_names(2))):
+        shape = (8,)
+        if name in ("head.weight", "rwkv7.emb.weight"):
+            shape = (16, 8)
+        elif name.endswith(("receptance.weight", "att.key.weight", "att.value.weight", "output.weight")):
+            shape = (8, 8)
+        elif name.endswith("ffn.key.weight"):
+            shape = (32, 8)
+        elif name.endswith("ffn.value.weight"):
+            shape = (8, 32)
+        elif name.endswith((".w1", ".a1", ".v1", ".g1")):
+            shape = (8, 2)
+        elif name.endswith((".w2", ".a2", ".v2", ".g2")):
+            shape = (2, 8)
+        elif name.endswith(".r_k"):
+            shape = (2, 4)
+        tensors[name] = ((torch.arange(math.prod(shape)).reshape(shape) - 7) / 16 + index / 8).to(torch.bfloat16)
+    st.save_file(tensors, checkpoint / "model.safetensors")
+    subprocess.run([
+        sys.executable, str(CONVERTER_PATH), "--checkpoint", str(checkpoint),
+        "--output", str(output / "weights.bump"), "--config-out", str(output / "config.json"),
+        "--manifest-out", str(output / "weights_manifest.json"), "--arch", "auto",
+    ], cwd=ROOT, check=True, capture_output=True, text=True)
+    manifest = json.loads((output / "weights_manifest.json").read_text())
+    audit = json.loads((output / "conversion_audit.json").read_text())
+    assert audit["verdict"] == "pass"
+    assert audit["unmapped_source_tensors"] == []
+    assert manifest["tokenizer_contract"]["tokenizer_type"] == "rwkv_world_trie"
+    entries = {entry["name"]: entry for entry in manifest["entries"]}
+    data = (output / "weights.bump").read_bytes()
+    for name in ("rwkv7.blocks.0.att.w1", "rwkv7.blocks.1.att.w2",
+                 "rwkv7.blocks.0.ffn.key.weight", "rwkv7.blocks.1.att.r_k"):
+        entry = entries[name]
+        assert entry["dtype"] == "fp32"
+        assert entry["shape"] == list(tensors[name].shape)
+        actual = np.frombuffer(data, dtype="<f4", count=tensors[name].numel(),
+                               offset=entry["file_offset"])
+        np.testing.assert_array_equal(actual, tensors[name].float().numpy().ravel())
+
+
+@pytest.mark.parametrize("missing", [
+    "rwkv7.blocks.0.ln0.weight", "rwkv7.blocks.1.att.w2", "head.weight",
+])
+def test_rwkv7_missing_required_weight_fails_closed(missing):
+    converter = _load_converter()
+    headers = _rwkv7_headers(converter, _rwkv7_inventory_names(2) - {missing})
+    with pytest.raises(SystemExit, match="Missing required safetensors tensor"):
+        converter._refs_from_safetensors_contract("rwkv7", {"num_layers": 2}, headers)

@@ -2523,16 +2523,16 @@ OP_DATAFLOW = {
         },
     },
     "rwkv7_r_proj": {
-        "inputs": {"x": "xr_lane"},
-        "outputs": {"y": {"slot": "r_vec", "dtype": "fp32"}},
+        "inputs": {"A": "xr_lane"},
+        "outputs": {"C": {"slot": "r_vec", "dtype": "fp32"}},
     },
     "rwkv7_k_proj": {
-        "inputs": {"x": "xk_lane"},
-        "outputs": {"y": {"slot": "k_raw_vec", "dtype": "fp32"}},
+        "inputs": {"A": "xk_lane"},
+        "outputs": {"C": {"slot": "k_raw_vec", "dtype": "fp32"}},
     },
     "rwkv7_v_proj": {
-        "inputs": {"x": "xv_lane"},
-        "outputs": {"y": {"slot": "v_in_vec", "dtype": "fp32"}},
+        "inputs": {"A": "xv_lane"},
+        "outputs": {"C": {"slot": "v_in_vec", "dtype": "fp32"}},
     },
     "rwkv7_lora_gates": {
         "inputs": {"xw": "xw_lane", "xa": "xa_lane", "xg": "xg_lane"},
@@ -2586,8 +2586,8 @@ OP_DATAFLOW = {
         },
     },
     "rwkv7_out_proj": {
-        "inputs": {"x": "wkv_out"},
-        "outputs": {"y": {"slot": "post_attention_stream", "dtype": "fp32"}},
+        "inputs": {"A": "wkv_out"},
+        "outputs": {"C": {"slot": "post_attention_stream", "dtype": "fp32"}},
     },
     "rwkv7_channelmix_decode": {
         "inputs": {"x": "main_stream", "shift_in": "ffn_shift"},
