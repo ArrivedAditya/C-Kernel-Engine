@@ -29593,6 +29593,11 @@
         1
       ]
     },
+    "talker_step_limit_scalar": {
+      "shape": [
+        1
+      ]
+    },
     "generation_state_ready_scalar": {
       "shape": [
         1
@@ -36422,6 +36427,7 @@
     "expected_step_index": "expected_step_index",
     "step_control_verified": "step_control_verified",
     "history_count_checked": "history_count_checked",
+    "talker_step_limit_scalar": "talker_step_limit_scalar",
     "generation_state_ready_scalar": "generation_state_ready_scalar",
     "rolling_embedding_0": "rolling_embedding_0",
     "rolling_embedding_1": "rolling_embedding_1",
@@ -104812,6 +104818,29 @@
           }
         },
         {
+          "id": "set_talker_step_limit",
+          "op": "runtime_extent_affine",
+          "kernel": "runtime_extent_affine_i32",
+          "returns_status": true,
+          "produces_runtime_lengths": {
+            "talker_step_limit": "valid_extent"
+          },
+          "params": {
+            "call_constants": {
+              "extent_affine_source": 0,
+              "extent_affine_factor": 1,
+              "extent_affine_offset": 62,
+              "extent_affine_capacity": 62
+            }
+          },
+          "graph_slots": {
+            "inputs": {},
+            "outputs": {
+              "valid_extent": "talker_step_limit_scalar"
+            }
+          }
+        },
+        {
           "id": "check_talker_step_raw",
           "op": "runtime_extent_sum",
           "kernel": "runtime_extent_sum_i32",
@@ -104826,6 +104855,13 @@
             "outputs": {
               "valid_extent": "talker_step_raw_checked"
             }
+          },
+          "consumes_runtime_lengths": [
+            "talker_step_limit"
+          ],
+          "runtime_scalar_bindings": {
+            "max_duration": "talker_step_limit",
+            "expanded_capacity": "talker_step_limit"
           }
         },
         {
@@ -190431,6 +190467,12 @@
       "result": "valid_extent",
       "capacity": 63,
       "allow_zero": false
+    },
+    "talker_step_limit": {
+      "producer": "set_talker_step_limit",
+      "result": "valid_extent",
+      "capacity": 62,
+      "allow_zero": true
     },
     "two_phase_ready": {
       "producer": "check_two_phase_ready",

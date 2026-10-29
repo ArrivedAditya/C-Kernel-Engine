@@ -130,9 +130,9 @@ int fake_frame(uint8_t *arena, size_t bytes) {
             self.assertEqual(run(ctypes.byref(request)), 0)
             self.assertEqual(valid.value, 3)
 
-    def _run_generated_qwen(self, *, force_eos: bool):
+    def _run_generated_qwen(self, *, force_eos: bool, max_frames: int = 5):
         graph = build_circuit(talker_layers=1, continuation_steps=2,
-                              max_generated_frames=5)
+                              max_generated_frames=max_frames)
         if force_eos:
             selector = graph["block_types"]["second_talker_predictor_bridge"]
             selector["body"]["ops"][1]["params"]["call_constants"]["stop_id"] = 0
@@ -159,8 +159,9 @@ int fake_frame(uint8_t *arena, size_t bytes) {
                 *(acts[name]["abs_offset"] for name in prefill_names))
             frame_offsets = (ctypes.c_size_t * 4)(
                 *(acts[name]["abs_offset"] for name in frame_names))
-            staging = np.full(20, -1, dtype=np.int32)
-            output = np.full(20, -901, dtype=np.int32)
+            elements = max_frames * 4
+            staging = np.full(elements, -1, dtype=np.int32)
+            output = np.full(elements, -901, dtype=np.int32)
             valid = ctypes.c_size_t(99)
             request = Loop(
                 ctypes.cast(segment_function(library, graph, 0), ctypes.c_void_p),
@@ -168,9 +169,9 @@ int fake_frame(uint8_t *arena, size_t bytes) {
                 arena, size, acts["talker_step_index_input"]["abs_offset"],
                 acts["pred_predictor_valid_code_count"]["abs_offset"],
                 acts["second_predictor_valid_code_count"]["abs_offset"],
-                prefill_offsets, frame_offsets, 4, 5,
-                staging.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)), 20,
-                output.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)), 20,
+                prefill_offsets, frame_offsets, 4, max_frames,
+                staging.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)), elements,
+                output.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)), elements,
                 ctypes.pointer(valid))
             result = run_function(library)(ctypes.byref(request))
             if force_eos:
@@ -178,7 +179,7 @@ int fake_frame(uint8_t *arena, size_t bytes) {
                 self.assertEqual(valid.value, 2)
                 self.assertEqual(int(output[0]), 0)
                 self.assertEqual(int(output[4]), 1)
-                np.testing.assert_array_equal(output[8:], [-901] * 12)
+                np.testing.assert_array_equal(output[8:], [-901] * (elements - 8))
                 self.assertTrue(np.all(cache[:, 20:, :] == -901.0))
                 self.assertEqual(int(view(arena, acts, "generation_state_valid",
                                           np.int32, (1,))[0]), 0)
@@ -191,15 +192,18 @@ int fake_frame(uint8_t *arena, size_t bytes) {
             else:
                 self.assertEqual(result, 2)
                 self.assertEqual(valid.value, 0)
-                np.testing.assert_array_equal(output, [-901] * 20)
+                np.testing.assert_array_equal(output, [-901] * elements)
                 self.assertEqual(int(view(arena, acts, "expected_step_index",
-                                          np.int32, (1,))[0]), 4)
+                                          np.int32, (1,))[0]), max_frames - 1)
 
     def test_generated_qwen_entries_reach_budget_without_publishing(self):
         self._run_generated_qwen(force_eos=False)
 
     def test_generated_qwen_entries_stop_on_eos(self):
         self._run_generated_qwen(force_eos=True)
+
+    def test_generated_qwen_entries_cross_prior_step_limit(self):
+        self._run_generated_qwen(force_eos=False, max_frames=18)
 
 
 if __name__ == "__main__":

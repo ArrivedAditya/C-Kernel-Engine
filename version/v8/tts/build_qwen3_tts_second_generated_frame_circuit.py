@@ -35,7 +35,7 @@ PREFIX = "second_"
 
 def copy_ids(op_id: str, source: str, destination: str,
              source_elements: int, destination_elements: int,
-             *, destination_offset: int = 0,
+             *, source_offset: int = 0, destination_offset: int = 0,
              runtime_destination_offset: str | None = None) -> dict:
     op = {
         "id": op_id, "op": "copy_i32_span_checked",
@@ -44,7 +44,8 @@ def copy_ids(op_id: str, source: str, destination: str,
                         "outputs": {"destination": destination}},
         "params": {"S": source_elements, "D": destination_elements,
                    "call_constants": {
-                       "source_elements": source_elements, "source_offset": 0,
+                       "source_elements": source_elements,
+                       "source_offset": source_offset,
                        "destination_elements": destination_elements,
                        "count": 1}},
     }
@@ -251,6 +252,8 @@ def build_circuit(*, talker_layers: int = 28,
     bindings["step_control_verified"] = "step_control_verified"
     shapes["history_count_checked"] = {"shape": [1]}
     bindings["history_count_checked"] = "history_count_checked"
+    shapes["talker_step_limit_scalar"] = {"shape": [1]}
+    bindings["talker_step_limit_scalar"] = "talker_step_limit_scalar"
     graph["runtime_lengths"].update({
         "generation_state_ready": {
             "producer": "check_generation_state_ready", "result": "valid_extent",
@@ -258,6 +261,9 @@ def build_circuit(*, talker_layers: int = 28,
         "history_valid_count": {
             "producer": "check_history_count", "result": "valid_extent",
             "capacity": max_generated_frames - 1, "allow_zero": False},
+        "talker_step_limit": {
+            "producer": "set_talker_step_limit", "result": "valid_extent",
+            "capacity": max_step_index, "allow_zero": True},
     })
     prefill_header = graph["block_types"][graph["sequence"][0]]["header"]
     step_ids = {"clear_talker_continuation_valid", "check_talker_step_raw",
@@ -347,6 +353,24 @@ def build_circuit(*, talker_layers: int = 28,
     step_raw = next(op for op in feedback["header"]
                     if op["id"] == "check_talker_step_raw")
     step_raw["graph_slots"]["inputs"]["values"] = "step_control_verified"
+    # The map's default max_duration belongs to the predictor and is 14 for
+    # this geometry. Bind the talker check to its own declared frame limit.
+    step_raw["consumes_runtime_lengths"] = ["talker_step_limit"]
+    step_raw["runtime_scalar_bindings"] = {
+        "max_duration": "talker_step_limit",
+        "expanded_capacity": "talker_step_limit"}
+    feedback["header"].insert(feedback["header"].index(step_raw), {
+        "id": "set_talker_step_limit",
+        "op": "runtime_extent_affine", "kernel": "runtime_extent_affine_i32",
+        "returns_status": True,
+        "produces_runtime_lengths": {"talker_step_limit": "valid_extent"},
+        "params": {"call_constants": {
+            "extent_affine_source": 0, "extent_affine_factor": 1,
+            "extent_affine_offset": max_step_index,
+            "extent_affine_capacity": max_step_index}},
+        "graph_slots": {"inputs": {},
+                        "outputs": {"valid_extent": "talker_step_limit_scalar"}},
+    })
     shapes["generation_state_ready_scalar"] = {"shape": [1]}
     bindings["generation_state_ready_scalar"] = "generation_state_ready_scalar"
 
