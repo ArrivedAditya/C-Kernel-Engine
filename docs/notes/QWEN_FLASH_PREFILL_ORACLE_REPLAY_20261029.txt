@@ -22,6 +22,7 @@ Full-vocabulary comparison
 Input                       Steps compared      Full logits             Greedy IDs
 2 tokens                    initial             bit-exact (248,320)     198
 127 tokens                  initial + 2 decode  bit-exact at all steps  21181, 18160, 553
+127 tokens, current main    initial + 2 decode  bit-exact at all steps  21181, 18160, 553
 2,323 tokens                initial + 2 decode  bit-exact at all steps  1, 1696, 1074
 2,323 tokens, current main  initial + 2 decode  bit-exact at all steps  1, 1696, 1074
 
@@ -33,7 +34,7 @@ With llama.cpp flash attention DISABLED, the two-token oracle and CKE flash-auto
 
 Speed and deployment boundary
 -----------------------------
-One matched Ryzen 127-token CKE run measured 6.337536 seconds for generated batched prefill versus 17.905567 seconds for serialized decode-style prefill. This is a one-run native prefill comparison, not an HTTP throughput result. Model initialization took about a minute and was measured separately. No speed claim is made for 2,323 tokens, 262K context, concurrent HTTP requests, or the dense Qwen3.8 artifact.
+One Ryzen 127-token CKE run on the earlier source measured 6.337536 seconds for generated batched prefill versus 17.905567 seconds for serialized decode-style prefill. A current-main same-bundle pair, switching only CK_V8_FORCE_DECODE_PREFILL, measured 6.573775 seconds batched and 18.822272 seconds sequential (2.86x native prefill ratio). Both generated the same three greedy token IDs, but only the batched path has exact flash-oracle full-logit parity. These are one-run native prefill comparisons, not HTTP throughput results. Current-main model initialization took 117.414120 and 99.340881 seconds respectively and was measured separately. No speed claim is made for 2,323 tokens, 262K context, concurrent HTTP requests, or the dense Qwen3.8 artifact.
 
 The currently served bundle was not replaced. The Muse test endpoint was restarted after the model runs. Before enabling this mode for Qwen Code, test HTTP cancellation/reset and context boundaries, then run the actual harness. Keep flash-auto selected through the circuit/map contract; do not silently substitute decode's reduction.
 
@@ -41,6 +42,7 @@ Retained private evidence
 -------------------------
 Ryzen: /data/cke/runs/qwen-flash-speed-20261029/continuation127 and continuation2323 (oracle and CKE logit rows and reports); oracle-flash-l3-2 and oracle-flash-127; original bundle build.log.
 Ryzen current-main: /data/cke/runs/qwen-flash-speed-20261029/current-main-2323 and runtime-current-main-fast-20261029/build.log.
-P3: artifacts/cohere-qwen-investigation-20261027/continuation127, continuation2323, current-main-2323, oracle-flash-l3-2, oracle-flash-127.logits.f32, phase-consistent-127.logits.f32.
+Ryzen current-main: /data/cke/runs/qwen-flash-speed-20261029/current-main-speed127 (same-bundle native timing and full logit rows).
+P3: artifacts/cohere-qwen-investigation-20261027/continuation127, continuation2323, current-main-2323, current-main-speed127, oracle-flash-l3-2, oracle-flash-127.logits.f32, phase-consistent-127.logits.f32.
 
-Follow-up: repeat the current-main 127-token and near-boundary cases, then compare HTTP Qwen Code task time and output against the safe service. Do not use the closed draft #968 provider change.
+Follow-up: run near-context-boundary and chunked cases, then compare HTTP Qwen Code task time and output against the safe service. Do not use the closed draft #968 provider change.
