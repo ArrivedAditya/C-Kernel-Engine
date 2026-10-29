@@ -1,7 +1,7 @@
 Qwen3.8 Flash Next: phase-matched prefill and continuation replay
 2026-10-29 UTC
 
-Status: bounded current-main native PASS; HTTP harness and long-context certification NOT_TESTED.
+Status: bounded current-main native PASS; raw HTTP lifecycle smoke PASS; Qwen Code harness and long-context certification NOT_TESTED.
 
 Artifact and execution
 ----------------------
@@ -37,6 +37,8 @@ Speed and deployment boundary
 One Ryzen 127-token CKE run on the earlier source measured 6.337536 seconds for generated batched prefill versus 17.905567 seconds for serialized decode-style prefill. A current-main same-bundle pair, switching only CK_V8_FORCE_DECODE_PREFILL, measured 6.573775 seconds batched and 18.822272 seconds sequential (2.86x native prefill ratio). Both generated the same three greedy token IDs, but only the batched path has exact flash-oracle full-logit parity. These are one-run native prefill comparisons, not HTTP throughput results. Current-main model initialization took 117.414120 and 99.340881 seconds respectively and was measured separately. No speed claim is made for 2,323 tokens, 262K context, concurrent HTTP requests, or the dense Qwen3.8 artifact.
 
 The currently served bundle was not replaced. The Muse test endpoint was restarted after the model runs. The qwen4_exp circuit currently has no serving-profile reference: invoking `--resolve-serving` on this rebuilt bundle produced no serving sidecar. Its publisher Jinja is present in config.json, but that alone does not certify the declared output protocol or a Qwen Code task. Before enabling this mode for Qwen Code, add and verify the circuit-linked serving contract, then test HTTP cancellation/reset and context boundaries with a suitable larger-context bundle. Keep flash-auto selected through the circuit/map contract; do not silently substitute decode's reduction.
+
+An isolated raw-prompt server on port 8210 loaded that current-main 4K bundle after setting `LD_LIBRARY_PATH` to its rebuilt session/tokenizer directory. The rebuilt session library SHA-256 was 070370cf3df7262bc7061e88ab3f645176c8374f58b30e4848bf826f5815c9ca; tokenizer SHA-256 was ac94e41160f7f441c3aa1f11a2a26b23e3f8bf4495aa82faf92f496057c8cbe5. `/v1/health` and `/v1/models` passed. A raw non-streaming request returned HTTP 200/completed in 5.744 seconds; a streaming request was disconnected immediately after its `response.created` event; a follow-up on the same server returned HTTP 200/incomplete at the requested eight-token output limit in 3.707 seconds. The streamed cancellation was requested before phase-specific prefill evidence was captured, so this establishes prompt follow-up after disconnect, not cancellation during prefill. This test does not exercise publisher rendering, tool calls or the Qwen Code harness. The HTTP worker reported 32 automatic threads, versus 16 threads in the native parity/speed measurements, so these timings must not be compared as a matched benchmark. Probe output and server log are retained at `/data/cke/runs/qwen-flash-speed-20261029/http-raw-probe.json` and `http-raw-server.log` on Ryzen.
 
 Retained private evidence
 -------------------------
