@@ -50,10 +50,11 @@ def build_circuit() -> dict:
     return attach_codec(graph, frames=1, ids=ids)
 
 
-def attach_codec(graph: dict, *, frames: int, ids: dict[str, str]) -> dict:
+def attach_codec(graph: dict, *, frames: int, ids: dict[str, str],
+                 codec_kwargs: dict | None = None) -> dict:
     """Append codec operations with explicit, already-produced codebook spans."""
-    codec = codec_waveform(frames=frames)
-    samples = frames * SAMPLES
+    codec = codec_waveform(frames=frames, **(codec_kwargs or {}))
+    samples = codec["activation_buffers"]["waveform_output"]["shape"][-1]
     shapes, bindings = graph["activation_buffers"], graph["activation_bindings"]
 
     def slot(value: str) -> str:

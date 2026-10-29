@@ -445,9 +445,21 @@ Asset-free tests exercise generated EOS and budget paths, output preservation,
 repeated invocation and malformed offsets. The pinned full-weight comparison
 certifies the first five generated code frames and retains the existing
 two-frame PCM regression.
-Natural EOS, a complete reference-matching code sequence, and codes-to-codec
-WAV composition remain unproven. Test:
+Natural EOS and a complete reference-matching code sequence remain unproven. Test:
 <code>tests/test_v8_checked_frame_loop.py</code>.</p>
+<p><strong>Qwen3-TTS checked code-to-codec handoff:</strong> a new bounded
+circuit declares the frame-major code buffer, each codebook packing edge, and
+the complete codec schedule. A generic native shell accepts only a generated
+EOS with the exact frame and codebook geometry selected for that codec segment;
+it then executes the generated codec on the same planned arena and publishes
+finite PCM samples only after the sample count is checked. The asset-free
+synthetic test compiles all three segments through normal lowering and codegen,
+checks codebook order, rejects a wrong length or failing codec without
+publishing PCM, and verifies recovery on the same arena. The synthetic test
+forces EOS at two frames; it does not certify natural stopping, pinned-model
+parity, or a useful text-to-speech utterance. The existing fixed-code codec
+oracle remains a separate numerical lane. Test:
+<code>tests/test_v8_qwen3_tts_loop_codec.py</code>.</p>
 <p><strong>Two generated frames to PCM:</strong> a checked, model-neutral integer
 span concatenation provider packs each pair of CKE-generated codebook IDs
 into a two-frame input for the existing generated codec. The same generated

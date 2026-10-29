@@ -35,7 +35,7 @@ PREFIX = "second_"
 
 def copy_ids(op_id: str, source: str, destination: str,
              source_elements: int, destination_elements: int,
-             *, destination_offset: int = 0,
+             *, source_offset: int = 0, destination_offset: int = 0,
              runtime_destination_offset: str | None = None) -> dict:
     op = {
         "id": op_id, "op": "copy_i32_span_checked",
@@ -44,7 +44,8 @@ def copy_ids(op_id: str, source: str, destination: str,
                         "outputs": {"destination": destination}},
         "params": {"S": source_elements, "D": destination_elements,
                    "call_constants": {
-                       "source_elements": source_elements, "source_offset": 0,
+                       "source_elements": source_elements,
+                       "source_offset": source_offset,
                        "destination_elements": destination_elements,
                        "count": 1}},
     }
