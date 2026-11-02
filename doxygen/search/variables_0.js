@@ -1,6 +1,6 @@
 var searchData=
 [
-  ['abi_5fversion_0',['abi_version',['../structCKSessionConfigV8.html#adddfa06e356784ee8dc61967f1766fbd',1,'CKSessionConfigV8::abi_version'],['../structCKSessionGenerateRequestV8.html#aa6274c83f941a5c47d04f56a952d72bb',1,'CKSessionGenerateRequestV8::abi_version'],['../structCKSessionGenerateResultV8.html#a4b9e80b1e1a1f2ce5d2cffe64033f58e',1,'CKSessionGenerateResultV8::abi_version'],['../structCKModelRuntimeDescriptorV8.html#af425dd44d5d3c8b98f14d709e846c175',1,'CKModelRuntimeDescriptorV8::abi_version']]],
+  ['abi_5fversion_0',['abi_version',['../structCKSessionConfigV8.html#adddfa06e356784ee8dc61967f1766fbd',1,'CKSessionConfigV8::abi_version'],['../structCKSessionGenerateRequestV8.html#aa6274c83f941a5c47d04f56a952d72bb',1,'CKSessionGenerateRequestV8::abi_version'],['../structCKSessionGenerateResultV8.html#a4b9e80b1e1a1f2ce5d2cffe64033f58e',1,'CKSessionGenerateResultV8::abi_version'],['../structCKSessionProgressV8.html#ad217fd75924a12dc8cba5991b61adcc4',1,'CKSessionProgressV8::abi_version'],['../structCKModelRuntimeDescriptorV8.html#af425dd44d5d3c8b98f14d709e846c175',1,'CKModelRuntimeDescriptorV8::abi_version']]],
   ['action_1',['action',['../structRecommendation.html#ad4009263d6f5d6e3feeab261f071beaf',1,'Recommendation']]],
   ['activation_5fbytes_2',['activation_bytes',['../structCKModelConfig.html#a3be18cb0e7b29fa1449ac753beeca7db',1,'CKModelConfig::activation_bytes'],['../structCKModel.html#aca3677590515480ee313d29adad814fb',1,'CKModel::activation_bytes']]],
   ['activations_5fbase_3',['activations_base',['../structck__bump__alloc__t.html#a197ed664fe2b6dd05130e00c6093225d',1,'ck_bump_alloc_t']]],
@@ -23,14 +23,15 @@ var searchData=
   ['alignment_5fbytes_20',['alignment_bytes',['../structCKMemPlan.html#a8e5e24bcf347c4fe2d45e76be8c2351e',1,'CKMemPlan']]],
   ['alignment_5fchannels_21',['alignment_channels',['../structCKKokoroShapeLimitsV8.html#a9af98b25afda3ced8b86248a4cb19c10',1,'CKKokoroShapeLimitsV8']]],
   ['alignment_5felements_22',['alignment_elements',['../structCKKokoroShapeV8.html#a12f1f3d0ea492da2ef9b18c989b26b3b',1,'CKKokoroShapeV8']]],
-  ['arena_23',['arena',['../structCKMemSpan.html#a818835e50806e8d1fd141cf97b4ea806',1,'CKMemSpan']]],
-  ['arg_24',['arg',['../structCKIRV2Binding.html#a0e50855a2852b3018c3b87ae5e53db19',1,'CKIRV2Binding::arg'],['../structCKPlanBinding.html#adf2dd85574e578a94cd1fc656d077505',1,'CKPlanBinding::arg']]],
-  ['artifact_5frole_25',['artifact_role',['../structCKModelRuntimeDescriptorV8.html#a7230fff85cda3eb99e6a7e26469dfd9b',1,'CKModelRuntimeDescriptorV8']]],
-  ['attn_5fout_26',['attn_out',['../structCKLayerBackwardParams.html#ab5ce33fe414d678705eb03372371d68d',1,'CKLayerBackwardParams::attn_out'],['../structCKLayerForwardParamsQ4K.html#a3372d9668e65bc5a77fcdb3e69547af3',1,'CKLayerForwardParamsQ4K::attn_out'],['../structCKLayerOffsets.html#a6f26daba0ff5fda605b9a751ac2ba2ee',1,'CKLayerOffsets::attn_out'],['../structCKLayerForwardParams.html#af592e985b232ee6a07522504bff59ff8',1,'CKLayerForwardParams::attn_out']]],
-  ['attn_5foutput_27',['attn_output',['../structCKLayerOffsets.html#af31ef2ca40d94908315c2313a00f7280',1,'CKLayerOffsets']]],
-  ['attn_5fprobs_28',['attn_probs',['../structCKLayerOffsets.html#a66f717f2874057bf925c4e97a57079a7',1,'CKLayerOffsets']]],
-  ['attn_5fproj_5fbias_5foffset_29',['attn_proj_bias_offset',['../structCKLayerLayout.html#aaece9ea1e0a761b00bdce132c24aa6a0',1,'CKLayerLayout']]],
-  ['attn_5fproj_5fweight_5foffset_30',['attn_proj_weight_offset',['../structCKLayerLayout.html#ace90b671a13ec6e8cb08fac170a25038',1,'CKLayerLayout']]],
-  ['attn_5fscores_31',['attn_scores',['../structCKLayerOffsets.html#a6f8340c9cf6ae1cba00764e4e14dda26',1,'CKLayerOffsets']]],
-  ['available_5fmb_32',['available_mb',['../structMemoryInfo.html#a72adfc47f767bf59141275a7e542f5e2',1,'MemoryInfo']]]
+  ['arena_23',['arena',['../structCKMemSpan.html#a818835e50806e8d1fd141cf97b4ea806',1,'CKMemSpan::arena'],['../structck__checked__frame__loop.html#a8a36a4c3b048a7b19d1246ac44e677c9',1,'ck_checked_frame_loop::arena']]],
+  ['arena_5fbytes_24',['arena_bytes',['../structck__checked__frame__loop.html#a73e07fdab8778475e08fb988224b76b9',1,'ck_checked_frame_loop']]],
+  ['arg_25',['arg',['../structCKPlanBinding.html#adf2dd85574e578a94cd1fc656d077505',1,'CKPlanBinding::arg'],['../structCKIRV2Binding.html#a0e50855a2852b3018c3b87ae5e53db19',1,'CKIRV2Binding::arg']]],
+  ['artifact_5frole_26',['artifact_role',['../structCKModelRuntimeDescriptorV8.html#a7230fff85cda3eb99e6a7e26469dfd9b',1,'CKModelRuntimeDescriptorV8']]],
+  ['attn_5fout_27',['attn_out',['../structCKLayerForwardParams.html#af592e985b232ee6a07522504bff59ff8',1,'CKLayerForwardParams::attn_out'],['../structCKLayerBackwardParams.html#ab5ce33fe414d678705eb03372371d68d',1,'CKLayerBackwardParams::attn_out'],['../structCKLayerForwardParamsQ4K.html#a3372d9668e65bc5a77fcdb3e69547af3',1,'CKLayerForwardParamsQ4K::attn_out'],['../structCKLayerOffsets.html#a6f26daba0ff5fda605b9a751ac2ba2ee',1,'CKLayerOffsets::attn_out']]],
+  ['attn_5foutput_28',['attn_output',['../structCKLayerOffsets.html#af31ef2ca40d94908315c2313a00f7280',1,'CKLayerOffsets']]],
+  ['attn_5fprobs_29',['attn_probs',['../structCKLayerOffsets.html#a66f717f2874057bf925c4e97a57079a7',1,'CKLayerOffsets']]],
+  ['attn_5fproj_5fbias_5foffset_30',['attn_proj_bias_offset',['../structCKLayerLayout.html#aaece9ea1e0a761b00bdce132c24aa6a0',1,'CKLayerLayout']]],
+  ['attn_5fproj_5fweight_5foffset_31',['attn_proj_weight_offset',['../structCKLayerLayout.html#ace90b671a13ec6e8cb08fac170a25038',1,'CKLayerLayout']]],
+  ['attn_5fscores_32',['attn_scores',['../structCKLayerOffsets.html#a6f8340c9cf6ae1cba00764e4e14dda26',1,'CKLayerOffsets']]],
+  ['available_5fmb_33',['available_mb',['../structMemoryInfo.html#a72adfc47f767bf59141275a7e542f5e2',1,'MemoryInfo']]]
 ];

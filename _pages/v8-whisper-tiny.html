@@ -3,6 +3,156 @@
 
 <h1>Whisper Tiny and Base End-to-End</h1>
 
+<h2>Word alignment bring-up boundary</h2>
+<table>
+  <thead><tr><th>Stage</th><th>Current evidence</th><th>Missing alignment contract</th></tr></thead>
+  <tbody>
+    <tr><td>Audio frontend and encoder</td><td>Generated WAV decode/features and encoder memory already feed the decoder.</td><td>Retain each window's valid 20 ms attention-frame extent.</td></tr>
+    <tr><td>Decoder and timestamp tokens</td><td>Generated decoder produces text IDs, optional paired segment timestamps, and an opt-in selected-head trace on the base artifact.</td><td>Measure word-boundary accuracy; segment timestamps alone cannot locate words.</td></tr>
+    <tr><td>Tokenizer and window assembly</td><td>The trace analyzer reports token correspondence and absolute word times per window. A checked assembler partitions words at each consumed audio extent and exposes overlap for review.</td><td>Measure boundary accuracy on real long recordings; review words crossing seek boundaries.</td></tr>
+    <tr><td>Editing</td><td>A local review tool produces private context WAVs and unapproved filler proposals; an edited copy requires a separate approval file tied to audio and preview hashes.</td><td>Measure filler recall and conduct human listening before any edit-readiness claim.</td></tr>
+  </tbody>
+</table>
+<p>The generated frontend, encoder and decoder produce transcription tokens.
+The optional timestamp-token policy and long-audio window offsets produce
+segment timing, not word timing. The pinned base artifact's
+<code>generation_config.json</code> declares eight alignment heads: layer/head
+3/1, 4/2, 4/3, 4/7, 5/1, 5/2, 5/4 and 5/6. The generated cross-attention
+provider uses head-major query/key/value and caller-owned score scratch.
+That scratch contains temporary, unnormalized exponentials for the current
+query and is overwritten by later decoder layers. An opt-in generic observer
+now recomputes the final query probability row from the generated Q/K tensors
+immediately after each cross-attention call. Its circuit-declared buffer keeps
+the selected layer/head rows across decoder steps. The last prefill query
+predicts the first generated token; each later decode call predicts the next
+token. The host associates those rows with the predicted token, rejects missing
+or nonfinite selected rows, and writes private versioned trace files.</p>
+<p>The generic native <code>alignment_attention_dtw_f32</code> provider now
+accepts selected attention heads, standardizes across text tokens, applies
+reflect-padded median smoothing over audio frames, averages heads and performs
+ordered dynamic time warping to return token-first-frame indices. A
+model-neutral generated graph tests the selected map and failure propagation.
+The opt-in analyzer groups tokenizer spans into words, crops attention to the
+valid audio extent and invokes this native provider. An earlier trace of public
+LibriSpeech recording 2086-149220-0033 produced 22 timed words. That trace
+used the incorrect token association and must be rerun before its timing can
+support a current claim. Against the independent, automatically forced-aligned
+<a href="https://huggingface.co/datasets/gilkeyio/librispeech-alignments">LibriSpeech alignments dataset</a>, 20 matching
+words previously had 40 matching boundaries with median absolute difference
+150 ms and 95th percentile 396 ms; three reference words differed from CKE's
+transcript. These historical boundaries are not manually verified or certified
+for edits. No calibrated transcription or boundary confidence is claimed.
+Generated execution, trace capture and word output pass; boundary accuracy,
+long-window deduplication, filler recall and non-destructive edit review remain
+open. The reference operation order is documented in the
+<a href="https://github.com/huggingface/transformers/blob/main/src/transformers/models/whisper/generation_whisper.py">Transformers Whisper generation source</a>.</p>
+<h3>Hand-corrected boundary check</h3>
+<p>A local, optional evaluation uses two clips from the
+<a href="https://buckeyecorpus.osu.edu/">Buckeye Corpus</a>, whose word
+boundaries were hand-corrected by trained annotators. The audio and corpus
+manifest are kept outside this repository under their noncommercial-use terms.
+The evaluator verifies recording and trace identities, then reports
+transcription edits, filler recall, and timing error only for matched words.
+It does not turn a missed word into a timing match.</p>
+<table>
+  <thead><tr><th>Clip</th><th>Transcription</th><th>Matched-boundary error</th><th>Important failure</th></tr></thead>
+  <tbody>
+    <tr><td><code>s0802a_023</code></td><td>11/13 words matched; both “um” fillers omitted</td><td>Median 56 ms across 10 timed words; maximum 5,189 ms</td><td>One matched word has no valid timing. The first recognized word is placed at 0 s although its hand-corrected start is 5.189 s.</td></tr>
+    <tr><td><code>s0303b_005</code></td><td>18/18 words matched</td><td>Median 74 ms; maximum 1,077 ms. Previous median was 225 ms.</td><td>Word boundaries remain provisional; this one clip does not establish edit-grade accuracy.</td></tr>
+  </tbody>
+</table>
+<p>The initial trace attached each decode call's attention to the token it
+consumed, one token later than the token that attention predicted. Replaying
+the generated decoder with prefill and decode observations corrected the clean
+clip's median matched-boundary error from 225 ms to 74 ms without changing its
+transcript. An independent pinned Transformers run measured 81 ms on the same
+hand-corrected reference. Older traces are rejected by the analyzer because
+their token correspondence is wrong. These results still fail an edit-grade
+timing claim. The first clip also
+demonstrates why filler detection must be scored independently: alignment
+cannot recover fillers absent from the transcript. A diagnostic replay that
+renormalized the captured attention within valid frames did not improve the
+clean clip's median boundary error; no production arithmetic was changed on
+that basis. Native timing remains an inspectable diagnostic pending numerical
+localization, silence handling, and manually reviewed edit intervals.</p>
+<h3>Checked long-window assembly</h3>
+<p>Run <code>assemble_whisper_word_timings_v8.py</code> with the original audio,
+generated run report, and one alignment JSON per audio window in order. It
+verifies the audio, report, trace and window identities, then publishes only
+words inside each window's consumed source-frame interval. A word crossing a
+seek boundary, appearing only in replayed overlap, lacking timing, or spanning
+more than two seconds goes into <code>review_words</code> with a named reason.
+It does not deduplicate by spelling: repeated words at distinct times remain
+distinct. The two-second rule is a conservative review trigger, not a
+calibrated word-duration or silence detector. Every assembled result has
+<code>edit_ready=false</code>; this tool proposes no cuts.</p>
+<p>A generated Whisper Base run on a 35.8-second recording made by repeating
+the clean clip four times exercised timestamp-seek overlap: two windows,
+with the first consuming audio through 27.76 seconds of its 30-second view.
+The assembler retained 71 bounded words, including all four distinct “bring”
+occurrences, and flagged one “family” span crossing the consumed boundary for
+review. This synthetic repetition checks window accounting; it is not a
+manually verified long-recording timing benchmark.</p>
+<p>On the local hand-corrected clips, the clean 18-word recording assembles
+without a review span. The filler recording publishes nine bounded words and
+flags “Actually” for its 5.44-second span and “I” for missing timing. The two
+omitted “um” fillers remain a separate transcription-recall failure measured
+by the boundary evaluator. This prevents the long first span from silently
+becoming an edit interval, but does not locate the missing fillers.</p>
+<p>An additional local check used three 25-second clips from different
+speakers in the <a href="https://huggingface.co/datasets/alexwengg/buckeye">Buckeye
+benchmark mirror</a>. Their matched-word median boundary errors were 65,
+50 and 70 ms, while maximum errors reached 4.745, 1.850 and 0.916 seconds.
+CKE omitted all 16 hand-labeled fillers; the pinned PyTorch Whisper Base run
+also emitted none of them. These are segment-level results, not a natural
+long-recording benchmark, and one clip has a larger CKE-versus-PyTorch
+transcript difference requiring separate diagnosis. The source audio and
+annotations remain local under the corpus terms.</p>
+<p>This check also exposed a physical-end boundary bug. A 25.196-second WAV
+can occupy a final 20 ms attention frame ending at 25.200 seconds. The word
+analyzer now caps reported word ends at the actual WAV end, preserves
+sub-millisecond source offsets, and marks capped words with
+<code>clipped_to_physical_window_end</code>. The checked assembler accepts
+all three corrected per-window reports and still requires review for any
+long or ambiguous span.</p>
+<h3>Filler review and approved copy</h3>
+<p><code>review_whisper_fillers_v8.py propose</code> accepts the original mono
+PCM16 WAV, its generated run report, checked word assembly, and optional
+manual flags. It writes private context WAVs and <code>proposals.json</code>
+in a new directory without changing the source. Recognized “um,” “uh,”
+“erm,” and “hmm” words become proposals only when timed. Missing timings are
+listed as unlocated; fillers omitted by transcription require a separate
+manually placed flag. A manual-flags file has schema
+<code>cke.whisper_manual_filler_flags.v1</code>, the original audio SHA-256,
+and a <code>flags</code> list with <code>label</code>,
+<code>start_seconds</code>, and <code>end_seconds</code>.</p>
+<p>After listening to each context WAV, a reviewer may create a separate
+<code>cke.whisper_filler_approval.v1</code> JSON with
+<code>audio_sha256</code>, <code>proposal_sha256</code>, a nonempty
+<code>approved_by</code>, and an <code>approved</code> list. Each selected ID
+must provide its <code>reviewed_preview_sha256</code> and exact
+<code>cut_start_seconds</code>/<code>cut_end_seconds</code>. The
+<code>render</code> command verifies those identities, rejects overlapping or
+out-of-context cuts, and writes a new WAV plus an evidence JSON. It refuses
+to overwrite the original or existing outputs. <code>approved_by</code> is
+a reviewer declaration, not authentication or proof that playback occurred.
+The preview and approval steps do not certify Whisper's boundaries.</p>
+<pre><code>python3 version/v8/scripts/review_whisper_fillers_v8.py propose \
+  --audio recording.wav --run-report run.json --assembly assembly.json \
+  --manual-flags flags.json --output-dir filler-review
+# Listen to filler-review/f0000-context.wav and inspect proposals.json.
+# Write approval.json by hand with the reviewed preview hash and exact cut times.
+python3 version/v8/scripts/review_whisper_fillers_v8.py render \
+  --audio recording.wav --proposals filler-review/proposals.json \
+  --approval approval.json --output reviewed-copy.wav \
+  --evidence reviewed-copy.json</code></pre>
+<p>In the local hand-corrected <code>s0802a_023</code> diagnostic, the model
+transcript supplied no filler proposal. Two manually flagged “um” intervals
+produced two context WAVs for review; no edit to that recording was approved
+or rendered. Synthetic tests cover approval, interval rejection, unchanged
+source audio, and the edited-copy frame count. Filler detection recall and
+human listening remain distinct acceptance gates.</p>
+
 <div class="alert alert-info">
     <div class="alert-icon">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
