@@ -180,6 +180,149 @@
     </div>
 </div>
 
+<section id="training-backend-contract">
+<h2>Antsand training backend: discovery and validation proposal</h2>
+<p><code>server/training/contract.py</code> implements the first handoff boundary only:
+capability discovery and side-effect-free configuration validation. It does not create a job, compile
+code, train weights, download assets, reserve resources or deploy a service. A saved Antsand draft is
+not a submission. The independent simulated consumer lives in <code>server/training/consumer.py</code>;
+it does not import producer validators. No real Antsand system was contacted.</p>
+<p>The versioned proposal is <code>cke.training.v1</code>. Its local JSON-lines command accepts
+<code>discover</code> and <code>validate</code>. Each response binds the request ID/hash, worker boot
+ID and current capability hash. Discovery includes the CKE checkout commit, v8 workflow source hash,
+explicit unloaded-runtime status, recipe definitions, immutable dataset hashes, split counts, tokenizer,
+optimizer, method, stages and limits. This is a source-checkout adapter, not proof of an installed
+native training runtime. It does not add endpoints to <code>cke.control.v1</code>.</p>
+<table class="table"><thead><tr><th>Boundary</th><th>Advertised scope</th></tr></thead><tbody>
+<tr><td>Recipes</td><td>Explicit <code>svg_tiny_v8</code> and <code>english_tiny_v8</code> bindings to committed v8 corpus specs. No implicit v7 recipe conversion.</td></tr>
+<tr><td>Shape</td><td>4 layers; model width 32; hidden width 64; 4 query/KV heads; vocabulary 256; sequence length 32. Other shapes are rejected in this adapter, even if another workflow supports them.</td></tr>
+<tr><td>Training settings</td><td>FP32, AdamW, full tiny-decoder training, UTF-8 byte tokenizer; epochs 1–10 and gradient accumulation 1–8.</td></tr>
+<tr><td>Dataset references</td><td>Opaque registered ID + version + SHA-256; train/validation split names. Worker-owned paths never appear in requests or replies.</td></tr>
+<tr><td>Resources</td><td>Unknown admission is a warning; explicitly unavailable resources reject validation. A successful plan never reserves memory/CPU or promises execution feasibility.</td></tr>
+<tr><td>Unsupported operations</td><td>Submit, observe, artifact retrieval, cancellation, LoRA/QLoRA and Clef-head training through this adapter. This does not deny existing CKE component training evidence.</td></tr>
+</tbody></table>
+<p>Dataset registration recomputes the corpus spec/hash, full split hashes, expected Git blob identities,
+byte-token counts and text/SVG format checks without executing the training workflow. SVG is restricted
+to the existing fixture's safe svg/rect/circle elements and attributes. Quality/generalization remain
+NOT_TESTED; the SVG validation document is a near duplicate and only establishes machinery coverage.
+A changed registry changes the capability hash; old plans must be revalidated. Arbitrary paths,
+commands, output directories and unknown configuration keys are rejected.</p>
+<p>Validation requires all fields explicitly: recipe, dataset reference, tokenizer, shape, dtype,
+optimizer, method, epochs and grad_accum. It returns a canonical plan/hash with
+<code>submittable=false</code> and <code>execution=disabled</code>, or field-addressed errors with no
+plan. Errors and warnings use fixed codes. The independent consumer checks the exact discovered
+capability snapshot, plan hash, supported config and correlated identities. Failed, late or cancelled
+responses cannot become its current accepted plan; publication rechecks the monotonic deadline under
+a lock. This local consumer does not interrupt a blocked transport. A network deadline/authentication
+contract is future work.</p>
+<pre><code># One read-only discovery request; no service is installed.
+printf '%s\n' '{"schema":"cke.training.v1","request_id":"inspect","operation":"discover"}' \
+  | python3 -S -m server.training.contract
+# Keep the same process alive for discovery followed by validation: boot IDs change on restart.
+python3 -m unittest server.tests.test_training_contract -v
+python3 scripts/nightly_runner.py --tests training_backend_contract --ci --require-executed</code></pre>
+<p>Copyable versioned examples are in <code>server/training/fixtures/validation_v1.json</code>.
+They are explicitly simulated, with fixed boot/capability identities; do not submit them to a new
+worker without discovery. The tests include a separate stdlib-only worker subprocess and independent
+client, accepted/rejected configs, v7/unknown recipes, invalid dimensions/splits, modified datasets,
+missing metadata, forged plan identities, stale workers, unavailable resources, strict bounded JSON,
+late responses and cancellation recovery. They assert validation cannot launch a subprocess, execute
+a shell command or write files. Messages are limited to 16 KiB. No real training is executed here.</p>
+<p><strong>Next gate:</strong> agree the proposal with Antsand, then add explicit authorized submission
+of the exact validated plan and one small SVG job using the existing v8 workflow. Persist job and
+idempotency identities; recheck inputs and resources on submission. Progress, artifact retrieval,
+cross-identity authorization, reconnect recovery and confirmed cancellation require their own tested
+implementation. None is implied by an accepted validation response. SVG/HTML reports must be isolated
+or sanitized by any future UI rather than injected into Antsand's authenticated origin.</p>
+</section>
+
+<section id="training-job-proposal">
+<h2>Opt-in local SVG job submission</h2>
+<p><code>server/training/jobs.py</code> adds a separate <code>cke.training.jobs.v1</code> local
+adapter around the existing v8 generated-C workflow. The discovery/validation-only command above
+remains unchanged and cannot submit jobs. This adapter requires an explicit
+<code>--enable-svg-training</code> launch and accepts only the registered SVG recipe. It does not
+install a daemon or expose a network endpoint.</p>
+<p><code>prepare</code> checks the existing validation contract and persists a new
+<code>cke.training.execution-plan.v1</code> receipt. This explicitly pins the experiment/draft revision,
+trusted caller identity, worker boot, validation/capability hashes, CKE commit, workflow hash,
+interpreter binary hash, fixed optimizer settings and seed. The original validation-only plan remains
+non-submittable inside the receipt. Only the new execution receipt is submittable. It expires after
+ten minutes. At least two epochs are required because the certification workflow compares first and
+last epoch losses.</p>
+<p><code>submit</code> accepts only that exact stored receipt hash and an idempotency key. An owner/key
+retry returns the original persistent job ID, even after reconnect; changing the plan under the same
+key fails. Inputs/capabilities, interpreter identity, expiry, disk availability and the one-job slot
+are rechecked before admission; inputs are checked again before execution. No client supplies shell
+commands, Python paths, corpus paths or output paths. The trusted launcher selects the interpreter
+without resolving away its virtual environment.</p>
+<p>SQLite receipts survive worker reconnects. A private store and exclusive daemon lock admit one job,
+with no waiting backlog. The store holds at most 32 jobs and 128 plan receipts; the launcher requires
+2 GiB free disk, fixes native thread settings to one and bounds the workflow to 600 seconds. This is
+local admission, not a global CPU/RAM reservation or a filesystem quota. Stdout/stderr is drained while
+retaining at most 1 MiB of private log data. The job has queued/running/succeeded/failed states, and
+an explicit <code>recovery_required</code> state for ambiguous interrupted work.</p>
+<p>On restart, unfinished receipts are never automatically retried or labelled cancelled. They become
+recovery-required and block further admission: a child may still exist, or a completion receipt may
+have been lost. Operator investigation is required; automatic adoption, cancellation and recovery
+resolution are not implemented. Completed jobs remain readable. Observations distinguish original
+submission boot identity from the current observer boot and carry experiment/revision correlation,
+timestamps, stage and fixed error codes. Fine-grained live progress remains <code>null</code>. At completion, finite training and validation
+cross-entropy values carry epoch, unit and observation time; missing values are omitted rather than
+replaced with zero. The authoritative workflow report retains the detailed trajectory.</p>
+<p>Success requires a zero process exit <em>and</em> a passing workflow report with the required
+learning, PyTorch trajectory, resume, checkpoint, inference-export, runtime-provenance and IR-report
+gates. Incomplete or failed reports do not become success. The accepted plan, actual training report and available workflow training-plan, pipeline and
+checkpoint-manifest JSON files are registered as owner-scoped artifact IDs, sizes and SHA-256 hashes.
+The pipeline/report retain generated samples; checkpoint binary retrieval is not implemented. Retrieval uses only those IDs,
+checks the hash and returns bounded 8 KiB base64 chunks. No arbitrary path or URL is accepted. Training
+report strings, samples and any future SVG/HTML reports must not be injected into an authenticated UI.</p>
+<p>Authorization is an in-process trusted-caller boundary: the launcher supplies the principal, and
+request JSON cannot override it. Tests prove cross-principal denial inside that boundary; this is not
+network authentication or a Unix-user sandbox. Real Antsand submission requires its authenticated
+adapter to establish that identity. Cancellation remains unsupported; neither timeout nor lost contact
+is presented as accepted cancellation.</p>
+<pre><code># Persistent local JSON-lines interface; explicit administrator-chosen identity and store.
+python3 -m server.training.jobs --enable-svg-training \
+  --principal local-review --store /private/cke-svg-jobs --python /path/to/venv/bin/python
+# Request fields: schema, request_id, operation plus:
+# discover: no extra fields
+# prepare: config, experiment_id, draft_revision
+# submit: plan_sha256, idempotency_key
+# observe: job_id
+# artifact: job_id, artifact_id, offset
+
+# Explicit real acceptance; writes acceptance.json and private per-job artifacts.
+/path/to/venv/bin/python version/v8/scripts/run_svg_job_acceptance_v8.py \
+  --store /private/fresh-svg-acceptance --python /path/to/venv/bin/python
+python3 -m unittest server.tests.test_training_jobs -v
+python3 scripts/nightly_runner.py --tests training_job_lifecycle training_backend_contract --ci
+# Opt-in real workflow gate; requires the training environment, compiler and clean tracked sources.
+CKE_RUN_SVG_JOB_ACCEPTANCE=1 /path/to/venv/bin/python -m unittest \
+  server.tests.test_training_jobs.RealSvgJobTest -v</code></pre>
+<p>The independent simulated Antsand observer rejects changed identities, out-of-order observations,
+terminal state regression and a success without required artifacts. Simulated executors explicitly say
+<code>contract_simulation</code>; the real adapter says <code>native_generated_workflow</code>. The cheap
+lifecycle tests use simulation, while the real workflow test is explicitly opt-in and otherwise SKIP.
+Versioned simulated job receipts are in <code>server/training/fixtures/job_v1.json</code>; their fixed
+IDs are examples, not retrievable live jobs.</p>
+<p><strong>Measured local acceptance (2026-11-08):</strong> source <code>15a4b0715</code>, job
+<code>8e6e98a354e14b74a8674db582720b9d</code>, two epochs of the fixed SVG recipe. The existing workflow
+passed all 11 certification gates in 77.7 seconds with build caches present. Training loss fell
+5.500 → 5.370 and held-out loss 5.553 → 5.323. Five artifact hashes were independently reconstructed
+through bounded retrieval; a completed-job restart and duplicate submission retained the same result
+without launching a process. Evidence is retained in
+<code>docs/notes/TRAINING_SVG_JOB_EVIDENCE_2026-11-08.json</code>. An earlier run exposed and fixed a
+virtual-environment symlink launch bug; that failed receipt remains retained locally.</p>
+<p><strong>Quality remains separate:</strong> the 48-token generated sample exhausted its budget and
+was not well-formed SVG. The passing result certifies this tiny generated training workflow and its
+numerical/resume/export checks, not useful SVG generation or generalization. The test uses near-duplicate
+training/validation fixtures. No real Antsand integration or Clef-head training was performed.</p>
+<p><strong>Next:</strong> review the job protocol with Antsand, then wire its authorized submission and
+job-detail UI. Add bounded live metric/log observations, checkpoint/sample artifact contracts and
+confirmed cancellation separately. No LoRA/QLoRA or new training arithmetic is introduced here.</p>
+</section>
+
 <h2 id="certified-fp32-training">Training: Certified FP32 Starter</h2>
 
 <div class="card card-green">
@@ -2152,6 +2295,39 @@ python3 server/gemma_antigravity_acceptance.py \
         environment value in these examples; the older settings profile alone did not
         constrain its output request in a bounded local probe.
     </p>
+    <h4>Isolated dense Qwen3.8 prefix-reuse acceptance</h4>
+    <p>Build a separate resolved 32K dense Qwen3.8 bundle from the intended source revision;
+        verify its generated source, runtime libraries, tokenizer and weights with
+        <code>GET /v1/cke/loaded-identity</code>. The example below uses the tested
+        Ryzen budget for one 2.36 GB checkpoint. Choose a budget from the loaded
+        artifact's reported checkpoint requirement and available memory. It does not
+        change an existing serving process.</p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>CK_BUNDLE=/path/to/resolved-dense-qwen38-32k-bundle
+CK_NUM_THREADS=16 OMP_NUM_THREADS=1 CK_V8_FORCE_BATCHED_PREFILL=1 \
+python3 version/v8/scripts/ck_serve_v8.py "$CK_BUNDLE" --run "$CK_BUNDLE" \
+  --no-build --host 127.0.0.1 --port 8206 \
+  --model-name qwen38-dense-prefix-32k-main-test \
+  --request-output-cap 2048 --max-tokens 2048 --temperature 0 \
+  --prefix-checkpoint-cache-bytes 2500000000
+
+# On the client, forward only this isolated loopback endpoint.
+ssh -N -L 127.0.0.1:18236:127.0.0.1:8206 ryzen</pre>
+    </div>
+    <p>Use Qwen Code 0.25.1 normal mode with a client settings file declaring
+        <code>contextWindowSize: 32768</code>, a 2,048-token output allowance and an
+        explicit wall-time budget. Run <code>server/qwen_harness_acceptance.py</code>
+        with <code>--qwen-profile normal</code>, <code>--settings</code>, and both
+        expected loaded hashes. Retain every empty per-attempt workspace, including
+        incomplete attempts. Compare cache-on and cache-off runs on the same bundle,
+        thread count and frozen fixture, alternating trial order; check file content,
+        validator result, tool IDs, loaded identity, actual input and reused token
+        counts separately from elapsed time. The opt-in cache saves exact processed
+        token prefixes, and exact-prefix requests without a suffix use fresh prefill
+        because checkpoints do not contain logits. HTTP execution remains
+        single-flight: this cache does not enable recurrent batching or concurrent
+        native calls.</p>
     <h4>Repeated Qwen and Gemma harness acceptance</h4>
     <p>Run <code>server/harness_repeatability.py</code> from a client machine that can
         reach both endpoints through localhost tunnels. It invokes the existing
@@ -2160,7 +2336,8 @@ python3 server/gemma_antigravity_acceptance.py \
         the intended loaded serving and session-library SHA-256 values. Use a Python
         environment with the server test dependencies for the coordinator, and name
         a separate Python environment containing <code>google-antigravity==0.1.20</code>
-        for the Gemma client. The Qwen executable must report version 0.24.6.</p>
+        for the Gemma client. Pin the installed Qwen Code version in each client
+        entry; the runner currently accepts 0.24.6 and 0.25.1.</p>
     <div class="cmd-block">
         <button class="copy-btn" type="button">Copy</button>
 <pre>{
@@ -2244,6 +2421,19 @@ python3 server/harness_repeatability.py \
         time, complete server request time, and time outside native generation. Client tool execution
         occurs between requests and must be timed separately.
     </p>
+    <h4>Experimental exact-prefix checkpoints</h4>
+    <p>On a separately certified native-session bundle, opt in with
+        <code>--prefix-checkpoint-cache-bytes BYTES</code>. The server keeps one
+        exact-token checkpoint per request owner under a global byte budget;
+        a changed prefix falls back to ordinary prefill. The initial snapshot
+        leaves a bounded tail outside the checkpoint so client-edited trailing
+        prompt items do not invalidate the reusable earlier prefix. Snapshots
+        contain state but no logits, so an exact-prefix hit also takes the
+        ordinary path. The tested 32K Qwen3.8 bundle needs about 2.36 GB per
+        checkpoint. One retained Qwen Code read/edit/test trial passed with
+        35,136 reused input tokens and 737 versus 1,442 seconds on the same
+        pinned Ryzen bundle. Keep this opt-in on an isolated endpoint while
+        repeatability and other workloads are certified.</p>
     <h4>Optional local harness nightly</h4>
     <p>On a client host with active, identified Qwen and Gemma endpoints and an HTTP client environment containing <code>httpx</code>, run the
         same repeatability config through <code>scripts/local_harness_nightly.py</code>.
@@ -2261,6 +2451,18 @@ python3 server/harness_repeatability.py \
 # After verifying the one-off command, schedule it on the client host:
 0 2 * * * cd /path/to/C-Kernel-Engine &amp;&amp; .venv/bin/python3 scripts/local_harness_nightly.py --config /path/to/local-serving-matrix.json --state-dir /path/to/private-harness-nightly-state &gt;&gt; /path/to/private-harness-nightly-state/cron.log 2&gt;&amp;1</pre>
     </div>
+    <p class="mini-note">To add exact-prefix numerical certification on an asset-equipped
+        host, pass <code>--prefix-cert-config /path/to/private-prefix-cert.json</code>
+        to that same command. The private JSON uses schema
+        <code>cke.local_prefix_cert.v1</code> with <code>bundle</code>,
+        <code>session_library</code>, <code>ids</code>, a pinned
+        <code>artifact_sha256</code> map for the six bundle files reported by
+        the probe, <code>session_sha256</code>, <code>ids_sha256</code>, and
+        <code>cases</code> such as <code>[{"prefix":128,"suffix":9}]</code>.
+        Missing assets remain <code>NOT_TESTED</code>; a mismatched loaded artifact or
+        numerical report is <code>FAIL</code>. The default per-case time budget is
+        two hours; <code>max_seconds</code> can extend it. Run this lane away from a production
+        endpoint because it loads its own model and checkpoint memory.</p>
     <p class="mini-note">For a scheduled run against current main, use a dedicated clean,
         detached worktree and add <code>--refresh-main</code>. After publishing the
         current run as <code>INCOMPLETE</code>, the runner fetches

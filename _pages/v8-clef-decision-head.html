@@ -1,0 +1,524 @@
+<!-- TITLE: Clef-Flash Decision-Head Bring-up -->
+
+<!-- NAV: architecture -->
+
+<div class="container">
+
+<h1>Clef-Flash decision-head bring-up</h1>
+
+<p>Model topology lives in the circuit builders here. Kernels implement arithmetic; maps describe ABI, scratch and numerical contracts. Generic operation catalogue entries do not inspect the model name.</p>
+
+<section id="reference-backbone-capture">
+<h2>Real-feature capture preparation — backbone run still NOT_TESTED</h2>
+<p>The next gate is a released-backbone feature capture followed by the packaged generated head.
+The local P3 cache currently contains the released head and reference source, but the post-trained
+Clef 9B backbone was not found. The new tooling does not download a model or substitute ordinary
+Qwen weights. Actual real-backbone capture and its generated-head numerical comparison remain
+<strong>NOT_TESTED</strong> until the pinned assets are supplied.</p>
+<p><code>capture_clef_features.py</code> is development-only PyTorch oracle tooling. It loads a local
+release after checking an administrator-pinned file-hash lock, committed head/config/source identities,
+and every indexed backbone shard. Tokenizer and other discoverable loader files must also appear in
+the lock. The lock must come from independently verified release assets; naming a revision in an
+untrusted manifest does not prove weight provenance. No production worker imports this script.</p>
+<p>The pinned schema encoder silently truncates state at its length limit. This wrapper first encodes
+without truncation, rejects requests exceeding the declared capacity, then verifies the bounded result
+is identical. Images/video are explicitly unsupported. It retains original token IDs, question/option
+spans, stable candidate IDs and request hash. The backbone runs in BF16 with eager attention; actual
+hidden states and output-embedding rows are cast to FP32 for the same-input head comparison.
+This is not a claim of BF16 head parity or full-model FP32 parity.</p>
+<p>Only used embedding rows are retained, with their original token IDs. The head-local IDs are remapped
+without changing their span positions or values. A nonzero complete-head PyTorch test proves that this
+compaction preserves every compared intermediate and final logit exactly. Capture loading checks byte
+hashes, token reconstruction, question ownership, expected reference shapes and finite reference values
+before native replay. Private requests/features remain local artifacts, not routine logs.</p>
+<p><code>replay_clef_features.py</code> builds a package using the existing authoring and compiler path,
+then compares four field-layer outputs, final normalized fields and all raw option logits. Intermediate
+absolute tolerance stays 1e-5; raw logits stay 2e-6, relative zero. It also compares each returned question's
+scores, retaining IDs and unequal option counts. Question zero → other questions → question zero tests
+selection and reuse within one captured context; it is not a substitute for distinct real-input A→B→A
+coverage. A package still has one compiled geometry. The existing 1,000 ms worker deadline is preserved;
+a deadline rejection is reported as execution failure with numerical NOT_TESTED, not silently bypassed.</p>
+<pre><code># release-lock.json: {"model":"Cloudflare/clef-flash", "revision":"PINNED_REVISION",
+#                     "files":{"config.json":"SHA256", ...every required local file...}}
+# Obtain the lock and its expected SHA independently from verified release assets.
+python3 -m version.v8.decision.capture_clef_features \
+  --release /trusted/clef-release --release-lock /trusted/release-lock.json \
+  --release-lock-sha256 LOCK_SHA256 --request request.json \
+  --output /private/clef-capture --max-tokens 512 --threads 4
+python3 -m version.v8.decision.replay_clef_features \
+  --capture /private/clef-capture --capture-sha256 CAPTURE_JSON_SHA256 \
+  --head /trusted/clef-release/joint_head.safetensors --output /private/clef-replay
+
+# Cheap contracts; reference-source test skips explicitly when absent.
+python3 -m unittest tests.test_v8_clef_feature_capture -v
+# Real backbone gate is optional and must report SKIP without these assets:
+CKE_CLEF_RELEASE_PATH=/trusted/clef-release \
+CKE_CLEF_RELEASE_LOCK=/trusted/release-lock.json \
+CKE_CLEF_RELEASE_LOCK_SHA256=LOCK_SHA256 \
+python3 -m unittest tests.test_v8_clef_feature_capture.RealBackboneCaptureTest -v</code></pre>
+<p>The standard <code>decision_feature_capture</code> nightly lane registers both the cheap contracts
+and the explicitly asset-dependent real-backbone gate. Five local contract tests passed, including
+pinned-source truncation detection; the real-backbone test was skipped. This prepares evidence collection;
+it does not advance the CKE backbone, head training, LoRA or end-to-end decision certification.</p>
+</section>
+
+<section id="antsand-evaluation-contract">
+<h2>Registered generated head: experimental loopback evaluation</h2>
+<p>The <code>cke.decision.evaluate.v1</code> proposal now connects one registered generated
+head package to the independent simulated Antsand consumer over real HTTP. This is
+<code>head_only / native_generated</code>, not text-to-decisions. The existing synthetic fixture
+lane remains explicitly <code>contract_simulation / fixture_replay</code>. Neither executes
+business actions. The read-only <code>cke.control.v1</code> protocol is unchanged; no real Antsand
+service or running deployment is modified.</p>
+<table class="table"><thead><tr><th>Boundary</th><th>Status</th></tr></thead><tbody>
+<tr><td>Supplied features → generated complete head → raw option logits</td><td>Implemented through a persistent loaded package and one generated native entry.</td></tr>
+<tr><td>Released head weights over HTTP versus pinned reference</td><td>PASS on P3; synthetic backbone features and embedding rows, two distinct inputs and A→B→A.</td></tr>
+<tr><td>Text preparation / actual generated backbone</td><td>NOT_IMPLEMENTED in this evaluation path.</td></tr>
+<tr><td>Compute cancellation, remote authorization, real Antsand integration</td><td>NOT_IMPLEMENTED. Consumer cancellation suppresses publication; it cannot preempt C.</td></tr>
+<tr><td>Head training</td><td>Existing derivative/optimizer work is unchanged; this is forward inference integration.</td></tr>
+</tbody></table>
+<p>The offline builder <code>version/v8/decision/package_clef_head.py</code> uses the ordinary
+circuit → map resolution → lowering → generated-C compiler. It packs effective FP32 weights and
+registered inputs; it performs no model arithmetic. Shared checked-graph build code now lives in
+<code>version/v8/scripts/compile_checked_bundle_v8.py</code>, with compatibility imports for existing
+tests. The worker uses only Python's standard library for request handling and byte copies; all
+head arithmetic remains in the generated entry. A subprocess test uses <code>python -S</code> to
+prove NumPy, safetensors and PyTorch are not runtime dependencies.</p>
+<p>An administrator supplies a trusted package manifest and its expected SHA-256. This is executable
+native code, not an untrusted upload interface. The manifest binds the model revision, CKE revision,
+effective weights, circuit, layout, call IR, generated source, compiler/build identity, native library and registered feature files. The loader
+checks hashes, shapes, offsets, disjoint input/output/weight regions, finite features, token IDs,
+spans, final-valid-token selection, option counts and candidate ownership before loading C. On Linux,
+it loads the exact verified library bytes from a sealed memfd. Weights load once; each request clears
+non-weight arena regions and copies all of its registered inputs. The host does not schedule neural
+operations. Packages have one compiled geometry and at most 64 registered artifacts; runtime-variable
+feature shapes and arbitrary uploads are not supported.</p>
+<p>Each registration contains <code>hidden</code>, <code>input_ids</code>,
+<code>question_spans</code>, <code>option_spans</code>, <code>global_span</code>,
+<code>option_counts</code> and <code>question_type_ids</code>, plus a selected question index and its
+stable candidate IDs. The entire multi-question context executes; one question's logits are returned.
+Reordering request candidate IDs only reorders those scores. Changing the head context requires a
+new registered artifact and hash. <code>artifact_id</code> in response evidence is the package SHA-256;
+<code>ir_id</code> is the call-IR SHA-256; <code>library_sha256</code> identifies the loaded bytes.
+The input hash binds both feature bytes and the registration metadata. No host paths are returned.</p>
+<p>The loopback worker allows one active evaluation, no evaluation queue and four connection threads.
+Concurrent evaluations return BUSY; excess connections close. A two-second absolute connection timer
+prevents slow clients from occupying threads indefinitely. Requests and responses remain bounded to
+16 KiB, 16 candidate IDs and a maximum 1,000 ms consumer attempt. The worker checks expiration before
+and after native execution and before responding. The independent consumer rechecks the same absolute
+monotonic deadline inside its publication lock, after validation and lock wait. Cancellation/replacement
+invalidates pending results immediately. A disconnected or expired native call retains its slot and
+arena until C actually returns. Closing the worker joins handlers before unloading its library.
+Remote exposure, authentication and native interruption require separate contracts.</p>
+<h3>Reproduction</h3>
+<p>Prepare a local registrations JSON list with <code>id</code>, <code>npz</code>,
+<code>question_index</code> and <code>candidate_ids</code>. Each NPZ contains exactly the seven inputs
+above, hidden FP32 and other arrays int32, matching the declared geometry. Supply pinned released head
+weights and the intended output-embedding rows as an NPY. Record whether features and embeddings are
+synthetic or actual backbone captures; a pinned head alone does not establish either.</p>
+<pre><code>python3 -m version.v8.decision.package_clef_head \
+  --head joint_head.safetensors --head-sha256 HEAD_SHA256 \
+  --embedding embedding.npy --embedding-sha256 EMBEDDING_SHA256 \
+  --registrations registrations.json --revision MODEL_REVISION \
+  --output /trusted/head-package
+python3 -S -m server.decision.native_server \
+  --package /trusted/head-package/package.json --package-sha256 PACKAGE_SHA256
+# Copy one printed bounded request object to request.json; use the printed loopback URL.
+python3 -m server.decision.consumer --url http://127.0.0.1:PORT/evaluate --request request.json
+
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 python3 -m unittest \
+  server.tests.test_decision_native server.tests.test_decision_evaluate -v
+python3 scripts/nightly_runner.py --tests decision_native_head decision_evaluate_contract --ci
+# Optional independent released-head oracle lane:
+CKE_CLEF_FLASH_HEAD_PATH=/path/joint_head.safetensors \
+CKE_CLEF_FLASH_REFERENCE_SOURCE=/path/joint_schema_model.py \
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 python3 -m unittest \
+  server.tests.test_decision_native.PinnedNativeDecisionTest -v</code></pre>
+<p>The server prints fresh boot IDs and example requests; a restart invalidates old IDs. Do not treat
+this local descriptor as an approved remote discovery/authentication protocol. No persistent service
+is installed. Registered features may be private; retain packages accordingly.</p>
+<h3>Evidence and remaining gates</h3>
+<p>The asset-free nonzero synthetic head test compares returned logits to an independent PyTorch
+composition at absolute tolerance 2e-6, relative zero. It covers A→B→A versus a fresh runtime,
+candidate permutation, frozen weight bytes, sealed library bytes, invalid package identity/layout,
+native failure/recovery, BUSY, deadline expiration and cancellation during actual native execution.
+The existing fixture responder continues testing malformed protocol, restart and publication-lock
+behavior. Missing PyTorch or pinned assets are explicit SKIPs. Add <code>--require-executed</code> to nightly only with the required assets configured; it correctly fails on a missing-asset subtest even when the remaining tests pass.</p>
+<p>On P3, released head/source identities from the committed Clef fixture were verified. Two distinct
+6×4096 synthetic feature arrays, synthetic 16×4096 output embeddings, two questions and three options
+ran A→B→A through the packaged worker. Returned question-zero logits had maximum absolute error
+2.39e-7 against the pinned direct reference (unchanged acceptance 2e-6); repeated A was exact.
+Native request execution was 234–265 ms in this run, excluding load/build. This is not a performance
+benchmark or end-to-end backbone result. Runtime responses always retain numerical NOT_TESTED:
+passing an independently run oracle test does not certify every subsequent request.</p>
+<p><strong>Next:</strong> agree on the execution contract with Antsand, register captured real backbone
+features and embeddings, then connect generated backbone execution. Keep head-only, full-model,
+transport, training and authorization verdicts separate. No decision score grants permission to act.</p>
+</section>
+
+<section id="indexed-scoring-backward">
+<h2>Indexed scoring gradients: separate normalization contracts</h2>
+<p>The final scoring branches now have checked FP32 derivatives for indexed pair features
+[a, b, a·b, |a−b|], normalized-vector dot products and cosine similarity. Owner indices route each
+option to its question. Repeated owners accumulate contributions; unreferenced owners receive zero.
+Both public gradient buffers are published only after all checks and reductions succeed. Caller-owned
+scratch holds groups·channels + 2·rows·channels floats; there is no kernel allocation.</p>
+<p><strong>Forward equivalence does not establish backward equivalence.</strong> The pinned head
+uses normalize-and-dot for its prior score and cosine_similarity for its joint score. PyTorch 2.12.1
+normalization has a zero clamp derivative below epsilon, whereas its
+<a href="https://github.com/pytorch/pytorch/blob/v2.12.1/aten/src/ATen/native/Distance.cpp">cosine implementation</a>
+clamps a cloned norm under NoGrad and retains the norm derivative below epsilon. The new providers
+encode those policies separately. At zero norm, the norm VJP is zero; the direct numerator derivative
+still flows. At the normalization clamp boundary the derivative is one. Absolute difference uses zero
+subgradient at equality, including signed zero.</p>
+<p>Consequently the cosine provider's below-clamp VJP deliberately matches the pinned framework's
+backward convention, not the finite-difference derivative of its clamped forward function. Central
+differences are tested away from nonsmooth/clamped boundaries; separate autograd tests cover zero,
+below epsilon, equality and adjacent FP32 values on both operands. Future head backward authoring must
+select the explicit derivative contract. Neither forward provider identity nor epsilon alone selects it.</p>
+<table class="table"><thead><tr><th>Independent PyTorch 2.12.1 CPU comparison</th><th>Largest observed absolute gradient error</th></tr></thead><tbody>
+<tr><td>Indexed pair features</td><td>2.39e-7</td></tr>
+<tr><td>Normalized-vector dot</td><td>2.24e-8</td></tr>
+<tr><td>Cosine similarity</td><td>2.24e-8</td></tr>
+</tbody></table>
+<p>Measured 2026-11-08 on synthetic nonzero operands, widths 1, 7 and 129, with repeated and
+unreferenced owners. Primitive PyTorch ceilings are absolute 2e-6 / relative 2e-5; generated joined
+gradients use 3e-6 / 3e-5. These are empirical fixture bounds. Ordered scalar tests also cover width 64,
+O0/O3 equality and the reduction policy: each row contribution rounds FP32, then repeated-owner
+contributions sum in ascending row order in FP64 before the final FP32 store. An adversarial
+[1e8, 1, −1e8] scatter retains one; this does not claim bitwise equivalence to FP32 index-add.</p>
+<p>One ordinary generated backward entry executes pair-feature/GELU and both cosine branches,
+then joins their left/right gradients using the existing checked addition provider. It compares the
+combined VJP against PyTorch, exercises A→B→A arena reuse, rejects insufficient arena capacity and a
+late nonfinite branch, and recovers. A deliberately miswired branch join produces a detectable gradient
+error. Primitive tests cover null/misaligned pointers, every short capacity, partial writable aliases,
+invalid owners, zero/overflow dimensions, invalid epsilon and late finite scatter overflow.</p>
+<pre><code>OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 python3 -m unittest \
+  tests.test_v8_decision_scoring_backward -v
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 python3 scripts/nightly_runner.py \
+  --tests decision_scoring_backward --ci --require-executed</code></pre>
+<p><strong>This is generated scoring-component backward, not full-head training.</strong> The
+circuit explicitly authors the derivative branches; automatic complete-head backward, scalar/gain
+and remaining indexed derivatives, grouped losses, all-parameter AdamW trajectory, BF16 optimizer
+certification and adapters remain separate gates. Existing full-head forward and attention-training
+regressions remain independent evidence. No Clef-specific compiler branch was added.</p>
+</section>
+
+<section id="attention-training">
+<h2>Noncausal attention backward and native training</h2>
+<p>A bounded generic composition now trains through feature lookup → trainable projection →
+Q/K/V projections → full noncausal attention → residual → scores → cross-entropy. Automatic backward
+lowering declares every branch accumulation and native AdamW updates the selected parameters.
+The new provider handles unequal query/memory lengths, packed token-major heads and caller-owned
+scratch. It does not implement masking, dropout or BF16 attention backward.</p>
+<p>Forward arithmetic remains FP64 ascending dot products with FP32 score/exponential stores.
+Backward recomputes those scores; dS stores FP32, dQ reduces FP64, and shared dK/dV accumulate in
+ascending query order with an FP32 store after each query. All three gradient outputs are staged
+until validation and arithmetic succeed. Scratch is Q·H·D + 2·S·H·D + 2·S floats.</p>
+<p>The shared trainer now propagates map-declared zero-success status. A checked kernel failure
+stops the step before AdamW, leaves weights/moments untouched, clears the incomplete accumulation
+window and leaves the caller's loss output untouched. This is not general rollback for arbitrary
+void providers. The fixed-batch contract rejects partial batches rather than allowing padding into
+unmasked softmax; native kernel tests cover unequal Q/S, while the composed training fixture uses
+four tokens. Variable-length masked training remains a separate contract.</p>
+<table class="table"><thead><tr><th>FP32 native AdamW, 40 updates</th><th>Initial → final loss</th><th>Gradient / weight / moment max absolute error</th></tr></thead><tbody>
+<tr><td>All Q/K/V trainable</td><td>1.32838511 → 0.00033159</td><td>1.75e-7 / 9.54e-7 / 5.22e-8</td></tr>
+<tr><td>Frozen K projection</td><td>1.32838511 → 0.00041567</td><td>1.20e-7 / 9.54e-7 / 3.73e-8</td></tr>
+</tbody></table>
+<p>Measured 2026-11-07 with PyTorch 2.12.1+cpu and seed 837. The oracle uses explicit independent
+softmax attention and autograd, not Unsloth. Ordered scalar FP64/FP32 comparisons at O0/O3 and native
+forward finite differences provide additional checks. Gradient/weight ceilings remain 3e-5 absolute,
+3e-4 relative; optimizer moments 3e-6 absolute, 3e-4 relative. These are bounded empirical checks,
+not a universal error bound or bitwise PyTorch claim. Reports retain engine, generated-C and runtime-contract hashes.</p>
+<p>Checkpoint reset/resume and trained-weight inference reload pass. Frozen K weights remain
+byte-identical while gradients reach the upstream trainable projection. Swapping the saved K input
+with V fails the gradient comparison. An injected late backward failure after one successful
+microstep clears partial gradients; two subsequent microsteps exactly match a clean two-microstep
+baseline. Null/invalid IDs, labels, batch lengths, undersized capacities, nonfinite operands, aliases,
+misalignment and finite accumulation overflow have rejection coverage.</p>
+<pre><code>make -j4 build/libckernel_engine.so
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 python3 -m unittest \
+  tests.test_v8_attention_cross_backward tests.test_v8_attention_training -v
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 python3 scripts/nightly_runner.py \
+  --tests training_attention_composition --ci --require-executed</code></pre>
+<p><strong>Complete Clef-head training remains NOT_TESTED.</strong> This certifies a synthetic
+attention/projection/residual training composition. Next: connect existing head VJPs and the remaining
+indexed/scoring derivatives and grouped loss, then certify every released-head gradient and update.
+BF16 optimizer trajectories, LoRA and quantized-base training are separate milestones.</p>
+</section>
+
+<section id="normalization-training">
+<h2>Cached-statistics LayerNorm training composition</h2>
+<p>The next trainable composition is fixed features → trainable projection → affine LayerNorm →
+trainable scores → cross-entropy. Existing native LayerNorm forward/backward arithmetic is reused;
+no new normalization kernel or model-specific compiler branch is introduced. The forward provider
+publishes its actual FP32 mean and reciprocal standard deviation, which automatic backward lowering
+passes to the existing VJP. Epsilon belongs to the operation, independently of the enclosing model.</p>
+<p>Shared training code generation now accepts an opt-in, map-owned ABI for bounded contiguous FP32
+buffers and literal scalar parameters. It rejects missing ports/providers, reordered ABIs, unsupported
+phases/dtypes, invalid scalars, insufficient capacities, incorrect shapes and writable aliases instead
+of guessing argument bindings. The selected maps participate in runtime/checkpoint identity. The legacy LayerNorm providers remain void: finite operands are their caller precondition.
+Checked providers now use the separate zero-success failure contract described above.</p>
+<table class="table"><thead><tr><th>FP32 native AdamW, 40 updates</th><th>Initial → final loss</th><th>Gradient / weight / moment maximum absolute error</th></tr></thead><tbody>
+<tr><td>Trainable affine, epsilon 1e-5</td><td>1.29325175 → 0.00443579</td><td>1.98e-7 / 9.54e-7 / 5.59e-8</td></tr>
+<tr><td>Frozen affine, epsilon 0.03</td><td>1.31046605 → 0.05293253</td><td>8.95e-8 / 6.26e-7 / 3.36e-8</td></tr>
+</tbody></table>
+<p>Measured on 2026-11-07 against PyTorch 2.12.1 CPU, seed 837. Every trainable gradient, weight
+and AdamW moment is compared at every update. Frozen weights remain byte-identical; an upstream
+finite difference checks gradient flow. Resetting and restoring a step-20 v8 checkpoint reproduces
+remaining updates exactly, and final-weight reload reproduces forward-only logits. A deliberately
+swapped mean/rstd capture fails the gradient oracle. Direct native VJPs also cover widths 1, 7, 512,
+513 and 4096. These are synthetic operands, not released Clef-head training or backbone features.</p>
+<p>Numerical ceilings retain absolute 3e-5 and relative 3e-4 for gradients, weights and logits;
+moments use absolute 3e-6 and relative 3e-4. They are empirical fixture bounds. The existing forward
+uses compile-target-dependent FP32 SIMD variance partials and FP64 merging; backward reduces in FP32.
+Neither cross-compiler bitwise agreement nor BF16 optimizer certification is claimed.</p>
+<pre><code>make -j4 build/libckernel_engine.so
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 python3 -m unittest \
+  tests.test_v8_layernorm_training tests.test_v8_selective_training -v
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 python3 scripts/nightly_runner.py \
+  --tests training_layernorm_composition training_selective_parameters --ci --require-executed</code></pre>
+<p>This change also aligns the shared v7 attention-score derivative scratch shape with the saved
+attention tensor, matching the v8 rule. It resolves the inherited attention-rematerialization shape
+assertion reported in the earlier selective-training sweep.</p>
+<p><strong>This does not yet make the complete Clef head trainable through cke.v8.compile.</strong>
+It extends the existing backend, maps and v8 derivative rules. Remaining work includes head authoring
+into the training IR, integration of the certified noncausal attention VJP, indexed/scoring derivatives, grouped losses and complete
+head parameter/optimizer/export comparisons. BF16 head trajectories and LoRA/QLoRA follow that baseline.</p>
+</section>
+
+<section id="selective-training">
+<h2>Selective FP32 training prerequisite</h2>
+<p>The shared v7/v8 backward lowerer now honors boolean parameter <code>requires_grad</code>
+declarations without cutting activation gradients through a frozen operation. Conflicting declarations
+on the same shared weight are rejected before emission. Undeclared weights retain legacy trainable
+behavior. Operation differentiability remains separate from parameter trainability: a frozen projection
+between trainable operations must still participate in backward execution.</p>
+<p>Frozen parameters have no canonical parameter gradient, optimizer moment allocation or AdamW update.
+Existing fused GEMM backward providers still require temporary dW/db output buffers, so these derivatives
+are computed into discard scratch. This is a correctness contract, not a claim that all unnecessary
+backward arithmetic or scratch has been eliminated.</p>
+<p>A small generic linear decision fixture executes fixed feature lookup → trainable projection → frozen
+projection → trainable scores → cross-entropy through the existing training IR, memory planner,
+generated C and native AdamW. This fixture is not the complete Clef head and is not a new public
+feature-head authoring API. No Python code updates CKE weights.</p>
+<p>On 2026-11-07, 40 FP32 native updates reduced loss from <code>1.42433834</code> to
+<code>0.04014646</code>. Every trainable gradient, updated weight and optimizer moment was compared
+with independent PyTorch CPU execution. An upstream finite difference verifies gradient flow through
+the frozen middle projection; feature and bridge weights remain byte-identical. The existing v8
+checkpoint format restores step 20 into a reset runtime and reproduces the remaining 20 steps exactly.
+Reloading final weights reproduces inference logits. Observed maximum absolute errors against PyTorch
+were 7.08e-8 for gradients, 7.31e-7 for updated weights and 2.24e-8 for moments.
+Regression ceilings are absolute 3e-5 for gradients/weights/logits and 3e-6 for moments, with relative
+3e-4. These are bounded fixture contracts, not universal error guarantees. This test does not claim fresh-process resume
+or released-head training. PyTorch or native-library absence is an explicit skip.</p>
+<pre><code>make -j4 build/libckernel_engine.so
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 python3 tests/test_v8_selective_training.py
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 python3 scripts/nightly_runner.py \
+  --tests training_selective_parameters --ci --require-executed</code></pre>
+<p>Eight focused tests and the registered nightly lane pass. Both existing decoder training compositions
+(<code>2l_dense</code>, <code>2l_gqa_tail</code>) pass gradients, ten updates, checkpoint/resume
+and inference export. A broader 47-test sweep had 46 passes and one attention-rematerialization
+shape assertion failure; the same failure was reproduced with the unchanged main lowerer.
+Full repository nightly has not been run locally.</p>
+<p>Next: connect the remaining complete-head derivatives and grouped loss to this existing training
+workflow, then certify head gradients, updates and export. BF16 VJP providers are independently tested;
+this FP32 optimizer trajectory does not certify BF16 head training. LoRA and quantized frozen-base
+training remain separate, later gates.</p>
+</section>
+
+<section id="complete-forward">
+<h2>Complete bounded head forward pass</h2>
+<p><code>build_clef_flash_complete_head_circuit.py</code> executes 140 operations in one generated entry:
+head ingress → two evidence-routing layers → option summaries → field assembly → four pre-norm
+self/cross-attention decoder layers → field/option normalization → prior, cosine and residual scoring
+→ raw option logits. The host supplies hidden features, output-embedding rows, token IDs, checked spans,
+option counts and question types. It does not schedule the layers.</p>
+<p>Question types index the released three-row type embedding. Consecutive option groups retain their
+question/option order; tests reorder entire questions with their option blocks and type identities.
+No softmax decision policy is imposed on the final raw scores. There is no generated-backbone or
+complete service certification in this milestone.</p>
+<p>Six reusable checked operations close the scoring gaps: row broadcast addition, indexed pair features
+(left, right, product, absolute difference), indexed cosine reduction, clamped scalar exponential,
+stable scalar sigmoid and scalar vector multiplication. Their maps declare sizes, scratch, numerical
+semantics and status propagation. Generic compiler changes are operation catalogue entries only.</p>
+<table class="table"><thead><tr><th>Pinned head, synthetic inputs</th><th>Worst decoder-block absolute error</th><th>Final logit maximum / RMSE</th></tr></thead><tbody>
+<tr><td>6 tokens, counts [2,1]</td><td>3.81470e-6</td><td>1.19209e-7 / 9.73340e-8</td></tr>
+<tr><td>8 tokens, counts [1,2]</td><td>5.72205e-6</td><td>1.78814e-7 / 1.06067e-7</td></tr>
+</tbody></table>
+<p>Measured 2026-11-07 with PyTorch 2.12.1 CPU, the hash-verified released head and its direct forward
+implementation. Both sides receive identical synthetic hidden features and synthetic output embeddings.
+These are two separately compiled bounded geometries, not a dynamic serving interface or captured
+backbone trajectories. Intermediate absolute regression ceilings are 1e-5; final logits use 2e-6.
+These empirical bounds do not establish training or other precision contracts.</p>
+<pre><code>python3 version/v8/decision/build_clef_flash_complete_head_circuit.py --check
+python3 -m unittest tests.test_v8_decision_tensor_ops tests.test_v8_clef_flash_complete_head -v
+export CKE_CLEF_FLASH_HEAD_PATH=/path/to/joint_head.safetensors
+export CKE_CLEF_FLASH_REFERENCE_SOURCE=/path/to/joint_schema_model.py
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 python3 scripts/nightly_runner.py \
+  --tests decision_tensor_ops decision_clef_flash_complete_head --ci --require-executed</code></pre>
+<p>The independent comparisons require PyTorch; pinned comparisons additionally require safetensors,
+the reference source dependencies and the two hash-checked assets. Missing dependencies/assets are
+explicit skips. Synthetic tests cover intermediate logits, two lengths, unequal groups, question
+permutation, malformed IDs/spans/counts/type IDs, nonfinite hidden input, undersized arena, a deliberately
+corrupted scoring weight, and A→B→A recovery. A model-neutral six-operation generated circuit exercises
+all new providers independently of Clef topology.</p>
+</section>
+<section id="backward-primitives">
+<h2>First generated backward composition</h2>
+<p>Three reusable FP32 vector-Jacobian products now cover token-span means, exact erf GELU,
+and grouped query-conditioned weighted pooling. They are backward providers, not inference aliases.
+Their maps own strides, capacities, scratch, numerical contracts and status propagation.
+The checked-call emitter now accepts an explicit backward phase and rejects providers used in the wrong phase.
+No model-name dispatch or second training workflow is introduced.</p>
+<p>The model-neutral regression executes one generated forward entry for span pooling → erf GELU →
+grouped pooling, then one generated backward entry for the reverse chain. Only native-produced forward
+intermediates enter that backward entry. This is an explicitly authored VJP circuit, not automatic
+backward synthesis through <code>cke.v8.compile</code>. It does not contain trainable parameters,
+a loss, optimizer updates, or the remaining complete-head derivatives.</p>
+<ul>
+<li>Span gradients sum all overlapping contributions in ascending span order with FP64 accumulation.
+Unreferenced valid tokens become zero; inactive token rows and padding remain unchanged.</li>
+<li>Erf GELU uses its analytic derivative in FP64, distinct from the existing tanh-approximation derivative.</li>
+<li>Grouped pooling differentiates both value and score paths, recomputing the forward provider's FP32
+probabilities. Ordered FP64 reductions and explicit FP32 intermediate stores are declared in its map.
+The options and query gradients publish together only after all checks succeed.</li>
+<li>Each VJP overwrites its valid output gradient. Overlapping contributions inside a VJP accumulate;
+fan-out across separate graph operations still requires an explicit gradient-accumulation operation.</li>
+<li>All outputs and scratch must be disjoint from read buffers and one another. Scratch may change on
+rejection; that kernel's gradient outputs do not. A later operation failure can leave earlier graph
+intermediates written, so the entry status must be checked. Tests inject a final-operation failure and
+verify that the final token gradient remains untouched, then recover.</li>
+</ul>
+<p>Tests cover independent ordered arithmetic oracles, optional PyTorch autograd, finite differences
+for both grouped-pooling inputs, unequal and singleton groups, padded strides, null/misaligned/overlapping
+regions, capacity and finite-overflow rejection, and A→B→A recovery. Generated execution and scalar
+oracles require no model assets or PyTorch. PyTorch absence is an explicit SKIP for the autograd comparison.</p>
+<pre><code>OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 python3 -m unittest tests.test_v8_head_backward -v
+python3 scripts/nightly_runner.py --tests decision_head_backward --ci --require-executed
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 python3 version/v8/scripts/run_training_composition_v8.py \
+  --run-root version/v8/.cache/clef-backward-decoder-regression</code></pre>
+<table class="table"><thead><tr><th>FP32 gradient versus PyTorch 2.12.1 CPU (2026-11-07)</th><th>Maximum absolute error</th><th>RMSE</th></tr></thead><tbody>
+<tr><td>Overlapping-span input</td><td>2.98023e-8</td><td>6.23360e-9</td></tr>
+<tr><td>Erf GELU input</td><td>5.96046e-8</td><td>3.12435e-8</td></tr>
+<tr><td>Grouped pooling options (both paths)</td><td>4.47035e-8</td><td>1.70069e-8</td></tr>
+<tr><td>Grouped pooling query</td><td>1.02445e-8</td><td>4.22744e-9</td></tr>
+</tbody></table>
+<p>These are measured small, nonzero synthetic cases, not universal error bounds or released-head gradient
+certification. Regression comparisons use absolute 4e-7 / relative 3e-6 against PyTorch, and exact checks
+for the explicitly ordered span/grouped arithmetic oracle. The focused 9-test suite passes; the four
+selected standard-nightly suites pass with no skips, including the hash-checked released-head forward
+comparison. Both existing decoder compositions (<code>2l_dense</code>, <code>2l_gqa_tail</code>)
+also pass 10 native AdamW updates, trajectory/gradient/weight/moment comparisons, fresh-process resume
+and inference export. Their aggregate report was <code>/tmp/clef-backward-decoder-regression.json</code>.
+The full repository nightly is not a local result.</p>
+<p><strong>Complete Clef head training remains NOT_TESTED.</strong> Next integrate checked biased-linear,
+LayerNorm and noncausal attention derivatives, indexed/scoring derivatives and branch accumulation into
+the existing v8 backward workflow. Then certify all head gradients, grouped loss, AdamW updates,
+frozen-backbone identity, checkpoint/resume and generated inference reload. Existing decoder training
+is a shared-consumer regression, not evidence that this head can already train.</p>
+</section>
+<section id="bf16-backward">
+<h2>BF16-storage backward providers</h2>
+<p>The same three VJPs now also have explicit BF16-storage maps. Saved floating-point operands,
+incoming gradients and outgoing gradients use BF16; spans/counts remain INT32. Caller-owned FP32
+workspace expands BF16 operands exactly, invokes the existing FP32 VJP arithmetic, then rounds each
+output gradient to BF16 using round-to-nearest-even. The FP64 reductions and FP32 intermediate
+stores inside the FP32 providers are preserved. There is no intermediate BF16 rounding inside a VJP.</p>
+<p>This is a particular mixed-precision derivative contract, <strong>not</strong> a claim of parity with
+an arbitrary BF16/autocast forward graph. Grouped probabilities are recomputed using the existing FP32
+forward semantics on expanded BF16 saved operands. Independent autograd runs FP32 computation on
+identical dequantized operands and rounds its gradients to BF16. The tested gradients match that
+oracle exactly after rounding; this is not a universal bit-identity guarantee.</p>
+<table class="table"><thead><tr><th>Provider</th><th>Required FP32 workspace (floats)</th></tr></thead><tbody>
+<tr><td>Span mean</td><td>(span_count + token_capacity + valid_tokens) × channels</td></tr>
+<tr><td>Erf GELU</td><td>4 × rows × channels</td></tr>
+<tr><td>Grouped weighted pooling</td><td>3 × option_rows × channels + 6 × groups × channels + 2 × option_rows</td></tr>
+</tbody></table>
+<p>Element counts and row strides use the pointed-to dtype, not bytes. BF16 buffers require two-byte
+alignment; INT32 spans/counts and FP32 scratch require four-byte alignment. Outputs and scratch must
+be disjoint from all reads and each other. Input padding is ignored, output padding/inactive rows
+stay untouched, and rejected calls publish no outputs. In particular, a finite FP32 gradient that
+rounds to BF16 infinity rejects the call before either grouped gradient is published.</p>
+<p>The model-neutral generated backward entry composes all three BF16 providers through ordinary maps,
+lowering and memory planning. Tests include odd channel counts, unequal/singleton groups, ordered
+oracles at O0/O3, exact/one-short capacities, two-byte-aligned buffers, mixed-width partial overlaps,
+nonfinite input, FP32 and BF16-only overflow, RNE midpoint ties, subnormal values, final-operation
+failure propagation, and A→B→A recovery. Saved inputs in this test are synthetic; this does not execute
+a complete BF16 Clef forward/backward pair. PyTorch absence skips only the independent autograd test.</p>
+<pre><code>OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 python3 -m unittest tests.test_v8_head_backward_bf16 tests.test_v8_head_backward -v
+python3 scripts/nightly_runner.py --tests decision_head_backward_bf16 decision_head_backward --ci --require-executed</code></pre>
+<p>Local validation on 2026-11-07: nine BF16 tests and 138 combined BF16/FP32, ABI, numerical-resolution,
+provider-selection, ledger and documentation tests pass. Three selected standard-nightly suites pass
+without skips, including the pinned complete FP32 Clef head forward comparison. DSL policy and
+interface/allocation audits pass. Full repository nightly and BF16 full-head training were not run.</p>
+<p><strong>Correctness baseline, not a speed claim.</strong> These portable conversion adapters need no
+BF16 ISA but add conversion work and workspace. Benchmark a complete training step before claiming
+latency or peak-memory improvement. Complete BF16 head training, gradient accumulation precision,
+FP32 master weights/optimizer state, loss scaling policy and checkpoint dtypes remain separate contracts.</p>
+<h3>Next training evidence</h3>
+<p>The next completion gate is a small nonzero trainable head composition through the existing v8
+workflow: verify every parameter gradient, demonstrate several native AdamW updates and loss reduction,
+prove frozen-weight identity, then save/reload and reproduce the updated scores. Expand this to the
+complete head once normalization, noncausal attention, projection and scoring derivatives are wired.
+The current primitive tests do not establish a trained decision model.</p>
+<p>After FP32 head training, certify BF16 training and declarative LoRA independently. Quantized LoRA
+requires a selected frozen-base format with a tested backward-input path; inference Q4/INT8 kernels
+alone do not establish QLoRA. Keep model topology/trainability in graph declarations and optimizer
+arithmetic in the existing generated native workflow.</p>
+</section>
+<section id="backward-audit">
+<h2>Backward audit and next training gate</h2>
+<p>Shared-consumer check on 2026-11-07: <code>run_training_composition_v8.py</code> completed both <code>2l_dense</code> and <code>2l_gqa_tail</code> with PASS. These existing generated decoder training certifications do not certify Clef backward execution.</p>
+<p><strong>Forward passes; head training remains NOT_TESTED.</strong> The full forward head is not yet linked to automatic backward execution. Extend <code>cke.v8.compile</code> and the existing generated-C optimizer,
+checkpoint/resume and inference-export workflow. Do not add a second model executor.</p>
+<table class="table"><thead><tr><th>Head computation</th><th>Existing implementation</th><th>Missing contract/certification</th></tr></thead><tbody>
+<tr><td>Linear projections, biases</td><td><code>gemm_backward_f32.json</code> maps <code>fc2_backward_kernel</code>; <code>gemm_backward_bf16_mixed</code> exists in <code>gemm_kernels_bf16.c</code>.</td><td>Bind checked head geometry and saved tensors; certify dX, dW and db, selective parameter gradients and accumulation.</td></tr>
+<tr><td>LayerNorm</td><td><code>layernorm_backward_kernel</code> in <code>layernorm_kernels.c</code>; BF16 variant in <code>layernorm_kernels_bf16.c</code>.</td><td>Cached-statistics training maps and native optimizer composition now pass; wire them into the complete head while preserving operation-local epsilon.</td></tr>
+<tr><td>Erf GELU</td><td>Checked erf derivative now has FP32 VJP and generated-chain evidence; earlier <code>gelu_backward_exact</code> differentiates tanh.</td><td>Wire the erf provider into automatic head backward; BF16 remains separate.</td></tr>
+<tr><td>Unmasked self/cross-attention</td><td>Checked FP32 noncausal dQ/dK/dV with ordered oracle, PyTorch autograd and native optimizer composition now pass.</td><td>Integrate the provider into the complete head. Masked and BF16 attention training are separate; existing causal providers are not substitutes.</td></tr>
+<tr><td>Token-span pooling and last-token selection</td><td>Checked span VJP accumulates overlapping spans with generated-chain evidence.</td><td>Wire automatic backward and final-row selection, with explicit accumulation for separate branches.</td></tr>
+<tr><td>Embedding/gather and residual branches</td><td><code>embedding_backward_f32.json</code>, native BF16 embedding scatter, <code>residual_add_backward_f32.json</code>, gradient-accumulation providers.</td><td>Wire type-embedding gradients, indexed-owner scatter and broadcast reductions. Frozen output embeddings need no updates, while required hidden-feature gradient paths remain explicit.</td></tr>
+<tr><td>Grouped softmax-weighted pooling</td><td>Checked options/query VJP covers both score and value paths, unequal and singleton groups.</td><td>Connect to full-head backward synthesis and loss; the tested isolated chain is not head training.</td></tr>
+<tr><td>Cosine, pair features, scalar transforms</td><td>Indexed pair features and distinct normalized-dot/cosine FP32 VJPs now have generated branch-join evidence.</td><td>Wire automatic head backward with explicit clamp policy; add scalar/gain and remaining indexed derivatives, then certify complete scoring parameter gradients.</td></tr>
+<tr><td>Loss and optimizer</td><td><code>softmax_cross_entropy_loss.json</code> and <code>adamw_update_f32.json</code>; existing trajectory/resume/export machinery.</td><td>Declare one label per question and loss reduction over unequal option counts, then verify every trainable parameter, frozen hashes, optimizer moments and restart equivalence.</td></tr>
+</tbody></table>
+<p><code>version/v8/scripts/run_training_workflow_v8.py:_apply_semantic_model</code> currently admits
+FP32, bias-free SwiGLU/RMSNorm decoder configurations at selected depths. Clef requires biased linear
+operations, LayerNorm, erf GELU, branches, span pooling and grouped outputs. Removing that validation
+alone would not implement their backward graph. Extend the responsible contracts while retaining the
+existing decoder certification suite.</p>
+<p>Start with FP32 head-only training on a small nonzero graph and frozen backbone features. Compare
+loss, feature gradients, every head parameter gradient, one AdamW update, a short deterministic
+trajectory, checkpoint/resume and inference reload. Then use released head geometry. BF16 kernel
+availability is not composed BF16 head-training evidence; BF16, adapters and quantized-base training
+remain separate later gates. End-to-end backbone decisions also need actual generated features and
+output embeddings, rather than synthetic ones.</p>
+</section>
+
+<h2>Earlier option-summary milestone</h2>
+
+<p><code>build_clef_flash_option_summary_circuit.py</code> extends the canonical ingress and both evidence-routing layers through grouped option pooling and <code>option_summary_norm</code>. Its single generated entry executes 43 operations. Question option counts partition consecutive routed option rows. Each question&#x27;s projected vector supplies its pooling query. Normalization declares epsilon <code>1e-5</code> locally, independently of the enclosing model configuration.</p>
+
+<p>The grouped provider validates positive counts and exact coverage, finite valid inputs, physical strides, capacities, alignment and disjoint writable buffers. Caller-owned scratch stages the result, so rejection does not publish partial output. Read-only buffers may alias each other. Padding is neither consumed nor written. Arithmetic follows the registered ordered FP64 reductions with FP32 intermediate storage; no backward capability is advertised.</p>
+
+<h2>Reproduction</h2>
+
+<pre><code>python3 version/v8/decision/build_clef_flash_option_summary_circuit.py --check
+python3 -m unittest tests.test_v8_grouped_weighted_rows tests.test_v8_clef_flash_option_summary -v
+python3 scripts/nightly_runner.py --tests decision_grouped_weighted_rows decision_clef_flash_option_summary --ci --require-executed</code></pre>
+
+<p>Use a Python environment with NumPy; independent oracle tests additionally need PyTorch. The released-head comparison also needs safetensors and the dependencies imported by the pinned reference source. Enable that comparison with:</p>
+
+<pre><code>export CKE_CLEF_FLASH_HEAD_PATH=/path/to/joint_head.safetensors
+export CKE_CLEF_FLASH_REFERENCE_SOURCE=/path/to/joint_schema_model.py</code></pre>
+
+<p>Both assets are hash-checked against <code>tests/fixtures/decision/clef_flash/identity.json</code>. Missing oracle packages or assets are explicit test skips. The reference test runs the pinned head&#x27;s actual forward method and captures its summary normalization boundary; it does not inject reference evidence outputs into CKE. The host supplies synthetic hidden states, synthetic output-embedding rows, IDs and spans. Both implementations use the same inputs and released head weights. This is <strong>not</strong> a generated-backbone or complete-decision test.</p>
+
+<p>On 2026-11-07, PyTorch 2.8.0 CPU comparisons passed for six tokens with option counts <code>[2,1]</code> and eight tokens with <code>[1,2]</code>. Maximum absolute errors were <code>1.90735e-6</code> / <code>1.43051e-6</code> for raw summaries and <code>1.31130e-6</code> / <code>1.19209e-6</code> for normalized summaries; normalized RMSE was <code>2.63926e-7</code> / <code>3.13428e-7</code>. These are fixed compiled geometries, not proof of a dynamic serving interface. The declared pinned-prefix absolute regression ceiling is <code>1e-5</code>.</p>
+
+<p>Synthetic tests also cover reordered options within groups, A→B→A reuse, invalid counts before parity, undersized arenas, and rejection followed by successful execution. Model-neutral tests compare explicit FP64/FP32-stage arithmetic at O0/O3, including singleton groups, unequal groups and padded strides.</p>
+
+<p>Related: <a href="kernel-architecture.html">kernel architecture</a>, <a href="v8-training-capability-ledger.html">training capability ledger</a>.</p>
+
+</div>
