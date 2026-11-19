@@ -1,0 +1,280 @@
+<!-- TITLE: Ming3 TTS Bring-up -->
+<!-- NAV: kernels -->
+<h1>Ming3 TTS: connected native components</h1>
+<p><strong>Status: experimental native FP32 text-to-WAV, checked cached continuation and a sentence-chunked 100-word trial. Publisher BF16/RNG parity, human listening approval, practical speed and HTTP serving remain open.</strong></p>
+<p>The model is <a href="https://huggingface.co/inclusionAI/Ming-3.0-tts-0.5B">inclusionAI/Ming-3.0-tts-0.5B</a>.
+The publisher combines a Qwen2.5 backbone with a DiT flow head, an aggregator,
+an audio VAE and a speaker encoder. Existing CKE TTS work supplies reusable
+arithmetic and serving infrastructure, but does not certify this composition.</p>
+<h2>Pinned sources</h2>
+<ul><li>Publisher source: <code>a39b80660bdc5a4394d5e1d41af6dbfd9c443a54</code>,
+<a href="https://github.com/inclusionAI/Ming-3.0-tts/blob/a39b80660bdc5a4394d5e1d41af6dbfd9c443a54/fm/CFM.py">fm/CFM.py</a>.</li>
+<li>Checkpoint metadata: <code>7247f4c94a5b2e987404ed28a5cfec41b1a4ca61</code>.
+The initial flow milestone did not load weights. A subsequent isolated publisher CPU reference loaded this checkpoint; that is not native CKE synthesis.</li></ul>
+<h2>Flow update component</h2>
+<pre>difference = prediction - null_prediction
+velocity   = prediction + cfg * difference
+euler      = latent + dt * velocity
+output     = euler + noise_amplitude * supplied_noise</pre>
+<p>The circuit decomposes this into eight checked scale/sum operations through
+normal circuit resolution, kernel maps, memory planning, lowering and generated C.
+Providers are <code>scale_vector_checked_f32</code> and
+<code>audio_scaled_sum_strided_f32_checked</code>. No new kernel, model-name
+compiler branch or handwritten neural executor is needed for this step.</p>
+<p>All tensors and coefficients are supplied in the arena. The caller must set
+<code>neg_one=-1</code>; it is a supplied scalar, not a native constant validator.
+The supplied noise amplitude represents the publisher's noise coefficient at this
+step. Time schedules, CFG policy, random-number generation and BF16 storage
+rounding are not implemented by this entry. Intermediate buffers may change on
+failure; the final output remains untouched when an upstream operation rejects.</p>
+<h2>Evidence and reproduction</h2>
+<p>The retained fixture executes the pinned publisher CFM sampler with a small
+synthetic affine predictor in FP32, five EPSS/sway updates and supplied noise.
+It does not replace a real DiT parity test. The fixture records source SHA-256,
+source/checkpoint revisions, PyTorch version, seed, operands and expected outputs.
+Each native output matches the retained FP32 trajectory exactly.</p>
+<pre>python3 version/v8/tts/build_ming3_flow_step_circuit.py --check
+python3 -m unittest tests.test_v8_ming3_flow_step -v
+python3 version/v8/tts/capture_ming3_flow_reference.py \
+  --publisher-cfm /path/to/pinned/fm/CFM.py \
+  --output /tmp/ming-flow-reference.json</pre>
+<p>The optional capture command verifies the pinned source hash before importing
+it. Normal PR/nightly tests use the retained fixture and require no download or
+large model. Coverage includes 1/63/64/65/256 elements, zero/nonzero noise,
+independent arenas, capacity rejection, nonfinite input rejection, recovery and a
+wrong-guidance negative control. Existing Kokoro/Qwen consumers keep their maps.</p>
+<h2>Audio decoder: checked linear interpolation</h2>
+<p>A reusable <code>audio_upsample_linear_frames_f32_checked</code> provider now
+implements offline integer-factor half-pixel interpolation with clamped endpoints.
+It consumes frame-major FP32 values, has explicit capacities, allocates no memory,
+and rejects invalid geometry, overlap and nonfinite inputs before output writes.
+The map declares FP64 coordinates and FP32 two-product/add arithmetic with no FMA.
+It does not implement streaming lookahead or BF16 storage conversion.</p>
+<p>On 2026-11-14, an isolated publisher PyTorch 2.6.0 CPU run generated
+112,896 finite samples at 44,100 Hz for “Hello. This is Ming speech.” using
+UK_George, seed 731, temperature zero, four threads, and a 128-step ceiling.
+The publisher run took 26.62 seconds including synthesis and WAV preparation;
+this is a reference-development observation, not CKE performance or listening approval.
+The publisher warned that SDPA sliding-window support was incomplete. Independent
+mask certification remains required.</p>
+<p>The captured decoder FC1 output contained 32 × 896 values. Native factor-four
+interpolation matched all 128 × 896 FP32 reference outputs; rounding both results
+to BF16 also matched. A small cropped real-input fixture is retained for nightly.
+This is identical-input primitive evidence, not full-model parity. The generated
+regression checks normal map resolution, lowering, execution and rejection recovery;
+a nearest-neighbor negative control fails the intended value comparison.</p>
+<pre>python3 -m unittest tests.test_v8_audio_linear_upsample -v</pre>
+<h2>Generated waveform from supplied spectra</h2>
+<p>The next connected boundary is an explicit-window inverse real DFT, normalized
+by overlap-add and cropped by caller-declared extents. Ming uses FFT length 3528,
+hop 882 and 1323 samples cropped at each end; Kokoro's centered crop is different.
+The new provider consumes Cartesian spectra and the actual stored window, avoiding
+an unannounced recomputation of upstream BF16 magnitude or phase.</p>
+<p>Identical-input replay isolated a 0.002938 maximum difference to the window
+normalizer. The publisher squares its BF16 window and stores each fold addition
+in BF16. For each destination sample, CPU fold accumulates contributing frames in
+descending order. Reversing that order is numerically observable. The native
+contract now declares these conversion points and ordering explicitly.</p>
+<p>On the retained 128-frame reference, normal generated execution produced
+112,896 finite waveform samples. Maximum absolute error was 8.94e-8 and RMSE
+6.80e-9 against the publisher waveform. The native final stage took 1.92 seconds
+with a 4,201,216-byte arena in one development run. This measures only waveform
+reconstruction from oracle spectra, not text-to-speech speed or listening quality.</p>
+<p>This correctness provider uses an FP64 inverse-DFT recurrence and overlap
+numerator, then the declared BF16 envelope and FP32 output. It is quadratic in FFT
+length, not an optimized FFT implementation. NumPy FP64 supplies an independent
+reference; a wrong fold-order control must fail. Existing Kokoro ISTFT contracts
+and execution remain separate.</p>
+<pre>python3 -m unittest tests.test_v8_audio_istft_complex_window -v
+python3 version/v8/tts/build_ming3_waveform_circuit.py --check
+python3 version/v8/tts/capture_ming3_synthesis_reference.py \
+  --publisher-root /path/to/pinned/publisher \
+  --checkpoint /path/to/pinned/checkpoint --output /tmp/ming-reference
+python3 version/v8/tts/replay_ming3_waveform.py \
+  --operands /tmp/ming-reference/waveform_operands.npz \
+  --output /tmp/ming-native-waveform</pre>
+<p>Output directories must not already exist, preserving previous attempts.
+The reference command requires its separate publisher dependencies. Native replay
+uses retained operands and does not run a hidden Transformers fallback.</p>
+<h2>First complete DiT block, explicit FP32 composition</h2>
+<p>The generated first-block graph now connects RMSNorm, biased Q/K/V projections,
+consecutive-pair rotary embedding, full unmasked attention, output projection,
+residual addition, second RMSNorm and the GELU MLP. It reuses checked providers and
+adds a checked explicit-table pairwise rotation. Semantic checkpoints identify
+all fourteen operation boundaries for X-Ray.</p>
+<p>Nonzero small graphs at two, three and seven tokens pass an independent
+reference. Corrupting a Q weight or a rotary coefficient fails the intended
+intermediate comparison. Invalid rotary input leaves the final output untouched;
+restoring valid input permits another successful call.</p>
+<p>Both real first-block conditioning branches were replayed with the pinned
+weights and inputs recast to FP32. Compared with the publisher block also recast
+to FP32, maximum errors were 3.34e-5 and 5.34e-5, with RMSE 1.99e-6 and 4.83e-6.
+The report labels these measured differences, not certification. This graph does
+not implement publisher BF16 storage boundaries, the full eight-block DiT,
+timestep conditioning or the complete sampler. It accepts supplied rotary tables.</p>
+<pre>python3 -m unittest tests.test_v8_ming3_dit_block tests.test_v8_rope_pairwise_rows -v
+python3 version/v8/tts/replay_ming3_dit_block.py \
+  --capture /tmp/ming-reference/dit_first_block.pt \
+  --output /tmp/ming-native-dit-block</pre>
+<p>The reference capture command above now retains the first block, its weights,
+its original BF16 output and a separately labelled FP32 replay. Tests retain
+nonzero mathematical fixtures; real checkpoint data stays in private local
+artifacts. Missing artifacts are not a model-level pass.</p>
+<h2>Complete FP32 DiT component</h2>
+<p>The generated graph now connects timestep features, conditioning, history and
+latent projections, all eight DiT blocks, and the final projection. Checked native
+sinusoidal providers construct timestep and rotary features using explicit
+frequencies. Mathematical timestep constants are compiled artifacts; rotary
+frequencies come from the checkpoint. Neither table is an oracle-fed activation.</p>
+<p>Nonzero one-, two- and eight-layer fixtures compare against an independent
+composition. Direct kernel checks cover capacities, aliasing, nonfinite inputs,
+phase overflow and recovery. These tests are registered in nightly.</p>
+<p>The retained real-weight two-branch replay measured maximum errors 1.67e-6
+and 3.58e-6, with RMSE 4.80e-7 and 8.50e-7 against the publisher DiT recast to
+FP32. Native execution took approximately 0.109 seconds per branch in one
+component measurement, using a 415 MB arena. This is measured FP32 component
+evidence, not publisher BF16 certification or end-to-end synthesis performance.</p>
+<pre>python3 -m unittest tests.test_v8_ming3_dit tests.test_v8_sinusoidal_rows -v</pre>
+<p>This DiT component result is separate from the connected native sampler, backbone,
+aggregator and audio-decoder evidence below. Reference-spectrum output alone does
+not establish native text-to-speech.</p>
+<h2>Connected offline audio decoder</h2>
+<p>The generated audio graph now accepts reference latents and an explicit window
+asset, then executes input projection, half-pixel interpolation, all 24 decoder
+layers, final normalization, spectral projection, clamped Cartesian conversion
+and waveform reconstruction. It requires no reference-provided spectra. Each
+layer uses split-half RoPE, grouped-query attention with an explicit 64-frame
+causal window, and SwiGLU. Small nonzero one-, two- and 24-layer cases compare
+intermediate outputs and waveform with an independent mathematical reference.</p>
+<p>This is a separate FP32 arithmetic variant with FP64 inverse-transform and
+overlap-envelope accumulation. It does not silently adopt the earlier BF16-window
+fold contract. The real-weight replay reports errors without declaring a newly
+chosen tolerance to be certification. Publisher CPU attention fallback warnings
+remain recorded; the intended mask is tested explicitly.</p>
+<p>Retained full-weight FP32 replays at 2, 17 and 32 latent frames all returned
+success. At 32 frames, the generated decoder produced 112,896 samples in 14.0
+seconds with a 1.76 GB planned arena. Compared with the publisher decoder recast
+to FP32, waveform maximum error was 6.89e-4 and RMSE 2.92e-5. The spectral-head
+maximum difference was 0.0343, so small waveform error must not hide intermediate
+drift. This is measured evidence without a numerical certification verdict or
+listening approval; no production speed claim follows from this development run.</p>
+<p>The present graph compiles a fixed latent count, at most 512 latent frames,
+which become 2048 spectral frames at the pinned factor four. This fixed-length baseline is retained alongside the newer resident runtime-length decoder described below. Neither establishes streaming equivalence. Kernel workspace is planned; Python's offline compiler/weight conversion
+has additional memory costs. The quadratic inverse transform remains a correctness
+baseline. No listening approval is inferred from numerical tests.</p>
+<pre>python3 -m unittest tests.test_v8_ming3_audio_decoder tests.test_v8_audio_spectrum_cartesian -v
+python3 version/v8/tts/capture_ming3_synthesis_reference.py \
+  --publisher-root /path/to/pinned/publisher --checkpoint /path/to/pinned/checkpoint \
+  --output /tmp/ming-reference --decoder-fp32-replay
+python3 version/v8/tts/replay_ming3_audio_decoder.py \
+  --checkpoint /path/to/pinned/checkpoint/model.safetensors \
+  --reference /tmp/ming-reference/decoder-fp32-17.npz \
+  --output /tmp/ming-native-decoder</pre>
+<h2>Native generation loop and resident lengths</h2>
+<p>The connected implementation executes token embedding, the complete Qwen2.5
+backbone, stop head, native guided-flow sampler and latent aggregator. A C driver
+owns the iteration and feeds the aggregator's class-row output back into the next
+backbone position. Python prepares inputs and invokes native execution; it does not
+run the neural sampling loop. The initial backbone deliberately recomputes the
+whole valid prefix. A separately selected cached policy now uses generated checked KV append after prefill; it does not silently replace the full-prefix baseline.</p>
+<p>The generated dynamic audio decoder uses checked request lengths within a fixed
+allocation. Small independent-reference tests cover short, long, then short
+requests, invalid capacities and recovery. The connected loop tests nonzero
+backbone, DiT and aggregator arithmetic against independent composition, A/B/A,
+minimum stop length, cancellation, budget exhaustion and failure recovery. Failed
+or incomplete synthesis does not publish partial latents as a completed utterance.</p>
+<p>Real-weight native guided-flow replay uses the same initial noise and schedule
+as an independent FP32 publisher comparison. Two retained streams had maximum
+latent differences 1.43e-6 and 1.22e-6. The real aggregator replay's maximum
+embedding differences ranged from 9.54e-6 to 1.34e-5. These are measured FP32
+component results, not BF16 trajectory certification. Native counter Gaussian RNG
+is explicitly different from PyTorch RNG.</p>
+<p>The experimental runner accepts a clean pinned publisher checkout only for its
+pure prompt-building functions. It uses the checkpoint tokenizer directly, maps
+BF16-stored weights into FP32 native arenas, and has no publisher neural fallback.
+Cancellation is checked between native generation stages; an already executing
+audio-decoder entry finishes before its output can be discarded. It is not yet an
+HTTP service, low-latency streaming session or listening-approved voice.</p>
+<pre>python3 -m unittest tests.test_v8_ming3_aggregator tests.test_v8_ming3_native_flow \
+  tests.test_v8_ming3_native_latent_loop tests.test_v8_ming3_backbone \
+  tests.test_v8_ming3_runtime_audio_decoder -v
+python3 version/v8/tts/run_ming3_native_v8.py \
+  --checkpoint /path/to/checkpoint --publisher-root /path/to/pinned/publisher \
+  --output /path/to/new-run --text "Hello. This is Ming speech." \
+  --capacity 256 --max-frames 100 --threads 2</pre>
+<p>Run directories retain exact tokens, checkpoint/tokenizer and generated-library
+identities, native timings and explicit incomplete/failure status. Allocated
+capacity is not a successful long-text or 100-word trial. Full-model reference
+comparisons, intelligibility, replacement and practical latency remain gates.</p>
+<p>A retained 144-token backbone comparison exposed a reference precision
+boundary: the publisher loaded as BF16 and then recast to FP32 retains BF16-rounded
+rotary inverse frequencies. Against that variant, native hidden-state RMSE was
+0.0182 (maximum 0.722). A separately retained reference initializing those
+frequencies directly in FP32 gave RMSE 1.48e-5 (maximum 5.57e-4); stop-logit
+maximum error was 8.21e-5. Both results remain recorded. This identifies a major
+contract difference, not permission to label the native path publisher-BF16 exact.</p>
+<h2>Declarative bindings and shared authoring</h2>
+<p>Model builders declare topology through ordinary circuit lowering. The backbone
+and audio decoder compose a shared transformer-stack authoring helper; backbone
+construction does not filter another model graph by operation names. Checked
+compilation, weight-shape validation and runtime-extent authoring live in shared
+modules, with representative Qwen TTS consumer tests.</p>
+<p>Each component exports named tensors and generated entries. The compiler validates
+shapes, contiguous slices, provider dtypes, entry call ranges and allocation bounds,
+then binds the manifest to the loaded library identity. The latent execution profile
+selects a versioned runtime shell and declares feedback, history, stop semantics,
+minimum frames, sampling schedule and RNG policy. Binding rejects the wrong
+prediction row, incompatible dimensions, wrong entry outputs and stale manifests
+before native execution. The decoder returns its valid sample count through the
+existing generated runtime-length ABI; the host does not reconstruct that count.</p>
+<p>The C loop is a bounded latent-autoregressive execution pattern, not an arbitrary
+graph executor. Version one supports one-patch history, one feedback embedding and
+binary stop logits. Unsupported policies reject. No Ming-name branch is added to
+generic lowering or code generation.</p>
+<h2>Retained native trials, 15 November 2026</h2>
+<p>The built-in UK_George voice spoke “Hello. This is Ming speech.” from a
+publisher-formatted 144-token prompt without oracle activations. Full-prefix
+execution took 552.3 seconds plus 14.0 seconds of waveform decoding. The cached
+candidate took 91.1 seconds plus 14.0 seconds for the same 32 latent frames and
+2.56 seconds of audio. These are development runs, not controlled speed benchmarks.
+Cached versus full-prefix latent maximum error was 0.0001903; waveform maximum
+error was 0.0001027. They are not bitwise equivalent. Real resident cancellation,
+oversized-input rejection and a repeated request recovered bit-exact latents and
+waveform for that cached candidate.</p>
+<p>A separate 100-word trial completed seven explicit sentence chunks in one loaded
+session, producing 2,127,384 samples (48.24 seconds). Generation took 1,583.7 seconds
+and waveform decoding 263.4 seconds, excluding load. This is far from interactive
+speed. Whisper, without vocabulary hints, recovered all sentences and the numbers
+3 and 42; one normalized word differed for “C-Kernel-Engine.” ASR agreement is not
+human listening approval, pronunciation certification or seamless-join evidence.</p>
+<p>The paragraph trial used an earlier cached build; its retained artifact hashes
+identify that build. It does not certify later binding refactors. A subsequent
+short trial exercised the validated declarative bindings separately: 91.6 seconds
+generation and 14.0 seconds decoding, with bit-exact latents and waveform against
+the earlier cached candidate. Native neural execution uses
+FP32 and the declared counter RNG, not the publisher BF16/PyTorch-RNG trajectory.</p>
+<pre>python3 -m unittest tests.test_v8_latent_execution_contract \
+  tests.test_v8_checked_circuit_authoring tests.test_v8_ming3_cached_backbone -v
+python3 version/v8/tts/run_ming3_native_v8.py \
+  --checkpoint /path/to/checkpoint --publisher-root /path/to/pinned/publisher \
+  --output /path/to/new-cached-run --text "Hello. This is Ming speech." \
+  --capacity 256 --max-frames 100 --threads 2 --cached-backbone
+python3 version/v8/tts/run_ming3_paragraph_v8.py \
+  --checkpoint /path/to/checkpoint --publisher-root /path/to/pinned/publisher \
+  --text-file /path/to/paragraph.txt --output /path/to/new-paragraph-run \
+  --capacity 512 --max-frames 200 --threads 2</pre>
+<h2>Kernel and circuit work still required</h2>
+<table><thead><tr><th>Component</th><th>Reuse candidates</th><th>Remaining gate</th></tr></thead><tbody>
+<tr><td>Qwen2.5 backbone</td><td>Linear projections, RMSNorm, RoPE, attention, KV</td><td>Connected prompt/weight mapping and cached continuation tested; artifact-specific BF16 parity remains</td></tr>
+<tr><td>DiT and aggregator</td><td>Checked linear, GELU/SiLU, normalization, full attention</td><td>FP32 DiT, native flow and aggregator connected through synthesis; publisher BF16 trajectory certification remains</td></tr>
+<tr><td>Flow sampler</td><td>Checked scale and sum</td><td>Native bounded iteration, EPSS/sway and CFG implemented; separate publisher RNG and BF16 contracts remain</td></tr>
+<tr><td>Audio VAE</td><td>Transformer arithmetic and waveform plumbing</td><td>FP32 latents-to-waveform and runtime extents connected; real-weight certification and streaming remain</td></tr>
+<tr><td>Voice conditioning</td><td>Existing audio preprocessing where contracts match</td><td>CAM++ speaker encoder and reference-audio conditioning</td></tr>
+<tr><td>Serving</td><td>Speech request lifecycle, queues, cancellation, WAV delivery</td><td>Connect only after native synthesis and repeat/reset pass</td></tr>
+</tbody></table>
+<p>These are reuse candidates, not claims that all required numerical contracts
+already match. Add generic kernels/maps only for demonstrated gaps. Next measure the connected bottlenecks, establish controlled numerical trajectory comparisons and finish listening and service lifecycle acceptance. Do not claim CPU speed from backbone parameter
+count or promote this diagnostic circuit as a serving model.</p>
+<p>The <a href="v7-visualizer-test-runbook.html#v8-component-coverage">IR visualizer</a>
+can inspect the generated layout, calls and semantic checkpoints. A circuit in its
+catalog remains a declaration, not production certification.</p>

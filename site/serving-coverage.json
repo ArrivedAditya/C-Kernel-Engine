@@ -1,12 +1,12 @@
 {
   "chat_scope_counts": {
-    "component": 105,
-    "linked_chat_declaration": 8,
-    "text_decoder_candidate": 11,
+    "component": 111,
+    "linked_chat_declaration": 9,
+    "text_decoder_candidate": 10,
     "unassessed": 4
   },
-  "circuit_count": 128,
-  "circuit_linked_count": 8,
+  "circuit_count": 134,
+  "circuit_linked_count": 9,
   "rows": [
     {
       "artifact": {
@@ -97,7 +97,7 @@
       "chat_scope_reason": "no independent text-decoder serving path declared",
       "circuit": "clef_flash_complete_head_bounded",
       "circuit_path": "version/v8/circuits/clef_flash_complete_head_bounded.json",
-      "circuit_sha256": "d0dcdf5699d8fc6ce4ddbd66d1767c8d01f27f8fcdae1fcc13e7fc08dbbbb97b",
+      "circuit_sha256": "8eb0b7258910d8598fdd1e959694959c37b1a98578a3eaabd3e9879907787716",
       "evidence": {
         "cancellation_recovery": "not_assessed",
         "exact_token_ids": "not_assessed",
@@ -2899,6 +2899,234 @@
         "revision": null,
         "tokenizer_sha256": null
       },
+      "chat_scope": "component",
+      "chat_scope_reason": "no independent text-decoder serving path declared",
+      "circuit": "ming3_aggregator_fp32_bounded_d8",
+      "circuit_path": "version/v8/circuits/ming3_aggregator_fp32_bounded.json",
+      "circuit_sha256": "14ec0c56346d0aa193fccd6e62eb2513301c901e7b07d51da564253feebb29c9",
+      "evidence": {
+        "cancellation_recovery": "not_assessed",
+        "exact_token_ids": "not_assessed",
+        "generated_runtime": "not_assessed",
+        "harness_task": "not_assessed",
+        "loaded_artifact_identity": "not_assessed",
+        "rendered_prompt": "not_assessed",
+        "tool_protocol": "not_assessed",
+        "tool_round_trip": "not_assessed"
+      },
+      "family": "bounded_graph",
+      "input_modalities": null,
+      "output_protocol": null,
+      "profile_id": null,
+      "profile_ref": null,
+      "profile_sha256": null,
+      "publisher_template": null,
+      "reasoning_protocol": null,
+      "renderer": null,
+      "serving_declaration": "missing",
+      "stop_policy": null,
+      "tool_template": null,
+      "variant": null
+    },
+    {
+      "artifact": {
+        "conversion_to_circuit": null,
+        "quantization": null,
+        "repository": null,
+        "resolved_bundle_identity": null,
+        "revision": null,
+        "tokenizer_sha256": null
+      },
+      "chat_scope": "component",
+      "chat_scope_reason": "no independent text-decoder serving path declared",
+      "circuit": "ming3_audio_decoder_fp32_bounded_d24",
+      "circuit_path": "version/v8/circuits/ming3_audio_decoder_fp32_bounded.json",
+      "circuit_sha256": "462724ed088144563b4e881667f403c9e807a32488b618eaa418b7a8bfd5c5cf",
+      "evidence": {
+        "cancellation_recovery": "not_assessed",
+        "exact_token_ids": "not_assessed",
+        "generated_runtime": "not_assessed",
+        "harness_task": "not_assessed",
+        "loaded_artifact_identity": "not_assessed",
+        "rendered_prompt": "not_assessed",
+        "tool_protocol": "not_assessed",
+        "tool_round_trip": "not_assessed"
+      },
+      "family": "bounded_graph",
+      "input_modalities": null,
+      "output_protocol": null,
+      "profile_id": null,
+      "profile_ref": null,
+      "profile_sha256": null,
+      "publisher_template": null,
+      "reasoning_protocol": null,
+      "renderer": null,
+      "serving_declaration": "missing",
+      "stop_policy": null,
+      "tool_template": null,
+      "variant": null
+    },
+    {
+      "artifact": {
+        "conversion_to_circuit": null,
+        "quantization": null,
+        "repository": null,
+        "resolved_bundle_identity": null,
+        "revision": null,
+        "tokenizer_sha256": null
+      },
+      "chat_scope": "component",
+      "chat_scope_reason": "no independent text-decoder serving path declared",
+      "circuit": "ming3_tts_dit_block_fp32_bounded",
+      "circuit_path": "version/v8/circuits/ming3_tts_dit_block_fp32_bounded.json",
+      "circuit_sha256": "6431173b26ff82afd7c76e5d632cf676fae9541350395307c1198ba99295eae8",
+      "evidence": {
+        "cancellation_recovery": "not_assessed",
+        "exact_token_ids": "not_assessed",
+        "generated_runtime": "not_assessed",
+        "harness_task": "not_assessed",
+        "loaded_artifact_identity": "not_assessed",
+        "rendered_prompt": "not_assessed",
+        "tool_protocol": "not_assessed",
+        "tool_round_trip": "not_assessed"
+      },
+      "family": "bounded_graph",
+      "input_modalities": null,
+      "output_protocol": null,
+      "profile_id": null,
+      "profile_ref": null,
+      "profile_sha256": null,
+      "publisher_template": null,
+      "reasoning_protocol": null,
+      "renderer": null,
+      "serving_declaration": "missing",
+      "stop_policy": null,
+      "tool_template": null,
+      "variant": null
+    },
+    {
+      "artifact": {
+        "conversion_to_circuit": null,
+        "quantization": null,
+        "repository": null,
+        "resolved_bundle_identity": null,
+        "revision": null,
+        "tokenizer_sha256": null
+      },
+      "chat_scope": "component",
+      "chat_scope_reason": "no independent text-decoder serving path declared",
+      "circuit": "ming3_tts_dit_fp32_bounded",
+      "circuit_path": "version/v8/circuits/ming3_tts_dit_fp32_bounded.json",
+      "circuit_sha256": "bc15d14527302c65f16f5b3e59c31c32ddf785b7f2f309456f02efdf59a02d14",
+      "evidence": {
+        "cancellation_recovery": "not_assessed",
+        "exact_token_ids": "not_assessed",
+        "generated_runtime": "not_assessed",
+        "harness_task": "not_assessed",
+        "loaded_artifact_identity": "not_assessed",
+        "rendered_prompt": "not_assessed",
+        "tool_protocol": "not_assessed",
+        "tool_round_trip": "not_assessed"
+      },
+      "family": "bounded_graph",
+      "input_modalities": null,
+      "output_protocol": null,
+      "profile_id": null,
+      "profile_ref": null,
+      "profile_sha256": null,
+      "publisher_template": null,
+      "reasoning_protocol": null,
+      "renderer": null,
+      "serving_declaration": "missing",
+      "stop_policy": null,
+      "tool_template": null,
+      "variant": null
+    },
+    {
+      "artifact": {
+        "conversion_to_circuit": null,
+        "quantization": null,
+        "repository": null,
+        "resolved_bundle_identity": null,
+        "revision": null,
+        "tokenizer_sha256": null
+      },
+      "chat_scope": "component",
+      "chat_scope_reason": "no independent text-decoder serving path declared",
+      "circuit": "ming3_tts_flow_step_bounded",
+      "circuit_path": "version/v8/circuits/ming3_tts_flow_step_bounded.json",
+      "circuit_sha256": "9d51ae291f3a03f5722d7caf59a054fc88dd5a4b11d17d67d41fe1ffe5c6f83d",
+      "evidence": {
+        "cancellation_recovery": "not_assessed",
+        "exact_token_ids": "not_assessed",
+        "generated_runtime": "not_assessed",
+        "harness_task": "not_assessed",
+        "loaded_artifact_identity": "not_assessed",
+        "rendered_prompt": "not_assessed",
+        "tool_protocol": "not_assessed",
+        "tool_round_trip": "not_assessed"
+      },
+      "family": "bounded_graph",
+      "input_modalities": null,
+      "output_protocol": null,
+      "profile_id": null,
+      "profile_ref": null,
+      "profile_sha256": null,
+      "publisher_template": null,
+      "reasoning_protocol": null,
+      "renderer": null,
+      "serving_declaration": "missing",
+      "stop_policy": null,
+      "tool_template": null,
+      "variant": null
+    },
+    {
+      "artifact": {
+        "conversion_to_circuit": null,
+        "quantization": null,
+        "repository": null,
+        "resolved_bundle_identity": null,
+        "revision": null,
+        "tokenizer_sha256": null
+      },
+      "chat_scope": "component",
+      "chat_scope_reason": "no independent text-decoder serving path declared",
+      "circuit": "ming3_tts_waveform_from_spectrum_bounded",
+      "circuit_path": "version/v8/circuits/ming3_tts_waveform_from_spectrum_bounded.json",
+      "circuit_sha256": "94aa7373cd513d207c2cc893a12afa98c5f724fb201c7b4680bfca57c2e5c011",
+      "evidence": {
+        "cancellation_recovery": "not_assessed",
+        "exact_token_ids": "not_assessed",
+        "generated_runtime": "not_assessed",
+        "harness_task": "not_assessed",
+        "loaded_artifact_identity": "not_assessed",
+        "rendered_prompt": "not_assessed",
+        "tool_protocol": "not_assessed",
+        "tool_round_trip": "not_assessed"
+      },
+      "family": "bounded_graph",
+      "input_modalities": null,
+      "output_protocol": null,
+      "profile_id": null,
+      "profile_ref": null,
+      "profile_sha256": null,
+      "publisher_template": null,
+      "reasoning_protocol": null,
+      "renderer": null,
+      "serving_declaration": "missing",
+      "stop_policy": null,
+      "tool_template": null,
+      "variant": null
+    },
+    {
+      "artifact": {
+        "conversion_to_circuit": null,
+        "quantization": null,
+        "repository": null,
+        "resolved_bundle_identity": null,
+        "revision": null,
+        "tokenizer_sha256": null
+      },
       "chat_scope": "linked_chat_declaration",
       "chat_scope_reason": "circuit references a resolved serving profile",
       "circuit": "muse_glimmer_text",
@@ -3109,7 +3337,7 @@
       "chat_scope_reason": "circuit references a resolved serving profile",
       "circuit": "qwen35",
       "circuit_path": "version/v8/circuits/qwen35.json",
-      "circuit_sha256": "a56638306ada0ae31809e242f48cd28ba94c648c707915fd402d1b8cad5248a4",
+      "circuit_sha256": "dc7b3617ac48a4336adf1984b0b38e73459de779cca8399a2f6b95729c34b892",
       "evidence": {
         "cancellation_recovery": "not_assessed",
         "exact_token_ids": "not_assessed",
@@ -4795,11 +5023,11 @@
         "revision": null,
         "tokenizer_sha256": null
       },
-      "chat_scope": "text_decoder_candidate",
-      "chat_scope_reason": "text decoder and token/logit contracts; serving unlinked",
+      "chat_scope": "linked_chat_declaration",
+      "chat_scope_reason": "circuit references a resolved serving profile",
       "circuit": "qwen4_exp",
       "circuit_path": "version/v8/circuits/qwen4_exp.json",
-      "circuit_sha256": "3f1e991dacff31a3f63637c4d2e11c0763aa7d2ccfe7d12c2a5bd1c37cbaf0cb",
+      "circuit_sha256": "ac17bec113b87f3626c9b0f5c16bc32418d4ea72f5f360a93d7f80541d1c1bce",
       "evidence": {
         "cancellation_recovery": "not_assessed",
         "exact_token_ids": "not_assessed",
@@ -4811,18 +5039,27 @@
         "tool_round_trip": "not_assessed"
       },
       "family": "qwen38_flash_next",
-      "input_modalities": null,
-      "output_protocol": null,
-      "profile_id": null,
-      "profile_ref": null,
-      "profile_sha256": null,
-      "publisher_template": null,
+      "input_modalities": [
+        "text"
+      ],
+      "output_protocol": "qwen_xml",
+      "profile_id": "qwen-tools-v1",
+      "profile_ref": "serving_profiles/qwen_tools_v1.json",
+      "profile_sha256": "89543095e856e028fbc2c4659a8d8674d4c53ddda56780ed23af9e84fabe9e44",
+      "publisher_template": {
+        "source": "publisher",
+        "variant": "default"
+      },
       "reasoning_protocol": null,
-      "renderer": null,
-      "serving_declaration": "missing",
+      "renderer": "jinja-chat-v1",
+      "serving_declaration": "circuit_linked",
       "stop_policy": null,
-      "tool_template": null,
-      "variant": null
+      "tool_template": {
+        "fallback_variant": "default",
+        "source": "publisher",
+        "variant": "tool_use"
+      },
+      "variant": "publisher"
     },
     {
       "artifact": {
@@ -4837,7 +5074,7 @@
       "chat_scope_reason": "text decoder and token/logit contracts; serving unlinked",
       "circuit": "rwkv7",
       "circuit_path": "version/v8/circuits/rwkv7.json",
-      "circuit_sha256": "7912b8d58df2bb40e58a5009fefd2be799febc644bbc27c75afb38082f1913a9",
+      "circuit_sha256": "3e79e26690d28eae9d54d0d245d0ccd85590e166d6a1505074a567f925064d08",
       "evidence": {
         "cancellation_recovery": "not_assessed",
         "exact_token_ids": "not_assessed",
