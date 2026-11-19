@@ -1,0 +1,164 @@
+VISION ENCODER PERFORMANCE REGRESSION CHECKLIST
+
+Scope: shared providers and exact generated consumers, not family-wide parity.
+Preserving a retained output does not establish agreement with an independent
+oracle. Numerical fidelity, image-task quality and latency remain separate gates.
+
+COMPLETED / MERGED
+[x] BF16 projection output-row reuse (#1110): preserve ascending-K arithmetic.
+[x] Attention tail reuse and strict softmax optimization (#1127).
+[x] Large table GELU independent-output dispatch (#1128).
+    Guard: tests/test_v8_gelu_ggml_parallel.py, standard nightly.
+    Check actual dispatch, exact output bits, tails, single-worker and nesting.
+
+MERGED ROW SCHEDULING (#1130)
+[x] Implement explicit RoPE and matched LayerNorm parallel dispatch wrappers.
+    Arithmetic remains in existing kernels; provider maps select wrappers.
+[x] Preserve small-work, nesting and overlapping-buffer serial fallbacks.
+[x] Execute synthetic output-preservation tests and assert dispatch occurs.
+[x] Register tests/test_v8_encoder_row_parallel.py in standard nightly.
+[x] Local contract and generated-inventory gates passed.
+[x] Execute focused nightly entries (zero skips), portable and native-ISA tests.
+[ ] Complete rebuilt affected-consumer gates and final-head required nightly.
+[x] Rebuild generated Qwen3-VL and Qwen3.6 consumers using selected wrappers.
+[ ] Validate Gemma's LayerNorm consumer; it does not use Qwen vision M-RoPE.
+[x] Repeat capture-disabled whole-encoder timing on physical cores only.
+    Diagnostic interposer gains are not production-wrapper acceptance evidence.
+
+NEXT MEASUREMENTS
+[x] Attribute GEMM-specific cache traffic, separately from encoder-wide traffic.
+[ ] Measure packing/conversion reuse, SIMD instruction mix and vector tails.
+[ ] Measure core occupancy per operation, dispatch overhead and serial intervals.
+[ ] Compare core-group locality on Ryzen's separate L3 domains.
+[ ] Test blocking or prefetch changes only after identifying a costly access.
+    Cache misses are not inherently defects; optimize elapsed time, not a ratio.
+    IBS latency-weighted shares are not CPU-cycle or wall-time shares.
+    Missing memory-source attribution must remain unknown, not cache HIT.
+
+PER-CHANGE ACCEPTANCE
+[ ] Retain baseline and candidate source, library, provider and input identities.
+[ ] Independent kernel reference plus exact old-provider comparisons where promised.
+[ ] Nonzero inputs, tails, geometry boundaries, aliasing and nested execution.
+[ ] Execute generated selection; reject unexpected serial/provider fallback.
+[ ] Compare outputs on every available affected consumer.
+[ ] Run interleaved warmed repetitions with loading/capture excluded from timing.
+[ ] Keep thread count, physical-core affinity, geometry and host load matched.
+[ ] Record elapsed time, CPU time, peak memory, packing and allocation costs.
+[ ] Regenerate inventories; run freshness and final-head required nightly.
+
+COVERAGE BOUNDARY
+Qwen3-VL and Qwen3.6: rebuilt consumers preserve retained prefix bytes and meet
+the <=1.5x encoder latency target on the bounded measured configurations.
+This is not broad geometry or corpus certification. Gemma selects layernorm_fp32_exact,
+so it is an affected consumer, not an automatically measured speedup.
+Qwen3.5/Qwen3.8/Next and other families: require exact vision-capable artifacts,
+provider selections and their own results. Text support does not prove vision.
+Keep all private corpus identities, content and size out of public reports.
+
+CURRENT VALIDATION COMMANDS
+.venv/bin/python -m pytest -q tests/test_v8_encoder_row_parallel.py
+CK_ENCODER_TEST_CFLAGS=-march=native .venv/bin/python -m pytest -q tests/test_v8_encoder_row_parallel.py
+make v8-kernel-map-contracts
+.venv/bin/python scripts/nightly_runner.py --tests encoder_row_parallel gelu_ggml_parallel --require-executed
+Native tests were also executed on Ryzen pinned to physical CPUs 0-3.
+
+PRODUCTION TIMING CHECKPOINT (3148d375b)
+Ryzen, physical CPUs 0-15, warmed encode calls, loading/preprocessing excluded,
+no tensor captures or interposer. Same processed pixels and frozen weights.
+Pinned llama.cpp: 19e28a27702117d8f2eb16b825b9a308111f67d9.
+Artifact lane     Baseline CKE   New CKE    llama.cpp   CKE/oracle
+Qwen3-VL         35.00 s        32.94 s    23.47 s     1.404x
+Qwen3.6          34.30 s        31.19 s    23.10 s     1.350x
+Candidate average busy physical CPUs: 13.98 and 14.28, respectively.
+Qwen3.6's baseline has fewer repetitions; its before/after estimate needs more
+repeats. Oracle/candidate repetitions support the bounded ratio, not a family-wide
+guarantee. Output preservation is relative to frozen CKE, not new oracle parity.
+
+GEMM-SCOPED DIAGNOSTIC
+Counters gated around generated BF16 GEMM dispatch calls in the measured encode;
+dispatch count checked against call-ready IR. Output retained byte identity.
+Instrumented GEMM time: 13.69 s. L2 hit ratio: 98.45%; L3 miss ratio: 8.13%.
+Counters scheduled 100%. L3 is system-wide uncore, not process-exclusive.
+Backend-stall events count dispatch opportunities, not stalled-cycle percent.
+This does not prove memory bandwidth or L3 misses dominate GEMM. Separate packing,
+conversion, arithmetic and load/store costs before changing blocking/prefetch.
+
+BF16 PACK INITIALIZATION EXPERIMENT
+[x] Remove full-tile zeroing; initialize unused tail lanes once per output tile.
+    Keep ascending-K multiply/add, bias placement and BF16 rounding unchanged.
+    No additional allocation, packing cache, provider or compiler policy.
+[x] Native and poisoned-stack tests: 5 tests and 536 subtests each passed.
+    Guard pages, row/channel/K tails and independent sequential FP32 arithmetic.
+    A mutation omitting tail initialization raises FP exceptions with poisoned
+    automatic storage, despite masked final stores. Keep this negative control.
+[x] Synthetic paired timings on physical CPU 0 and CPU 8: representative large
+    shapes improve by 1.071-1.078x, all output bytes equal to baseline.
+    Always-masked-load variants were slower and were rejected.
+[x] Finish interleaved generated Qwen3-VL and Qwen3.6 encoder acceptance.
+[ ] Final-head required nightly.
+Existing nightly suite bf16_exact_output_lanes runs the expanded regression.
+Gemma's FP16 projections are not covered by this BF16 performance claim.
+
+PACKING CONNECTED RESULTS
+Current main base: 64993770e. Same generated consumers as the production timing
+checkpoint above. Only engine changes; source/provider hashes retained privately.
+16 physical cores; baseline/candidate/candidate/baseline, each with a warmup.
+Capture-disabled encode-only seconds (medians):
+Artifact        Baseline       Candidate      Latency reduction
+Qwen3-VL        33.3407        31.6632        5.03%
+Qwen3.6         31.3057        30.8285        1.52%
+Qwen3-VL ranges: baseline 32.4579-34.2234, candidate 31.3814-31.9449.
+Qwen3.6 ranges: baseline 31.2265-31.3850, candidate 30.6855-30.9714.
+All warmed and measured prefixes equal retained CKE bytes. No new task-quality
+or independent-oracle parity claim. The small Qwen3.6 gain needs ongoing tracking.
+Do not combine these times with an older oracle run to claim a new speed ratio.
+Baseline engine SHA256:
+1655cffde79a397432b91cd4f756ff50a9964c1ddc334465572086bd0574fc15
+Candidate engine SHA256:
+2cc75ad82351e065660b8df390f3f12820d1bb0b8b7b5792743194041657fbbf
+Next: reprofile the remaining GEMM conversion/packing and serial intervals on
+the accepted artifact before changing blocking, prefetching or precision.
+
+CONTIGUOUS WEIGHT PACKING (2026-11-15)
+Base: merged #1135, 1a558d817. Profiling the retained exact BF16 provider on
+physical CPU 0 put approximately 45% of its synthetic cycle samples in the
+weight-packing region. Disassembly shows extracts/shuffles and strided stores.
+Sampling identifies a candidate region, not an exact wall-time decomposition.
+[x] Test K-outer/channel-inner packing to write contiguous packed output lanes.
+    Packed values, stack size, BF16 conversion and ascending-K reduction stay
+    unchanged. No persistent packing, allocation, provider or compiler change.
+[x] Paired synthetic shapes on physical CPUs 0 and 8: 1.033-1.107x speedup,
+    bitwise-identical results. The smallest observed gain was the first shape
+    on CPU 0; do not present the maximum as a whole-encoder gain.
+[x] Extend independent arithmetic tests across multi-tile channel/K strides.
+    Poisoned-stack AVX512 run: 6 tests and 556 subtests passed.
+[x] Map/ABI/registry gate and row-dispatch/Qwen BF16 contract tests passed.
+[x] Complete paired generated encoder timing and prefix-byte acceptance.
+[ ] Final-head required nightly.
+Continue to treat Gemma FP16 and other artifact/provider combinations as
+separate measured consumers; this is not an all-family speed claim.
+
+CONTIGUOUS PACKING CONNECTED RESULTS
+Same generated consumers, frozen inputs and weights; change engine only.
+Physical CPUs 0-15; baseline/candidate/candidate/baseline, each with a warmup.
+Encoder-only seconds (median; initialization and captures excluded):
+Artifact        Baseline       Candidate      Latency reduction
+Qwen3-VL        31.4705        30.3200        3.66%
+Qwen3.6         30.3676        29.9890        1.25%
+Qwen3-VL ranges: baseline 30.8088-32.1321, candidate 30.1806-30.4595.
+Qwen3.6 ranges: baseline 30.1639-30.5713, candidate 29.5277-30.4503.
+Qwen3.6 ranges overlap: treat its small gain as provisional, not a guaranteed
+speedup across inputs. Every warmup and measured prefix preserved CKE bytes.
+This does not establish new oracle parity, image quality or a fresh oracle
+latency ratio. Gemma FP16 and other consumers remain separately unmeasured.
+Baseline engine SHA256:
+2cc75ad82351e065660b8df390f3f12820d1bb0b8b7b5792743194041657fbbf
+Candidate engine SHA256:
+c40cbfbfcc62a27fd73b6040709f3522a4e0ad740ca29ec85fee437ea8889457
+
+Synthetic process counters, physical CPU 0 (startup included, normalized by
+completed projections): cycles/call approximately 31.17M -> 28.20M, instructions
+approximately 96.07M -> 158.27M. More instructions can still execute faster;
+do not advertise instruction-count reduction or infer better L3 behavior.
+Intel AVX512 throughput remains unmeasured. Focused nightly executed with no
+skips; required full nightly remains a separate gate.

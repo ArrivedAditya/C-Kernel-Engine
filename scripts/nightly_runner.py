@@ -688,6 +688,9 @@ TEST_SUITES = {
     # Core kernel tests (FP32)
     "gemm": TestSuite("GEMM", "kernels", UNITTEST_DIR / "test_gemm.py"),
     "gemm_variants": TestSuite("GEMM Variants", "kernels", UNITTEST_DIR / "test_gemm_variants.py"),
+    "f32_gemm_row_reuse": TestSuite(
+        "FP32 Production Row Reuse and Output Ownership", "kernels",
+        ROOT / "tests" / "test_v8_f32_gemm_row_reuse.py"),
     "gemm_microkernel": TestSuite("GEMM Microkernel", "kernels", UNITTEST_DIR / "test_gemm_microkernel.py"),
     "add_bf16": TestSuite("BF16 Add Stored-Value Oracle", "kernels", UNITTEST_DIR / "test_add.py"),
     "gemm_fused": TestSuite("GEMM Fused", "kernels", UNITTEST_DIR / "test_gemm_fused.py"),
@@ -701,6 +704,26 @@ TEST_SUITES = {
     "rope": TestSuite("RoPE", "kernels", UNITTEST_DIR / "test_rope.py"),
     "embedding": TestSuite("Embedding", "kernels", UNITTEST_DIR / "test_embedding.py"),
     "attention": TestSuite("Attention", "kernels", UNITTEST_DIR / "test_attention.py"),
+    "bf16_exact_output_lanes": TestSuite(
+        "v8 BF16 exact output-lane SIMD", "kernels",
+        ROOT / "tests" / "test_v8_bf16_exact_output_lanes.py", timeout_sec=180,
+    ),
+    "attention_matmul_tail": TestSuite(
+        "AVX-512 Attention Matmul Tail", "kernels",
+        ROOT / "tests" / "test_v8_attention_matmul_tail.py", timeout_sec=180,
+    ),
+    "attention_softmax_exact": TestSuite(
+        "AVX-512 Attention Softmax Exact Reduction", "kernels",
+        ROOT / "tests" / "test_v8_attention_softmax_exact.py", timeout_sec=180,
+    ),
+    "gelu_ggml_parallel": TestSuite(
+        "GGML GELU independent-output parallelism", "kernels",
+        ROOT / "tests" / "test_v8_gelu_ggml_parallel.py", timeout_sec=180,
+    ),
+    "encoder_row_parallel": TestSuite(
+        "Encoder RoPE and LayerNorm independent-row dispatch", "kernels",
+        ROOT / "tests" / "test_v8_encoder_row_parallel.py", timeout_sec=180,
+    ),
     "attention_sliding": TestSuite("Attention Sliding Window", "kernels", UNITTEST_DIR / "test_attention_sliding_contract.py"),
     "attention_gemma3_arithmetic": TestSuite(
         "Gemma3 Attention Arithmetic Fixture", "kernels",
@@ -746,6 +769,94 @@ TEST_SUITES = {
     "tts_kokoro_shape_bounds": TestSuite(
         "TTS Kokoro Extent and Duration Expansion", "kernels",
         ROOT / "tests" / "test_v8_kokoro_shape_bounds.py",
+    ),
+    "tts_ming3_generated_dit_fp32": TestSuite(
+        "Ming3 Full Generated DiT FP32 Composition", "inference",
+        ROOT / "tests" / "test_v8_ming3_dit.py",
+        timeout_sec=120,
+    ),
+    "sinusoidal_rows_checked": TestSuite(
+        "Checked Native Sinusoidal Features", "inference",
+        ROOT / "tests" / "test_v8_sinusoidal_rows.py",
+        timeout_sec=120,
+    ),
+    "tts_ming3_generated_dit_block_fp32": TestSuite(
+        "Ming3 Nonzero Generated DiT Block FP32 Composition", "inference",
+        ROOT / "tests" / "test_v8_ming3_dit_block.py",
+        timeout_sec=120,
+    ),
+    "rope_pairwise_rows_checked": TestSuite(
+        "Explicit-Table Checked Pairwise Rotation", "inference",
+        ROOT / "tests" / "test_v8_rope_pairwise_rows.py",
+        timeout_sec=120,
+    ),
+    "tts_ming3_aggregator": TestSuite(
+        "Ming3 Generated Latent Feedback", "inference",
+        ROOT / "tests" / "test_v8_ming3_aggregator.py", timeout_sec=180,
+        unittest_targets=("tests.test_v8_ming3_aggregator",),
+    ),
+    "tts_ming3_native_flow": TestSuite(
+        "Ming3 Native Guided Flow", "inference",
+        ROOT / "tests" / "test_v8_ming3_native_flow.py", timeout_sec=180,
+        unittest_targets=("tests.test_v8_ming3_native_flow",),
+    ),
+    "checked_latent_execution_contract": TestSuite(
+        "Checked Latent Execution Bindings", "inference",
+        ROOT / "tests" / "test_v8_latent_execution_contract.py", timeout_sec=240,
+        unittest_targets=("tests.test_v8_latent_execution_contract",),
+    ),
+    "checked_circuit_authoring": TestSuite(
+        "Shared Checked Circuit Authoring", "inference",
+        ROOT / "tests" / "test_v8_checked_circuit_authoring.py", timeout_sec=240,
+        unittest_targets=("tests.test_v8_checked_circuit_authoring",),
+    ),
+    "tts_ming3_cached_backbone": TestSuite(
+        "Ming3 Cached Backbone State", "inference",
+        ROOT / "tests" / "test_v8_ming3_cached_backbone.py", timeout_sec=240,
+        unittest_targets=("tests.test_v8_ming3_cached_backbone",),
+    ),
+    "tts_ming3_text_segments": TestSuite(
+        "Ming3 Explicit Text Spans", "inference",
+        ROOT / "tests" / "test_v8_ming3_text_segments.py", timeout_sec=240,
+        unittest_targets=("tests.test_v8_ming3_text_segments",),
+    ),
+    "tts_ming3_native_latent_loop": TestSuite(
+        "Ming3 Connected Native Latent Loop", "inference",
+        ROOT / "tests" / "test_v8_ming3_native_latent_loop.py", timeout_sec=180,
+        unittest_targets=("tests.test_v8_ming3_native_latent_loop",),
+    ),
+    "tts_ming3_backbone": TestSuite(
+        "Ming3 Runtime Prefix Backbone", "inference",
+        ROOT / "tests" / "test_v8_ming3_backbone.py", timeout_sec=180,
+        unittest_targets=("tests.test_v8_ming3_backbone",),
+    ),
+    "tts_ming3_runtime_audio_decoder": TestSuite(
+        "Ming3 Resident Audio Decoder", "inference",
+        ROOT / "tests" / "test_v8_ming3_runtime_audio_decoder.py", timeout_sec=180,
+        unittest_targets=("tests.test_v8_ming3_runtime_audio_decoder",),
+    ),
+    "tts_ming3_generated_audio_decoder": TestSuite(
+        "Ming3 Connected FP32 Latents to Waveform", "inference",
+        ROOT / "tests" / "test_v8_ming3_audio_decoder.py", timeout_sec=180,
+    ),
+    "audio_spectrum_cartesian_checked": TestSuite(
+        "Checked Clamped Cartesian Spectrum", "inference",
+        ROOT / "tests" / "test_v8_audio_spectrum_cartesian.py", timeout_sec=120,
+    ),
+    "audio_istft_complex_window_checked": TestSuite(
+        "Audio Explicit-Window Cropped ISTFT and BF16 Fold Order", "inference",
+        ROOT / "tests" / "test_v8_audio_istft_complex_window.py",
+        timeout_sec=120,
+    ),
+    "audio_linear_upsample_checked": TestSuite(
+        "Audio Linear Half-Pixel Upsampling and Generated Binding", "inference",
+        ROOT / "tests" / "test_v8_audio_linear_upsample.py",
+        timeout_sec=120,
+    ),
+    "tts_ming3_generated_flow_step": TestSuite(
+        "Ming3 FP32 Supplied-Prediction Generated Flow Step", "inference",
+        ROOT / "tests" / "test_v8_ming3_flow_step.py",
+        timeout_sec=120,
     ),
     "tts_qwen3_customvoice_oracle_contract": TestSuite(
         "Qwen3-TTS 0.6B CustomVoice Pinned Oracle Contract", "inference",
@@ -817,6 +928,8 @@ TEST_SUITES = {
     "tts_checked_multi_entry": TestSuite(
         "Checked Shared-Arena Multi-Entry Composition", "inference",
         ROOT / "tests" / "test_v8_checked_multi_entry.py",
+        unittest_targets=("tests.test_v8_checked_multi_entry",
+                          "tests.test_v8_checked_bundle_policy"),
     ),
     "tts_qwen3_customvoice_two_phase_speech": TestSuite(
         "Qwen3-TTS Checked Prefill and Rolling Frame Entries", "inference",
@@ -933,9 +1046,9 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_copy_i32_span_checked.py",
     ),
     "training_job_lifecycle": TestSuite(
-        "Explicit SVG Job Submission, Idempotency and Persistent Recovery", "training",
+        "Training Jobs: Integer/Opaque Revisions, Idempotency and Recovery", "training",
         ROOT / "server" / "tests" / "test_training_jobs.py",
-        unittest_targets=("server.tests.test_training_jobs",),
+        unittest_targets=("server.tests.test_training_jobs", "server.tests.test_training_bridge"),
     ),
     "training_backend_contract": TestSuite(
         "Training Capability Discovery and Side-Effect-Free Plan Validation", "training",
@@ -952,6 +1065,25 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_clef_feature_capture.py",
         unittest_targets=("tests.test_v8_clef_feature_capture",),
     ),
+    "generated_embedded_entry": TestSuite(
+        "Generated Embedded Entry and Declared Visual Layer Output", "inference",
+        ROOT / "tests" / "test_v8_codegen_bridge.py",
+        unittest_targets=("tests.test_v8_codegen_bridge.EmbeddedEntryContractTests",
+                          "tests.test_v8_codegen_bridge.V8CodegenBridgeTests.test_qwen3vl_decoder_codegen_without_prefill_layout_keeps_prefill_bridge_api"),
+    ),
+    "generated_composition_training": TestSuite(
+        "Generated Composition Claims and Shared Circuit Training Lowering", "training",
+        ROOT / "tests" / "test_v8_generated_composition_contract.py",
+        unittest_targets=("tests.test_v8_generated_composition_contract", "tests.test_v8_map_training_binding", "tests.test_v8_circuit_training_lowering", "tests.test_v8_training_float_inputs", "tests.test_v8_portable_training_runtime", "tests.test_v8_frozen_component_training"),
+    ),
+    "decision_native_frontend": TestSuite(
+        "Clef Text Spans and Native Backbone Feature Boundary", "inference",
+        ROOT / "tests" / "test_v8_clef_native_frontend.py",
+        unittest_targets=("tests.test_v8_clef_native_frontend",
+                          "tests.test_v8_native_entry_binding",
+                          "tests.test_v8_decoder_feature_sequence",
+                          "tests.test_v8_native_feature_head_composition"),
+    ),
     "decision_native_head": TestSuite(
         "Registered Generated Decision Head and Independent Consumer", "inference",
         ROOT / "server" / "tests" / "test_decision_native.py",
@@ -967,6 +1099,38 @@ TEST_SUITES = {
         ROOT / "tests" / "test_v8_attention_training.py",
         unittest_targets=("tests.test_v8_attention_training", "tests.test_v8_attention_cross_backward"),
     ),
+    "training_complete_clef_head": TestSuite(
+        "FP32 Complete Clef Head Training and Generated Export (Pinned Oracle When Available)",
+        "training", ROOT / "tests" / "test_v8_clef_full_training.py",
+        unittest_targets=("tests.test_v8_clef_full_training.FullHeadTraining.test_pinned_complete_head_training", "tests.test_v8_clef_full_training.FullHeadTrainingContracts", "tests.test_v8_indexed_rows_training"),
+    ),
+    "training_clef_registered_recipe": TestSuite(
+        "Registered FP32 Clef Dataset, Training, Resume and Native Export",
+        "training", ROOT / "tests" / "test_v8_clef_training_recipe.py",
+        timeout_sec=600,
+        unittest_targets=("tests.test_v8_clef_training_recipe", "tests.test_v8_clef_evaluation", "tests.test_v8_clef_dataset_scale"),
+    ),
+    "training_released_clef_head": TestSuite(
+        "FP32 Released Clef Head Gradients, Updates and Export (Asset-backed)",
+        "training", ROOT / "tests" / "test_v8_clef_full_training.py",
+        timeout_sec=600,
+        unittest_targets=("tests.test_v8_clef_full_training.FullHeadTraining.test_released_head_training",),
+    ),
+    "training_scoring_composition": TestSuite(
+        "FP32 Learned Gates, Cosine Branches and Residual Scoring Training",
+        "training", ROOT / "tests" / "test_v8_scoring_training.py",
+        unittest_targets=("tests.test_v8_scoring_training",),
+    ),
+    "training_grouped_loss_composition": TestSuite(
+        "FP32 Grouped Decision Loss, Indexed Scorer and Native AdamW",
+        "training", ROOT / "tests" / "test_v8_grouped_loss_training.py",
+        unittest_targets=("tests.test_v8_grouped_loss_training",),
+    ),
+    "training_pooling_composition": TestSuite(
+        "FP32 Span and Grouped Pooling Training with Per-Batch Integer Inputs",
+        "training", ROOT / "tests" / "test_v8_pooling_training.py",
+        unittest_targets=("tests.test_v8_pooling_training",),
+    ),
     "training_gelu_composition": TestSuite(
         "FP32 Exact-Erf GELU Automatic Backward and Native AdamW",
         "training", ROOT / "tests" / "test_v8_gelu_training.py",
@@ -980,7 +1144,18 @@ TEST_SUITES = {
     "training_selective_parameters": TestSuite(
         "Selective FP32 Training, Frozen Gradient Flow and Native AdamW", "training",
         ROOT / "tests" / "test_v8_selective_training.py",
-        unittest_targets=("tests.test_v8_selective_training",),
+        unittest_targets=("tests.test_v8_selective_training", "tests.test_v8_training_storage_contract"),
+    ),
+    "training_lora_fp32": TestSuite(
+        "FP32 LoRA Authoring, Frozen Base and Native AdamW Oracle", "training",
+        ROOT / "tests" / "test_v8_lora_training.py",
+        unittest_targets=("tests.test_v8_lora_training", "tests.test_v8_decoder_lora_training", "tests.test_v8_lora_session",
+                          "tests.test_v8_portable_training_runtime.PortableTrainingRuntime.test_relocated_lora_trains_without_checkout_or_python"),
+    ),
+    "training_projection_bf16": TestSuite(
+        "BF16 Projection, FP32 Master Gradients and Native AdamW", "training",
+        ROOT / "tests" / "test_v8_bf16_projection_training.py",
+        unittest_targets=("tests.test_projection_bf16_train_kernel", "tests.test_v8_bf16_projection_training", "tests.test_v8_clef_mixed_training", "tests.test_v8_lora_bf16_base"),
     ),
     "decision_head_backward_bf16": TestSuite(
         "BF16 Decision-Head VJPs and Generated Backward Chain", "kernels",

@@ -4,16 +4,50 @@ import ctypes
 import io
 import hashlib
 import json
+import re
 from pathlib import Path
 import subprocess
 import sys
+import shutil
+import tempfile
+import os
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / 'version/v8/scripts'))
 import build_ir_v8
+from checked_bundle_evidence_v8 import (
+    IDENTITY_SYMBOL, WARNING_POLICY, check_provider_warnings, digest_json,
+    load_verified_checked_bundle,
+)
 
 
-def compile_native_graph(root, source, circuit, extra_exports=(), mode="prefill"):
+def compile_native_graph(root, source, circuit, extra_exports=(), mode="prefill", *,
+                         runtime_sources=(), openmp=False, fp_contract="off",
+                         provider_warnings="error", c_standard="c11"):
+    """Compile resolved providers, with explicit native-shell support and policy.
+
+    Neural sources come exclusively from resolved maps. Extra sources are limited
+    to src/runtime, for native host shells, and are separately recorded. Generated
+    code always passes strict C11 checks, even when legacy providers report warnings.
+    """
+    root = Path(root)
+    if type(openmp) is not bool or fp_contract not in ("off", "fast") or provider_warnings not in ("error", "report") or c_standard not in ("c11", "gnu11"):
+        raise ValueError("invalid native build policy")
+    support = set()
+    for name in runtime_sources:
+        path = (ROOT / name).resolve()
+        if not path.is_relative_to((ROOT / "src/runtime").resolve()) or path.suffix != ".c" or not path.is_file():
+            raise ValueError("extra native support must be a declared src/runtime C source")
+        support.add(str(path.relative_to(ROOT)))
+    entry = source['template']['native_entry']
+    exported = {entry['function'], *extra_exports,
+                *(segment['function'] for segment in entry.get('segments', [])),
+                *(spec['function'] for spec in source['template'].get('execution_exports',{}).get('provider_entries',{}).values())}
+    if any(not isinstance(name, str) or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', name) for name in exported):
+        raise ValueError("invalid native export name")
+    if IDENTITY_SYMBOL in exported:
+        raise ValueError("native entry collides with reserved build-identity export")
+    exported.add(IDENTITY_SYMBOL)
     registry = build_ir_v8.load_kernel_registry()
     with contextlib.redirect_stdout(io.StringIO()):
         ir1 = build_ir_v8.build_ir1_direct(source, circuit, mode=mode)
@@ -22,6 +56,8 @@ def compile_native_graph(root, source, circuit, extra_exports=(), mode="prefill"
             lower1, source, registry, mode=mode, context_len=source['config']['context_length'])
         lower2 = build_ir_v8.generate_ir_lower_2(lower1, layout, source, registry, mode=mode)
         call_ir = build_ir_v8.generate_ir_lower_3(lower2, mode=mode)
+    if call_ir.get('errors'):
+        raise ValueError("checked graph lowering failed: " + str(call_ir['errors']))
     (root / 'layout.json').write_text(json.dumps(layout))
     (root / 'call.json').write_text(json.dumps(call_ir))
     generated = root / 'generated.c'
@@ -32,39 +68,150 @@ def compile_native_graph(root, source, circuit, extra_exports=(), mode="prefill"
         raise RuntimeError('native graph generation failed:\n' + codegen.stdout + codegen.stderr)
     function = source['template']['native_entry']['function']
     exports = root / 'exports.map'
-    exports.write_text('{ global: ' + '; '.join((function, *extra_exports)) +
+    exports.write_text('{ global: ' + '; '.join(sorted(exported)) +
                        '; local: *; };\n')
     providers = {provider["id"]: provider for provider in registry["kernels"]}
+    from version.v8.scripts.checked_execution_exports_v8 import resolve_exports, canonical_hash
+    execution_exports=resolve_exports(source['template'],layout,call_ir,providers,exported)
+    if execution_exports is not None:
+        (root/'execution-bindings.json').write_text(json.dumps(execution_exports,indent=2)+'\n')
     sources = set()
+    selected = {}
     for op in call_ir['operations']:
         provider = providers[op['call_abi']['kernel_id']]
         sources.update(provider['impl']['sources'])
+        selected[provider['id']] = hashlib.sha256(json.dumps(provider, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
     # Generated code remains ISO C checked. Legacy dependencies include POSIX
     # dlsym conversions; compile/link them under their established conventions.
-    subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
-                    '-fsyntax-only', str(generated), '-I', str(ROOT / 'include')],
-                   check=True, capture_output=True, text=True)
+    compiler_env = dict(os.environ, LC_ALL="C", LANG="C")
+    syntax = subprocess.run(
+        ['cc', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
+         '-fsyntax-only', str(generated), '-I', str(ROOT / 'include')],
+        capture_output=True, text=True, env=compiler_env)
+    (root / 'generated-diagnostics.txt').write_text(syntax.stdout + syntax.stderr)
+    if syntax.returncode:
+        raise RuntimeError('generated graph syntax validation failed:\n' + syntax.stderr)
+    compiler = subprocess.check_output(['cc', '--version'], text=True, env=compiler_env).splitlines()[0]
+    policy = dict(openmp=openmp, fp_contract=fp_contract, provider_warnings=provider_warnings, c_standard=c_standard)
+    identity_inputs = dict(
+        schema="cke.checked-native-build.v1", compiler=compiler, build_policy=policy,
+        compiler_executable_sha256=hashlib.sha256(Path(shutil.which("cc")).resolve().read_bytes()).hexdigest(),
+        builder_source_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        selected_provider_sha256=selected,
+        source_sha256={name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest() for name in sorted(sources | support)},
+        header_sha256={str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted((ROOT / "include").rglob("*.h"))},
+        generated_source_sha256=hashlib.sha256(generated.read_bytes()).hexdigest(),
+        call_ir_sha256=hashlib.sha256((root / 'call.json').read_bytes()).hexdigest(),
+        layout_sha256=hashlib.sha256((root / 'layout.json').read_bytes()).hexdigest(),
+        warning_policy_sha256=hashlib.sha256(WARNING_POLICY.read_bytes()).hexdigest(),
+        exports=sorted(exported),
+        circuit_sha256=(digest_json(circuit) if isinstance(circuit, dict)
+                        else hashlib.sha256(Path(circuit).read_bytes()).hexdigest()),
+        execution_exports_sha256=canonical_hash(execution_exports) if execution_exports is not None else None,
+    )
+    build_digest = digest_json(identity_inputs)
+    identity_source = root / 'build-identity.c'
+    identity_source.write_text('const char *' + IDENTITY_SYMBOL + '(void) { return "' + build_digest + '"; }\n')
     library = root / 'generated.so'
-    result = subprocess.run([
-        'cc', '-std=c11', '-O2', '-Wall', '-Wextra', '-Werror', '-shared', '-fPIC',
-        '-ffp-contract=off', '-ffunction-sections', '-fdata-sections',
-        '-Wl,--gc-sections', '-Wl,--no-undefined', '-Wl,--version-script=' + str(exports),
-        str(generated), *[str(ROOT / name) for name in sorted(sources)],
-        '-I', str(ROOT / 'include'), '-lm', '-lpthread', '-ldl', '-o', str(library),
-    ], capture_output=True, text=True)
+    staged_fd, staged_name = tempfile.mkstemp(prefix='checked-build-', suffix='.so', dir=root)
+    os.close(staged_fd)
+    staged_library = Path(staged_name)
+    try:
+        result = subprocess.run([
+            'cc', '-std=' + c_standard, '-O2', '-Wall', '-Wextra',
+            *(['-Werror'] if provider_warnings == 'error' else []), '-shared', '-fPIC',
+            '-ffp-contract=' + fp_contract, *(['-fopenmp'] if openmp else []), '-ffunction-sections', '-fdata-sections',
+            '-Wl,--gc-sections', '-Wl,--no-undefined', '-Wl,--version-script=' + str(exports),
+            str(generated), str(identity_source), *[str(ROOT / name) for name in sorted(sources | support)],
+            '-I', str(ROOT / 'include'), '-lm', '-lpthread', '-ldl', '-o', str(staged_library),
+        ], capture_output=True, text=True, env=compiler_env)
+    except BaseException:
+        staged_library.unlink(missing_ok=True)
+        raise
+    (root / 'compiler-diagnostics.txt').write_text(result.stdout + result.stderr)
     if result.returncode:
+        staged_library.unlink(missing_ok=True)
         raise RuntimeError('native graph compilation failed:\n' + result.stderr)
+    try:
+        accepted_warnings = check_provider_warnings(result.stdout + "\n" + result.stderr)
+        os.replace(staged_library, library)
+    finally:
+        staged_library.unlink(missing_ok=True)
     identity = {
-        'compiler': subprocess.check_output(['cc', '--version'], text=True).splitlines()[0],
+        'identity_inputs': identity_inputs,
+        'build_identity_sha256': build_digest,
+        'accepted_provider_warnings': accepted_warnings,
+        'build_policy': dict(openmp=openmp, fp_contract=fp_contract, provider_warnings=provider_warnings, c_standard=c_standard),
+        'selected_provider_sha256': selected,
+        'runtime_support_sources': sorted(support),
+        'exports': sorted(exported),
+        'call_ir_sha256': hashlib.sha256((root / 'call.json').read_bytes()).hexdigest(),
+        'layout_sha256': hashlib.sha256((root / 'layout.json').read_bytes()).hexdigest(),
+        'compiler_diagnostics_sha256': hashlib.sha256((root / 'compiler-diagnostics.txt').read_bytes()).hexdigest(),
+        'compiler_warning_lines': sum('warning:' in line for line in result.stderr.splitlines()),
+        'compiler': subprocess.check_output(['cc', '--version'], text=True, env=compiler_env).splitlines()[0],
         'compile_command': result.args,
-        'source_sha256': {name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest() for name in sorted(sources)},
+        'source_sha256': {name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest() for name in sorted(sources | support)},
         'generated_source_sha256': hashlib.sha256(generated.read_bytes()).hexdigest(),
         'library_sha256': hashlib.sha256(library.read_bytes()).hexdigest(),
         'embedded_runtime_build_identity': 'NOT_VERIFIED',
     }
     (root / 'build-identity.json').write_text(json.dumps(identity, indent=2))
-    loaded = ctypes.CDLL(str(library))
+    loaded = load_verified_checked_bundle(library, root / 'build-identity.json',
+        hashlib.sha256((root / 'build-identity.json').read_bytes()).hexdigest())
+    identity['embedded_runtime_build_identity'] = 'VERIFIED'
+    (root / 'build-identity.json').write_text(json.dumps(identity, indent=2))
     fn = getattr(loaded, function)
-    fn.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t]
+    scalar_types = {"float": ctypes.c_float, "int32_t": ctypes.c_int32,
+                    "size_t": ctypes.c_size_t, "uint8_t": ctypes.c_uint8,
+                    "int": ctypes.c_int}
+    def parameter_type(parameter):
+        declared = parameter["c_type"].replace("const ", "").strip()
+        pointers = declared.count("*")
+        base = declared.replace("*", "").strip()
+        if base == "void" and pointers == 1:
+            return ctypes.c_void_p
+        if base not in scalar_types:
+            raise ValueError(f"unsupported native entry parameter type: {declared}")
+        result = scalar_types[base]
+        for _ in range(pointers):
+            result = ctypes.POINTER(result)
+        return result
+    fn.argtypes = [parameter_type(p) for p in source["template"]["native_entry"]["params"]]
     fn.restype = ctypes.c_int
     return layout, call_ir, library, loaded, fn
+
+
+def compile_declared_f32_graph(folder,graph,weights, *, source_config=None, **build_policy):
+    """Load declared FP32 arrays into an ordinary checked generated bundle.
+
+    Callers may supply the normal source configuration explicitly. The default
+    accepts the bounded authoring convention's geometry metadata; it never
+    dispatches on a model name. Unsupported weight-port shapes reject.
+    """
+    import numpy as np
+    from version.v8.scripts.checked_circuit_authoring_v8 import declared_f32_weight_shapes as weight_shapes
+    entries=[];offset=4096
+    for name,shape in weight_shapes(graph).items():
+        w=weights[name]
+        if list(w.shape)!=shape or w.dtype!=np.float32:raise ValueError(name)
+        offset=(offset+63)&~63
+        entries.append({'name':name,'shape':shape,'dtype':'F32','size':w.nbytes,'file_offset':offset})
+        offset+=w.nbytes
+    if source_config is None:
+        c=graph['contract']['runtime_invariants'];width=c['width'];tokens=c['tokens'];heads=c['heads']
+        source_config={'model':graph['name'],'arch':graph['name'],'num_layers':1,'embed_dim':width,
+            'num_heads':heads,'num_kv_heads':c.get('kv_heads',heads),'head_dim':width//heads,
+            'intermediate_size':c.get('inner',width*c['mult']),'context_length':tokens,
+            'max_seq_len':tokens,'vocab_size':c.get('vocab',1)}
+    source={'config':dict(source_config),'entries':entries,'quant_summary':{},'template':graph}
+    path=folder/'circuit.json';path.write_text(json.dumps(graph))
+    layout,calls,library,loaded,fn=compile_native_graph(folder,source,path,**build_policy)
+    size=layout['memory']['arena']['total_size'];raw=(ctypes.c_uint8*(size+63))()
+    arena=(ctypes.c_uint8*size).from_buffer(raw,(-ctypes.addressof(raw))&63)
+    for item in layout['memory']['weights']['entries']:
+        w=np.ascontiguousarray(weights[item['name']]);start=item['abs_offset']
+        ctypes.memmove(ctypes.addressof(arena)+start,w.ctypes.data,w.nbytes)
+    buffers={b['name']:b for b in layout['memory']['activations']['buffers']}
+    def view(name,dtype=np.float32):return np.ndarray(tuple(graph['activation_buffers'][name]['shape']),dtype,buffer=arena,offset=buffers[name]['abs_offset'])
+    return fn,arena,view,loaded

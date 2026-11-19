@@ -463,10 +463,20 @@ SRCS    := src/backend_native.c \
 	           src/kernels/layernorm_kernels.c \
 	           src/kernels/layernorm_rows_checked.c \
 	           src/kernels/decision_scoring_backward.c \
+	           src/kernels/indexed_rows_train.c \
+	           src/kernels/last_valid_row_checked.c \
+	           src/kernels/expand_group_row_indices_checked.c \
+	           src/kernels/decision_tensor_ops.c \
+	           src/kernels/transformer_rows_checked.c \
 	           src/kernels/attention_cross_token_major_checked.c \
+	           src/kernels/attention_last_query_prob_trace_f32.c \
+	           src/kernels/alignment_attention_dtw_f32.c \
 	           src/kernels/gelu_rows_tanh_checked.c \
 	           src/kernels/gelu_rows_erf_checked.c \
 	           src/kernels/head_backward.c \
+	           src/kernels/projection_bf16_train.c \
+	           src/kernels/grouped_cross_entropy.c \
+	           src/kernels/token_span_mean_checked.c \
 	           src/kernels/grouped_weighted_rows.c \
 	           src/kernels/layernorm_kernels_bf16.c \
 	           src/kernels/gelu_kernels.c \
@@ -1635,6 +1645,7 @@ test-qwen3vl-methodical-parity: $(LIB) $(LIB_VISION)
 	@echo "qwen3vl_checkpoint_coverage max_diff=0 tol=0 [PASS]"
 	@$(PYTHON) $(PYTHONFLAGS) -m unittest tests.test_v8_qwen3vl_template -v
 	@echo "qwen3vl_circuit_codegen max_diff=0 tol=0 [PASS]"
+	@$(PYTHON) $(PYTHONFLAGS) -m unittest tests.test_v8_encoder_row_parallel -v
 	@LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) unittest/test_vision.py
 	@echo "qwen3vl_frontend_mrope max_diff=0 tol=0 [PASS]"
 	@LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) unittest/test_attention_full.py
@@ -4382,9 +4393,11 @@ test-v8-template-circuit-audit:
 	@$(PYTHON) -m py_compile version/v8/scripts/audit_template_circuit_v8.py
 	@$(PYTHON) -m unittest tests.test_v8_template_circuit_audit -v
 	@$(PYTHON) -m unittest tests.test_v8_prefill_codegen -v
+	@$(PYTHON) -m unittest tests.test_v8_codegen_bridge.EmbeddedEntryContractTests -v
 
 .PHONY: test-numerical-contracts
 test-numerical-contracts: $(LIB)
+	@$(PYTHON) -m unittest tests.test_projection_bf16_train_kernel
 	@echo "Running v8 numerical contract validation..."
 	@$(PYTHON) unittest/test_nvfp4_q8_0.py
 	@$(PYTHON) unittest/test_moe_swiglu_q4k_mixed_parallel.py

@@ -2034,6 +2034,28 @@ OP_DATAFLOW = {
         "inputs": {"input": "external:audio_features"},
         "outputs": {"output": {"slot": "audio_conv_output", "dtype": "fp32"}},
     },
+    "sinusoidal_features_checked": {
+        "inputs": {"positions": "external:positions"},
+        "outputs": {"output": {"slot": "features", "dtype": "fp32"}},
+    },
+    "sinusoidal_constant_tables_checked": {
+        "inputs": {},
+        "outputs": {"sine": {"slot": "sine", "dtype": "fp32"}, "cosine": {"slot": "cosine", "dtype": "fp32"}},
+    },
+    "rope_pairwise_rows_checked": {
+        "inputs": {"input": "external:input", "cosine": "external:cosine", "sine": "external:sine"},
+        "outputs": {"output": {"slot": "rotated", "dtype": "fp32"}},
+    },
+    "audio_noise_counter_gaussian": {"inputs": {}, "outputs": {"output": {"slot": "noise", "dtype": "fp32"}}},
+    "audio_spectrum_cartesian_checked": {"inputs": {"input": "external:input"}, "outputs": {"real": {"slot": "real", "dtype": "fp32"}, "imag": {"slot": "imag", "dtype": "fp32"}}},
+    "audio_istft_complex_window_checked": {
+        "inputs": {"real": "external:real", "imag": "external:imag", "window": "external:window"},
+        "outputs": {"output": {"slot": "waveform", "dtype": "fp32"}},
+    },
+    "audio_upsample_linear_checked": {
+        "inputs": {"input": "external:audio_features"},
+        "outputs": {"output": {"slot": "upsampled_features", "dtype": "fp32"}},
+    },
     "audio_upsample_nearest_checked": {
         "inputs": {"input": "external:audio_features"},
         "outputs": {"output": {"slot": "upsampled_features", "dtype": "fp32"}},
@@ -2271,6 +2293,10 @@ OP_DATAFLOW = {
     "token_span_mean_checked": {
         "inputs": {"input": "external:input", "spans": "external:spans"},
         "outputs": {"output": {"slot": "pooled_rows", "dtype": "fp32"}},
+    },
+    "decoder_features_sequence": {
+        "inputs": {"ids": "external:ids"},
+        "outputs": {"output": {"slot": "decoder_features", "dtype": "fp32"}},
     },
     "last_valid_row_checked": {
         "inputs": {"input": "external:input", "span": "external:span"},
@@ -3431,6 +3457,10 @@ def _generate_tokenizer_c_code(tokenizer_type: str, vocab_size: int, num_merges:
             # rendered bytes without adding another BOS. A GGUF tokenizer may
             # still advertise automatic BOS for raw prompt use; the circuit
             # explicitly selects the publisher prompt contract here.
+            add_bos = False
+        elif bos_policy == "decoder_start_token":
+            # Encoder-decoder runners construct the complete decoder prefix.
+            # Encoding vocabulary context must not inject another BOS.
             add_bos = False
         elif bos_policy != "model_defined":
             raise ValueError(f"unsupported BPE bos_policy: {bos_policy}")
@@ -5281,6 +5311,13 @@ TEMPLATE_TO_KERNEL_OP = {
     "audio_conv1d_checked": "audio_conv1d_checked",
     "audio_conv1d_depthwise_checked": "audio_conv1d_depthwise_checked",
     "audio_conv1d_dilated_checked": "audio_conv1d_dilated_checked",
+    "sinusoidal_features_checked": "sinusoidal_features_checked",
+    "sinusoidal_constant_tables_checked": "sinusoidal_constant_tables_checked",
+    "rope_pairwise_rows_checked": "rope_pairwise_rows_checked",
+    "audio_noise_counter_gaussian": "audio_noise_counter_gaussian",
+    "audio_spectrum_cartesian_checked": "audio_spectrum_cartesian_checked",
+    "audio_istft_complex_window_checked": "audio_istft_complex_window_checked",
+    "audio_upsample_linear_checked": "audio_upsample_linear_checked",
     "audio_upsample_nearest_checked": "audio_upsample_nearest_checked",
     "audio_conv_transpose1d_depthwise_checked": "audio_conv_transpose1d_depthwise_checked",
     "audio_conv_transpose1d_dense_checked": "audio_conv_transpose1d_dense_checked",
@@ -5345,6 +5382,7 @@ TEMPLATE_TO_KERNEL_OP = {
     "runtime_extent_sum": "runtime_extent_sum",
     "runtime_extent_scale": "runtime_extent_scale",
     "runtime_extent_affine": "runtime_extent_affine",
+    "decoder_features_sequence": "decoder_features_sequence",
     "audio_duration_expand": "audio_duration_expand",
     "runtime_copy_valid": "runtime_copy_valid",
     "audio_istft_mag_phase": "audio_istft_mag_phase",
@@ -10178,6 +10216,14 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         "runtime_extent_sum": None,
         "runtime_extent_scale": None,
         "runtime_extent_affine": None,
+        "sinusoidal_features_checked": ["frequencies"],
+        "sinusoidal_constant_tables_checked": ["positions", "frequencies"],
+        "rope_pairwise_rows_checked": None,
+        "audio_noise_counter_gaussian": None,
+        "audio_spectrum_cartesian_checked": None,
+        "audio_istft_complex_window_checked": None,
+        "audio_upsample_linear_checked": None,
+        "decoder_features_sequence": None,
         "audio_upsample_nearest_checked": None,
         "audio_conv_transpose1d_depthwise_checked": ["weight", "bias"],
         "audio_conv_transpose1d_dense_checked": ["weight", "bias"],
@@ -13643,6 +13689,14 @@ TEMPLATE_OP_WEIGHTS = {
     "runtime_extent_sum": [],
     "runtime_extent_scale": [],
     "runtime_extent_affine": [],
+    "sinusoidal_features_checked": ["frequencies"],
+    "sinusoidal_constant_tables_checked": ["positions", "frequencies"],
+    "rope_pairwise_rows_checked": [],
+    "audio_noise_counter_gaussian": [],
+    "audio_spectrum_cartesian_checked": [],
+    "audio_istft_complex_window_checked": [],
+    "audio_upsample_linear_checked": [],
+    "decoder_features_sequence": [],
     "audio_upsample_nearest_checked": [],
     "audio_conv_transpose1d_depthwise_checked": ["weight", "bias"],
     "audio_conv_transpose1d_dense_checked": ["weight", "bias"],
@@ -17269,6 +17323,7 @@ def load_kernel_bindings() -> Dict[str, Dict]:
 
 
 _CALL_ABI_SOURCE_KINDS = {
+    "entry",
     "activation",
     "config",
     "const",
@@ -18262,6 +18317,17 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
                     expr = "0"
                 if cast:
                     expr = f"({cast})({expr})"
+
+            elif src.startswith("entry:"):
+                from native_entry_binding_v8 import resolve_entry_argument
+                try:
+                    expr = resolve_entry_argument(
+                        config.get("native_entry"), physical_maps[kernel_id],
+                        next(p for p in physical_maps[kernel_id]["call_abi"]["params"]
+                             if p["name"] == name))
+                except ValueError as error:
+                    op_errors.append(f"{func}.{name}: {error}")
+                    expr = "0"
 
             elif src.startswith("const:"):
                 expr = src.split(":", 1)[1]

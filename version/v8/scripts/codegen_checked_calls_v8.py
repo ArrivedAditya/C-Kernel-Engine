@@ -38,23 +38,8 @@ def _kernel_map(root: Path, kernel_id: str) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def emit_checked_calls(call_ir: dict, root: Path) -> str:
-    """Return C for call-ready IR with explicit caller-owned entry buffers.
-
-    The input is the generic call-ready operation representation emitted by
-    IR Lower 3, plus a small `entry` declaration for the host ABI. No provider
-    selection or model-family behavior occurs here.
-    """
-    phase = call_ir.get("mode", "prefill")
-    if phase not in {"init", "prefill", "decode", "backward"}:
-        raise CheckedCallCodegenError(f"unsupported checked execution phase: {phase!r}")
-    entry = call_ir.get("entry")
-    ops = call_ir.get("operations")
-    contract = call_ir.get("runtime_extent_contract")
-    if not isinstance(entry, dict) or not isinstance(ops, list) or not ops:
-        raise CheckedCallCodegenError("entry and nonempty operations are required")
-    if not isinstance(contract, dict):
-        raise CheckedCallCodegenError("runtime_extent_contract is required")
+def resolve_entry_segments(entry: dict, ops: list) -> list:
+    """Resolve the exact generated call ranges for named entry points."""
     function_name = _ident(entry.get("function"), "entry function")
     segment_specs = entry.get("segments")
     if segment_specs is None:
@@ -83,6 +68,28 @@ def emit_checked_calls(call_ir: dict, root: Path) -> str:
             raise CheckedCallCodegenError("entry segments must cover every resolved call")
         if function_name in names and segments[0][0] != function_name:
             raise CheckedCallCodegenError("declared native entry collides with a later segment")
+    return segments
+
+
+def emit_checked_calls(call_ir: dict, root: Path) -> str:
+    """Return C for call-ready IR with explicit caller-owned entry buffers.
+
+    The input is the generic call-ready operation representation emitted by
+    IR Lower 3, plus a small `entry` declaration for the host ABI. No provider
+    selection or model-family behavior occurs here.
+    """
+    phase = call_ir.get("mode", "prefill")
+    if phase not in {"init", "prefill", "decode", "backward"}:
+        raise CheckedCallCodegenError(f"unsupported checked execution phase: {phase!r}")
+    entry = call_ir.get("entry")
+    ops = call_ir.get("operations")
+    contract = call_ir.get("runtime_extent_contract")
+    if not isinstance(entry, dict) or not isinstance(ops, list) or not ops:
+        raise CheckedCallCodegenError("entry and nonempty operations are required")
+    if not isinstance(contract, dict):
+        raise CheckedCallCodegenError("runtime_extent_contract is required")
+    function_name = _ident(entry.get("function"), "entry function")
+    segments = resolve_entry_segments(entry, ops)
     params = entry.get("params")
     if not isinstance(params, list) or not params:
         raise CheckedCallCodegenError("entry params are required")
@@ -216,7 +223,8 @@ def emit_checked_calls(call_ir: dict, root: Path) -> str:
     all_produced = set()
     for segment_function, first, end in segments:
         lines.append(f"int {segment_function}({', '.join(declarations)}) {{")
-        if lengths:
+        if lengths and any(op.get("produces_runtime_lengths") or op.get("consumes_runtime_lengths")
+                           for op in ops[first:end]):
             lines.append("    CKRuntimeExtents runtime_extents = {0};")
         lines.append("    int status = 0;")
         lines.extend(arena_check)
@@ -245,6 +253,16 @@ def emit_checked_calls(call_ir: dict, root: Path) -> str:
                 expr = arg.get("expr")
                 if not isinstance(expr, str) or not expr.strip():
                     raise CheckedCallCodegenError(f"call {index} has unresolved argument")
+                if arg.get("source", "").startswith("entry:"):
+                    from native_entry_binding_v8 import resolve_entry_argument
+                    canonical = next(p for p in kernel["call_abi"]["params"]
+                                     if p["name"] == arg["name"])
+                    try:
+                        bound = resolve_entry_argument(entry, kernel, canonical)
+                    except ValueError as error:
+                        raise CheckedCallCodegenError(str(error)) from error
+                    if expr != bound:
+                        raise CheckedCallCodegenError("entry argument expression changed after lowering")
                 arg_exprs.append(expr)
             lines.append(f"    status = {op['function']}({', '.join(arg_exprs)});")
             lines.append("    if (status != 0) return status;")

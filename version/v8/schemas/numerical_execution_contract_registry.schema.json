@@ -99,12 +99,14 @@
             "audio_concat_channels_checked",
             "concat_i32_checked",
             "copy_i32_span_checked",
+            "grouped_cross_entropy_checked",
             "token_span_mean_checked",
             "grouped_softmax_weighted_rows_checked",
             "token_span_mean_backward_checked",
+            "indexed_rows_gather",
+            "indexed_rows_scatter",
             "gelu_erf_backward_checked",
             "grouped_weighted_rows_backward_checked",
-
             "broadcast_add_rows_checked",
             "indexed_pair_features_checked",
             "indexed_cosine_rows_checked",
@@ -160,10 +162,12 @@
             "runtime_extent_scale",
             "runtime_extent_affine",
             "audio_upsample_nearest",
+            "audio_upsample_linear",
             "audio_conv_transpose1d_depthwise",
             "audio_conv_transpose1d_dense",
             "audio_reflect_pad1d_left",
-            "audio_zero_pad1d_left"
+            "audio_zero_pad1d_left",
+            "decoder_features_sequence"
           ]
         },
         "status": {

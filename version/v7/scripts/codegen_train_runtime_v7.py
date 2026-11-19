@@ -70,6 +70,7 @@ FALLBACK_FN_BY_KERNEL_ID: Dict[str, str] = {
 def _load_train_layout_offsets(
     layout: Optional[Dict[str, Any]],
     tensor_numel: Dict[str, int],
+    tensor_dtypes: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """
     Read layout_train.json and return:
@@ -104,11 +105,13 @@ def _load_train_layout_offsets(
         nbytes = row.get("bytes")
         if not isinstance(tid, str) or not isinstance(off_b, int) or not isinstance(nbytes, int):
             continue
-        if (off_b % 4) != 0 or (nbytes % 4) != 0:
-            raise RuntimeError(f"layout tensor `{tid}` has non-float-aligned offset/size")
+        itemsize = 2 if (tensor_dtypes or {}).get(tid) == "bf16" else 4
+        if (off_b % 4) != 0 or nbytes <= 0 or (nbytes % itemsize) != 0:
+            raise RuntimeError(f"layout tensor `{tid}` has invalid typed offset/size")
+        if tid in (tensor_dtypes or {}) and row.get("dtype") != tensor_dtypes[tid]:
+            raise RuntimeError("layout dtype disagrees with IR: " + tid)
 
         off_f = int(off_b // 4)
-        size_f = int(nbytes // 4)
 
         if tid.startswith("optimizer.m."):
             name = tid[len("optimizer.m.") :]
@@ -120,10 +123,10 @@ def _load_train_layout_offsets(
             continue
 
         if tid in tensor_numel:
-            expected = int(tensor_numel[tid])
-            if size_f < expected:
+            expected = int(tensor_numel[tid]) * itemsize
+            if nbytes < expected:
                 raise RuntimeError(
-                    f"layout tensor `{tid}` too small: layout={size_f} expected={expected}"
+                    f"layout tensor `{tid}` too small: bytes={nbytes} expected={expected}"
                 )
             tensor_offsets[tid] = off_f
 
@@ -145,9 +148,12 @@ def _load_train_layout_offsets(
             size_b = r.get("bytes")
             if not isinstance(name, str) or not isinstance(off_b, int) or not isinstance(size_b, int):
                 continue
-            if (off_b % 4) != 0 or (size_b % 4) != 0:
+            typed_tail = any((tensor_dtypes or {}).get(t.get("id")) == "bf16"
+                             and t.get("offset", -1) + t.get("bytes", 0) == off_b + size_b
+                             for t in tensors if isinstance(t, dict))
+            if (off_b % 4) != 0 or size_b < 0 or (size_b % 4 and not typed_tail):
                 raise RuntimeError(f"layout region `{name}` has non-float-aligned offset/size")
-            region_offsets[name] = (int(off_b // 4), int(size_b // 4))
+            region_offsets[name] = (int(off_b // 4), int((size_b + 3) // 4))
 
     return {
         "total_floats": int(total_bytes // 4),
@@ -1135,11 +1141,63 @@ def _bridge_head_group_macro(head_group: Any) -> str:
     return "CK_ROPE_NUM_HEADS"
 
 
-def _declared_training_call(op, kernel, args, pools, tensors, tensor_numel, variables, *, fixed_batch=False):
+def _training_native_contexts(config):
+    contexts = config.get("training_native_contexts", [])
+    if not isinstance(contexts, list) or len(contexts) > 16:
+        raise ValueError("bounded native context list required")
+    if contexts and config.get("train_batch_policy") != "fixed":
+        raise ValueError("native contexts require a fixed training batch")
+    bindings = {}
+    for index, context in enumerate(contexts):
+        if not isinstance(context, dict) or set(context) != {"pointer", "bytes"}:
+            raise ValueError("invalid borrowed native context contract")
+        for field, ctype, expression in (
+            ("pointer", "constvoid*", f"g_native_contexts[{index}]"),
+            ("bytes", "size_t", f"g_native_context_sizes[{index}]"),
+        ):
+            name = context[field]
+            if (not isinstance(name, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name)
+                    or name in bindings):
+                raise ValueError("native context names must be unique identifiers")
+            bindings[name] = (ctype, expression)
+    return contexts, bindings
+
+
+def _training_native_context_source(count):
+    """Borrowed runtime bindings, never parameters or checkpoint state."""
+    return f'''
+static const void *g_native_contexts[{count}];
+static size_t g_native_context_sizes[{count}];
+static int g_native_contexts_ready = 0;
+static int g_native_forward_ready = 0;
+static int g_native_backward_ready = 0;
+void ck_train_clear_native_contexts(void) {{
+    memset(g_native_contexts, 0, sizeof(g_native_contexts));
+    memset(g_native_context_sizes, 0, sizeof(g_native_context_sizes));
+    g_native_contexts_ready = g_native_forward_ready = g_native_backward_ready = 0;
+}}
+int ck_train_set_native_context_ex(int index, const void *context, size_t bytes) {{
+    g_native_contexts_ready = g_native_forward_ready = g_native_backward_ready = 0;
+    if (index < 0 || index >= {count}) return -1;
+    g_native_contexts[index] = NULL;
+    g_native_context_sizes[index] = 0;
+    uintptr_t lo = (uintptr_t)context, base = (uintptr_t)g_memory;
+    if (!g_memory || !context || !bytes || bytes > 1048576 || bytes > UINTPTR_MAX - lo ||
+        (lo < base + g_memory_floats * sizeof(float) && base < lo + bytes)) return -1;
+    g_native_contexts[index] = context;
+    g_native_context_sizes[index] = bytes;
+    for (int i = 0; i < {count}; ++i) if (!g_native_contexts[i]) return 0;
+    g_native_contexts_ready = 1;
+    return {count};
+}}
+'''.strip().splitlines()
+
+
+def _declared_training_call(op, kernel, args, pools, tensors, tensor_numel, variables, *, fixed_batch=False, native_contexts=None):
     """Resolve a bounded map ABI without legacy pointer/scalar guessing.
 
-    Opt-in for fixed-capacity training graphs. Only FP32 buffers and literal
-    scalar bindings are supported here. Checked providers must explicitly declare
+    Opt-in for fixed-capacity training graphs. FP32 buffers, typed BF16 saved
+    auxiliaries, INT32 metadata and literal scalar bindings are supported here. Checked providers must explicitly declare
     zero-success status; the generated step stops before optimizer execution.
     """
     phase = "backward" if str(op.get("phase", "")).startswith("backward") else "training"
@@ -1163,11 +1221,27 @@ def _declared_training_call(op, kernel, args, pools, tensors, tensor_numel, vari
     for (ctype, name), binding in zip(args, params):
         source = binding.get("source", "")
         category, _, key = source.partition(":")
+        if category == "entry":
+            binding_type = (native_contexts or {}).get(key)
+            if (binding.get("cast") or binding_type is None
+                    or ctype.replace(" ", "") != binding_type[0]):
+                raise ValueError("undeclared or incompatible borrowed training context")
+            expressions.append(binding_type[1])
+            continue
+        if source == "null":
+            if ctype.replace(" ", "") != "constfloat*":
+                raise ValueError("training null binding must be a read-only float pointer")
+            expressions.append("NULL")
+            continue
         if "*" in ctype:
-            if ctype.replace(" ", "") not in ("float*", "constfloat*"):
-                raise ValueError("training map call supports FP32 pointers only")
+            compact_type = ctype.replace(" ", "")
+            expected_dtype = {"float*": "fp32", "constfloat*": "fp32", "constint32_t*": "i32", "int32_t*": "i32", "constuint16_t*": "bf16", "uint16_t*": "bf16"}.get(compact_type)
+            if expected_dtype is None:
+                raise ValueError("training map supports FP32, declared BF16 auxiliaries and nondifferentiable INT32 pointers")
             tid = pools.get(category, {}).get(key)
-            if not tid or tid not in variables or tensors.get(tid, {}).get("dtype") != "fp32":
+            if expected_dtype == "i32" and tensors.get(tid, {}).get("requires_grad") is not False:
+                raise ValueError("integer training metadata must explicitly disable gradients")
+            if not tid or tid not in variables or tensors.get(tid, {}).get("dtype") != expected_dtype:
                 raise ValueError("missing or incompatible training map buffer: " + source)
             if ("const" not in ctype) != (category in ("output", "scratch")):
                 raise ValueError("training map buffer access mismatch: " + source)
@@ -1175,10 +1249,11 @@ def _declared_training_call(op, kernel, args, pools, tensors, tensor_numel, vari
             expressions.append(variables[tid])
         else:
             value = (constants.get(key) if category == "runtime" else
-                     op.get("params", {}).get(key) if category == "param" else None)
+                     op.get("params", {}).get(key) if category == "param" else
+                     int(key) if category == "const" and key.isdigit() else None)
             if ctype in ("int", "size_t"):
                 bound = 2147483647 if ctype == "int" else (2**64 - 1) // 4
-                if type(value) is not int or not 0 < value <= bound:
+                if type(value) is not int or not (0 if category == "const" else 1) <= value <= bound:
                     raise ValueError("invalid bounded integer for " + name)
                 expressions.append(str(value))
             elif ctype == "float":
@@ -1195,6 +1270,11 @@ def _declared_training_call(op, kernel, args, pools, tensors, tensor_numel, vari
         value = scalars.get(name)
         if value is None or not limits["min"] <= value <= limits["max"]:
             raise ValueError("training map scalar outside provider bounds: " + name)
+    for pair in contract.get("scalar_equalities", []):
+        if (not isinstance(pair, list) or len(pair) != 2
+                or any(not isinstance(k, str) or k not in scalars for k in pair)
+                or scalars[pair[0]] != scalars[pair[1]]):
+            raise ValueError("training map scalar equality violated")
     spans = contract.get("buffer_spans", [])
     if {span.get("pointer") for span in spans} != set(pointers) or len(spans) != len(pointers):
         raise ValueError("training map must bound every pointer exactly once")
@@ -1218,17 +1298,93 @@ def _declared_training_call(op, kernel, args, pools, tensors, tensor_numel, vari
             if not rows * width <= capacity <= tensor_numel[tid]:
                 raise ValueError("training map advertised capacity invalid: " + tid)
         shape = tensors[tid].get("shape")
-        if shape not in ([rows, width], [rows * width]):
+        flatten = span.get("flatten", False)
+        if type(flatten) is not bool:
+            raise ValueError("training map flatten must be boolean")
+        flat_shape = (isinstance(shape, list) and bool(shape)
+                      and all(type(x) is int and x > 0 for x in shape)
+                      and math.prod(shape) == rows * width)
+        if shape not in ([rows, width], [rows * width]) and not (flatten and flat_shape):
             raise ValueError("training map requires contiguous declared shape: " + tid)
     writable = [pointers[n] for (t, n) in args if "*" in t and "const" not in t]
-    readable = {pointers[name] for ctype, name in args if "const" in ctype and "*" in ctype}
+    readable = {pointers[name] for ctype, name in args if "const" in ctype and "*" in ctype and name in pointers}
     if len(writable) != len(set(writable)) or set(writable) & readable:
         raise ValueError("training map writable buffers must not alias")
     return expressions
 
 
+def _validate_training_storage(ir2, tensors, manifest=None):
+    """Reject storage the generated trainer cannot represent before emitting C.
+
+    Master weights, snapshots, gradients and optimizer state remain FP32.
+    BF16 is admitted only for explicitly produced, nonpersistent map-owned
+    auxiliaries. It is never hydrated as a weight or silently optimized.
+    """
+    def canonical(dtype, where):
+        if not isinstance(dtype, str):
+            raise ValueError("invalid generated-training storage dtype at " + where)
+        value = dtype.lower()
+        if value in ("fp32", "f32"):
+            return "fp32"
+        if value == "bf16":
+            return "bf16"
+        if _dtype_is_i32(value):
+            return "i32"
+        raise ValueError("unsupported generated-training storage dtype %r at %s; "
+                         "runtime supports FP32 tensors, typed BF16 auxiliaries and INT32 metadata only" % (dtype, where))
+
+    for label, config in (("IR config", ir2.get("config") or {}), ("manifest config", (manifest or {}).get("config") or {})):
+        if "dtype" in config and config["dtype"] not in ("fp32", "f32", "float32"):
+            raise ValueError("unsupported generated-training storage dtype in " + label)
+    for tid, meta in tensors.items():
+        dtype = canonical(meta.get("dtype", "fp32"), tid)
+        if dtype == "bf16" and (not tid.startswith("aux.") or meta.get("kind") != "aux"
+                                or meta.get("requires_grad") is not False
+                                or meta.get("persistent") is not False):
+            raise ValueError("unsupported generated-training storage dtype: BF16 requires nonpersistent nondifferentiable aux storage")
+        if dtype == "i32" and (tid.startswith(("weight.", "grad.", "tmp.grad."))
+                               or meta.get("kind") == "weight"
+                               or "grad" in str(meta.get("kind", ""))
+                               or meta.get("requires_grad") is True):
+            raise ValueError("integer training metadata cannot be a weight or gradient: " + tid)
+    ops = list(ir2.get("forward", [])) + list(ir2.get("backward", []))
+    op_by_id = {int(op["op_id"]): op for op in ops if "op_id" in op}
+    bf16_ids = {tid for tid, m in tensors.items() if m.get("dtype") == "bf16"}
+    produced = set()
+    for op in ops:
+        df = op.get("dataflow", {})
+        for direction in ("inputs", "outputs"):
+            for ref in df.get(direction, {}).values():
+                tid = _resolve_ref_tensor(ref, op_by_id) if isinstance(ref, dict) else None
+                if tid in bf16_ids:
+                    if op.get("map_call") is not True:
+                        raise ValueError("BF16 auxiliary requires a typed map call: " + tid)
+                    if direction == "outputs":
+                        if tid in produced or str(op.get("phase", "")).startswith("backward"):
+                            raise ValueError("BF16 auxiliary requires one forward producer: " + tid)
+                        produced.add(tid)
+                    elif tid not in produced:
+                        raise ValueError("BF16 auxiliary read before forward production: " + tid)
+        pools = (df.get("inputs", {}), df.get("outputs", {}),
+                 op.get("weights", {}), op.get("save_for_backward", {}))
+        for pool in pools:
+            if not isinstance(pool, dict):
+                continue
+            for ref in pool.values():
+                if not isinstance(ref, dict) or "dtype" not in ref:
+                    continue
+                tid = _resolve_ref_tensor(ref, op_by_id) or ("weight." + ref["name"] if isinstance(ref.get("name"), str) else "unresolved")
+                dtype = canonical(ref["dtype"], "op %s reference %s" % (op.get("op_id"), tid))
+                if dtype == "bf16" and tid not in bf16_ids:
+                    raise ValueError("unsupported generated-training storage dtype in reference: " + tid)
+                if tid in tensors and dtype != canonical(tensors[tid].get("dtype", "fp32"), tid):
+                    raise ValueError("conflicting generated-training storage dtype: " + tid)
+
+    if bf16_ids - produced:
+        raise ValueError("BF16 auxiliary has no forward producer")
+
 def generate_c(ir2: Dict[str, Any], registry: Dict[str, Any], manifest: Optional[Dict[str, Any]] = None, layout: Optional[Dict[str, Any]] = None, exec_plan: Optional[Dict[str, Any]] = None) -> Tuple[str, Dict[str, Any]]:
-    identity = {"ir2": ir2, "manifest": manifest or {}, "layout": layout or {}, "exec_plan": exec_plan or {}}
+    identity = {"evaluation_contract": "forward_and_single_declared_loss_seed_v1", "ir2": ir2, "manifest": manifest or {}, "layout": layout or {}, "exec_plan": exec_plan or {}}
     declared_ids = set()
     for op in list(ir2.get("forward", [])) + list(ir2.get("backward", [])):
         if "map_call" in op and type(op["map_call"]) is not bool:
@@ -1244,12 +1400,14 @@ def generate_c(ir2: Dict[str, Any], registry: Dict[str, Any], manifest: Optional
         json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
     cfg = dict(ir2.get("config") or {})
+    native_context_specs, native_context_bindings = _training_native_contexts(cfg)
     if cfg.get("train_batch_policy") not in (None, "fixed"):
         raise ValueError("unsupported training batch policy")
     bridge_lowering = str(ir2.get("bridge_lowering", "legacy") or "legacy").strip().lower()
     bindings_doc = _load_json(DEFAULT_BINDINGS) if DEFAULT_BINDINGS.exists() else {}
     kernel_bindings = dict(bindings_doc.get("bindings") or {})
     tensors = _collect_tensors(ir2)
+    _validate_training_storage(ir2, tensors, manifest)
     tensor_numel, missing_numel = _tensor_numel_map(tensors)
     if missing_numel:
         raise RuntimeError(
@@ -1262,6 +1420,17 @@ def generate_c(ir2: Dict[str, Any], registry: Dict[str, Any], manifest: Optional
     forward_ops = sorted(list(ir2.get("forward") or []), key=lambda o: int(o.get("op_id", 0)))
     backward_ops = sorted(list(ir2.get("backward") or []), key=lambda o: int(o.get("op_id", 0)))
     all_ops = forward_ops + backward_ops
+    used_native_contexts = set()
+    for operation in all_ops:
+        provider = kernel_map.get(operation.get("kernel_id"), {})
+        for binding in provider.get("call_abi", {}).get("params", []):
+            source = binding.get("source", "")
+            if operation.get("map_call") and source.startswith("entry:"):
+                if str(operation.get("phase", "")).startswith("backward"):
+                    raise ValueError("borrowed native context is forward-only")
+                used_native_contexts.add(source.partition(":")[2])
+    if used_native_contexts != set(native_context_bindings):
+        raise ValueError("native context declarations must match consumed entry arguments")
     op_by_id = {int(op["op_id"]): op for op in all_ops if isinstance(op, dict) and "op_id" in op}
     exec_plan_info = _load_train_exec_plan(exec_plan)
     exec_plan_by_op = exec_plan_info["by_op_id"]
@@ -1271,13 +1440,111 @@ def generate_c(ir2: Dict[str, Any], registry: Dict[str, Any], manifest: Optional
 
     tvars_f32: Dict[str, str] = {}
     tvars_i32: Dict[str, str] = {}
+    tvars_bf16: Dict[str, str] = {}
     for tid, meta in sorted(tensors.items(), key=lambda x: x[0]):
         ident = _c_ident(tid, prefix="t_")
         dtype = str((meta or {}).get("dtype", "fp32"))
         if _dtype_is_i32(dtype):
             tvars_i32[tid] = ident
+        elif dtype == "bf16":
+            tvars_bf16[tid] = ident
         else:
             tvars_f32[tid] = ident
+
+    integer_input_order = cfg.get("training_integer_inputs", [])
+    if (not isinstance(integer_input_order, list)
+            or any(not isinstance(tid, str) for tid in integer_input_order)
+            or len(set(integer_input_order)) != len(integer_input_order)):
+        raise ValueError("training_integer_inputs must be a unique ordered tensor list")
+    if integer_input_order and cfg.get("train_batch_policy") != "fixed":
+        raise ValueError("integer training inputs require a fixed batch")
+    integer_inputs = []
+    integer_offset = 0
+    for tid in integer_input_order:
+        meta = tensors.get(tid, {})
+        if (tid not in tvars_i32 or meta.get("kind") != "input"
+                or meta.get("requires_grad") is not False or meta.get("persistent", False)
+                or tid in ("input.token_ids", "input.targets")):
+            raise ValueError("invalid nondifferentiable integer training input: " + tid)
+        n = tensor_numel[tid]
+        if type(n) is not int or n <= 0 or integer_offset + n > 2147483647:
+            raise ValueError("integer training input capacity exceeded")
+        integer_inputs.append(dict(tensor=tid, offset=integer_offset, count=n, dtype="i32"))
+        integer_offset += n
+    integer_constants = cfg.get("training_integer_constants", {})
+    if not isinstance(integer_constants, dict):
+        raise ValueError("training_integer_constants must be an explicit tensor/value mapping")
+    for tid, values in integer_constants.items():
+        meta = tensors.get(tid, {})
+        if (tid not in tvars_i32 or meta.get("kind") != "aux"
+                or meta.get("requires_grad") is not False or meta.get("persistent") is not True
+                or tid in integer_input_order or not isinstance(values, list)
+                or len(values) != tensor_numel[tid] or not values
+                or any(type(v) is not int or not -2147483648 <= v <= 2147483647 for v in values)):
+            raise ValueError("invalid compiler-owned integer training constant: " + str(tid))
+    for operation in all_ops:
+        for ref in operation.get("dataflow", {}).get("outputs", {}).values():
+            if ref.get("tensor") in integer_constants:
+                raise ValueError("training operation attempts to write an immutable integer constant")
+
+    # Integer operands used by declared map calls must be explicitly bound. They
+    # must never silently read an uninitialized static buffer or token-ID alias.
+    initialized_i32 = set(integer_input_order) | set(integer_constants)
+    for op in all_ops:
+        if op.get("map_call"):
+            for ref in op.get("dataflow", {}).get("inputs", {}).values():
+                tid = ref.get("tensor")
+                if tid in tvars_i32 and tid not in initialized_i32:
+                    raise ValueError("unbound integer training map input: " + tid)
+            for ref in op.get("dataflow", {}).get("outputs", {}).values():
+                tid = ref.get("tensor")
+                if tid in tvars_i32:
+                    meta = tensors[tid]
+                    if (tid in initialized_i32 or meta.get("requires_grad") is not False
+                            or meta.get("kind") != "activation" or meta.get("persistent", False)):
+                        raise ValueError("invalid generated integer training output: " + tid)
+                    initialized_i32.add(tid)
+
+
+    float_input_order = cfg.get("training_float_inputs", [])
+    if (not isinstance(float_input_order, list)
+            or any(not isinstance(tid, str) for tid in float_input_order)
+            or len(set(float_input_order)) != len(float_input_order)):
+        raise ValueError("training_float_inputs must be a unique ordered tensor list")
+    if float_input_order and cfg.get("train_batch_policy") != "fixed":
+        raise ValueError("float training inputs require a fixed batch")
+    float_inputs = []
+    float_offset = 0
+    produced = {ref.get("tensor") for op in forward_ops
+                for ref in op.get("dataflow", {}).get("outputs", {}).values()}
+    for tid in float_input_order:
+        meta = tensors.get(tid, {})
+        if (tid not in tvars_f32 or meta.get("dtype") != "fp32"
+                or meta.get("kind") != "input" or meta.get("requires_grad") is not False
+                or meta.get("persistent", False) or tid in produced):
+            raise ValueError("invalid external FP32 training input: " + tid)
+        n = tensor_numel[tid]
+        if type(n) is not int or n <= 0 or float_offset + n > 2147483647:
+            raise ValueError("float training input capacity exceeded")
+        float_inputs.append(dict(tensor=tid, offset=float_offset, count=n, shape=list(meta["shape"]), dtype="fp32"))
+        float_offset += n
+    zero_input_order = cfg.get("training_zero_inputs", [])
+    if (not isinstance(zero_input_order, list)
+            or any(not isinstance(tid, str) for tid in zero_input_order)
+            or len(set(zero_input_order)) != len(zero_input_order)):
+        raise ValueError("training_zero_inputs must be a unique ordered tensor list")
+    for tid in zero_input_order:
+        meta = tensors.get(tid, {})
+        if (tid not in tvars_f32 or meta.get("dtype") != "fp32"
+                or meta.get("kind") != "input" or meta.get("requires_grad") is not False
+                or meta.get("persistent", False) or tid in produced or tid in float_input_order
+                or type(tensor_numel.get(tid)) is not int or tensor_numel[tid] <= 0):
+            raise ValueError("invalid zero-initialized FP32 training input: " + tid)
+
+    # A declared FP32 input must not silently read zeroed/stale workspace.
+    for tid, meta in tensors.items():
+        if meta.get("kind") == "input" and meta.get("dtype", "fp32") == "fp32" and tid not in float_input_order and tid not in zero_input_order:
+            raise ValueError("unbound FP32 training input: " + tid)
 
     # Collect declarations required by kernels in this IR.
     used_decl: Dict[str, Tuple[str, List[Tuple[str, str]], str]] = {}
@@ -1333,7 +1600,7 @@ def generate_c(ir2: Dict[str, Any], registry: Dict[str, Any], manifest: Optional
                 used_decl[opt_kernel] = resolved
 
     # Optimizer state (AdamW moments) for each grad.weight.* tensor.
-    # AdamW kernel here is fp32-only, so non-fp32 params are skipped.
+    # Storage admission above rejects unsupported dtypes; never skip updates.
     opt_pairs: List[Tuple[str, str, str, str, str, int]] = []
     skipped_opt_non_fp32: List[str] = []
     grad_weight_tids = sorted([tid for tid in tensors.keys() if tid.startswith("grad.weight.")])
@@ -1346,8 +1613,7 @@ def generate_c(ir2: Dict[str, Any], registry: Dict[str, Any], manifest: Optional
             continue
         wdtype = str((tensors.get(wtid) or {}).get("dtype", "fp32")).lower()
         if wdtype not in ("fp32", "f32"):
-            skipped_opt_non_fp32.append(wname)
-            continue
+            raise ValueError("unsupported optimizer parameter dtype: " + wname)
         mvar = _c_ident("m." + wname, prefix="m_")
         vvar = _c_ident("v." + wname, prefix="v_")
         numel = tensor_numel.get(gtid)
@@ -1372,12 +1638,13 @@ def generate_c(ir2: Dict[str, Any], registry: Dict[str, Any], manifest: Optional
             raise RuntimeError("Missing positive numel for weight tensor: %s" % tid)
         init_weight_specs.append((wname, var, int(numel)))
 
-    layout_info = _load_train_layout_offsets(layout, tensor_numel)
+    layout_info = _load_train_layout_offsets(layout, tensor_numel, {tid: m.get("dtype", "fp32") for tid, m in tensors.items()})
+    typed_vars = {**tvars_f32, **tvars_bf16}
     tensor_offsets = layout_info["tensor_offsets_floats"]
     region_offsets = layout_info["region_offsets_floats"]
 
     tensor_offset_macros: Dict[str, str] = {}
-    for tid, var in sorted(tvars_f32.items(), key=lambda x: x[1]):
+    for tid, var in sorted(typed_vars.items(), key=lambda x: x[1]):
         tensor_offset_macros[tid] = "OFF_%s" % var
 
     opt_m_offset_macros: Dict[str, str] = {}
@@ -1396,12 +1663,12 @@ def generate_c(ir2: Dict[str, Any], registry: Dict[str, Any], manifest: Optional
     # Keep ordering stable so a failing canary index maps to the same range/slot
     # across runs and can be decoded consistently in strict mode.
     slot_rows: List[Dict[str, Any]] = []
-    for tid, _var in sorted(tvars_f32.items(), key=lambda x: x[1]):
+    for tid, _var in sorted(typed_vars.items(), key=lambda x: x[1]):
         wf, wb = _slot_writable_flags(tid)
         slot_rows.append({
             "name": tid,
             "offset": int(tensor_offsets[tid]),
-            "numel": int(tensor_numel[tid]),
+            "numel": (int(tensor_numel[tid]) + 1) // 2 if tid in tvars_bf16 else int(tensor_numel[tid]),
             "section": _classify_slot_section(tid),
             "writable_fwd": int(wf),
             "writable_bwd": int(wb),
@@ -1588,7 +1855,7 @@ def generate_c(ir2: Dict[str, Any], registry: Dict[str, Any], manifest: Optional
     ap("#define CK_ROPE_ALIGNED_HEAD_DIM %d" % int(rope_aligned_head_dim))
     ap("#define CK_ROPE_ROTARY_DIM %d" % int(rope_rotary_dim))
     ap("#define CK_ROPE_THETA %.6ff" % float(rope_theta))
-    for tid, var in sorted(tvars_f32.items(), key=lambda x: x[1]):
+    for tid, var in sorted(typed_vars.items(), key=lambda x: x[1]):
         ap("#define %s ((size_t)%d)" % (tensor_offset_macros[tid], int(tensor_offsets[tid])))
     for _wname, _gvar, _wvar, mvar, vvar, _numel in sorted(opt_pairs, key=lambda x: x[0]):
         ap("#define %s ((size_t)%d)" % (opt_m_offset_macros[mvar], int(opt_m_offsets[_wname])))
@@ -1696,6 +1963,9 @@ def generate_c(ir2: Dict[str, Any], registry: Dict[str, Any], manifest: Optional
 
     ap("static float *g_memory = NULL;")
     ap("static size_t g_memory_floats = 0;")
+    if float_inputs:
+        ap("static int g_float_inputs_ready = 0;")
+        ap("static int g_float_forward_ready = 0;")
     ap("static float g_dummy_f32[1];")
     ap("static int32_t g_dummy_i32[(CK_NUM_TOKENS > 0 ? CK_NUM_TOKENS : 1)];")
     ap("static float g_loss_scalar[1];")
@@ -1705,8 +1975,14 @@ def generate_c(ir2: Dict[str, Any], registry: Dict[str, Any], manifest: Optional
 
     for tid, var in sorted(tvars_f32.items(), key=lambda x: x[1]):
         ap("static float *%s; /* %s */" % (var, tid))
+    for tid, var in sorted(tvars_bf16.items(), key=lambda x: x[1]):
+        ap("static uint16_t *%s; /* %s: BF16 saved operands */" % (var, tid))
     for tid, var in sorted(tvars_i32.items(), key=lambda x: x[1]):
-        ap("static int32_t %s[%d]; /* %s */" % (var, int(tensor_numel[tid]), tid))
+        if tid in integer_constants:
+            values = ", ".join(str(v) for v in integer_constants[tid])
+            ap("static const int32_t %s[%d] = {%s}; /* %s */" % (var, int(tensor_numel[tid]), values, tid))
+        else:
+            ap("static int32_t %s[%d]; /* %s */" % (var, int(tensor_numel[tid]), tid))
     ap("")
 
     if opt_pairs:
@@ -1721,6 +1997,9 @@ def generate_c(ir2: Dict[str, Any], registry: Dict[str, Any], manifest: Optional
                 ap("static float *%s;" % vvar)
                 seen_v.add(vvar)
     ap("static int g_opt_step = 0;")
+    if native_context_specs:
+        for line in _training_native_context_source(len(native_context_specs)):
+            ap(line)
     ap("static int g_accum_step = 0;")
     ap("static int64_t g_accum_tokens = 0;")
     ap("static int g_active_tokens = CK_NUM_TOKENS;")
@@ -1800,6 +2079,8 @@ def generate_c(ir2: Dict[str, Any], registry: Dict[str, Any], manifest: Optional
     ap("    g_memory_floats = alloc_floats;")
     for tid, var in sorted(tvars_f32.items(), key=lambda x: x[1]):
         ap("    %s = g_memory + %s;" % (var, tensor_offset_macros[tid]))
+    for tid, var in sorted(tvars_bf16.items()):
+        ap("    %s = (uint16_t *)(g_memory + %s);" % (var, tensor_offset_macros[tid]))
     for _wname, _gvar, _wvar, mvar, vvar, _numel in sorted(opt_pairs, key=lambda x: x[0]):
         ap("    %s = g_memory + %s;" % (mvar, opt_m_offset_macros[mvar]))
         ap("    %s = g_memory + %s;" % (vvar, opt_v_offset_macros[vvar]))
@@ -1808,12 +2089,17 @@ def generate_c(ir2: Dict[str, Any], registry: Dict[str, Any], manifest: Optional
     ap("")
 
     ap("void ck_train_free(void) {")
+    if native_context_specs:
+        ap("    ck_train_clear_native_contexts();")
+    if float_inputs:
+        ap("    g_float_inputs_ready = 0;")
+        ap("    g_float_forward_ready = 0;")
     ap("    if (g_memory != NULL) {")
     ap("        free(g_memory);")
     ap("        g_memory = NULL;")
     ap("    }")
     ap("    g_memory_floats = 0;")
-    for _tid, var in sorted(tvars_f32.items(), key=lambda x: x[1]):
+    for _tid, var in sorted(typed_vars.items(), key=lambda x: x[1]):
         ap("    %s = NULL;" % var)
     for _wname, _gvar, _wvar, mvar, vvar, _numel in sorted(opt_pairs, key=lambda x: x[0]):
         ap("    %s = NULL;" % mvar)
@@ -1821,6 +2107,7 @@ def generate_c(ir2: Dict[str, Any], registry: Dict[str, Any], manifest: Optional
     ap("}")
     ap("")
     ap("int ck_train_forward_step(void);")
+    ap("int ck_train_eval_step(float *loss_out);")
     ap("int ck_train_backward_step(void);")
     ap("int ck_train_backward_step_trace(int *failed_op_id, int *first_corrupt_idx);")
     ap("int ck_train_optimizer_step(float lr);")
@@ -1884,6 +2171,22 @@ def generate_c(ir2: Dict[str, Any], registry: Dict[str, Any], manifest: Optional
     ap("    }")
     ap("    return (int)cursor;")
     ap("}")
+    ap("")
+    if init_weight_specs:
+        ap("int ck_train_compare_weight(int index, const float *expected, size_t elements) {")
+        ap("    if (g_memory == NULL || expected == NULL || index < 0 || index >= CK_INIT_WEIGHT_COUNT) return -1;")
+        ap("    if (elements == 0 || elements != (size_t)g_init_weight_numel[index] ||")
+        ap("        elements > SIZE_MAX / sizeof(float) || (uintptr_t)expected % _Alignof(float)) return -1;")
+        ap("    size_t bytes = elements * sizeof(float);")
+        ap("    uintptr_t address = (uintptr_t)expected;")
+        ap("    uintptr_t begin = (uintptr_t)g_memory;")
+        ap("    if (bytes > UINTPTR_MAX - address || CK_TRAIN_TOTAL_FLOATS > (UINTPTR_MAX - begin) / sizeof(float)) return -1;")
+        ap("    uintptr_t end = begin + CK_TRAIN_TOTAL_FLOATS * sizeof(float);")
+        ap("    if (address < end && begin < address + bytes) return -1;")
+        ap("    return memcmp(g_memory + g_init_weight_offsets[index], expected, bytes) == 0 ? 1 : 0;")
+        ap("}")
+    else:
+        ap("int ck_train_compare_weight(int index, const float *expected, size_t elements) { (void)index; (void)expected; (void)elements; return -1; }")
     ap("")
     ap("int ck_train_get_weight_snapshot_numel(void) {")
     ap("    return (int)CK_WEIGHT_SNAPSHOT_FLOATS;")
@@ -2009,6 +2312,8 @@ def generate_c(ir2: Dict[str, Any], registry: Dict[str, Any], manifest: Optional
     ap("}")
     ap("")
     ap("int ck_train_import_weight_snapshot(const float *src, int src_numel) {")
+    if native_context_specs:
+        ap("    g_native_forward_ready = g_native_backward_ready = 0;")
     ap("    if (g_memory == NULL || src == NULL) return -1;")
     ap("    if (src_numel < (int)CK_WEIGHT_SNAPSHOT_FLOATS) return -2;")
     ap("    size_t cursor = 0;")
@@ -2154,6 +2459,8 @@ def generate_c(ir2: Dict[str, Any], registry: Dict[str, Any], manifest: Optional
     token_input_i32_vars: List[str] = []
     target_input_i32_vars: List[str] = []
     for tid, var in sorted(tvars_i32.items(), key=lambda x: x[1]):
+        if tid in integer_input_order or tid in integer_constants:
+            continue
         lt = str(tid).lower()
         if "token" in lt and "target" not in lt:
             token_input_i32_vars.append(var)
@@ -2165,10 +2472,15 @@ def generate_c(ir2: Dict[str, Any], registry: Dict[str, Any], manifest: Optional
         if isinstance(tid, str) and tid.startswith("grad."):
             grad_vars_f32.append(var)
     ap("void ck_train_reset_buffers(void) {")
+    if native_context_specs:
+        ap("    ck_train_clear_native_contexts();")
+    if float_inputs:
+        ap("    g_float_inputs_ready = 0;")
+        ap("    g_float_forward_ready = 0;")
     ap("    if (g_memory != NULL && g_memory_floats > 0) {")
     ap("        memset(g_memory, 0, g_memory_floats * sizeof(float));")
     ap("    }")
-    for var in sorted(set(tvars_i32.values())):
+    for var in sorted({var for tid, var in tvars_i32.items() if tid not in integer_constants}):
         ap("    memset(%s, 0, sizeof(%s));" % (var, var))
     if opt_pairs:
         ap("    g_opt_step = 0;")
@@ -2248,6 +2560,8 @@ def generate_c(ir2: Dict[str, Any], registry: Dict[str, Any], manifest: Optional
     ap("}")
     ap("")
     ap("void ck_zero_grad(void) {")
+    if native_context_specs:
+        ap("    g_native_backward_ready = 0;")
     ap("    ck_zero_grad_weights();")
     ap("    ck_zero_grad_activations();")
     ap("    ck_zero_tmp_grads();")
@@ -3512,6 +3826,23 @@ def generate_c(ir2: Dict[str, Any], registry: Dict[str, Any], manifest: Optional
             ap("    int first = -1;")
         else:
             ap("int %s(void) {" % fn_name)
+        if native_context_specs and phase in ("forward", "backward", "backward_trace", "evaluation_loss"):
+            if phase == "forward":
+                ap("    g_native_forward_ready = g_native_backward_ready = 0;")
+                ap("    if (!g_native_contexts_ready) return -6;")
+            else:
+                ap("    g_native_backward_ready = 0;")
+                ap("    if (!g_native_contexts_ready || !g_native_forward_ready) return -6;")
+        if float_inputs and phase in ("forward", "backward", "backward_trace", "evaluation_loss"):
+            ap("    if (!g_float_inputs_ready) return -5;")
+            if phase == "forward":
+                ap("    g_float_forward_ready = 0;")
+            else:
+                ap("    if (!g_float_forward_ready) return -5;")
+        if phase == "forward" and zero_input_order:
+            ap("    if (g_memory == NULL) return -1;")
+            for tid in zero_input_order:
+                ap("    memset(%s, 0, (size_t)%d * sizeof(float));" % (tvars_f32[tid], tensor_numel[tid]))
         ap("    /* %s ops: %d */" % (phase, len(ops)))
         ap("    int call_count = 0;")
         idx = 0
@@ -4221,7 +4552,7 @@ def generate_c(ir2: Dict[str, Any], registry: Dict[str, Any], manifest: Optional
                 call_args = _declared_training_call(
                     op, kernel_map[kid], args,
                     {"activation": io_inputs, "output": io_outputs, "weight": io_weights, "scratch": io_outputs},
-                    tensors, tensor_numel, tvars_f32, fixed_batch=cfg.get("train_batch_policy") == "fixed")
+                    tensors, tensor_numel, {**tvars_f32, **tvars_i32, **tvars_bf16}, fixed_batch=cfg.get("train_batch_policy") == "fixed", native_contexts=native_context_bindings)
                 bounds_checks = [(tvars_f32[tid], tensor_numel[tid])
                                  for tid in list(io_inputs.values()) + list(io_outputs.values()) + list(io_weights.values())
                                  if tid in tvars_f32]
@@ -4479,6 +4810,12 @@ def generate_c(ir2: Dict[str, Any], registry: Dict[str, Any], manifest: Optional
                 ap("    if (%s(%s) != 0) return -7000 - %s;" % (call_fn, ", ".join(call_args), op_id))
             else:
                 ap("    %s(%s);" % (call_fn, ", ".join(call_args)))
+            if op.get("loss_value_tensor") is not None:
+                loss_tid = op["loss_value_tensor"]
+                if (op.get("role") != "loss_seed" or loss_tid not in io_outputs.values()
+                        or loss_tid not in tvars_f32 or tensor_numel.get(loss_tid) != 1):
+                    raise ValueError("invalid declared scalar loss publication")
+                ap("    g_loss_scalar[0] = %s[0];" % tvars_f32[loss_tid])
             if phase.startswith("backward"):
                 inj_tid: Optional[str] = None
                 for _k, _tid in _sorted_pool_items(io_outputs):
@@ -4503,15 +4840,66 @@ def generate_c(ir2: Dict[str, Any], registry: Dict[str, Any], manifest: Optional
                 ap("    }")
             idx += 1
 
+        if float_inputs and phase == "forward":
+            ap("    g_float_forward_ready = 1;")
+        if native_context_specs:
+            if phase == "forward":
+                ap("    g_native_forward_ready = 1;")
+            elif phase in ("backward", "backward_trace"):
+                ap("    g_native_backward_ready = 1;")
         ap("    return call_count;")
         ap("}")
         ap("")
 
+    if float_inputs:
+        ap("int ck_train_set_float_inputs_ex(const float *inputs, size_t count) {")
+        if native_context_specs:
+            ap("    g_native_forward_ready = g_native_backward_ready = 0;")
+        ap("    g_float_inputs_ready = 0;")
+        ap("    g_float_forward_ready = 0;")
+        ap("    if (!g_memory || !inputs || count != (size_t)%d) return -1;" % float_offset)
+        ap("    uintptr_t begin = (uintptr_t)inputs;")
+        ap("    if (begin %% _Alignof(float) != 0 || begin > UINTPTR_MAX - (size_t)%d * sizeof(float)) return -2;" % float_offset)
+        ap("    uintptr_t end = begin + (size_t)%d * sizeof(float);" % float_offset)
+        ap("    uintptr_t arena = (uintptr_t)g_memory;")
+        ap("    if (begin < arena + g_memory_floats * sizeof(float) && arena < end) return -2;")
+        ap("    for (size_t i = 0; i < count; ++i) if (!isfinite(inputs[i])) return -3;")
+        for item in float_inputs:
+            ap("    memcpy(%s, inputs + %d, (size_t)%d * sizeof(float));" %
+               (tvars_f32[item["tensor"]], item["offset"], item["count"]))
+        ap("    g_float_inputs_ready = 1;")
+        ap("    return %d;" % float_offset)
+        ap("}")
+        ap("")
+
     emit_ops("ck_train_forward_step", forward_ops, "forward")
+    # Loss seeds are deliberately separate from forward-only feature execution.
+    # Evaluation executes the declared scalar loss/seed, never parameter VJPs or
+    # an optimizer update. The seed may refresh d_logits and its own scratch.
+    evaluation_loss_ops = [op for op in backward_ops if op.get("role") == "loss_seed"]
+    emit_ops("ck_train_eval_loss_step", evaluation_loss_ops if len(evaluation_loss_ops) == 1 else [], "evaluation_loss")
+    ap("int ck_train_eval_step(float *loss_out) {")
+    ap("    if (g_memory == NULL || loss_out == NULL) return -1;")
+    ap("    g_loss_scalar[0] = NAN;")
+    if len(evaluation_loss_ops) != 1:
+        ap("    return -3; /* Evaluation requires one declared scalar loss seed. */")
+    else:
+        ap("    int fwd = ck_train_forward_step();")
+        ap("    if (fwd < 0) return fwd;")
+        ap("    int loss = ck_train_eval_loss_step();")
+        ap("    if (loss <= 0) return loss < 0 ? loss : -3;")
+        ap("    if (!isfinite(g_loss_scalar[0])) return -4;")
+        ap("    *loss_out = g_loss_scalar[0];")
+        ap("    return fwd + loss;")
+    ap("}")
+    ap("")
     emit_ops("ck_train_backward_step", backward_ops, "backward")
     emit_ops("ck_train_backward_step_trace", backward_ops, "backward_trace", trace_canary=True)
 
     ap("int ck_train_optimizer_step(float lr) {")
+    if native_context_specs:
+        ap("    if (!g_native_contexts_ready || !g_native_backward_ready) return -6;")
+        ap("    g_native_forward_ready = g_native_backward_ready = 0;")
     if "adamw_update_f32" not in used_decl:
         ap("    (void)lr;")
         ap("    /* adamw_update_f32 is unavailable; optimizer kernel call path is disabled. */")
@@ -4647,13 +5035,22 @@ def generate_c(ir2: Dict[str, Any], registry: Dict[str, Any], manifest: Optional
     ap("    return valid_tokens;")
     ap("}")
     ap("")
-    ap("int ck_train_set_batch_ex(const int32_t *token_ids, const int32_t *targets, int valid_tokens) {")
+    ap("static int ck_train_set_batch_inputs_impl(const int32_t *token_ids, const int32_t *targets, int valid_tokens, const int32_t *integer_inputs, size_t integer_count) {")
+    if native_context_specs:
+        ap("    g_native_forward_ready = g_native_backward_ready = 0;")
+    ap("    if (integer_count != (size_t)%d) return -2;" % integer_offset)
+    if integer_inputs:
+        ap("    if (!integer_inputs || (uintptr_t)integer_inputs %% sizeof(int32_t) != 0 || (uintptr_t)integer_inputs > UINTPTR_MAX - (size_t)%d * sizeof(int32_t)) return -2;" % integer_offset)
+
     if cfg.get("train_batch_policy") == "fixed":
         vocab = int(cfg.get("vocab_size", 0))
         if vocab <= 0:
             raise ValueError("fixed training batch requires positive vocabulary capacity")
         ap("    if (!token_ids || !targets || valid_tokens != CK_NUM_TOKENS) return -2;")
         ap("    for (int i = 0; i < CK_NUM_TOKENS; ++i) if (token_ids[i] < 0 || token_ids[i] >= %d || targets[i] < 0 || targets[i] >= %d) return -2;" % (vocab, vocab))
+    for item in integer_inputs:
+        ap("    memcpy(%s, integer_inputs + %d, (size_t)%d * sizeof(int32_t));" %
+           (tvars_i32[item["tensor"]], item["offset"], item["count"]))
     ap("    const int active = ck_clamp_active_tokens(valid_tokens);")
     ap("    if (token_ids != NULL) {")
     if token_input_i32_vars:
@@ -4677,16 +5074,22 @@ def generate_c(ir2: Dict[str, Any], registry: Dict[str, Any], manifest: Optional
     ap("    return active;")
     ap("}")
     ap("")
+    ap("int ck_train_set_batch_with_i32_ex(const int32_t *token_ids, const int32_t *targets, int valid_tokens, const int32_t *integer_inputs, size_t integer_count) {")
+    ap("    return ck_train_set_batch_inputs_impl(token_ids, targets, valid_tokens, integer_inputs, integer_count);")
+    ap("}")
+    ap("int ck_train_set_batch_ex(const int32_t *token_ids, const int32_t *targets, int valid_tokens) {")
+    ap("    return ck_train_set_batch_inputs_impl(token_ids, targets, valid_tokens, NULL, 0);")
+    ap("}")
     ap("int ck_train_set_batch(const int32_t *token_ids, const int32_t *targets) {")
     ap("    return ck_train_set_batch_ex(token_ids, targets, CK_NUM_TOKENS);")
     ap("}")
     ap("")
 
-    ap("int ck_train_step_ex(const int32_t *token_ids, const int32_t *targets, int valid_tokens, float *loss_out, float lr) {")
+    ap("int ck_train_step_with_i32_ex(const int32_t *token_ids, const int32_t *targets, int valid_tokens, const int32_t *integer_inputs, size_t integer_count, float *loss_out, float lr) {")
     ap("    double t_step0 = ck_now_ms();")
     ap("    g_last_opt_applied = 0;")
     ap("    g_last_opt_calls = 0;")
-    ap("    int batch_status = ck_train_set_batch_ex(token_ids, targets, valid_tokens);")
+    ap("    int batch_status = ck_train_set_batch_inputs_impl(token_ids, targets, valid_tokens, integer_inputs, integer_count);")
     ap("    if (batch_status < 0) return batch_status;")
     ap("    /*")
     ap("     * Grad-accum window contract (must match PyTorch):")
@@ -4766,12 +5169,25 @@ def generate_c(ir2: Dict[str, Any], registry: Dict[str, Any], manifest: Optional
     ap("    return fwd + bwd + opt;")
     ap("}")
     ap("")
+    ap("int ck_train_step_ex(const int32_t *token_ids, const int32_t *targets, int valid_tokens, float *loss_out, float lr) {")
+    ap("    return ck_train_step_with_i32_ex(token_ids, targets, valid_tokens, NULL, 0, loss_out, lr);")
+    ap("}")
     ap("int ck_train_step(const int32_t *token_ids, const int32_t *targets, float *loss_out, float lr) {")
     ap("    return ck_train_step_ex(token_ids, targets, CK_NUM_TOKENS, loss_out, lr);")
     ap("}")
     ap("")
 
     summary = {
+        "evaluation_loss_ops": len(evaluation_loss_ops),
+        "evaluation_entry": "ck_train_eval_step",
+        "float_inputs": float_inputs,
+        "native_contexts": native_context_specs,
+        "float_input_count": float_offset,
+        "zero_input_order": zero_input_order,
+        "zero_input_policy": "each_forward",
+        "integer_inputs": integer_inputs,
+        "integer_constants": integer_constants,
+        "integer_input_count": integer_offset,
         "forward_ops": len(forward_ops),
         "backward_ops": len(backward_ops),
         "bridge_lowering": bridge_lowering,
@@ -4781,6 +5197,9 @@ def generate_c(ir2: Dict[str, Any], registry: Dict[str, Any], manifest: Optional
         "batched_grad_accumulate_calls": int(batched_grad_accumulate_calls),
         "batched_grad_accumulate_tensors": int(batched_grad_accumulate_tensors),
         "callable_kernels": len(used_decl),
+        "declared_kernel_providers": {
+            kid: declaration[0] for kid, declaration in sorted(used_decl.items())
+        },
         "optimizer_pairs": len(opt_pairs),
         "runtime_contract_sha256": runtime_contract_sha256,
         "parameter_gradient_order": [wname for (wname, _gvar, _wvar, _mvar, _vvar, _numel) in sorted(opt_pairs, key=lambda x: x[0])],
@@ -4792,6 +5211,11 @@ def generate_c(ir2: Dict[str, Any], registry: Dict[str, Any], manifest: Optional
         "init_weight_numel": [int(_numel) for (_wname, _wvar, _numel) in init_weight_specs],
         "tensor_numel_count": len(tensor_numel),
         "memory_total_floats": int(layout_info["total_floats"]),
+        "bf16_auxiliary_storage": [
+            {"tensor": tid, "elements": tensor_numel[tid], "bytes": tensor_numel[tid] * 2,
+             "offset_bytes": tensor_offsets[tid] * 4, "checkpointed": False}
+            for tid in sorted(tvars_bf16)
+        ],
         "memory_regions": sorted(list(region_offsets.keys())),
         "tensor_slot_count": len(slot_rows),
         "canary_range_count": len(canary_ranges),

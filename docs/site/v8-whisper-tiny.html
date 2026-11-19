@@ -1029,7 +1029,278 @@
     </header>
     <main>
 
-<h1>Whisper Tiny and Base End-to-End</h1>
+<h1>Whisper: Tiny, Base and Large-v3</h1>
+
+<section id="large-v3-projection-m3n4">
+<h2>Projection follow-up: three rows by four columns</h2>
+<p>A bounded AVX2/FMA tile reuses weights across three rows and activations across four columns, preserving
+ascending eight-lane reductions and bias order. It applies only to worker ranges with at least twelve complete
+rows; short ranges retain the previous path. No packing, allocation, provider identity or model schedule changes.
+ARM, AVX-512 and non-FMA paths are unchanged.</p>
+<p>On P3, three alternating resident pairs on the same 20-second hinted recording reduced four-thread median
+inference from 20.82 to 19.79 seconds (4.9%), and eight-thread inference from 15.94 to 15.18 seconds (4.7%).
+Four-thread encoder time fell from 12.54 to 11.58 seconds; decode was 6.46 versus 6.57 seconds. Eight-thread
+encoder time was 9.14 versus 8.48 seconds, decode 5.17 versus 5.18 seconds. These shared-host measurements
+include variability and small slowdowns; they do not establish parity with Transformers performance.</p>
+<p>Every resident attempt retained identical encoder hashes and 74 generated tokens. A separate four-thread
+comparison preserved the complete encoder, two full-vocabulary logit trajectories, logical decoder state and
+reset/repeat bit-for-bit. The independent llama.cpp projection oracle passed 28 shapes at each of 1/4/8 threads.
+The existing nightly row-reuse suite now covers the selection boundary and a compiled corrupted-accumulator
+negative control. The full audio suite passed locally; final-head CI remains a separate gate.</p>
+<p><a href="assets/whisper-projection-m3n4-20261113.json">All timing attempts, hashes, shapes and limitations</a>.
+Production services remain unchanged. Earlier colocated Torch microbenchmarks were sensitive to wait policy:
+a fixed three-to-four-times short decoder projection deficit is not established. Native-versus-native results
+here avoid loading Torch in the timing process. No recognition-quality or new hardware certification is claimed.</p>
+</section>
+
+<section id="large-v3-attention-locality">
+<h2>Attention locality candidate: preserve arithmetic, reorder independent work</h2>
+<p>The next candidate processes a head's query rows before advancing to the next head. This keeps the head's
+keys and values nearer in cache while preserving each output's QK contraction, softmax maximum and FP64
+normalization sum, probability–V reduction and stored layout. Workers retain their existing query-indexed
+scratch ownership. No new allocation, workspace or model-specific branch is introduced.</p>
+<p>Three alternating resident pairs at four threads measured encoder medians of 13.43 → 12.68 seconds and
+inference medians of 21.71 → 21.05 seconds, approximately 3% less inference time. Request medians were
+21.84 → 21.26 seconds; decode was 6.46 versus 6.54 seconds. This is a modest shared-host development gain,
+not evidence that CKE has caught Transformers. Model initialization is excluded; warm-ups and every attempt
+are retained separately.</p>
+<p>At eight threads on physical P cores, three measured pairs reduced median inference from 16.76 to 15.94 seconds
+and request latency from 16.90 to 16.08 seconds. The earlier warm-ups were materially faster than the measured
+runs and remain visible in the report; this is not a claim that the isolated deployed service has these
+absolute timings. All eight runs at each thread count returned identical tokens and encoder hashes.</p>
+<p>Complete encoder output, two full-vocabulary logit trajectories, captured logical decoder state and
+reset/repeat remain bit-exact against the merged projection baseline. Native tests compare packed/unpacked
+attention and serial/threaded execution, retaining the existing independent PyTorch tolerances. New cases
+check exact-sized scratch guards, repeated calls, worker counts 1/2/4/8 and query/key/dimension tails.
+The existing default-nightly Audio Transformer Primitives suite runs these checks.</p>
+<p><a href="assets/whisper-attention-locality-20261113.json">Retained timing and numerical evidence</a>.
+The running Base and Large services were not replaced by this candidate. No new recognition-quality,
+ARM performance, or independent full-logit Transformers certification is claimed.</p>
+</section>
+
+<section id="large-v3-cache-panel-candidate">
+<h2>Measured follow-up: bounded projection cache reuse</h2>
+<p>On P3, perf attributed 54.5% of sampled P-core cycles to FP32 projections and about 24.7% to attention.
+VTune software Hotspots independently attributed 50.9% of CPU time to projections and 26.8% to attention.
+These are attribution measurements, not predicted wall-time savings. The hardware-counter collection produced
+an implausible CPI and is excluded from roofline and memory-bound conclusions.</p>
+<p>The candidate groups four-row projection microtiles into a bounded 32-row panel, reusing each weight pair
+without changing any output's reduction order. It adds no allocation, changes no model schedule, and leaves
+partial output ownership and the non-AVX2 paths intact.</p>
+<p>Three alternating pairs on the same hinted 20-second recording, four threads pinned to physical P cores
+0, 2, 4 and 6, measured median encoder time 17.97 → 15.48 seconds, native worker time 27.29 → 24.35 seconds,
+and total CLI time 32.73 → 29.95 seconds. Decode medians were 6.54 and 6.44 seconds. Other agents were compiling;
+these are shared-host development measurements, not an idle-host guarantee. Every pair retained identical
+encoder hashes and all 74 generated tokens.</p>
+<p>Separate full-model replay retained bit-exact 1500 × 1280 encoder output, two 63 × 51866 full-logit
+trajectories, captured logical state and reset/repeat behavior. The external llama.cpp oracle passed 22 shapes
+at 1, 4 and 8 threads. Asset-free nightly now covers 31/32/33/65-row panel boundaries. No new comparison with
+Transformers or whisper.cpp was performed, and the deployed services were not replaced by this candidate.</p>
+<p><a href="assets/whisper-large-profile-20261113.json">All paired timings and reproduction commands</a> ·
+<a href="assets/whisper-large-profile-20261113.svg">Interactive perf flame graph</a></p>
+</section>
+
+<section id="large-v3-serving-candidate">
+<h2>Large-v3 serving candidate: FP32 row reuse</h2>
+<p>The AVX2 production FP32 projection now reuses a pair of weight vectors across four input rows.
+Each output retains the original eight-lane accumulation, horizontal reduction and bias addition.
+Partial output ranges, odd output widths and unaligned reduction widths preserve the existing path.
+This is a shared kernel optimization; there is no Whisper-specific compiler branch, new packed-weight cache,
+or change to the AVX-512 and ARM implementations.</p>
+<p>The <a href="assets/whisper-large-serving-20261113.json">retained candidate report</a> separates
+kernel checks, complete-model equality, HTTP lifecycle acceptance and timing observations.
+The nonzero regression runs without model assets in standard nightly, including portable and available
+AVX2/FMA and AVX2/non-FMA builds. The external llama.cpp oracle additionally checks the real threaded wrapper.</p>
+<p>Three alternating baseline/candidate pairs on P3, at four threads, reduced median end-to-end time
+from 35.95 to 23.78 seconds (1.51×) for the same 20-second recording. All paired encoder hashes and tokens match.
+At eight threads the resident HTTP service measured a 16.81-second warm median. A separate five-minute CLI run
+completed ten windows in 220.7 seconds, using one encoder and one decoder initialization; every window reached EOS.
+That longer run overlapped other development checks and is a stability observation, not a controlled benchmark
+or transcript-accuracy certificate.</p>
+<p>Fresh Large-v3 reference runs matched 25 JFK tokens, 74 hinted technical-speech tokens, and 80 tokens with hints
+plus timestamps. Ten selected attention heads differed from eager FP32 Transformers by maximum absolute error
+2.40×10<sup>−5</sup> and RMSE 1.07×10<sup>−7</sup>; these are measured differences, not fitted acceptance tolerances.
+The existing CLI assembly produced 46 word timings and still reports <code>ASSEMBLED_UNCALIBRATED</code>,
+<code>edit_ready=false</code>. Word-boundary accuracy requires human-labelled recordings.
+Hints changed some wording and capitalization; reference agreement does not prove recognition improvement.</p>
+<h3>Bounded operating envelope</h3>
+<p>The isolated P3 candidate uses the full Large-v3 checkpoint, generated FP32 execution, eight native threads,
+one active recording and two waiting requests. It accepts mono 16 kHz PCM16 WAV, at most 30 seconds and 1 MiB,
+English greedy transcription and bounded vocabulary hints. The decoder output limit defaults to 128 tokens. Use <code>--max-output-tokens 256</code> for the Large-v3 candidate;
+startup rejects budgets that exceed the decoder context after its required prefix. Vocabulary validation
+reserves this same generation budget. Replies expose <code>complete</code> and <code>generated_tokens</code>;
+<code>stop=max_tokens</code> means a partial transcript, not a successful complete recording.
+The initial retained performance/lifecycle report used the default 128-token budget.
+This does not certify multilingual, beam-search, long-form or word-alignment HTTP behavior.
+The existing Base accessibility endpoint remains separate.</p>
+<pre>CK_NUM_THREADS=8 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
+  python3 -m server.whisper_http \
+  --encoder-run-dir /path/to/verified-large-v3/encoder \
+  --decoder-run-dir /path/to/verified-large-v3/decoder \
+  --port 8112 --max-seconds 30 --max-waiters 2 --worker-timeout-seconds 600 \
+  --max-output-tokens 256
+
+curl --fail http://127.0.0.1:8112/health
+python3 server/examples/whisper_http_client.py \
+  --url http://127.0.0.1:8112 --audio recording.wav \
+  --vocabulary-hint='Linux, SSD, C-Kernel-Engine, Antsand' \
+  --output /private/transcription.json</pre>
+<p>Wait for <code>ready=true</code>. Inspect the service instance, worker generation, loaded library and weight
+hashes in replies. Use SSH forwarding for another machine; the service binds only to loopback.
+A client timeout does not prove native computation stopped. Cancel by request ID and wait for recovery.
+No automatic retry or silent transcript replacement is provided.</p>
+<h3>Repeatable real-worker lifecycle checks</h3>
+<p>The existing server test lane also contains an opt-in real-worker case. Its configuration extends the private
+speech benchmark configuration with <code>encoder_run_dir</code>, <code>decoder_run_dir</code> and
+<code>max_output_tokens</code>, and requires at least two recordings with different pinned expected transcripts.
+It starts its own isolated in-process HTTP application and native workers; it does not replace a deployed service.
+It checks A→B→A, loaded identities, malformed input, queued and active cancellation, and recovery.</p>
+<pre>CK_WHISPER_SERVICE_ACCEPTANCE_CONFIG=/private/acceptance-config.json \
+CK_WHISPER_SERVICE_ACCEPTANCE_OUTPUT=/private/lifecycle-latest.json \
+python3 -m pytest -q server/tests/test_whisper_artifact_lifecycle.py</pre>
+<p>Without configured assets it reports SKIP. Current attempts publish INCOMPLETE before running and preserve
+failures instead of leaving an earlier successful report as the latest attempt. Outputs contain private transcripts;
+store them in an access-restricted directory. Use this case alongside the lightweight default tests in a reserved
+local nightly window.</p>
+<h3>Repeatable local performance checks</h3>
+<p>Use <code>scripts/whisper_service_benchmark.py --config /private/benchmark.json --output /private/latest.json</code>
+with the exact audio hash, expected transcript, loaded artifact identities, CPU and native worker environment.
+The existing local harness nightly accepts this same configuration through <code>--speech-perf-config</code>.
+Use a reserved idle-host window. A missing endpoint produces an incomplete result rather than retaining an old pass.
+The standalone benchmark also accepts <code>--pause-file /private/PAUSE</code>: an existing file publishes an INCOMPLETE current attempt before submitting requests; it does not cancel an active run. Keep private audio, hints and transcripts outside the public evidence report. A timing budget is an operational
+limit, not a cross-CPU performance comparison. Retain both a known-good bundle and a separate candidate;
+rollback by stopping the candidate and reconnecting the client to the verified Base service.</p>
+</section>
+
+<section id="base-large-parity-20261113">
+<h2>Base alignment and Large-v3: bounded execution evidence</h2>
+<p>The follow-up candidate makes the existing trace circuit reachable through the unified audio command.
+It fixes decoder-start BOS handling and links the existing trace and alignment providers into the normal engine.
+Large-v3 also exposed a tokenizer-padding precedence issue: a named tokenizer padding token must not be replaced
+by a conflicting model default. Explicit contradictions within tokenizer metadata still fail.</p>
+<p>The <a href="assets/whisper-parity-alignment-20261113.json">13 November evidence report</a>
+records loaded runtime/checkpoint hashes, separate quality verdicts and all limitations.
+The full <a href="https://huggingface.co/openai/whisper-large-v3">Large-v3 checkpoint</a> is pinned at
+<code>06f233fe06e710322aca913c1bc4249a0d71fce1</code>; this is not the Turbo variant.
+The generated encoder uses its declared 128 Mel bins and 32 layers. Its decoder ran through ordinary CKE generation.</p>
+<table><thead><tr><th>Case</th><th>CKE versus Transformers</th><th>Scope</th></tr></thead><tbody>
+<tr><td>Base, natural 20-second speech</td><td>63/63 tokens and transcript match</td><td>One greedy trajectory</td></tr>
+<tr><td>Base, vocabulary plus timestamps</td><td>72/72 tokens and transcript match</td><td>One greedy trajectory; traced and untraced CKE tokens also match</td></tr>
+<tr><td>Large-v3, natural 20-second speech</td><td>62/62 tokens and transcript match</td><td>One greedy trajectory, explicit FP32 eager reference</td></tr>
+<tr><td>Base and Large-v3, one-second digital silence</td><td>Each matches its reference's single unwanted text token</td><td>Numerical trajectory PASS; empty-transcript quality FAIL</td></tr>
+</tbody></table>
+<p>Silence is not fixed by changing CKE arithmetic: Transformers also returns the unwanted text.
+An explicit reference no-speech threshold of 0.6 with log-probability threshold −1.0 and zero temperature
+still retained the Base short-form output. No silent dictionary replacement, transcript filtering or
+unmeasured noise threshold is introduced. Quiet speech and long-form silence need separate evaluation.</p>
+<p>On identical decoder IDs, the eight selected attention heads across 72 rows and 1,500 frames differ from
+Transformers by maximum absolute error 3.43×10<sup>−6</sup> and RMSE 3.48×10<sup>−8</sup>.
+This includes independent frontend/encoder differences; it is not identical-operand local proof or a fitted tolerance.
+The existing assembler retained 44 word timings and marked one word for missing timing.
+It remains <code>edit_ready=false</code>. No human boundary accuracy or automatic cutting is certified.</p>
+<p>Large-v3's 20-second request took about 42.6 seconds parent wall time, including about 31.2 seconds
+in the encoder worker and 9.9 seconds in the decoder worker. The reference generation measurement was
+16.4 seconds, excluding model load. These individual observations occurred during development activity;
+repeat idle-host measurements before claiming a speed ratio. Keep Base for the deployed accessibility service.</p>
+<h3>Build and run a separate trace candidate</h3>
+<pre>CK_NUM_THREADS=4 version/v8/scripts/cks-v8-run audio /path/to/pinned/whisper-base \
+  --run /path/to/separate-trace-bundle --wav speech.wav \
+  --vocabulary-hint='C-Kernel-Engine, Clef' --timestamps \
+  --attention-trace-dir /private/traces --output /private/run.json
+
+python3 version/v8/scripts/align_whisper_trace_v8.py \
+  --report /private/run.json --trace /private/traces/window-0000.npz \
+  --encoder-run-dir /path/to/separate-trace-bundle/encoder \
+  --decoder-run-dir /path/to/separate-trace-bundle/decoder \
+  --alignment-library /path/to/separate-trace-bundle/decoder/libckernel_engine.so \
+  --output /private/alignment.json
+
+python3 version/v8/scripts/assemble_whisper_word_timings_v8.py \
+  --run-report /private/run.json --audio speech.wav \
+  --alignment /private/alignment.json --output /private/words.json</pre>
+<p>Use a fresh trace directory for each attempt. A partial alignment or review-required assembly intentionally
+returns a nonzero exit code; inspect its retained report rather than inventing missing timings.
+The trace build choice is part of bundle identity. Prefill and decode observations use separate phase manifests;
+ordinary circuit refresh remains enabled for normal builds.</p>
+<h3>Repeat the reference gate</h3>
+<pre>python3 version/v8/scripts/compare_whisper_e2e_pytorch_v8.py \
+  --checkpoint /path/to/pinned/whisper-base \
+  --encoder-run-dir /path/to/separate-trace-bundle/encoder \
+  --decoder-run-dir /path/to/separate-trace-bundle/decoder \
+  --wav speech.wav --threads 4 --timestamps \
+  --vocabulary-hint='C-Kernel-Engine, Clef' \
+  --attention-trace-dir /private/reference-traces --output /private/parity.json</pre>
+<p>The reference runs offline and is never a production fallback. It records explicit FP32 eager execution,
+checks captured token/head/hash correspondence and reports attention errors separately from token-trajectory status.
+Attention comparison currently supports one window. Run Large-v3 with its own pinned checkpoint and bundle;
+do not reuse Base artifacts or treat these short passes as long-form certification.</p>
+<p>The existing runner test lane also accepts <code>CK_WHISPER_PARITY_CHECKPOINT</code>,
+<code>CK_WHISPER_PARITY_ENCODER</code>, <code>CK_WHISPER_PARITY_DECODER</code> and
+<code>CK_WHISPER_PARITY_WAV</code> for an optional artifact-backed trajectory. Missing assets explicitly skip.
+<code>CK_WHISPER_PARITY_THREADS</code> defaults to 4 and the configurable
+<code>CK_WHISPER_PARITY_TIMEOUT_SECONDS</code> defaults to 1,800. A timeout fails the test; it is not a numerical verdict.</p>
+<p>The running P3 Base service remains unchanged. HTTP alignment, long-audio admission, full-logit/state certification,
+Large serving, held-out recognition quality and edit-safe boundaries remain open. This is usable CLI evidence,
+not full Transformers feature parity. Retain the previous bundle and service configuration for rollback.</p>
+</section>
+
+<section id="consumer-audit-20261113">
+<h2>Resident service audit: 13 November 2026</h2>
+<p>This is the first consumer-integration stage, not a long-recording or editing certificate.
+The deployed P3 service remained on clean commit <code>19a733d1c</code> (#1071), port 8110.
+A separate candidate based on <code>bfdb72606</code> used the same generated artifacts on port 8112.
+See the <a href="assets/whisper-serving-audit-20261113.json">sanitized artifact-bound report</a>.
+Loaded model, engine, manifest and weight hashes identify this run; the original checkpoint revision was not independently established.</p>
+<table><thead><tr><th>Capability</th><th>Source / tests</th><th>Loaded artifact / CLI</th><th>HTTP and deployment</th><th>Consumer evidence this run</th></tr></thead><tbody>
+<tr><td>Vocabulary context</td><td>Existing bounded implementation; isolation and capacity tests</td><td>Supported; leading-dash forwarding retained</td><td>Already deployed; candidate adds discovery and private access-log defaults</td><td>Real HTTP: 55 hint tokens applied; subsequent unhinted transcript matches baseline</td></tr>
+<tr><td>Segment timestamp tokens</td><td>Existing runner policy and tests</td><td>Hint plus timestamps executed on the real 20-second clip</td><td>Not exposed; candidate rejects unsupported query options</td><td>CLI execution only; no human boundary validation</td></tr>
+<tr><td>Attention traces / word alignment</td><td>Existing trace, alignment and assembly pipeline; focused tests pass</td><td>Loaded decoder lacks complete trace buffer; actual trace request fails explicitly</td><td>Not exposed or deployed</td><td>Unsupported on tested artifacts</td></tr>
+<tr><td>Editing proposals</td><td>Existing source-hash and preview-approval tests pass</td><td>Requires valid alignment evidence and review</td><td>Not exposed</td><td>No listening approval, filler accuracy or edit-safety claim</td></tr>
+<tr><td>Long audio</td><td>Existing windowing and certification machinery; focused tests pass</td><td>Not exercised on a long recording here</td><td>Service limited to 30 seconds</td><td>Laptop 21:52 recording not transferred or tested</td></tr>
+<tr><td>Recovery and cancellation</td><td>Existing lifecycle tests pass</td><td>Resident workers reused for six requests</td><td>Queued cancellation releases admission; active cancellation aborts workers before reuse</td><td>No new real disconnect/restart-fault trial</td></tr>
+<tr><td>Silence, repetition and fallback</td><td>Greedy decoding; no beam search or quality-triggered decoding fallback found</td><td>One-second zero audio produced nonempty text with and without hints</td><td>No silence-quality guarantee</td><td>FAIL for this silence fixture; broader rates unmeasured</td></tr>
+</tbody></table>
+<p>The four 20-second HTTP cases took 2.19–2.31 seconds wall time (about 0.11 real-time factor),
+with four native threads. These are individual warm requests, not a comparative benchmark.
+The hint changes text, but without a human transcript this does not establish improved recognition.
+84 focused tests and six subtests passed; two asset-dependent tests skipped. Raw audio and transcripts remain private.</p>
+<h3>External client and discovery</h3>
+<p>The candidate extends existing <code>GET /health</code> with
+<code>cke.whisper.capabilities.v1</code>, a service boot identity, actual HTTP limits and explicit false values
+for unavailable alignment, timestamp and long-audio features. <code>GET /telemetry</code> uses the same boot identity.
+Successful replies retain the request ID, hint-applied flag, hint token count and loaded-artifact hashes.
+Worker generation is scoped to this service boot. The node adapter does not yet forward these capabilities.</p>
+<p>Copy <a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/blob/main/server/examples/whisper_http_client.py">whisper_http_client.py</a>
+to the consumer machine. It needs only Python's standard library, no CKE checkout. It discovers limits,
+checks request/boot correlation, writes a private result and never automatically retries a lost response.</p>
+<pre>python3 whisper_http_client.py --url http://127.0.0.1:8110 \
+  --audio technical-16k-mono.wav \
+  --vocabulary-hint='Jupyter Notebook, C-Kernel-Engine, CKE, Clef, Qwen, Kokoro, Antsand, ShivasNotes, Muon, AdamW, MXFP4, NVFP4, Q4_K.' \
+  --output private-transcript.json</pre>
+<p>Clients send raw PCM16 mono 16 kHz WAV with URL-encoded <code>vocabulary_hint</code> and
+<code>X-CKE-Request-ID</code>. Limits are 1 MiB upload, 30 seconds, 1,024 UTF-8 hint bytes and 64 hint tokens;
+hint plus generation must fit decoder capacity. Two uploads and two waiting jobs are allowed by default.
+English transcription, greedy decoding and 128 output tokens are fixed. Worker timeout is 600 seconds;
+there is no per-request queue/execution deadline. Completed IDs are not an idempotency cache.</p>
+<p>The old deployed service lacks this discovery schema, so the example intentionally refuses it until upgrade.
+The candidate rejects unsupported query options before upload processing instead of silently ignoring them.
+It disables Uvicorn access logs because query strings contain vocabulary. Custom launchers and proxies must
+also suppress query content; aggregate telemetry remains available. No dictionary rewrites raw output.</p>
+<h3>Deployment, rollback and next gate</h3>
+<p>Keep the existing service while reviewing this candidate. After merge, pin a clean checkout, start
+<code>python -m server.whisper_http --encoder-run-dir ENCODER --decoder-run-dir DECODER --port 8112</code>
+with the existing verified bundles and four native threads. Verify health, identity and A→hinted B→A before
+changing the user service working directory. Keep its previous checkout and unit configuration for rollback;
+rollback restores that configuration and restarts only the Whisper service. Do not replace artifacts in place.</p>
+<p>Next build a separate trace-enabled decoder using the existing
+<code>build_whisper_alignment_trace_manifest_v8.py</code> and ordinary generation path. Verify selected heads,
+prompt exclusion, global window offsets and trace bounds before exposing alignment. Preserve current transcription
+as the fallback explicitly requested by a client, never fabricate word timestamps.</p>
+<p>Consumer acceptance needs a natural technical excerpt with a human verbatim transcript, ordinary and similar-sounding
+speech, silence/quiet speech, and manually marked word boundaries. Then test the full laptop recording with its source hash.
+WER, term insertions, boundary error, filler precision/recall, peak memory and trace storage are not measured here.
+No beam search, automatic cutting or production model replacement is introduced.</p>
+</section>
 
 <h2>Word alignment bring-up boundary</h2>
 <table>
@@ -2136,7 +2407,7 @@ The ordinary endpoint needs deployment of this telemetry change before this rout
             </div>
             <div style="text-align: right;">
                 <p style="color: #606060; font-size: 0.75rem; margin: 0;">Static docs · C-first execution</p>
-                <p style="color: #606060; font-size: 0.75rem; margin: 0.5rem 0 0 0;">2026-11-08</p>
+                <p style="color: #606060; font-size: 0.75rem; margin: 0.5rem 0 0 0;">2026-11-13</p>
             </div>
         </div>
     </footer>

@@ -1,0 +1,1563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ming3 TTS Bring-up  | C-Kernel-Engine</title>
+    <meta name="description" content="C-Kernel-Engine documentation for a CPU-native AI runtime, kernels, code generation, training, and inference on Linux systems.">
+    <meta name="robots" content="index,follow">
+    <link rel="canonical" href="https://c-kernel-engine.github.io/C-Kernel-Engine/v8-tts-ming3-bringup.html">
+    <meta property="og:title" content="Ming3 TTS Bring-up  | C-Kernel-Engine">
+    <meta property="og:description" content="C-Kernel-Engine documentation for a CPU-native AI runtime, kernels, code generation, training, and inference on Linux systems.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://c-kernel-engine.github.io/C-Kernel-Engine/v8-tts-ming3-bringup.html">
+    <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+    <style>
+        :root {
+            /* Antsand Brand Colors - Lightened */
+            --orange: #ffb400;
+            --orange-dark: #e5a200;
+            --orange-light: #ffc933;
+            --dark: #2a2a2a;
+            --dark-lighter: #363636;
+            --dark-card: #323232;
+            --grey: #454545;
+            --grey-light: #555555;
+            --text-primary: #f5f5f5;
+            --text-secondary: #b0b0b0;
+            --text-muted: #808080;
+            --bg-dark: #232323;
+            --white: #ffffff;
+            --code-bg: #1a1a1a;
+            --green: #47b475;
+            --blue: #07adf8;
+            --gradient-header: linear-gradient(135deg, #2a2a2a 0%, #363636 50%, #2a2a2a 100%);
+            --shadow-sm: 0 2px 4px rgba(0,0,0,0.3);
+            --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+            --shadow-lg: 0 8px 24px rgba(0,0,0,0.5);
+            --transition: all 0.3s ease;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-dark);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Header */
+        .site-header {
+            background: var(--gradient-header);
+            border-bottom: 3px solid var(--orange);
+            padding: 0.5rem 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 1rem;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            box-shadow: var(--shadow-md);
+        }
+
+        .header-brand {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            text-decoration: none;
+        }
+
+        .header-logo {
+            width: 40px;
+            height: 40px;
+            background: var(--orange);
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            color: var(--dark);
+            font-size: 1.1rem;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .header-title {
+            color: var(--white);
+            font-size: 1.4rem;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+        }
+
+        .header-subtitle {
+            color: var(--orange);
+            font-size: 0.8rem;
+            font-weight: 500;
+        }
+
+        /* Navigation */
+        .site-nav {
+            display: flex;
+            gap: 0.25rem;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .site-nav > a,
+        .nav-dropdown > .nav-trigger {
+            color: var(--text-secondary);
+            text-decoration: none;
+            padding: 0.6rem 1rem;
+            border-radius: 4px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: var(--transition);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            border: none;
+            background: transparent;
+            font-family: inherit;
+        }
+
+        .site-nav > a:hover,
+        .nav-dropdown:hover > .nav-trigger {
+            color: var(--white);
+            background: var(--grey);
+        }
+
+        .site-nav > a.active,
+        .nav-dropdown > .nav-trigger.active {
+            background: var(--orange);
+            color: var(--dark);
+            font-weight: 600;
+        }
+
+        /* Dropdown */
+        .nav-dropdown {
+            position: relative;
+        }
+
+        .nav-trigger::after {
+            content: '';
+            border: solid currentColor;
+            border-width: 0 2px 2px 0;
+            display: inline-block;
+            padding: 3px;
+            transform: rotate(45deg);
+            margin-top: -3px;
+            transition: transform 0.2s;
+        }
+
+        .nav-dropdown:hover .nav-trigger::after {
+            transform: rotate(-135deg);
+            margin-top: 3px;
+        }
+
+        .nav-dropdown-menu {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            background: var(--dark-card);
+            border-radius: 8px;
+            box-shadow: var(--shadow-lg);
+            min-width: 220px;
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(-10px);
+            transition: var(--transition);
+            overflow: hidden;
+            margin-top: 0.5rem;
+            border: 1px solid var(--grey);
+        }
+
+        .nav-dropdown:hover .nav-dropdown-menu {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0);
+        }
+
+        .nav-dropdown-menu a {
+            display: block;
+            padding: 0.75rem 1rem;
+            color: var(--text-secondary);
+            text-decoration: none;
+            transition: var(--transition);
+            border-left: 3px solid transparent;
+        }
+
+        .nav-dropdown-menu a:hover {
+            background: var(--grey);
+            border-left-color: var(--orange);
+            color: var(--white);
+        }
+
+        .nav-dropdown-menu a small {
+            display: block;
+            color: var(--text-muted);
+            font-size: 0.75rem;
+            margin-top: 0.2rem;
+        }
+
+        /* Last dropdown aligns to the right edge */
+        .nav-dropdown:last-child .nav-dropdown-menu {
+            left: auto;
+            right: 0;
+        }
+
+        /* Mega menu for Architecture dropdown */
+        .nav-dropdown-menu.mega-menu {
+            width: min(1180px, calc(100vw - 2rem));
+            min-width: 0;
+            max-height: calc(100vh - 90px);
+            padding: 1.25rem 1.5rem;
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 0.75rem 1.25rem;
+            left: auto;
+            right: 0;
+            overflow-y: auto;
+            transform: translateY(-10px);
+        }
+
+        .nav-dropdown:hover .nav-dropdown-menu.mega-menu {
+            transform: translateY(0);
+        }
+
+        .mega-menu .menu-section {
+            margin-bottom: 0.75rem;
+        }
+
+        .mega-menu .menu-shortcuts {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 0.5rem;
+            margin-top: 0.75rem;
+        }
+
+        .mega-menu .menu-shortcuts a {
+            padding: 0.55rem 0.75rem;
+            background: rgba(255, 180, 0, 0.055);
+            border: 1px solid rgba(255, 180, 0, 0.18);
+        }
+
+        .mega-menu .menu-heading {
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--orange);
+            padding: 0.5rem 0.75rem 0.35rem;
+            border-bottom: 1px solid var(--grey);
+            margin-bottom: 0.35rem;
+        }
+
+        .mega-menu a {
+            padding: 0.6rem 0.75rem;
+            font-size: 0.9rem;
+            border-radius: 4px;
+            border-left: none;
+            line-height: 1.3;
+        }
+
+        .mega-menu a:hover {
+            border-left: none;
+            background: var(--grey);
+        }
+
+        .mega-menu a small {
+            font-size: 0.75rem;
+            margin-top: 0.15rem;
+        }
+
+        /* Main Content */
+        main {
+            box-sizing: border-box;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+            flex: 1;
+            width: 100%;
+        }
+
+        /* Hero Section */
+        .hero {
+            background: var(--gradient-header);
+            border: 1px solid var(--grey);
+            color: var(--white);
+            padding: 3rem 2rem;
+            border-radius: 12px;
+            margin-bottom: 2rem;
+            text-align: center;
+            box-shadow: var(--shadow-lg);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, var(--orange), var(--orange-light), var(--orange));
+        }
+
+        .hero h1 {
+            color: var(--white);
+            border: none;
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .hero p {
+            font-size: 1.1rem;
+            color: var(--text-secondary);
+            max-width: 700px;
+            margin: 0 auto;
+        }
+
+        /* Typography */
+        h1 {
+            color: var(--white);
+            font-size: 2rem;
+            margin-bottom: 1rem;
+            border-bottom: 2px solid var(--orange);
+            padding-bottom: 0.5rem;
+        }
+
+        h2 {
+            color: var(--white);
+            font-size: 1.4rem;
+            margin: 2rem 0 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        h2::before {
+            content: '';
+            width: 4px;
+            height: 1.4rem;
+            background: var(--orange);
+            border-radius: 2px;
+        }
+
+        h3 {
+            color: var(--orange);
+            font-size: 1.15rem;
+            margin: 1.5rem 0 0.75rem;
+        }
+
+        p {
+            margin-bottom: 1rem;
+            color: var(--text-secondary);
+        }
+
+        /* Cards */
+        .card {
+            background: var(--dark-card);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            box-shadow: var(--shadow-sm);
+            border-left: 3px solid var(--grey-light);
+            transition: var(--transition);
+            border: 1px solid var(--grey);
+        }
+
+        .card:hover {
+            box-shadow: var(--shadow-md);
+            border-left-color: var(--orange);
+        }
+
+        .card-accent {
+            border-left-color: var(--orange);
+        }
+
+        .card-green {
+            border-left-color: var(--green);
+        }
+
+        .card-blue {
+            border-left-color: var(--blue);
+        }
+
+        .card h3 {
+            margin-top: 0;
+        }
+
+        /* Clickable Cards */
+        a.card-link {
+            display: block;
+            text-decoration: none;
+            color: inherit;
+        }
+
+        a.card-link .card {
+            cursor: pointer;
+        }
+
+        a.card-link .card:hover {
+            border-left-width: 5px;
+        }
+
+        .card-arrow {
+            color: var(--orange);
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-top: 1rem;
+            transition: var(--transition);
+        }
+
+        a.card-link:hover .card-arrow {
+            gap: 0.75rem;
+        }
+
+        /* Feature Icons */
+        .feature-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .feature-icon.orange { background: rgba(255, 180, 0, 0.15); color: var(--orange); }
+        .feature-icon.green { background: rgba(71, 180, 117, 0.15); color: var(--green); }
+        .feature-icon.blue { background: rgba(7, 173, 248, 0.15); color: var(--blue); }
+        .feature-icon.grey { background: rgba(255, 255, 255, 0.1); color: var(--text-secondary); }
+
+        /* Stats */
+        .stat-number {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: var(--orange);
+            line-height: 1;
+        }
+
+        .stat-label {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+        }
+
+        /* Code blocks */
+        pre {
+            background: var(--code-bg);
+            color: #e0e0e0;
+            padding: 1.25rem;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin: 1rem 0;
+            font-family: 'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            font-size: 0.85rem;
+            border: 1px solid var(--grey);
+        }
+
+        code {
+            font-family: 'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            background: var(--grey);
+            padding: 0.2rem 0.4rem;
+            border-radius: 3px;
+            font-size: 0.85rem;
+            color: var(--orange);
+        }
+
+        pre code {
+            background: none;
+            padding: 0;
+            color: #e0e0e0;
+        }
+
+        /* Tables */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+            background: var(--dark-card);
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid var(--grey);
+        }
+
+        th {
+            background: var(--dark);
+            color: var(--orange);
+            padding: 0.875rem 1rem;
+            text-align: left;
+            font-weight: 600;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        td {
+            padding: 0.875rem 1rem;
+            border-bottom: 1px solid var(--grey);
+            color: var(--text-secondary);
+        }
+
+        tr:hover {
+            background: var(--grey);
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        /* Lists */
+        ul, ol {
+            margin: 1rem 0;
+            padding-left: 1.5rem;
+            color: var(--text-secondary);
+        }
+
+        li {
+            margin-bottom: 0.5rem;
+        }
+
+        /* Links */
+        a {
+            color: var(--orange);
+            transition: var(--transition);
+        }
+
+        a:hover {
+            color: var(--orange-light);
+        }
+
+        /* Grid */
+        .grid {
+            display: grid;
+            gap: 1.5rem;
+        }
+
+        .grid-2 {
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        }
+
+        .grid-3 {
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        }
+
+        .grid-4 {
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        }
+
+        /* Alerts */
+        .alert {
+            padding: 1rem 1.25rem;
+            border-radius: 6px;
+            margin: 1rem 0;
+            display: flex;
+            align-items: flex-start;
+            gap: 0.75rem;
+            border: 1px solid;
+        }
+
+        .alert-icon {
+            font-size: 1.25rem;
+            flex-shrink: 0;
+        }
+
+        .alert-info {
+            background: rgba(7, 173, 248, 0.1);
+            border-color: var(--blue);
+            color: var(--blue);
+        }
+
+        .alert-warning {
+            background: rgba(255, 180, 0, 0.1);
+            border-color: var(--orange);
+            color: var(--orange);
+        }
+
+        .alert-success {
+            background: rgba(71, 180, 117, 0.1);
+            border-color: var(--green);
+            color: var(--green);
+        }
+
+        /* Image containers */
+        .img-container {
+            margin: 1.5rem 0;
+            text-align: center;
+        }
+
+        .img-container img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 8px;
+            box-shadow: var(--shadow-lg);
+            border: 1px solid var(--grey);
+        }
+
+        /* Badge */
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 999px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .badge-orange {
+            background: var(--orange);
+            color: var(--dark);
+        }
+
+        .badge-green {
+            background: var(--green);
+            color: white;
+        }
+
+        .badge-grey {
+            background: var(--grey);
+            color: var(--text-secondary);
+        }
+
+        /* Diagram blocks (monospace pre with colored spans) */
+        .diagram {
+            background: var(--code-bg);
+            border: 1px solid var(--grey);
+            border-radius: 6px;
+            padding: 1.25rem;
+            margin: 1rem 0;
+            overflow-x: auto;
+            font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace;
+            font-size: 0.8rem;
+            line-height: 1.55;
+            white-space: pre;
+            color: var(--text-muted);
+        }
+        .diagram .hl     { color: var(--blue); font-weight: 700; }
+        .diagram .grn    { color: var(--green); }
+        .diagram .wrn    { color: var(--orange); }
+        .diagram .err    { color: #f85149; }
+        .diagram .purple { color: #bc8cff; }
+        .diagram .dim    { color: #484f58; }
+
+        /* Inline status colors */
+        .good { color: var(--green); font-weight: 600; }
+        .bad  { color: #f85149; font-weight: 600; }
+        .meh  { color: var(--orange); font-weight: 600; }
+
+        /* Section numbering */
+        .section-num {
+            color: var(--orange);
+            font-weight: 400;
+            margin-right: 0.25rem;
+        }
+
+        /* Accordion */
+        details {
+            background: var(--dark-card);
+            border-radius: 6px;
+            margin-bottom: 0.75rem;
+            border: 1px solid var(--grey);
+            border-left: 3px solid var(--grey-light);
+            overflow: hidden;
+            transition: var(--transition);
+        }
+
+        details:hover {
+            border-left-color: var(--orange);
+        }
+
+        details[open] {
+            border-left-color: var(--orange);
+        }
+
+        summary {
+            padding: 1rem 1.25rem;
+            cursor: pointer;
+            font-weight: 600;
+            color: var(--white);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            list-style: none;
+            user-select: none;
+            transition: var(--transition);
+        }
+
+        summary::-webkit-details-marker {
+            display: none;
+        }
+
+        summary::after {
+            content: '';
+            border: solid var(--orange);
+            border-width: 0 2px 2px 0;
+            display: inline-block;
+            padding: 4px;
+            transform: rotate(-45deg);
+            transition: transform 0.2s ease;
+            flex-shrink: 0;
+            margin-left: 1rem;
+        }
+
+        details[open] summary::after {
+            transform: rotate(45deg);
+        }
+
+        summary:hover {
+            background: var(--grey);
+        }
+
+        details[open] summary {
+            border-bottom: 1px solid var(--grey);
+        }
+
+        .accordion-content {
+            padding: 1rem 1.25rem;
+        }
+
+        /* Site search */
+        .site-search {
+            display: flex;
+            align-items: center;
+            flex: 0 1 240px;
+            min-width: 140px;
+        }
+
+        .site-search input {
+            width: 100%;
+            background: var(--code-bg);
+            border: 1px solid var(--grey);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-family: inherit;
+            font-size: 0.85rem;
+            padding: 0.5rem 0.75rem;
+            transition: var(--transition);
+        }
+
+        .site-search input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .site-search input:focus {
+            outline: 2px solid var(--orange);
+            outline-offset: 1px;
+            border-color: var(--orange);
+        }
+
+        /* Mobile hamburger button */
+        .nav-toggle {
+            display: none;
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            padding: 0.5rem;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .nav-toggle span {
+            display: block;
+            width: 24px;
+            height: 3px;
+            background: var(--orange);
+            border-radius: 2px;
+            transition: var(--transition);
+        }
+
+        .nav-toggle.active span:nth-child(1) {
+            transform: rotate(45deg) translate(5px, 5px);
+        }
+
+        .nav-toggle.active span:nth-child(2) {
+            opacity: 0;
+        }
+
+        .nav-toggle.active span:nth-child(3) {
+            transform: rotate(-45deg) translate(6px, -6px);
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .site-header {
+                flex-direction: row;
+                justify-content: space-between;
+                padding: 0.75rem 1rem;
+            }
+
+            .nav-toggle {
+                display: flex;
+            }
+
+            .site-search {
+                order: 3;
+                flex: 1 1 100%;
+                min-width: 0;
+            }
+
+            .site-search input {
+                font-size: 1rem;
+            }
+
+            .site-nav {
+                position: fixed;
+                top: 60px;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: var(--dark);
+                flex-direction: column;
+                flex-wrap: nowrap;
+                align-items: stretch;
+                padding: 1rem;
+                gap: 0.5rem;
+                overflow-y: auto;
+                transform: translateX(-100%);
+                transition: transform 0.3s ease;
+                z-index: 999;
+            }
+
+            .site-nav.open {
+                transform: translateX(0);
+            }
+
+            .site-nav > a,
+            .nav-dropdown > .nav-trigger {
+                width: 100%;
+                padding: 1rem;
+                font-size: 1rem;
+            }
+
+            .nav-dropdown {
+                width: 100%;
+            }
+
+            .nav-dropdown-menu {
+                position: static;
+                opacity: 1;
+                visibility: hidden;
+                max-height: 0;
+                overflow: hidden;
+                transform: none;
+                margin-top: 0;
+                transition: max-height 0.3s ease, visibility 0.3s ease;
+                background: var(--dark-lighter);
+                border-radius: 0;
+                border: none;
+                box-shadow: none;
+            }
+
+            .nav-dropdown.open .nav-dropdown-menu {
+                visibility: visible;
+                max-height: 500px;
+            }
+
+            .nav-dropdown-menu a {
+                padding: 0.75rem 1.5rem;
+            }
+
+            /* Disable hover on mobile */
+            .nav-dropdown:hover .nav-dropdown-menu {
+                opacity: 1;
+                visibility: hidden;
+                max-height: 0;
+            }
+
+            .nav-dropdown.open .nav-dropdown-menu,
+            .nav-dropdown.open:hover .nav-dropdown-menu {
+                visibility: visible;
+                max-height: 500px;
+            }
+
+            .nav-dropdown-menu.mega-menu {
+                display: block;
+                width: 100%;
+                min-width: 0;
+                max-height: 0;
+                padding: 0.5rem;
+                left: auto;
+                right: auto;
+                overflow: hidden;
+                transform: none;
+            }
+
+            .nav-dropdown.open .nav-dropdown-menu.mega-menu,
+            .nav-dropdown.open:hover .nav-dropdown-menu.mega-menu {
+                max-height: 70vh;
+                overflow-y: auto;
+                transform: none;
+            }
+
+            .mega-menu .menu-shortcuts {
+                grid-template-columns: 1fr;
+            }
+
+            main {
+                padding: 1rem;
+            }
+
+            h1 {
+                font-size: 1.75rem;
+            }
+
+            .hero {
+                padding: 2rem 1rem;
+            }
+
+            .hero h1 {
+                font-size: 1.75rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="site-header">
+        <a href="index.html" class="header-brand">
+            <div class="header-logo">CK</div>
+            <div>
+                <div class="header-title">C-Kernel-Engine</div>
+                <div class="header-subtitle">High-Performance ML Kernels</div>
+            </div>
+        </a>
+        <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+            <span></span>
+            <span></span>
+            <span></span>
+        </button>
+        <form class="site-search" role="search" action="search.html" method="get" data-test="site-search">
+            <input type="search" name="q" id="site-search-input" aria-label="Search documentation" placeholder="Search docs ( / )" autocomplete="off">
+        </form>
+        <nav class="site-nav">
+            <a href="index.html" class="">Home</a>
+            <a href="spectrum.html" class="" style="color:var(--orange)">⚡ Spectrum</a>
+            <a href="quickstart.html" class="">Getting Started</a>
+            <a href="developer-guide.html" class="">Developer Guide</a>
+            <a href="contributing.html" class="">Contribute</a>
+            <a href="scaling.html" class="">Scaling</a>
+            <a href="support-hardware.html" class="" style="color:var(--green)">Support Lab</a>
+            <a href="cke-throughput-unit.html" class="" style="color:var(--orange)">CKU</a>
+            <div class="nav-dropdown">
+                <span class="nav-trigger ">Architecture</span>
+                <div class="nav-dropdown-menu mega-menu">
+                    <!-- Architecture Home Link -->
+                    <div class="menu-section" style="grid-column: 1 / -1; border-bottom: 1px solid var(--grey); padding-bottom: 0.5rem; margin-bottom: 0.5rem;">
+                        <a href="architecture-links.html" style="font-weight: 600; color: var(--orange);">
+                            View All Architecture Docs
+                            <small>Complete documentation index</small>
+                        </a>
+                        <div class="menu-shortcuts">
+                            <a href="pytorch-parity.html">PyTorch Parity<small>Numerical evidence</small></a>
+                            <a href="research.html">Research<small>Current investigations</small></a>
+                            <a href="decisions.html">Architecture Decisions<small>ADRs and tradeoffs</small></a>
+                            <a href="api.html">API &amp; Source Docs<small>Reference and Doxygen</small></a>
+                        </div>
+                    </div>
+                    <!-- Left Column -->
+                    <div class="menu-section">
+                        <div class="menu-heading">Core</div>
+                        <a href="architecture.html">System Overview<small>IR, Codegen, Kernels</small></a>
+                        <a href="tokenizer.html">Tokenizer<small>BPE, WordPiece, Trie</small></a>
+                        <a href="sentencepiece.html">SentencePiece<small>Viterbi DP, byte fallback</small></a>
+                        <a href="kernels.html">Kernel Reference<small>Forward/backward ops</small></a>
+                        <a href="codegen.html">Code Generation<small>IR to C compilation</small></a>
+                        <a href="iteration-philosophy.html">Iteration Philosophy<small>Why v1→v6 matters</small></a>
+                        <a href="ir-v2.html">IR v2 Format<small>Case study: symbolic dimensions</small></a>
+                        <a href="v7-backprop-ir.html">v7 Backprop IR<small>IR1/IR2 + layout/codegen flow</small></a>
+                        <a href="v7-cross-entropy-parity.html">v7 Cross-Entropy Parity<small>p - one_hot, reduction semantics, drift fixes</small></a>
+                        <a href="concepts.html">Deep Dive Concepts<small>RoPE, Flash Attention, GQA</small></a>
+                        <a href="kernel-maps.html">Kernel Maps<small>Provider selection, ABI, migration</small></a>
+                        <a href="kernel-architecture.html">v8 Kernel Architecture<small>Registry by op family, math</small></a>
+                        <a href="architecture-variants.html">Architecture Variants<small>Laguna, Cohere2, Instella, Nemotron</small></a>
+                        <a href="v8-moe-expert-kernels.html">MoE Expert Kernels<small>Bucketed prefill, mixed-quant experts</small></a>
+                        <a href="v8-cohere-kernels.html">Cohere Kernel Story<small>Reuse, BF16 vision, Transcribe audio</small></a>
+                    </div>
+                    <div class="menu-section">
+                        <div class="menu-heading">Quantization</div>
+                        <a href="quantization.html">Quant Fundamentals<small>Block formats, grouping</small></a>
+                        <a href="gguf-bump.html">GGUF to Bump<small>Weight conversion</small></a>
+                        <a href="gguf-conversion.html">GGUF Parsing<small>Byte-level guide</small></a>
+                    </div>
+                    <!-- Right Column -->
+                    <div class="menu-section">
+                        <div class="menu-heading">Optimization</div>
+                        <a href="gemm-memory-layout.html">GEMM Memory Layout<small>NN/NT layouts, offsets</small></a>
+                        <a href="gemm-optimization.html">GEMM Optimization<small>AVX, MKL, blocking</small></a>
+                        <a href="kernel-tuning-methodology.html">Kernel Tuning Methodology<small>VTune, Advisor, roofline, parity gates</small></a>
+                        <a href="cke-throughput-unit.html">CKE Throughput Unit<small>PB/s active-byte target</small></a>
+                        <a href="gemma4-speculative-pair.html">Gemma4 Speculative Pair<small>Backbone + MTP drafter circuit</small></a>
+                        <a href="v8-mla-kimi.html">v8 MLA / Kimi<small>Explicit decode cache contract</small></a>
+                        <a href="v8-whisper-tiny.html">Whisper Tiny E2E<small>Audio encoder/decoder circuits</small></a>
+                        <a href="simd-architecture.html">SIMD Architecture<small>AVX-512, VNNI, AMX</small></a>
+                        <a href="flash_attention.html" class="">Flash Attention Analysis<small>Why llama.cpp is faster</small></a>
+                    </div>
+                    <div class="menu-section">
+                        <div class="menu-heading">Infrastructure</div>
+                        <a href="memory-safety.html">Memory Safety<small>Bump allocator, canaries</small></a>
+                        <a href="deterministic-memory.html">Deterministic Memory<small>RDMA, interpretability</small></a>
+                        <a href="profiling.html">Profiling Guide<small>Valgrind, perf, flamegraphs</small></a>
+                        <a href="kernel-tuning-methodology.html">Kernel Tuning Methodology<small>CPU-node performance runbook</small></a>
+                        <a href="v7-profiling.html">v7 Profiling Runbook<small>Train kernels: VTune, Advisor, perf</small></a>
+                        <a href="v7-runbook.html">v7 Inference + Training Runbook<small>Copy/paste train + infer workflow</small></a>
+                        <a href="sizing.html">Model Sizing Lab<small>KV, state, concurrency, six-GPU placement</small></a>
+                        <a href="serving.html">Serving &amp; Batching<small>Single-flight, batch2, continuous-batching roadmap</small></a>
+                        <a href="v7-svg-dataset-runbook.html">v7 SVG Dataset Runbook<small>Pretrain + midtrain data generation</small></a>
+                        <a href="testing.html">Testing<small>Numerical parity verification</small></a>
+                        <a href="divergence-harness.html">Stitched Divergence Harness<small>llama.cpp/PyTorch tensor attribution</small></a>
+                        <a href="threadpool.html">Thread Pool<small>Persistent pthreads, dispatch</small></a>
+                    </div>
+                </div>
+            </div>
+            <a href="test-report.html" class="">Test Report</a>
+            <a href="version-history.html" class="">Versions</a>
+        </nav>
+    </header>
+    <main>
+<h1>Ming3 TTS: connected native components</h1>
+<p><strong>Status: experimental native FP32 text-to-WAV, checked cached continuation and a sentence-chunked 100-word trial. Publisher BF16/RNG parity, human listening approval, practical speed and HTTP serving remain open.</strong></p>
+<p>The model is <a href="https://huggingface.co/inclusionAI/Ming-3.0-tts-0.5B">inclusionAI/Ming-3.0-tts-0.5B</a>.
+The publisher combines a Qwen2.5 backbone with a DiT flow head, an aggregator,
+an audio VAE and a speaker encoder. Existing CKE TTS work supplies reusable
+arithmetic and serving infrastructure, but does not certify this composition.</p>
+<h2>Pinned sources</h2>
+<ul><li>Publisher source: <code>a39b80660bdc5a4394d5e1d41af6dbfd9c443a54</code>,
+<a href="https://github.com/inclusionAI/Ming-3.0-tts/blob/a39b80660bdc5a4394d5e1d41af6dbfd9c443a54/fm/CFM.py">fm/CFM.py</a>.</li>
+<li>Checkpoint metadata: <code>7247f4c94a5b2e987404ed28a5cfec41b1a4ca61</code>.
+The initial flow milestone did not load weights. A subsequent isolated publisher CPU reference loaded this checkpoint; that is not native CKE synthesis.</li></ul>
+<h2>Flow update component</h2>
+<pre>difference = prediction - null_prediction
+velocity   = prediction + cfg * difference
+euler      = latent + dt * velocity
+output     = euler + noise_amplitude * supplied_noise</pre>
+<p>The circuit decomposes this into eight checked scale/sum operations through
+normal circuit resolution, kernel maps, memory planning, lowering and generated C.
+Providers are <code>scale_vector_checked_f32</code> and
+<code>audio_scaled_sum_strided_f32_checked</code>. No new kernel, model-name
+compiler branch or handwritten neural executor is needed for this step.</p>
+<p>All tensors and coefficients are supplied in the arena. The caller must set
+<code>neg_one=-1</code>; it is a supplied scalar, not a native constant validator.
+The supplied noise amplitude represents the publisher's noise coefficient at this
+step. Time schedules, CFG policy, random-number generation and BF16 storage
+rounding are not implemented by this entry. Intermediate buffers may change on
+failure; the final output remains untouched when an upstream operation rejects.</p>
+<h2>Evidence and reproduction</h2>
+<p>The retained fixture executes the pinned publisher CFM sampler with a small
+synthetic affine predictor in FP32, five EPSS/sway updates and supplied noise.
+It does not replace a real DiT parity test. The fixture records source SHA-256,
+source/checkpoint revisions, PyTorch version, seed, operands and expected outputs.
+Each native output matches the retained FP32 trajectory exactly.</p>
+<pre>python3 version/v8/tts/build_ming3_flow_step_circuit.py --check
+python3 -m unittest tests.test_v8_ming3_flow_step -v
+python3 version/v8/tts/capture_ming3_flow_reference.py \
+  --publisher-cfm /path/to/pinned/fm/CFM.py \
+  --output /tmp/ming-flow-reference.json</pre>
+<p>The optional capture command verifies the pinned source hash before importing
+it. Normal PR/nightly tests use the retained fixture and require no download or
+large model. Coverage includes 1/63/64/65/256 elements, zero/nonzero noise,
+independent arenas, capacity rejection, nonfinite input rejection, recovery and a
+wrong-guidance negative control. Existing Kokoro/Qwen consumers keep their maps.</p>
+<h2>Audio decoder: checked linear interpolation</h2>
+<p>A reusable <code>audio_upsample_linear_frames_f32_checked</code> provider now
+implements offline integer-factor half-pixel interpolation with clamped endpoints.
+It consumes frame-major FP32 values, has explicit capacities, allocates no memory,
+and rejects invalid geometry, overlap and nonfinite inputs before output writes.
+The map declares FP64 coordinates and FP32 two-product/add arithmetic with no FMA.
+It does not implement streaming lookahead or BF16 storage conversion.</p>
+<p>On 2026-11-14, an isolated publisher PyTorch 2.6.0 CPU run generated
+112,896 finite samples at 44,100 Hz for “Hello. This is Ming speech.” using
+UK_George, seed 731, temperature zero, four threads, and a 128-step ceiling.
+The publisher run took 26.62 seconds including synthesis and WAV preparation;
+this is a reference-development observation, not CKE performance or listening approval.
+The publisher warned that SDPA sliding-window support was incomplete. Independent
+mask certification remains required.</p>
+<p>The captured decoder FC1 output contained 32 × 896 values. Native factor-four
+interpolation matched all 128 × 896 FP32 reference outputs; rounding both results
+to BF16 also matched. A small cropped real-input fixture is retained for nightly.
+This is identical-input primitive evidence, not full-model parity. The generated
+regression checks normal map resolution, lowering, execution and rejection recovery;
+a nearest-neighbor negative control fails the intended value comparison.</p>
+<pre>python3 -m unittest tests.test_v8_audio_linear_upsample -v</pre>
+<h2>Generated waveform from supplied spectra</h2>
+<p>The next connected boundary is an explicit-window inverse real DFT, normalized
+by overlap-add and cropped by caller-declared extents. Ming uses FFT length 3528,
+hop 882 and 1323 samples cropped at each end; Kokoro's centered crop is different.
+The new provider consumes Cartesian spectra and the actual stored window, avoiding
+an unannounced recomputation of upstream BF16 magnitude or phase.</p>
+<p>Identical-input replay isolated a 0.002938 maximum difference to the window
+normalizer. The publisher squares its BF16 window and stores each fold addition
+in BF16. For each destination sample, CPU fold accumulates contributing frames in
+descending order. Reversing that order is numerically observable. The native
+contract now declares these conversion points and ordering explicitly.</p>
+<p>On the retained 128-frame reference, normal generated execution produced
+112,896 finite waveform samples. Maximum absolute error was 8.94e-8 and RMSE
+6.80e-9 against the publisher waveform. The native final stage took 1.92 seconds
+with a 4,201,216-byte arena in one development run. This measures only waveform
+reconstruction from oracle spectra, not text-to-speech speed or listening quality.</p>
+<p>This correctness provider uses an FP64 inverse-DFT recurrence and overlap
+numerator, then the declared BF16 envelope and FP32 output. It is quadratic in FFT
+length, not an optimized FFT implementation. NumPy FP64 supplies an independent
+reference; a wrong fold-order control must fail. Existing Kokoro ISTFT contracts
+and execution remain separate.</p>
+<pre>python3 -m unittest tests.test_v8_audio_istft_complex_window -v
+python3 version/v8/tts/build_ming3_waveform_circuit.py --check
+python3 version/v8/tts/capture_ming3_synthesis_reference.py \
+  --publisher-root /path/to/pinned/publisher \
+  --checkpoint /path/to/pinned/checkpoint --output /tmp/ming-reference
+python3 version/v8/tts/replay_ming3_waveform.py \
+  --operands /tmp/ming-reference/waveform_operands.npz \
+  --output /tmp/ming-native-waveform</pre>
+<p>Output directories must not already exist, preserving previous attempts.
+The reference command requires its separate publisher dependencies. Native replay
+uses retained operands and does not run a hidden Transformers fallback.</p>
+<h2>First complete DiT block, explicit FP32 composition</h2>
+<p>The generated first-block graph now connects RMSNorm, biased Q/K/V projections,
+consecutive-pair rotary embedding, full unmasked attention, output projection,
+residual addition, second RMSNorm and the GELU MLP. It reuses checked providers and
+adds a checked explicit-table pairwise rotation. Semantic checkpoints identify
+all fourteen operation boundaries for X-Ray.</p>
+<p>Nonzero small graphs at two, three and seven tokens pass an independent
+reference. Corrupting a Q weight or a rotary coefficient fails the intended
+intermediate comparison. Invalid rotary input leaves the final output untouched;
+restoring valid input permits another successful call.</p>
+<p>Both real first-block conditioning branches were replayed with the pinned
+weights and inputs recast to FP32. Compared with the publisher block also recast
+to FP32, maximum errors were 3.34e-5 and 5.34e-5, with RMSE 1.99e-6 and 4.83e-6.
+The report labels these measured differences, not certification. This graph does
+not implement publisher BF16 storage boundaries, the full eight-block DiT,
+timestep conditioning or the complete sampler. It accepts supplied rotary tables.</p>
+<pre>python3 -m unittest tests.test_v8_ming3_dit_block tests.test_v8_rope_pairwise_rows -v
+python3 version/v8/tts/replay_ming3_dit_block.py \
+  --capture /tmp/ming-reference/dit_first_block.pt \
+  --output /tmp/ming-native-dit-block</pre>
+<p>The reference capture command above now retains the first block, its weights,
+its original BF16 output and a separately labelled FP32 replay. Tests retain
+nonzero mathematical fixtures; real checkpoint data stays in private local
+artifacts. Missing artifacts are not a model-level pass.</p>
+<h2>Complete FP32 DiT component</h2>
+<p>The generated graph now connects timestep features, conditioning, history and
+latent projections, all eight DiT blocks, and the final projection. Checked native
+sinusoidal providers construct timestep and rotary features using explicit
+frequencies. Mathematical timestep constants are compiled artifacts; rotary
+frequencies come from the checkpoint. Neither table is an oracle-fed activation.</p>
+<p>Nonzero one-, two- and eight-layer fixtures compare against an independent
+composition. Direct kernel checks cover capacities, aliasing, nonfinite inputs,
+phase overflow and recovery. These tests are registered in nightly.</p>
+<p>The retained real-weight two-branch replay measured maximum errors 1.67e-6
+and 3.58e-6, with RMSE 4.80e-7 and 8.50e-7 against the publisher DiT recast to
+FP32. Native execution took approximately 0.109 seconds per branch in one
+component measurement, using a 415 MB arena. This is measured FP32 component
+evidence, not publisher BF16 certification or end-to-end synthesis performance.</p>
+<pre>python3 -m unittest tests.test_v8_ming3_dit tests.test_v8_sinusoidal_rows -v</pre>
+<p>This DiT component result is separate from the connected native sampler, backbone,
+aggregator and audio-decoder evidence below. Reference-spectrum output alone does
+not establish native text-to-speech.</p>
+<h2>Connected offline audio decoder</h2>
+<p>The generated audio graph now accepts reference latents and an explicit window
+asset, then executes input projection, half-pixel interpolation, all 24 decoder
+layers, final normalization, spectral projection, clamped Cartesian conversion
+and waveform reconstruction. It requires no reference-provided spectra. Each
+layer uses split-half RoPE, grouped-query attention with an explicit 64-frame
+causal window, and SwiGLU. Small nonzero one-, two- and 24-layer cases compare
+intermediate outputs and waveform with an independent mathematical reference.</p>
+<p>This is a separate FP32 arithmetic variant with FP64 inverse-transform and
+overlap-envelope accumulation. It does not silently adopt the earlier BF16-window
+fold contract. The real-weight replay reports errors without declaring a newly
+chosen tolerance to be certification. Publisher CPU attention fallback warnings
+remain recorded; the intended mask is tested explicitly.</p>
+<p>Retained full-weight FP32 replays at 2, 17 and 32 latent frames all returned
+success. At 32 frames, the generated decoder produced 112,896 samples in 14.0
+seconds with a 1.76 GB planned arena. Compared with the publisher decoder recast
+to FP32, waveform maximum error was 6.89e-4 and RMSE 2.92e-5. The spectral-head
+maximum difference was 0.0343, so small waveform error must not hide intermediate
+drift. This is measured evidence without a numerical certification verdict or
+listening approval; no production speed claim follows from this development run.</p>
+<p>The present graph compiles a fixed latent count, at most 512 latent frames,
+which become 2048 spectral frames at the pinned factor four. This fixed-length baseline is retained alongside the newer resident runtime-length decoder described below. Neither establishes streaming equivalence. Kernel workspace is planned; Python's offline compiler/weight conversion
+has additional memory costs. The quadratic inverse transform remains a correctness
+baseline. No listening approval is inferred from numerical tests.</p>
+<pre>python3 -m unittest tests.test_v8_ming3_audio_decoder tests.test_v8_audio_spectrum_cartesian -v
+python3 version/v8/tts/capture_ming3_synthesis_reference.py \
+  --publisher-root /path/to/pinned/publisher --checkpoint /path/to/pinned/checkpoint \
+  --output /tmp/ming-reference --decoder-fp32-replay
+python3 version/v8/tts/replay_ming3_audio_decoder.py \
+  --checkpoint /path/to/pinned/checkpoint/model.safetensors \
+  --reference /tmp/ming-reference/decoder-fp32-17.npz \
+  --output /tmp/ming-native-decoder</pre>
+<h2>Native generation loop and resident lengths</h2>
+<p>The connected implementation executes token embedding, the complete Qwen2.5
+backbone, stop head, native guided-flow sampler and latent aggregator. A C driver
+owns the iteration and feeds the aggregator's class-row output back into the next
+backbone position. Python prepares inputs and invokes native execution; it does not
+run the neural sampling loop. The initial backbone deliberately recomputes the
+whole valid prefix. A separately selected cached policy now uses generated checked KV append after prefill; it does not silently replace the full-prefix baseline.</p>
+<p>The generated dynamic audio decoder uses checked request lengths within a fixed
+allocation. Small independent-reference tests cover short, long, then short
+requests, invalid capacities and recovery. The connected loop tests nonzero
+backbone, DiT and aggregator arithmetic against independent composition, A/B/A,
+minimum stop length, cancellation, budget exhaustion and failure recovery. Failed
+or incomplete synthesis does not publish partial latents as a completed utterance.</p>
+<p>Real-weight native guided-flow replay uses the same initial noise and schedule
+as an independent FP32 publisher comparison. Two retained streams had maximum
+latent differences 1.43e-6 and 1.22e-6. The real aggregator replay's maximum
+embedding differences ranged from 9.54e-6 to 1.34e-5. These are measured FP32
+component results, not BF16 trajectory certification. Native counter Gaussian RNG
+is explicitly different from PyTorch RNG.</p>
+<p>The experimental runner accepts a clean pinned publisher checkout only for its
+pure prompt-building functions. It uses the checkpoint tokenizer directly, maps
+BF16-stored weights into FP32 native arenas, and has no publisher neural fallback.
+Cancellation is checked between native generation stages; an already executing
+audio-decoder entry finishes before its output can be discarded. It is not yet an
+HTTP service, low-latency streaming session or listening-approved voice.</p>
+<pre>python3 -m unittest tests.test_v8_ming3_aggregator tests.test_v8_ming3_native_flow \
+  tests.test_v8_ming3_native_latent_loop tests.test_v8_ming3_backbone \
+  tests.test_v8_ming3_runtime_audio_decoder -v
+python3 version/v8/tts/run_ming3_native_v8.py \
+  --checkpoint /path/to/checkpoint --publisher-root /path/to/pinned/publisher \
+  --output /path/to/new-run --text "Hello. This is Ming speech." \
+  --capacity 256 --max-frames 100 --threads 2</pre>
+<p>Run directories retain exact tokens, checkpoint/tokenizer and generated-library
+identities, native timings and explicit incomplete/failure status. Allocated
+capacity is not a successful long-text or 100-word trial. Full-model reference
+comparisons, intelligibility, replacement and practical latency remain gates.</p>
+<p>A retained 144-token backbone comparison exposed a reference precision
+boundary: the publisher loaded as BF16 and then recast to FP32 retains BF16-rounded
+rotary inverse frequencies. Against that variant, native hidden-state RMSE was
+0.0182 (maximum 0.722). A separately retained reference initializing those
+frequencies directly in FP32 gave RMSE 1.48e-5 (maximum 5.57e-4); stop-logit
+maximum error was 8.21e-5. Both results remain recorded. This identifies a major
+contract difference, not permission to label the native path publisher-BF16 exact.</p>
+<h2>Declarative bindings and shared authoring</h2>
+<p>Model builders declare topology through ordinary circuit lowering. The backbone
+and audio decoder compose a shared transformer-stack authoring helper; backbone
+construction does not filter another model graph by operation names. Checked
+compilation, weight-shape validation and runtime-extent authoring live in shared
+modules, with representative Qwen TTS consumer tests.</p>
+<p>Each component exports named tensors and generated entries. The compiler validates
+shapes, contiguous slices, provider dtypes, entry call ranges and allocation bounds,
+then binds the manifest to the loaded library identity. The latent execution profile
+selects a versioned runtime shell and declares feedback, history, stop semantics,
+minimum frames, sampling schedule and RNG policy. Binding rejects the wrong
+prediction row, incompatible dimensions, wrong entry outputs and stale manifests
+before native execution. The decoder returns its valid sample count through the
+existing generated runtime-length ABI; the host does not reconstruct that count.</p>
+<p>The C loop is a bounded latent-autoregressive execution pattern, not an arbitrary
+graph executor. Version one supports one-patch history, one feedback embedding and
+binary stop logits. Unsupported policies reject. No Ming-name branch is added to
+generic lowering or code generation.</p>
+<h2>Retained native trials, 15 November 2026</h2>
+<p>The built-in UK_George voice spoke “Hello. This is Ming speech.” from a
+publisher-formatted 144-token prompt without oracle activations. Full-prefix
+execution took 552.3 seconds plus 14.0 seconds of waveform decoding. The cached
+candidate took 91.1 seconds plus 14.0 seconds for the same 32 latent frames and
+2.56 seconds of audio. These are development runs, not controlled speed benchmarks.
+Cached versus full-prefix latent maximum error was 0.0001903; waveform maximum
+error was 0.0001027. They are not bitwise equivalent. Real resident cancellation,
+oversized-input rejection and a repeated request recovered bit-exact latents and
+waveform for that cached candidate.</p>
+<p>A separate 100-word trial completed seven explicit sentence chunks in one loaded
+session, producing 2,127,384 samples (48.24 seconds). Generation took 1,583.7 seconds
+and waveform decoding 263.4 seconds, excluding load. This is far from interactive
+speed. Whisper, without vocabulary hints, recovered all sentences and the numbers
+3 and 42; one normalized word differed for “C-Kernel-Engine.” ASR agreement is not
+human listening approval, pronunciation certification or seamless-join evidence.</p>
+<p>The paragraph trial used an earlier cached build; its retained artifact hashes
+identify that build. It does not certify later binding refactors. A subsequent
+short trial exercised the validated declarative bindings separately: 91.6 seconds
+generation and 14.0 seconds decoding, with bit-exact latents and waveform against
+the earlier cached candidate. Native neural execution uses
+FP32 and the declared counter RNG, not the publisher BF16/PyTorch-RNG trajectory.</p>
+<pre>python3 -m unittest tests.test_v8_latent_execution_contract \
+  tests.test_v8_checked_circuit_authoring tests.test_v8_ming3_cached_backbone -v
+python3 version/v8/tts/run_ming3_native_v8.py \
+  --checkpoint /path/to/checkpoint --publisher-root /path/to/pinned/publisher \
+  --output /path/to/new-cached-run --text "Hello. This is Ming speech." \
+  --capacity 256 --max-frames 100 --threads 2 --cached-backbone
+python3 version/v8/tts/run_ming3_paragraph_v8.py \
+  --checkpoint /path/to/checkpoint --publisher-root /path/to/pinned/publisher \
+  --text-file /path/to/paragraph.txt --output /path/to/new-paragraph-run \
+  --capacity 512 --max-frames 200 --threads 2</pre>
+<h2>Kernel and circuit work still required</h2>
+<table><thead><tr><th>Component</th><th>Reuse candidates</th><th>Remaining gate</th></tr></thead><tbody>
+<tr><td>Qwen2.5 backbone</td><td>Linear projections, RMSNorm, RoPE, attention, KV</td><td>Connected prompt/weight mapping and cached continuation tested; artifact-specific BF16 parity remains</td></tr>
+<tr><td>DiT and aggregator</td><td>Checked linear, GELU/SiLU, normalization, full attention</td><td>FP32 DiT, native flow and aggregator connected through synthesis; publisher BF16 trajectory certification remains</td></tr>
+<tr><td>Flow sampler</td><td>Checked scale and sum</td><td>Native bounded iteration, EPSS/sway and CFG implemented; separate publisher RNG and BF16 contracts remain</td></tr>
+<tr><td>Audio VAE</td><td>Transformer arithmetic and waveform plumbing</td><td>FP32 latents-to-waveform and runtime extents connected; real-weight certification and streaming remain</td></tr>
+<tr><td>Voice conditioning</td><td>Existing audio preprocessing where contracts match</td><td>CAM++ speaker encoder and reference-audio conditioning</td></tr>
+<tr><td>Serving</td><td>Speech request lifecycle, queues, cancellation, WAV delivery</td><td>Connect only after native synthesis and repeat/reset pass</td></tr>
+</tbody></table>
+<p>These are reuse candidates, not claims that all required numerical contracts
+already match. Add generic kernels/maps only for demonstrated gaps. Next measure the connected bottlenecks, establish controlled numerical trajectory comparisons and finish listening and service lifecycle acceptance. Do not claim CPU speed from backbone parameter
+count or promote this diagnostic circuit as a serving model.</p>
+<p>The <a href="v7-visualizer-test-runbook.html#v8-component-coverage">IR visualizer</a>
+can inspect the generated layout, calls and semantic checkpoints. A circuit in its
+catalog remains a declaration, not production certification.</p>
+    </main>
+
+    <!-- SVG Viewer Overlay (shared across all pages) -->
+    <style>
+    .svg-viewer { cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
+    .svg-viewer:hover { transform: scale(1.01); box-shadow: 0 8px 32px rgba(255, 180, 0, 0.3); }
+    #svg-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.95); z-index: 999999; }
+    #svg-overlay .toolbar { position: fixed; top: 0; left: 0; right: 0; padding: 10px 20px; background: rgba(0,0,0,0.9); display: flex; justify-content: space-between; align-items: center; z-index: 1000000; border-bottom: 1px solid #333; }
+    #svg-overlay .toolbar .title { color: #ccc; font-size: 14px; }
+    #svg-overlay .toolbar .controls { display: flex; gap: 8px; align-items: center; }
+    #svg-overlay .toolbar button { background: #333; color: #ffb400; border: 1px solid #555; padding: 8px 14px; cursor: pointer; border-radius: 4px; font-size: 14px; }
+    #svg-overlay .toolbar button:hover { background: #444; border-color: #ffb400; }
+    #svg-overlay .toolbar .close-btn { font-size: 20px; padding: 4px 12px; }
+    #svg-overlay .toolbar .zoom-display { color: #888; font-size: 12px; min-width: 45px; text-align: center; }
+    #svg-overlay .toolbar .separator { color: #444; }
+    #svg-overlay .image-container { display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 60px 20px 20px; cursor: grab; }
+    #svg-overlay .image-container:active { cursor: grabbing; }
+    #svg-overlay .image-container img { max-width: 95%; max-height: 90vh; transform-origin: center center; }
+    #svg-overlay .nav-btn { position: fixed; top: 50%; transform: translateY(-50%); background: rgba(0,0,0,0.7); color: #ffb400; border: 1px solid #555; font-size: 30px; padding: 20px 15px; cursor: pointer; z-index: 1000000; border-radius: 4px; }
+    #svg-overlay .nav-btn:hover { background: rgba(255,180,0,0.2); border-color: #ffb400; }
+    #svg-overlay .nav-prev { left: 10px; }
+    #svg-overlay .nav-next { right: 10px; }
+    #svg-overlay .hint { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); color: #666; font-size: 12px; background: rgba(0,0,0,0.8); padding: 8px 20px; border-radius: 20px; }
+    </style>
+
+    <div id="svg-overlay">
+        <div class="toolbar">
+            <span class="title" id="svg-title">Image</span>
+            <div class="controls">
+                <button onclick="svgViewer.zoomOut()" title="Zoom Out (-)">-</button>
+                <span class="zoom-display" id="zoom-display">100%</span>
+                <button onclick="svgViewer.zoomIn()" title="Zoom In (+)">+</button>
+                <span class="separator">|</span>
+                <button onclick="svgViewer.fitWidth()" title="Fit Width (W)">Width</button>
+                <button onclick="svgViewer.fitHeight()" title="Fit Height (H)">Height</button>
+                <button onclick="svgViewer.resetZoom()" title="Reset (0)">Reset</button>
+                <span class="separator">|</span>
+                <button class="close-btn" onclick="svgViewer.close()" title="Close (ESC)">&times;</button>
+            </div>
+        </div>
+        <button class="nav-btn nav-prev" onclick="svgViewer.prev()" title="Previous">&larr;</button>
+        <button class="nav-btn nav-next" onclick="svgViewer.next()" title="Next">&rarr;</button>
+        <div class="image-container" id="svg-container">
+            <img id="svg-image" src="" alt="">
+        </div>
+        <div class="hint">Scroll to zoom | Drag to pan | W/H to fit | 0 to reset | ESC to close</div>
+    </div>
+
+    <script>
+    var svgViewer = (function() {
+        var overlay, img, titleEl, container;
+        var images = [];
+        var currentIndex = 0;
+        var scale = 1, panX = 0, panY = 0;
+        var isDragging = false, dragStartX, dragStartY, panStartX, panStartY;
+
+        function init() {
+            overlay = document.getElementById('svg-overlay');
+            img = document.getElementById('svg-image');
+            titleEl = document.getElementById('svg-title');
+            container = document.getElementById('svg-container');
+            if (!overlay || !img) return;
+
+            document.querySelectorAll('.svg-viewer').forEach(function(viewer, index) {
+                var viewerImg = viewer.querySelector('img');
+                if (viewerImg) {
+                    images.push({ src: viewerImg.src, title: viewer.getAttribute('data-title') || viewerImg.alt || 'Diagram' });
+                    viewer.onclick = function(e) { e.preventDefault(); open(index); };
+                }
+            });
+
+            container.addEventListener('wheel', function(e) {
+                e.preventDefault();
+                scale = Math.max(0.5, Math.min(10, scale + (e.deltaY > 0 ? -0.2 : 0.2)));
+                updateTransform();
+            });
+
+            container.addEventListener('mousedown', function(e) { isDragging = true; dragStartX = e.clientX; dragStartY = e.clientY; panStartX = panX; panStartY = panY; });
+            document.addEventListener('mousemove', function(e) { if (!isDragging) return; panX = panStartX + (e.clientX - dragStartX); panY = panStartY + (e.clientY - dragStartY); updateTransform(); });
+            document.addEventListener('mouseup', function() { isDragging = false; });
+
+            document.addEventListener('keydown', function(e) {
+                if (overlay.style.display !== 'block') return;
+                if (e.key === 'Escape') close();
+                if (e.key === 'ArrowLeft') prev();
+                if (e.key === 'ArrowRight') next();
+                if (e.key === '+' || e.key === '=') zoomIn();
+                if (e.key === '-') zoomOut();
+                if (e.key === '0') resetZoom();
+                if (e.key === 'w' || e.key === 'W') fitWidth();
+                if (e.key === 'h' || e.key === 'H') fitHeight();
+            });
+
+            overlay.addEventListener('click', function(e) { if (e.target === overlay || e.target === container) close(); });
+        }
+
+        function updateTransform() {
+            img.style.transform = 'translate(' + panX + 'px, ' + panY + 'px) scale(' + scale + ')';
+            var zd = document.getElementById('zoom-display');
+            if (zd) zd.textContent = Math.round(scale * 100) + '%';
+        }
+
+        function open(index) {
+            if (!images[index]) return;
+            currentIndex = index; scale = 1; panX = 0; panY = 0;
+            img.src = images[index].src;
+            titleEl.textContent = images[index].title + ' (' + (index + 1) + '/' + images.length + ')';
+            updateTransform();
+            overlay.style.display = 'block';
+            document.body.style.overflow = 'hidden';
+        }
+
+        function close() { overlay.style.display = 'none'; document.body.style.overflow = ''; }
+        function prev() { open((currentIndex - 1 + images.length) % images.length); }
+        function next() { open((currentIndex + 1) % images.length); }
+        function zoomIn() { scale = Math.min(10, scale + 0.25); updateTransform(); }
+        function zoomOut() { scale = Math.max(0.5, scale - 0.25); updateTransform(); }
+        function resetZoom() { scale = 1; panX = 0; panY = 0; updateTransform(); }
+
+        function fitWidth() {
+            if (!img.naturalWidth || !img.complete) { img.onload = fitWidth; return; }
+            scale = Math.max(0.1, Math.min(10, (window.innerWidth - 150) / img.naturalWidth));
+            panX = 0; panY = 0; updateTransform();
+        }
+
+        function fitHeight() {
+            if (!img.naturalHeight || !img.complete) { img.onload = fitHeight; return; }
+            scale = Math.max(0.1, Math.min(10, (window.innerHeight - 120) / img.naturalHeight));
+            panX = 0; panY = 0; updateTransform();
+        }
+
+        if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', init); } else { init(); }
+
+        return { open: open, close: close, prev: prev, next: next, zoomIn: zoomIn, zoomOut: zoomOut, resetZoom: resetZoom, fitWidth: fitWidth, fitHeight: fitHeight };
+    })();
+
+    // Mobile navigation
+    (function() {
+        var navToggle = document.querySelector('.nav-toggle');
+        var siteNav = document.querySelector('.site-nav');
+        var dropdowns = document.querySelectorAll('.nav-dropdown');
+
+        if (navToggle && siteNav) {
+            navToggle.addEventListener('click', function() {
+                navToggle.classList.toggle('active');
+                siteNav.classList.toggle('open');
+                navToggle.setAttribute('aria-expanded', siteNav.classList.contains('open'));
+            });
+
+            // Close menu when clicking a non-dropdown link
+            siteNav.querySelectorAll('a:not(.nav-dropdown-menu a)').forEach(function(link) {
+                link.addEventListener('click', function() {
+                    if (window.innerWidth <= 768) {
+                        navToggle.classList.remove('active');
+                        siteNav.classList.remove('open');
+                    }
+                });
+            });
+        }
+
+        // Handle dropdowns on mobile
+        dropdowns.forEach(function(dropdown) {
+            var trigger = dropdown.querySelector('.nav-trigger');
+            if (trigger) {
+                trigger.addEventListener('click', function(e) {
+                    if (window.innerWidth <= 768) {
+                        e.preventDefault();
+                        // Close other dropdowns
+                        dropdowns.forEach(function(d) {
+                            if (d !== dropdown) d.classList.remove('open');
+                        });
+                        dropdown.classList.toggle('open');
+                    }
+                });
+            }
+        });
+
+        // Close dropdowns when clicking outside on mobile
+        document.addEventListener('click', function(e) {
+            if (window.innerWidth <= 768 && !e.target.closest('.nav-dropdown')) {
+                dropdowns.forEach(function(d) { d.classList.remove('open'); });
+            }
+        });
+    })();
+
+    // Site search keyboard shortcuts: "/" or Ctrl+K / Cmd+K focuses the header search box.
+    (function() {
+        var searchInput = document.getElementById('site-search-input');
+        if (!searchInput) return;
+        document.addEventListener('keydown', function(e) {
+            var target = e.target;
+            var tag = (target.tagName || '').toLowerCase();
+            var typing = tag === 'input' || tag === 'textarea' || tag === 'select' || target.isContentEditable;
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+                e.preventDefault();
+                searchInput.focus();
+                searchInput.select();
+            } else if (e.key === '/' && !typing) {
+                e.preventDefault();
+                searchInput.focus();
+            }
+        });
+    })();
+    </script>
+
+    <!-- MathJax for LaTeX equations across docs pages -->
+    <script>
+    window.MathJax = {
+        tex: {
+            inlineMath: [['\\(', '\\)'], ['$', '$']],
+            displayMath: [['\\[', '\\]'], ['$$', '$$']],
+            processEscapes: true,
+            processEnvironments: true
+        },
+        options: {
+            skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
+        },
+        svg: {
+            fontCache: 'global'
+        }
+    };
+    </script>
+    <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+
+    <footer style="background: #2a2a2a; border-top: 1px solid #454545; color: #b0b0b0; padding: 3rem 2rem; margin-top: auto;">
+        <div style="max-width: 1200px; margin: 0 auto; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 2rem;">
+            <div>
+                <h4 style="color: #ffb400; margin-bottom: 0.75rem; font-size: 1rem;">C-Kernel-Engine</h4>
+                <p style="color: #707070; font-size: 0.875rem; margin: 0;">High-performance ML kernels with full PyTorch parity.</p>
+            </div>
+            <div>
+                <h4 style="color: #ffb400; margin-bottom: 0.75rem; font-size: 1rem;">Resources</h4>
+                <ul style="list-style: none; padding: 0; margin: 0;">
+                    <li style="margin-bottom: 0.5rem;"><a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine" style="color: #909090; text-decoration: none; font-size: 0.875rem;">GitHub</a></li>
+                    <li style="margin-bottom: 0.5rem;"><a href="contributing.html" style="color: #909090; text-decoration: none; font-size: 0.875rem;">Contributor Path</a></li>
+                    <li style="margin-bottom: 0.5rem;"><a href="architecture.html" style="color: #909090; text-decoration: none; font-size: 0.875rem;">Architecture</a></li>
+                    <li style="margin-bottom: 0.5rem;"><a href="api.html" style="color: #909090; text-decoration: none; font-size: 0.875rem;">API Reference</a></li>
+                </ul>
+            </div>
+            <div>
+                <h4 style="color: #ffb400; margin-bottom: 0.75rem; font-size: 1rem;">Related</h4>
+                <ul style="list-style: none; padding: 0; margin: 0;">
+                    <li style="margin-bottom: 0.5rem;"><a href="https://www.shivasnotes.com/" style="color: #909090; text-decoration: none; font-size: 0.875rem;">ShivasNotes</a></li>
+                    <li style="margin-bottom: 0.5rem;"><a href="https://www.shivasnotes.com/work-with-us" style="color: #909090; text-decoration: none; font-size: 0.875rem;">Work With Us</a></li>
+                    <li style="margin-bottom: 0.5rem;"><a href="https://antshiv.com/" style="color: #909090; text-decoration: none; font-size: 0.875rem;">antshiv.com</a></li>
+                </ul>
+            </div>
+            <div style="text-align: right;">
+                <p style="color: #606060; font-size: 0.75rem; margin: 0;">Static docs · C-first execution</p>
+                <p style="color: #606060; font-size: 0.75rem; margin: 0.5rem 0 0 0;">2026-11-15</p>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>

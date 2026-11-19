@@ -1,0 +1,112 @@
+"""Fresh-process native checkpoint replay; test worker, not a model scheduler."""
+
+import ctypes
+import hashlib
+import json
+from pathlib import Path
+import sys
+
+import numpy as np
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "version/v8/scripts"))
+import run_training_workflow_v8 as workflow
+
+
+def run(request_path):
+    request = json.loads(Path(request_path).read_text())
+    library = Path(request["library"])
+    if hashlib.sha256(library.read_bytes()).hexdigest() != request["library_sha256"]:
+        raise ValueError("generated library identity mismatch")
+    lib = ctypes.CDLL(str(library))
+    workflow._configure(lib)
+    fp = ctypes.POINTER(ctypes.c_float)
+    ip = ctypes.POINTER(ctypes.c_int32)
+    sizes = np.asarray(request["sizes"], dtype="i4")
+    inference = request.get("mode") == "inference"
+    if inference:
+        payload = Path(request["weights"]).read_bytes()
+        if hashlib.sha256(payload).hexdigest() != request["weights_sha256"]:
+            raise ValueError("inference weight identity mismatch")
+        initial = np.frombuffer(payload, dtype="<f4").copy()
+        if initial.size != int(sizes.sum()):
+            raise ValueError("inference weight size mismatch")
+    else:
+        initial = np.zeros(int(sizes.sum()), dtype="f4")
+    lib.ck_train_init.argtypes = [fp, ip, ctypes.c_int]
+    if lib.ck_train_init(
+        initial.ctypes.data_as(fp), sizes.ctypes.data_as(ip), len(sizes)
+    ) != len(sizes):
+        raise RuntimeError("native initialization failed")
+    del initial
+    try:
+        lib.ck_set_strict_parity(1)
+        if not inference:
+            workflow._checkpoint_load(Path(request["checkpoint"]), lib, request["metadata"])
+        ids = np.asarray(request.get("token_ids", [0] * request["tokens"]), dtype="i4")
+        if len(ids) != request["tokens"]:
+            raise ValueError("token count mismatch")
+        targets = np.asarray(request.get("target_ids", ids), dtype="i4")
+        if targets.shape != ids.shape:
+            raise ValueError("target count mismatch")
+        metadata = np.asarray(request["integer_inputs"], dtype="i4")
+        lib.ck_train_step_with_i32_ex.argtypes = [
+            ip,
+            ip,
+            ctypes.c_int,
+            ip,
+            ctypes.c_size_t,
+            fp,
+            ctypes.c_float,
+        ]
+        if "float_inputs" in request:
+            features = np.asarray(request["float_inputs"], dtype="f4")
+            lib.ck_train_set_float_inputs_ex.argtypes = [fp, ctypes.c_size_t]
+            if (
+                lib.ck_train_set_float_inputs_ex(
+                    features.ctypes.data_as(fp), features.size
+                )
+                != features.size
+            ):
+                raise RuntimeError("native resumed features rejected")
+        if inference:
+            lib.ck_train_set_batch_with_i32_ex.argtypes = [ip, ip, ctypes.c_int, ip, ctypes.c_size_t]
+            rc = lib.ck_train_set_batch_with_i32_ex(
+                ids.ctypes.data_as(ip), targets.ctypes.data_as(ip), len(ids),
+                metadata.ctypes.data_as(ip), metadata.size)
+            if rc <= 0 or lib.ck_train_forward_step() <= 0:
+                raise RuntimeError("native inference failed")
+            outputs = workflow.CERT._activation_snapshot(lib, request["summary"])
+            result = dict(logits=outputs[request["output_tensor"]].tolist(),
+                          optimizer_step=lib.ck_train_get_opt_step(),
+                          weight_sha256=hashlib.sha256(workflow._array_export(lib, "weight").astype('<f4').tobytes()).hexdigest())
+            Path(request["result"]).write_text(json.dumps(result, sort_keys=True))
+            return
+        losses = []
+        for _ in range(request["remaining_steps"]):
+            loss = ctypes.c_float()
+            rc = lib.ck_train_step_with_i32_ex(
+                ids.ctypes.data_as(ip),
+                targets.ctypes.data_as(ip),
+                len(ids),
+                metadata.ctypes.data_as(ip),
+                len(metadata),
+                ctypes.byref(loss),
+                request["learning_rate"],
+            )
+            if rc <= 0:
+                raise RuntimeError(f"native resumed step failed: {rc}")
+            losses.append(loss.value)
+        result = {"losses": losses, "optimizer_step": lib.ck_train_get_opt_step()}
+        for name in ("weight", "optimizer_state"):
+            values = workflow._array_export(lib, name)
+            result[name + "_sha256"] = hashlib.sha256(
+                values.astype("<f4", copy=False).tobytes()
+            ).hexdigest()
+        Path(request["result"]).write_text(json.dumps(result, sort_keys=True))
+    finally:
+        lib.ck_train_free()
+
+
+if __name__ == "__main__":
+    run(sys.argv[1])

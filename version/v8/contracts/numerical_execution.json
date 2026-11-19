@@ -3,6 +3,496 @@
   "schema_version": 1,
   "engine_contract_version": "8",
   "contracts": {
+    "audio_spectrum_cartesian_fp32": {
+      "operator_family": "audio_spectral_head_mag_phase",
+      "status": "observed",
+      "storage": {
+        "input": "fp32",
+        "weight": "none",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "none",
+        "accumulator": "fp32",
+        "contraction": "disabled",
+        "evaluation_order": "clamped_exp_times_cos_or_sin_fp32"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "input_load",
+          "pointwise_product",
+          "sine",
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "none",
+        "order": "none",
+        "partial_accumulator": "none",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Finite frame-major log-magnitude and phase; FP32 exp clamp, sine/cosine and products. No BF16 conversion."
+    },
+    "audio_istft_complex_window_fp64_fold": {
+      "operator_family": "audio_istft_mag_phase",
+      "status": "observed",
+      "storage": {
+        "input": "fp32",
+        "weight": "none",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "none",
+        "accumulator": "fp64",
+        "contraction": "disabled",
+        "evaluation_order": "fp64_inverse_dft_and_fp64_overlap_envelope"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "input_load",
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "composite",
+        "order": "stage_ordered",
+        "partial_accumulator": "fp64",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "serial",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "FP64 inverse DFT, window products and overlap envelope; FP32 output. Mathematical reference variant, no BF16 stores."
+    },
+    "checked_native_decoder_feature_copy_fp32": {
+      "operator_family": "decoder_features_sequence",
+      "status": "validated",
+      "storage": {
+        "input": "int32",
+        "weight": "none",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "int32",
+        "weight": "none",
+        "accumulator": "fp32",
+        "contraction": "disabled",
+        "evaluation_order": "validate_request_reset_decode_collect_finite_rows_reset_publish_exact_fp32"
+      },
+      "rounding": {
+        "mode": "none",
+        "points": [
+          "input_load",
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "none",
+        "order": "none",
+        "partial_accumulator": "none",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "serial",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Checked native decoder sequence and exact FP32 feature transport. The caller binds an initialized deterministic decoder artifact and its independent numerical contract; delegated model arithmetic is not certified by this copy contract. Invalid requests precede execution; failures and cancellation publish no features."
+    },
+    "sinusoidal_explicit_frequencies_fp32": {
+      "operator_family": "position_embeddings",
+      "status": "observed",
+      "storage": {
+        "input": "fp32",
+        "weight": "fp32",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "fp32",
+        "accumulator": "fp32",
+        "contraction": "disabled",
+        "evaluation_order": "position_times_scale_then_frequency_then_sinf_cosf"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "input_load",
+          "pointwise_product",
+          "sine",
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "none",
+        "order": "none",
+        "partial_accumulator": "none",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Explicit frequency and position operands; phase=(position*scale)*frequency with two FP32 stores, followed by scalar libm sine/cosine and FP32 output. No implicit frequency construction."
+    },
+    "rope_pairwise_explicit_tables_fp32": {
+      "operator_family": "text_mrope",
+      "status": "observed",
+      "storage": {
+        "input": "fp32",
+        "weight": "none",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "none",
+        "accumulator": "fp32",
+        "contraction": "disabled",
+        "evaluation_order": "two_rounded_products_then_add_or_subtract_for_each_consecutive_pair"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "input_load",
+          "weighted_product",
+          "pointwise_sum",
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "sum",
+        "order": "left_to_right",
+        "partial_accumulator": "fp32",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Checked nonaliasing token-major pairwise rotation with explicit position tables. Each product and sum rounds in FP32 with FMA disabled; no cache generation or position policy."
+    },
+    "audio_istft_complex_window_bf16_fold": {
+      "operator_family": "audio_istft_mag_phase",
+      "status": "observed",
+      "storage": {
+        "input": "fp32",
+        "weight": "none",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "none",
+        "accumulator": "fp64",
+        "contraction": "disabled",
+        "evaluation_order": "fp64_inverse_dft_recurrence_and_overlap_numerator_bf16_squared_window_and_reverse_frame_fold_denominator"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "input_load",
+          "fft_projection",
+          "square_product",
+          "reduction_update",
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "composite",
+        "order": "stage_ordered",
+        "partial_accumulator": "fp64",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "serial",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Correctness baseline, O(frames*n_fft^2), not a fast FFT provider. Cartesian inputs preserve upstream phase/magnitude rounding; FP64 inverse recurrence and overlap numerator; BF16 square and each denominator sum in descending contributing-frame order; FP32 output. Explicit crop. Offline only."
+    },
+    "audio_linear_half_pixel_fp32": {
+      "operator_family": "audio_upsample_linear",
+      "status": "observed",
+      "storage": {
+        "input": "fp32",
+        "weight": "none",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "none",
+        "accumulator": "fp32",
+        "contraction": "disabled",
+        "evaluation_order": "fp64_half_pixel_coordinate_then_fp32_weight_then_left_product_plus_right_product"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "input_load",
+          "weighted_product",
+          "pointwise_sum",
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "sum",
+        "order": "left_to_right",
+        "partial_accumulator": "fp32",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Offline clamped half-pixel integer-factor interpolation. FP64 coordinates, FP32 weights and two rounded products followed by FP32 add. Not a BF16 or streaming contract."
+    },
+    "indexed_rows_gather_exact_f32_v1": {
+      "operator_family": "indexed_rows_gather",
+      "status": "validated",
+      "storage": {
+        "input": "fp32",
+        "weight": "none",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "none",
+        "accumulator": "fp32",
+        "contraction": "disabled",
+        "evaluation_order": "checked_indexed_row_copy"
+      },
+      "rounding": {
+        "mode": "none",
+        "points": [
+          "input_load",
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "none",
+        "order": "none",
+        "partial_accumulator": "none",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "serial",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Validate every index and selected finite row before copying exact FP32 bits to disjoint output. No reduction."
+    },
+    "indexed_rows_scatter_ordered_fp64_f32_v1": {
+      "operator_family": "indexed_rows_scatter",
+      "status": "validated",
+      "storage": {
+        "input": "fp32",
+        "weight": "none",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "none",
+        "accumulator": "fp64",
+        "contraction": "disabled",
+        "evaluation_order": "ascending_source_rows_per_destination"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "sum",
+        "order": "ascending_index",
+        "partial_accumulator": "fp64",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "serial",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Repeated indices accumulate in ascending source-row order with FP64 accumulation and one FP32 store. Entire destination staged; rejection leaves destination unchanged."
+    },
+    "scalar_exp_clamped_backward_ordered_fp64_f32_v1": {
+      "operator_family": "scalar_exp_clamped_checked",
+      "status": "validated",
+      "storage": {
+        "input": "fp32",
+        "weight": "none",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "none",
+        "accumulator": "fp64",
+        "contraction": "disabled",
+        "evaluation_order": "ordered_scalar_products"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "activation_intermediate_store",
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "sum",
+        "order": "ascending_index",
+        "partial_accumulator": "fp64",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "serial",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "expf(min(x,maximum)); derivative active at equality, zero above. Reject nonfinite forward value even if derivative inactive. All inputs finite; outputs and scratch disjoint. No updates published on rejection."
+    },
+    "scalar_sigmoid_backward_ordered_fp64_f32_v1": {
+      "operator_family": "scalar_sigmoid_checked",
+      "status": "validated",
+      "storage": {
+        "input": "fp32",
+        "weight": "none",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "none",
+        "accumulator": "fp64",
+        "contraction": "disabled",
+        "evaluation_order": "ordered_scalar_products"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "activation_intermediate_store",
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "sum",
+        "order": "ascending_index",
+        "partial_accumulator": "fp64",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "serial",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Stable sigmoid forward recomputation; derivative of rounded FP32 sigmoid using FP64 products. All inputs finite; outputs and scratch disjoint. No updates published on rejection."
+    },
+    "scale_vector_backward_ordered_fp64_f32_v1": {
+      "operator_family": "scale_vector_checked",
+      "status": "validated",
+      "storage": {
+        "input": "fp32",
+        "weight": "none",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "none",
+        "accumulator": "fp64",
+        "contraction": "disabled",
+        "evaluation_order": "ordered_scalar_products_ascending_gain_reduction"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "activation_intermediate_store",
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "sum",
+        "order": "ascending_index",
+        "partial_accumulator": "fp64",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "serial",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "d_input = d_output * gain; d_gain is ascending FP64 dot reduction, FP32 stores. Stage both outputs in rows+1 scratch floats before publishing. All inputs finite; outputs and scratch disjoint. No updates published on rejection."
+    },
+    "grouped_ce_ordered_fp64_fp32_v1": {
+      "operator_family": "grouped_cross_entropy_checked",
+      "status": "validated",
+      "storage": {
+        "input": "fp32",
+        "weight": "none",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "none",
+        "accumulator": "fp64",
+        "contraction": "disabled",
+        "evaluation_order": "ascending_groups_then_options_max_shift_log_sum_exp"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "sum",
+        "order": "ascending_index",
+        "partial_accumulator": "fp64",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "serial",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Mean per-group cross entropy with positive counts and relative labels. FP64 maximum-shift exponential sum in ascending option order, log, target subtraction, then ascending group mean. FP64 probabilities and VJP, FP32 output stores. Loss and gradient publish atomically after validation. Singleton groups yield zero. Fixed bounded contiguous inputs; no BF16 or double backward."
+    },
     "indexed_cosine_rows_backward_ordered_fp64_f32_v1": {
       "operator_family": "indexed_cosine_rows_checked",
       "status": "validated",
@@ -2794,8 +3284,8 @@
         "merge_order": "none"
       },
       "threading": {
-        "work_partition": "serial",
-        "split_strategy": "serial",
+        "work_partition": "independent_rows",
+        "split_strategy": "independent_outputs",
         "deterministic": true,
         "thread_count_changes_arithmetic_order": false
       },
@@ -2818,7 +3308,7 @@
           "partner_cos_product",
           "fma_output"
         ],
-        "threading": "serial"
+        "threading": "independent_heads"
       },
       "storage": {
         "input": "fp32",
@@ -2848,8 +3338,8 @@
         "merge_order": "none"
       },
       "threading": {
-        "work_partition": "serial",
-        "split_strategy": "serial",
+        "work_partition": "independent_rows",
+        "split_strategy": "independent_outputs",
         "deterministic": true,
         "thread_count_changes_arithmetic_order": false
       },
@@ -2872,7 +3362,7 @@
           "partner_cos_product",
           "fma_output"
         ],
-        "threading": "serial"
+        "threading": "independent_heads"
       },
       "storage": {
         "input": "fp32",
@@ -2949,8 +3439,8 @@
         "merge_order": "none"
       },
       "threading": {
-        "work_partition": "serial",
-        "split_strategy": "serial",
+        "work_partition": "independent_rows",
+        "split_strategy": "independent_outputs",
         "deterministic": true,
         "thread_count_changes_arithmetic_order": false
       },
@@ -2973,7 +3463,7 @@
           "partner_cos_product",
           "fma_output"
         ],
-        "threading": "serial"
+        "threading": "independent_heads"
       },
       "storage": {
         "input": "fp32",
@@ -3912,13 +4402,13 @@
         "merge_order": "none"
       },
       "threading": {
-        "work_partition": "serial",
-        "split_strategy": "serial",
+        "work_partition": "output_tiles",
+        "split_strategy": "independent_outputs",
         "deterministic": true,
         "thread_count_changes_arithmetic_order": false
       },
       "position_transform": null,
-      "description": "llama.cpp CPU GELU semantics: round FP32 input to FP16, index the GGML FP16 GELU table, then widen the FP16 result to FP32."
+      "description": "llama.cpp CPU GELU semantics: round FP32 input to FP16, index the GGML FP16 GELU table, then widen the FP16 result to FP32. Independent elements may execute in parallel; no reduction or per-element rounding changes."
     },
     "fp16_weight_fp16_input_llamafile_x86_native_fp32_output": {
       "operator_family": "gemm",
@@ -5690,6 +6180,162 @@
       },
       "position_transform": null,
       "description": "Existing layernorm_backward_kernel. Consume actual forward FP32 mean/rstd; overwrite d_input, accumulate d_gamma/d_beta in ascending row order into zeroed temporary gradients. Graph accumulation handles sharing. Build contraction may affect rounding; tested FP32 autograd/optimizer tolerances are not bitwise guarantees."
+    },
+    "projection_bf16_train_forward_rne_ordered_fp32_v1": {
+      "operator_family": "gemm",
+      "status": "validated",
+      "storage": {
+        "input": "fp32",
+        "weight": "fp32",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "fp32",
+        "accumulator": "fp32",
+        "contraction": "disabled",
+        "evaluation_order": "ascending_contracted_index_separate_multiply_add"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "input_load",
+          "weighted_product",
+          "reduction_update",
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "sum",
+        "order": "ascending_index",
+        "partial_accumulator": "fp32",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "serial",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Primary output and output gradient are FP32; named saved_input and saved_weight ports are BF16. RNE BF16 saved operands; FP32 outputs and gradients. Identity derivative of operand rounding; VJP evaluated at rounded operands. Not default torch.autocast. Independent PyTorch FP32 matmul on explicit BF16-rounded operands; custom autograd identity rounding VJP."
+    },
+    "projection_bf16_train_backward_rne_ordered_fp32_v1": {
+      "operator_family": "gemm",
+      "status": "validated",
+      "storage": {
+        "input": "fp32",
+        "weight": "bf16",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "fp32",
+        "accumulator": "fp32",
+        "contraction": "disabled",
+        "evaluation_order": "ascending_contracted_index_separate_multiply_add"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "input_load",
+          "weighted_product",
+          "reduction_update",
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "sum",
+        "order": "ascending_index",
+        "partial_accumulator": "fp32",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "serial",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Primary output and output gradient are FP32; named saved_input and saved_weight ports are BF16. RNE BF16 saved operands; FP32 outputs and gradients. Identity derivative of operand rounding; VJP evaluated at rounded operands. Not default torch.autocast. Independent PyTorch FP32 matmul on explicit BF16-rounded operands; custom autograd identity rounding VJP."
+    },
+    "projection_bf16_train_bias_forward_rne_ordered_fp32_v1": {
+      "operator_family": "gemm",
+      "status": "validated",
+      "storage": {
+        "input": "fp32",
+        "weight": "fp32",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "fp32",
+        "accumulator": "fp32",
+        "contraction": "disabled",
+        "evaluation_order": "ascending_contracted_index_separate_multiply_add"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "input_load",
+          "weighted_product",
+          "reduction_update",
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "sum",
+        "order": "ascending_index",
+        "partial_accumulator": "fp32",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "serial",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Primary output and output gradient are FP32; named saved_input and saved_weight ports are BF16. RNE BF16 saved operands; FP32 outputs and gradients. Identity derivative of operand rounding; VJP evaluated at rounded operands. Not default torch.autocast. Independent PyTorch FP32 matmul on explicit BF16-rounded operands; custom autograd identity rounding VJP. FP32 bias added after the ordered dot; bias VJP sums rows in ascending FP32 order."
+    },
+    "projection_bf16_train_bias_backward_rne_ordered_fp32_v1": {
+      "operator_family": "gemm",
+      "status": "validated",
+      "storage": {
+        "input": "fp32",
+        "weight": "bf16",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "fp32",
+        "accumulator": "fp32",
+        "contraction": "disabled",
+        "evaluation_order": "ascending_contracted_index_separate_multiply_add"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "input_load",
+          "weighted_product",
+          "reduction_update",
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "sum",
+        "order": "ascending_index",
+        "partial_accumulator": "fp32",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "serial",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Primary output and output gradient are FP32; named saved_input and saved_weight ports are BF16. RNE BF16 saved operands; FP32 outputs and gradients. Identity derivative of operand rounding; VJP evaluated at rounded operands. Not default torch.autocast. Independent PyTorch FP32 matmul on explicit BF16-rounded operands; custom autograd identity rounding VJP. FP32 bias added after the ordered dot; bias VJP sums rows in ascending FP32 order."
     }
   }
 }

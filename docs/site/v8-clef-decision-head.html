@@ -1034,7 +1034,1102 @@
 
 <h1>Clef-Flash decision-head bring-up</h1>
 
+
+<section id="lora-notebook-session">
+<h2>Bounded notebook LoRA training interface</h2>
+<p>The public <code>cke.v8.prepare_lora</code> interface accepts an existing FP32
+BUMP base artifact and explicit <code>LoRAConfig</code> targets. It resolves a
+checked plan, freezes all base parameters and prepares externally initialized
+adapter values before compilation. <code>plan.compile</code> uses the existing
+shared backward lowering, memory planner and native compiler. No Python gradient
+calculation, optimizer update or second neural execution schedule is introduced.</p>
+<pre>plan = cke.v8.prepare_lora(base_directory, tokens=4, adapters=[
+    cke.v8.LoRAConfig("layer.0.wq", rank=2, alpha=4, name="query", seed=42),
+    cke.v8.LoRAConfig("layer.1.wv", rank=3, alpha=6, name="value", seed=43),
+])
+with plan.compile(new_run_directory, dataset_id="my-dataset-sha256",
+                  max_steps=1000, learning_rate=0.003) as session:
+    metrics = session.train_step(token_ids, target_ids)
+    validation = session.evaluate(validation_ids, validation_targets)
+    session.save_checkpoint(checkpoint_directory)
+    session.export_adapters(adapter_directory)</pre>
+<p><code>cke.v8.lora_capabilities()</code> reports the supported scope.
+<code>cke.v8.lora_targets(base_directory, tokens=4)</code> discovers supported
+projection IDs, layer/role, shapes, legal rank ranges and parameter costs without
+initializing adapters, compiling or executing training. Initially:
+two-layer dense qwen3-template FP32 artifacts with explicit RMS/QK epsilon 1e-5,
+2–64 tokens fixed at compile time,
+explicit projection targets, adapter-only native AdamW, and bounded workspace and
+step count. It does not load arbitrary pretrained Qwen/GGUF models, implement
+BF16 whole-decoder training or QLoRA, or accept arbitrary PyTorch modules. Token
+IDs must match the base tokenizer; tokenization is not guessed.</p>
+<p><code>LoRASession.open</code> verifies artifact/build identities and creates
+isolated native state. Adapter reload requires the same base, shapes, targets and
+scales and a fresh optimizer. Checkpoint resume instead restores the complete
+optimizer trajectory and declared dataset/step-budget identity. All checkpoint
+payloads are validated before import. Calls on one session are serialized.</p>
+<p>Tests execute the notebook cells, two concurrent session objects, input rejection
+and recovery, corrupt checkpoint rejection, incompatible adapter rejection,
+40 native updates, and fresh-process reload without importing PyTorch or
+Transformers. Numerical certification remains in the complete-decoder oracle
+lane. Training loss is separate from held-out quality and performance.</p>
+<p>Examples: <code>version/v8/notebooks/03_generated_lora_session.ipynb</code> and
+<code>version/v8/examples/python_lora_session_v8.py</code>. Both require an explicit
+existing base artifact and tokenized records; neither substitutes a synthetic
+base or silently changes unsupported input. The notebook regression uses a
+labelled synthetic base solely as test evidence.</p>
+<pre>make -j4 build/libckernel_engine.so
+CK_NUM_THREADS=4 OMP_NUM_THREADS=1 python -m pytest -q tests/test_v8_lora_session.py
+CK_NUM_THREADS=4 OMP_NUM_THREADS=1 python scripts/nightly_runner.py --tests training_lora_fp32 --require-executed</pre>
+</section>
+
+<section id="decoder-lora-certification">
+<h2>Complete small decoder with FP32 adapters</h2>
+<p><code>attach_lora_adapters(..., freeze_base=True)</code> explicitly freezes
+all base parameters while preserving activation gradients through the decoder.
+The default preserves existing selective-training behavior. Initialization remains
+external; generated native code performs forward, backward and AdamW updates.</p>
+<p>The regression uses the standard two-layer dense Qwen-style decoder template,
+including embeddings, normalization, RoPE, causal attention, residuals, SwiGLU and
+vocabulary loss. Rank-2 query and rank-3 value adapters in different layers total
+320 trainable parameters. Four- and seven-token cases use separate compiled
+geometries; this does not certify dynamic lengths in one library.</p>
+<p>Both cases compare named forward tensors, loss, every adapter gradient, weights
+and optimizer moments against independent PyTorch for 40 updates. Tests cover
+frozen-base bytes, zero-B initialization, finite differences, capacity/nonfinite
+rejection, checkpoint continuation and fresh-process forward-only reload.
+Missing dependencies remain explicit skips; numerical tolerances are unchanged.</p>
+<p>Training loss fell from 4.764195 to 1.113996 and from 3.932966 to 1.229868.
+Maximum observed gradient error was 7.67e-6, weight error 2.55e-6 and moment error
+4.49e-7. This is synthetic training correctness, not held-out application accuracy.
+Pretrained Qwen fine-tuning, base-import adapter manifests, complete BF16 decoder
+training, QLoRA and performance certification remain untested.</p>
+<pre>make -j4 build/libckernel_engine.so
+CK_NUM_THREADS=4 OMP_NUM_THREADS=1 python -m pytest -q tests/test_v8_decoder_lora_training.py tests/test_v8_lora_training.py tests/test_v8_lora_bf16_base.py tests/test_v8_selective_training.py</pre>
+<p>The existing <code>training_lora_fp32</code> nightly lane includes this test.
+PyTorch runs only as the independent development oracle.</p>
+</section>
+
+<section id="frozen-native-training-prefix">
+<h2>Declared frozen native prefix in training</h2>
+<p>A checked feature-producing component can feed the existing generated head
+trainer when its circuit explicitly declares <code>stop_gradient=True</code>.
+Kernel maps declare a frozen forward boundary and borrowed context arguments;
+shared lowering owns feature and scratch storage. Generated C executes the
+component, head forward, backward and AdamW. Python need not transfer hidden
+features or schedule component tokens.</p>
+<p>The caller binds an exclusively owned, live native descriptor through
+<code>ck_train_set_native_context_ex</code> and retains it until execution ends.
+Contexts are not parameters or checkpoint contents and must be rebound after
+initialization or reset. Changed inputs, weight imports, failed execution and
+evaluation invalidate permission to apply stale gradients. Failed native
+execution cannot advance the optimizer.</p>
+<p>Small non-Clef tests compare five FP32 updates and parameter gradients against
+PyTorch, including a declared FP32 LoRA adapter after the frozen component. They
+test invalid IDs, nonfinite output, cancellation and recovery, and run a
+relocated C-only training host after deleting its build directory. This certifies
+the bounded interface. A separate released-model run executes the frozen 9B
+backbone and one generated head update with no Python hidden-feature handoff.
+Fresh pinned PyTorch head comparisons on the identical native features pass:
+maximum gradient error <code>1.02e-7</code>, weight error <code>2.38e-7</code> and
+optimizer-state error <code>1.01e-8</code>, preserving the existing tolerances.
+A separate C-only host outside the checkout reproduces the complete updated
+weight array and loss exactly, without a Python process or captured hidden inputs.
+Loaded native library identities are retained; this is not arbitrary-machine portability.
+See <a href="assets/clef-frozen-native-training-20261114.json">bound evidence</a>.
+This fixed-request experiment is not yet exposed by the application training
+recipe. No backbone derivative, BF16 adapter or quantized-base training is advertised.
+Connected backbone/head numerical acceptance remains a separate open gate.</p>
+<pre><code>python3 -m unittest tests.test_v8_frozen_component_training -v</code></pre>
+</section>
+
+<section id="lora-bf16-base">
+<h2>BF16 compute in a frozen base, FP32 adapters</h2>
+<p>The existing projection-precision transformation composes with FP32 LoRA.
+Attach the adapter first, then select the frozen base operation for
+<code>use_bf16_projection</code>. Adapter matrices, base parameter storage,
+gradients and AdamW moments remain FP32. The base projection saves RNE BF16
+compute operands and accumulates in FP32; its input gradient still reaches
+trainable operations upstream.</p>
+<pre><code>from version.v8.training.lora import attach_lora
+from version.v8.training.bf16_projection import use_bf16_projection
+
+adapted, spec = attach_lora(authored_training_ir,
+    target="bridge", name="task", rank=2, alpha=3)
+base = next(op for op in adapted["ops"] if any(
+    ref["tensor"] == "weight.bridge" for ref in op.get("weights", {}).values()))
+mixed = use_bf16_projection(adapted, base["op_id"])
+# Prepare checked weights, then use the existing backward lowering/runtime.
+</code></pre>
+<p>The resolved BF16 projection providers are <code>ck_projection_bf16_train_forward</code> and <code>ck_projection_bf16_train_backward</code> in <code>src/kernels/projection_bf16_train.c</code>. They use portable C conversion and ordered FP32 arithmetic, with no BF16 hardware-ISA dispatch; these tests do not claim AVX-512 BF16 or AMX acceleration. Generated provider identities are asserted alongside native execution.</p>
+<p>A fourth composition trains rank-two and rank-one adapters across two BF16-compute frozen projections. It requires the shared composition audit alongside independent gradients, unchanged FP32 base/scale bytes and exact fresh-process resume.</p>
+<p>Three small generated compositions cover adapter-only training, an upstream
+trainable projection, and rectangular dimensions. Each compares loss, gradients,
+weights and optimizer moments for 40 AdamW updates, including checkpoint reload,
+fresh-process continuation and inference reload. The independent PyTorch oracle
+implements this declared saved-BF16-operand/FP32-gradient contract; it is not
+ordinary PyTorch autocast. Frozen matrices and adapter scale remain unchanged.
+Finite differences are not used to certify a straight-through derivative of
+rounding. <a href="assets/lora-bf16-frozen-base-20261114.json">Retained evidence</a>
+records maximum gradient error <code>4.10e-7</code>, weight error <code>1.67e-6</code>
+and moment error <code>7.81e-8</code> across these trajectories.</p>
+<p>This reuses existing providers without a compiler or arithmetic change. It is
+not BF16 adapter storage, whole-model mixed precision, QLoRA or released Clef
+adapter certification. Base storage remains FP32 and saved BF16 buffers are
+additional memory; no speed or memory improvement is claimed without measurement.</p>
+<pre><code>python -m pytest -q tests/test_v8_lora_bf16_base.py
+python scripts/nightly_runner.py --tests training_projection_bf16 --ci --require-executed</code></pre>
+</section>
+
+<section id="lora-parameter-preparation">
+<h2>Bounded FP32 adapters and weight preparation</h2>
+<p><code>attach_lora_adapters</code> accepts explicit target, rank, alpha and name declarations for multiple unique biasless FP32 projections before backward synthesis. It reuses ordinary projection, scale and add operations and the existing generated training backend. A declared parameter budget is checked against resolved ranks; the authoring utility does not guess targets or reduce ranks silently. Tied/shared targets, unsupported dtypes and inconsistent geometry fail.</p>
+<p>Each inserted base projection has an adapter-qualified operation identity and a separate projection semantic label. The original operation identity stays on the join that produces its former output. Name collisions fail before lowering. A two-adapter composition passes the shared provenance audit and independent update comparison.</p>
+<p><code>resolve_lora_parameters</code> returns names, shapes, layout, dtype and trainability without parameter values. <code>prepare_lora_weights</code> validates every base parameter, initializes wholly absent adapters with explicit seeds, and returns schema/specification/weight hashes plus initialization method, implementation and NumPy version. Existing adapters are preserved; partial adapters, stale scale values and unused initialization seeds fail. Resume requires all parameters and performs no initialization. Optimizer moments and counters still resume through the existing checkpoint interface.</p>
+<pre>from version.v8.training.lora import attach_lora_adapters
+from version.v8.training.lora_weights import prepare_lora_weights
+
+adapted, specs = attach_lora_adapters(authored_training_ir, adapters=[
+    dict(target="projection.weight", name="task", rank=8, alpha=16),
+])
+weights, evidence = prepare_lora_weights(
+    adapted, base_weights, seeds={"task": 41})
+# Compile the adapted graph through the existing training lowering/backend.
+# Pass these checked weights to its native loader; Python does not update them.
+resumed, resume_evidence = prepare_lora_weights(
+    adapted, checkpoint_weights, mode="resume")</pre>
+<p>This is supported training-IR authoring, not arbitrary PyTorch module conversion or an all-model notebook API. The default initialization remains PCG64 normal A with standard deviation 1/sqrt(input width), zero B and frozen FP32 scale. Initialization is artifact preparation outside native computation. Generated C executes forward, gradients and AdamW updates.</p>
+<p>The asset-free LoRA suite compares four nonzero native training compositions with independent PyTorch across 40 updates, including two adapters, rectangular projections, frozen-base gradient flow, evaluation, checkpoint resume and inference export. It also rejects malformed schemas and partial initialization. A shared-builder portability test runs two adapters for 40 updates from a C-only host, moves the bundle, removes the build directory, and reproduces identical results. Frozen base matrices and scales remain unchanged; removing the bundled engine fails. This does not certify BF16 adapters, quantized-base backward, QLoRA or complete connected Clef training.</p>
+<pre>CK_NUM_THREADS=4 OMP_NUM_THREADS=1 python -m pytest -q tests/test_v8_lora_training.py
+python scripts/nightly_runner.py --tests training_lora_fp32 --json /tmp/lora.json</pre>
+</section>
+
+
+<section id="map-owned-training-bindings">
+<h2>Map-owned projection and addition differentiation</h2>
+<p>FP32 checked row projections (with or without bias) and row addition declare
+<code>training_contract.differentiation</code> in their kernel maps. The shared
+circuit adapter resolves the operation interface, ready gradient rule, saved
+operand ports and dimension aliases from that declaration. A provider name or
+prefix no longer establishes training support for these operations.</p>
+<p>The bounded <code>cke.training.direct-vjp.v1</code> contract reuses the same
+forward provider and existing operand tensors. It validates FP32 ports, saved
+operands and positive bounded dimensions before backward generation. Ready rules must explicitly admit the operation interface and provide exactly the declared input/weight gradient destinations with compatible ownership. Missing, unrelated, duplicate or misowned destinations are rejected even when saved operands match. It does not
+introduce a new derivative executor or an expression language. Cached-forward
+rewrites and other operation groups still use explicit translation rules; this
+is not arbitrary-circuit differentiation or BF16 adapter certification.</p>
+<p>Generated nonzero projection compositions, complete supplied-feature head
+training and mixed-projection regressions retain independent PyTorch checks.
+Unavailable pinned assets remain SKIP. Connected backbone/head numerical
+acceptance remains separate and unresolved.</p>
+<p>A released-size Ryzen replay compares all 121,762,820 gradient elements and
+123 exported tensors exactly with the retained baseline. A relocated C-only host
+reproduces its update. This is one supplied-feature head update, not a fresh
+backbone oracle run; the prior connected score FAIL remains visible in the
+<a href="assets/clef-map-training-bindings-20261114.json">identity-bound evidence</a>.</p>
+<pre>python -m pytest -q tests/test_v8_map_training_binding.py tests/test_v8_circuit_training_lowering.py tests/test_v8_clef_evaluation.py tests/test_v8_clef_full_training.py tests/test_v8_clef_mixed_training.py</pre>
+</section>
+
+<section id="training-audit-followup">
+<h2>Composition and training audit follow-up</h2>
+<p>The composition gate now requires the declared consumer operation to contribute to the
+requested output. A live sibling cannot make a dead declared consumer pass. Boundary identities,
+shape, dtype and element count must be present and consistent. Structural, executed and numerical
+verdicts remain separate.</p>
+<p>Each head update retains exact frozen-embedding verification through a generated native tensor
+comparison. It does not export all parameters for this check. Full snapshots remain available for
+certification and export. On the released 121,762,820-element head, one Ryzen update avoided a
+488,296,464-byte host weight snapshot and compared 1,245,184 bytes in place. The native update took
+14.153 seconds and its comparison 0.239 ms in that run; these are not whole-job throughput claims.</p>
+<p>Broadcast expansion uses declared immutable int32 constants owned by the generated runtime,
+not a host input named <code>broadcast_zeros</code>. An unrelated broadcast-plus-GELU graph passes
+40 PyTorch gradient/AdamW comparisons, including a trainable broadcast row. Maximum gradient,
+updated-weight and moment errors were approximately 1.27e-7, 1.07e-6 and 4.47e-8 under the existing
+bounds. Invalid constants and attempts to write them are rejected.</p>
+<p>The released-head update and gradients exactly replay the retained independent-oracle baseline;
+a relocated C-only host also reproduces the update. This is supplied-feature head training, not a
+fresh connected backbone oracle run. The prior connected score comparison remains FAIL, maximum
+error 0.009174 at a 2e-6 bound. <a href="assets/clef-training-cleanup-20261114.json">Evidence and identities</a>.</p>
+<pre>python -m pytest -q tests/test_v8_generated_composition_contract.py tests/test_v8_circuit_training_lowering.py tests/test_v8_clef_evaluation.py
+python scripts/nightly_runner.py --tests generated_composition_training --json /tmp/composition-training.json</pre>
+</section>
+
+<section id="portable-head-runtime">
+<h2>Relocatable native head training</h2>
+<p>The head recipe uses the existing shared training build helper and packages
+<code>libckernel_engine.so</code> beside <code>train.so</code>, with a
+<code>$ORIGIN</code> loader path. Build identity records the compiler, generated
+source, extra provider sources and engine hash. Additional neural sources are
+resolved from generated provider declarations and kernel maps when their symbols
+are absent from the engine; the head no longer names a special source file.
+Missing source contracts fail before compilation. Resume validates the packaged
+engine rather than consulting the checkout's build directory; older runtimes
+without that dependency must be regenerated.</p>
+<p>A C-only regression host runs generated forward, backward and AdamW after the
+bundle is moved outside its build directory. The model-neutral graph completes
+40 updates with frozen weights unchanged. A complete small Clef head reproduces
+three native updates and evaluation exactly after relocation. Removing the
+packaged engine causes startup failure. No Python interpreter or repository
+headers are required during those deployed runs.</p>
+<p><strong>Released-head relocation evidence:</strong> On Ryzen, the full
+121,762,820-element trainable head completed one AdamW update through a relocated
+C-only host. Loss changed from 0.0080747874 to 0.0078037283; all updated weights
+matched the native recipe exactly. Current gradients and updated head tensors
+also match the retained independent PyTorch-certified baseline exactly. This
+was a baseline replay, not a fresh oracle run. The single process took 18.22
+seconds including initialization and evaluations; it is not a performance
+benchmark. <a href="assets/clef-head-portability-20261114.json">Artifact identities
+and separate verdicts</a> retain the connected-model numerical FAIL.</p>
+<p>The private full-size reproduction is retained on Ryzen at
+<code>/data/cke/private/clef-portable-head-20261114/reproduce.py</code>;
+run it with the pinned oracle environment and a new output directory argument.
+It consumes the retained native feature capture and released head, so its scope
+is explicitly head-only. The small asset-free regression remains in ordinary
+nightly; it does not impersonate this full-size run.</p>
+<p>This is runtime portability on the tested Linux ABI, not arbitrary-machine
+binary portability or released 9B connected-model certification. The test host
+loads prepared parameters and feature requests; text preprocessing and a
+declared generated backbone-to-head connection remain separate work. The
+ordinary recipe's Python layer still manages datasets and reports.</p>
+<p>The DSL policy now covers the shared circuit-training adapter, composition
+gate, checked emitter and bundle compiler, plus shared backward synthesis,
+training memory planning, code generation and runtime building. Clef and Kokoro
+are explicitly included in forbidden model-dispatch literals. This checks those
+policy rules; it is not proof that all compiler behavior originates in IR.</p>
+</section>
+
+<section id="native-component-feature-work">
+<h2>Declared native feature connection: development evidence</h2>
+<p>A model-neutral native sequence provider resets an exclusively owned decoder,
+executes its token entry, stages checked FP32 feature rows, resets state, and publishes
+only after success. Circuit authoring connects those rows to an existing head through
+ordinary edges. The host supplies inputs and a borrowed component descriptor; it does
+not run the token loop or copy intermediate feature rows.</p>
+<p>The synthetic decoder plus complete small head executes in a relocated C-only process
+after the build directory is removed. Poisoned hidden features and logits are replaced by
+native output; missing component libraries fail. Failure and cancellation tests preserve
+unpublished output and permit recovery. Borrowed descriptors hold exclusive decoder ownership;
+reentrant encode, close or borrowing is rejected, and failed initialization releases native state.</p>
+<p><strong>Released-model execution:</strong> one pinned 128-token request now invokes the
+9B generated decoder component and complete head through one generated entry, with no Python
+token loop or captured hidden input. Invalid IDs are rejected and a repeated request succeeds.
+A separate C-only process outside the checkout reproduces current logits exactly. A repeated
+C-only run records the actually loaded shared-library hashes and thread environment; neither
+libpython nor libtorch appears in its loaded-library map. Internal backend dispatch choices
+remain unobserved. This is a
+fixed diagnostic artifact, not a persistent arbitrary-text service or connected backward graph.</p>
+<p>A fresh pinned PyTorch head comparison on the same current native features produces
+exactly matching option logits (maximum absolute error 0, unchanged absolute bound 2e-6).
+This isolates head arithmetic; it does not certify the backbone trajectory.</p>
+<p><strong>Numerical limitation:</strong> current Python-driven and native token loops agree
+exactly, but both differ from the older native capture beginning at token index 54. That
+retained comparison remains FAIL; its cause is unresolved. The independent connected PyTorch
+failure also remains open. The <a href="assets/clef-generated-component-20261114.json">execution
+identities and separate verdicts</a> do not convert either discrepancy into a pass. The provider
+declares no backward support; supplied-feature head training remains a distinct path.</p>
+<p>The map declares its call ABI and numerical copy contract. Native-entry parameter types
+must exactly match the provider declaration; code generation rechecks the binding and rejects
+altered pointer expressions. Component arithmetic, artifact identity and lifetime remain
+separate obligations; an exact feature copy does not certify the decoder that produced it.</p>
+<pre>python -m pytest -q tests/test_v8_native_entry_binding.py tests/test_v8_decoder_feature_sequence.py tests/test_v8_native_feature_head_composition.py
+python scripts/nightly_runner.py --tests decision_native_frontend --json /tmp/native-feature-boundary.json</pre>
+<p>Remaining before deployment: expose the verified composed artifacts through a stable
+package/loader interface, certify connected outputs, and provide a checked native-context input
+for frozen component execution in training. The released C-only trial uses existing model
+artifacts outside the checkout; it does not certify arbitrary-machine portability. Runtime
+configuration must declare the separate backbone-token input as int32; compact head embedding
+IDs are not interchangeable with backbone vocabulary IDs.</p>
+</section>
+
+
 <p>Model topology lives in the circuit builders here. Kernels implement arithmetic; maps describe ABI, scratch and numerical contracts. Generic operation catalogue entries do not inspect the model name.</p>
+
+<section id="native-backbone-head-training">
+<h2>Native text → backbone → decision → head training</h2>
+<p>The offline diagnostic now runs the released Clef-Flash Qwen3.5-9B backbone
+through ordinary generated decode execution, reads its declared final feature row,
+and passes those CKE-produced features and pinned output-embedding rows into the
+generated head. No PyTorch or Transformers import is needed for production inference
+or head training. Python owns schema encoding, tokenization, artifact preparation,
+requests and reporting; generated C owns neural forward/backward and AdamW.</p>
+<p><strong>Generated composition: NOT_IMPLEMENTED. End-to-end certification: NOT_TESTED.</strong>
+The host currently extracts backbone features, prepares embedding rows and builds a separate
+head package. Two native components connected by Python do not satisfy the generated
+backbone-to-head composition gate. This is component integration evidence, not a complete
+compiled inference/training graph. The CLI option <code>--require-generated-e2e</code>
+fails before execution on this diagnostic path.</p>
+<p>The shared bounded circuit-training adapter now owns operation-to-training translation;
+Clef authoring supplies its graph, inputs, frozen parameters and grouped loss. Cosine
+VJP semantics are explicit circuit metadata, never inferred from operation names. The
+adapter still has a bounded provider inventory; it does not imply arbitrary inference
+circuits support training. A non-Clef graph exercises generated forward, backward,
+frozen-weight gradient propagation, evaluation and 40 native AdamW updates against PyTorch.
+Standard nightly checks reject missing composition evidence and host-fed internal edges.
+Structural checks remain distinct from execution, gradient and numerical certification.</p>
+<p>Feature batches now use the shared generated FP32 input ABI:
+<code>ck_train_set_float_inputs_ex</code>. Hidden features occupy input storage,
+not a frozen <code>__features.hidden</code> parameter. Batch binding copies only
+feature data and does not export/import the parameter array. Counts, alignment,
+overlap and finite values are checked before publication; rejection invalidates
+input readiness and leaves parameters and optimizer state unchanged. Backward
+cannot reuse a forward pass after the feature binding changes. These inputs are
+nondifferentiable external features; this is not a substitute for a connected
+backbone activation edge when backbone training is requested.</p>
+<p>Checkpoints retain parameters and optimizer state, not feature batches. Inputs
+must be supplied again after initialization/reload. Existing generated runtimes
+without this ABI must be regenerated; their old runtime identities are not silently
+accepted as compatible. This remains a fixed-capacity input contract.</p>
+<p>The backbone is frozen. The 121,762,820-element released head is trained using
+<code>train_clef_head.Runtime</code>, exported and reloaded through generated inference.
+This does not train the backbone, introduce LoRA, or establish held-out task accuracy.
+The head is compiled for each offline request geometry; a persistent arbitrary-text
+application endpoint remains a separate integration gate.</p>
+<p>The Qwen3.5 circuit now selects existing BF16-storage providers for recurrent softplus, attention gating
+and text rotary arithmetic when BF16 recurrent projection weights are declared.
+Identical-input replay isolated these contract mismatches: FP32 gating differed by 0.00481534,
+and position-one rotary Q differed by 0.01765776. The existing BF16 providers matched
+the corresponding PyTorch values exactly. FP32 and quantized selections remain unchanged.
+The recurrent softplus replay also becomes exact (previous maximum difference 3.55e-9). These are circuit contract fixes, not new model-specific compiler branches.</p>
+<p>The diagnostic profile explicitly selects the existing oneDNN 3.12 projection
+contract. Its reference is Transformers 5.10.2, the release's recorded version, with
+SDPA attention. An experimental Transformers checkout and eager attention are retained
+as diagnostic comparisons, not silently treated as the same oracle.</p>
+<h3>Released-weight evidence, 2026-11-14</h3>
+<p>On Ryzen 9950X3D, one 128-token sentiment request ran through the actual released
+backbone and head with PyTorch/Transformers imports blocked. One native AdamW update
+reduced this record's loss from 0.008074787 to 0.007803728; exported/reloaded logits
+were exact. This is a training-mechanics test, not a held-out accuracy result.</p>
+<table><thead><tr><th>Independent check</th><th>Maximum absolute error</th><th>Verdict</th></tr></thead><tbody>
+<tr><td>Head on identical native features</td><td>9.53674e-7 (bound 2e-6)</td><td>PASS</td></tr>
+<tr><td>All 121,762,820 head parameter gradients</td><td>1.22469e-7 (bound 3e-5)</td><td>PASS</td></tr>
+<tr><td>AdamW-updated weights</td><td>2.38419e-7 (bound 3e-6)</td><td>PASS</td></tr>
+<tr><td>Connected logits versus SDPA full prefill</td><td>0.00803661 (bound 2e-6)</td><td>FAIL</td></tr>
+<tr><td>Connected logits versus SDPA incremental execution</td><td>0.00917447 (bound 2e-6)</td><td>FAIL</td></tr>
+</tbody></table>
+<p><strong>The native path executes end to end, but is not numerically certified.</strong>
+The three exact local fixes do not resolve the complete backbone trajectory.
+The first token's final features are exact; the second token still diverges.
+Continue identical-input state/operation diagnosis before expanding LoRA.
+No tolerance was increased and no reference intermediate entered production.</p>
+<p>A further state capture identifies a precision-policy difference: the released
+Transformers incremental cache stores BF16, while CKE's selected recurrent contract
+retains FP32 state. Diagnostic BF16 rounding of CKE's first-step state reproduces all
+524,288 reference values exactly. A separate reference experiment retaining FP32 cache
+state still has connected logit error 0.00187111 and remains FAIL. This isolates one
+cause, not all remaining divergence. Production state precision is unchanged; the
+modified-reference experiment is explicitly labelled diagnostic, not released parity.</p>
+<p><a href="assets/clef-native-e2e-20261114.json">Machine-readable evidence</a>
+retains raw logits, RMSE, reference signal magnitudes, identities, dependency hashes,
+training results and local replay results. Private activation packets remain on the
+asset host; the public artifact contains the synthetic request and summary metrics.</p>
+<h3>Reproduction and boundaries</h3>
+<p>Use the pinned release <code>fb4417d31c1d0f9e7e77f1141b40aaede7491e00</code>,
+its SHA-verified release lock, and standalone native oneDNN/SLEEF/MKL dependencies.
+This profile is validated on AVX-512-capable Ryzen; it is not an AVX2-only portability claim.
+Set <code>CK_ONEDNN_LIBRARY</code>, <code>CK_SLEEF_LIBRARY</code> and
+<code>CK_MKL_LIBRARY</code> to those installed libraries. Record their hashes and thread
+settings. The build command requires a fresh output directory; it never reuses unbound
+converted weights. A local trusted administrator must supply the expected lock and
+bundle hashes.</p>
+<pre><code>python3 version/v8/decision/build_native_clef_backbone.py \
+  --release "$RELEASE" --lock "$LOCK" --lock-sha256 "$LOCK_SHA" --output "$BUNDLE"
+python3 version/v8/decision/run_native_clef.py \
+  --release "$RELEASE" --lock "$LOCK" --lock-sha256 "$LOCK_SHA" \
+  --bundle "$BUNDLE" --bundle-descriptor "$BUNDLE/bundle.json" \
+  --bundle-sha256 "$BUNDLE_SHA" --request request.json --output native-run
+python3 version/v8/decision/train_native_clef.py \
+  --release "$RELEASE" --native-run native-run --report-sha256 "$REPORT_SHA" \
+  --labels labels.json --output training-run --steps 1 --workspace-mib 4096
+python3 tests/run_clef_native_oracle.py \
+  --release "$RELEASE" --native-run native-run --native-sha256 "$REPORT_SHA" \
+  --capture "$CAPTURE" --capture-sha256 "$CAPTURE_SHA" --output comparison.json
+python3 tests/run_clef_native_training_oracle.py \
+  --release "$RELEASE" --native-run native-run --native-sha256 "$REPORT_SHA" \
+  --training training-run --training-sha256 "$TRAINING_SHA" \
+  --labels labels.json --output gradient-comparison.json</code></pre>
+<p>The independent capture tool accepts <code>--attention sdpa --schedule incremental</code>
+to match the native token-by-token schedule. Its defaults remain eager/prefill for
+existing users. Full-prefill and incremental comparisons are retained separately;
+changing the oracle schedule is not permission to erase a failing comparison. Neither reference features nor reference logits enter
+the native runner. Reports separate execution, same-input head parity, connected
+logit parity, exact backbone-storage agreement, gradients, optimizer updates and reload.
+Unavailable reference evidence is NOT_TESTED, not PASS.</p>
+<p>The released geometry needs approximately 2.51 GB of native training workspace.
+The offline CLI explicitly permits a 4 GiB budget; existing application recipes retain
+their 2 GiB default. This is an arena bound, not total process memory: weights, compiler,
+Python arrays and exported snapshots require additional RAM. Evaluation performs no
+optimizer update. Offline tools do not claim HTTP deadlines, cancellation, concurrent
+backbone ownership, streaming training datasets or automatic application admission.</p>
+<p>Cheap standard-nightly coverage checks schema spans, rejection without truncation,
+BF16 versus FP32/quantized contract selection, artifact tampering, decoder ownership,
+short/long/short state reset, output lifetime, partial failure and recovery, and a
+nonzero generated head against an independent reference. Full 9B/released-head runs
+require the pinned assets and are reported separately. Set
+<code>CKE_CLEF_NATIVE_ACCEPTANCE</code> to a trusted JSON file with the runner arguments
+<code>release, lock, lock_sha, bundle, bundle_descriptor, bundle_sha, request</code>
+and a <code>labels</code> mapping (question ID to candidate ID) to enable the released
+asset execution/training/reload test. Without that configuration it reports SKIP.
+That test is execution evidence; run the independent comparison commands separately.</p>
+</section>
+
+<section id="lora-fp32-authoring">
+<h2>FP32 LoRA: bounded graph authoring and native training</h2>
+<p><code>version/v8/training/lora.py</code> now attaches one explicitly named adapter
+at the existing authored training-IR boundary. This is not automatic adapter admission
+for arbitrary pretrained models or a new training service endpoint. The selected
+projection must already belong to a differentiable, bounded, contiguous FP32 training
+graph. Tied targets, bias, padded strides, BF16 and quantized bases are rejected.</p>
+<pre>from version.v8.training.lora import attach_lora, initialize_lora
+adapted_ir, spec = attach_lora(
+    training_ir, target="bridge", rank=2, alpha=3, name="demo")
+initial_adapter_weights = initialize_lora(spec, seed=41)
+# Merge these new weights with the original weight values, then use the
+# existing backward synthesis, layout planner, code generator and AdamW.</pre>
+<p>For row-major inputs, the declared graph computes
+<code>X Wᵀ + (alpha/rank) (X Aᵀ) Bᵀ</code>. The base weight is frozen;
+other parameter declarations are preserved. A uses seeded PCG64 normal initialization,
+B starts at zero, and the scale is an immutable training parameter. This leaves the
+initial projection unchanged. Parameter count is <code>rank × (inputs + outputs)</code>.
+The descriptor is retained in authored IR; generated runtime identity and existing
+checkpoint contracts remain in force. Dedicated portable adapter packages and
+application-job admission remain follow-up work.</p>
+<p>No new kernel, map, or generic compiler branch is introduced. Checked projection,
+vector scale and add maps supply forward and backward contracts; the shared trainer
+accumulates both activation-gradient branches and updates only trainable weights.
+Frozen parameters receive no optimizer state. This is correctness bring-up, not a
+claim that all frozen-weight arithmetic is optimally pruned.</p>
+<table><thead><tr><th>Independent PyTorch FP32 comparison</th><th>Native loss, 40 AdamW updates</th></tr></thead><tbody>
+<tr><td>Only A/B trainable; all original weights frozen</td><td>0.73031437 → 0.14123474</td></tr>
+<tr><td>Square target, trainable upstream/downstream projections</td><td>1.42433834 → 0.00277238</td></tr>
+<tr><td>Rectangular target (6 inputs, 3 outputs)</td><td>1.40610135 → 0.00002841</td></tr>
+</tbody></table>
+<p>Across these cases, maximum absolute gradient error was 4.48e-7 or less;
+weight error was 1.20e-6 or less. Existing numerical tolerances were unchanged.
+Tests compare every trainable gradient, weight and optimizer moment on every update,
+verify frozen weights bit-for-bit, check a central finite difference, resume at step 20
+in both the same and a fresh process, and reload final weights for generated inference.
+With identity feature inputs, the upstream projection gradient is the transpose of
+the adapter input gradient, testing both derivative branches. A starts with zero
+gradient and acquires a nonzero gradient after B's first update.</p>
+<pre>make -j4 build/libckernel_engine.so
+python -m unittest tests.test_v8_lora_training -v
+python scripts/nightly_runner.py --tests training_lora_fp32 --require-executed</pre>
+<p>Use a Python environment with NumPy and PyTorch for the independent oracle.
+Missing dependencies or the native engine produce explicit SKIP; the required lane
+rejects SKIP. <a href="assets/lora-fp32-20261114.json">Retained local evidence</a>.
+Full-model LoRA, BF16 adapters, QLoRA, Muon and application training-job admission are
+<strong>NOT_TESTED / unsupported by this milestone</strong>. Existing Clef FP32 and
+mixed-BF16 verdicts are not changed by these small adapter tests.</p>
+</section>
+
+<section id="validation-loss-correction">
+<h2>Validation loss correction: forward plus declared loss, without an update</h2>
+<p>A real notebook consumer at <code>aa68f5812</code> exposed stale held-out metrics.
+<code>Runtime.evaluate()</code> ran forward and read <code>ck_train_get_loss()</code>,
+but that accessor returns cached loss. The grouped loss seed executes at the start
+of backward, so forward alone returned zero after initialization and the last
+training loss after updates. Native training, exported weights and scoring were
+correct; the reported validation metrics were not.</p>
+<p>The generic generated <code>ck_train_eval_step(float *loss_out)</code> now executes
+forward plus the single declared loss-seed operation. It does not run parameter
+backward or an optimizer step. The existing loss provider refreshes its output-gradient
+seed and scratch as well as the scalar loss; forward activations and supplied feature
+inputs also change. Trainable weights, parameter gradients, AdamW moments and update/
+accumulation counters remain unchanged. A failed evaluation does not publish a scalar.
+Ordinary decoder cross-entropy and grouped question loss use the same contract;
+there is no Clef-specific compiler branch or Python loss calculation in production.</p>
+<table class="table"><thead><tr><th>40-update notebook reproduction</th><th>Old report</th><th>Corrected native report</th><th>Independent grouped CE</th></tr></thead><tbody>
+<tr><td>Validation before training</td><td>0.0</td><td>0.2278986424</td><td>0.2278986458</td></tr>
+<tr><td>Validation after training</td><td>0.1184638888</td><td>0.1780027747</td><td>0.1780027814</td></tr>
+</tbody></table>
+<p>The reproduction uses the original pinned synthetic package, 20 epochs, learning
+rate 0.001 and 40 native updates, with PyTorch/Transformers imports blocked in the
+production process. All 40 training losses, trained weights, optimizer-state hash
+and record logits are unchanged. The original notebook evidence is preserved.
+<a href="assets/clef-validation-loss-20261114.json">Retained numerical evidence and artifact identities</a>
+separates the old and corrected reports.</p>
+<p>Regressions cover initial evaluation, different records and labels, unequal option
+counts, validation between updates, rejected evaluation and recovery, independent
+FP64 stable log-sum-exp, multiple held-out records, checkpoint reload, final report
+metrics and published job metrics. They separately preserve inference export/reload
+checks. Validation-before means the state at the start of this invocation; when
+resuming, it is evaluated at the loaded checkpoint, not at the original initialization.</p>
+<p>The generated runtime contract now includes evaluation semantics. Regenerate old
+training libraries; a cached runtime without the new entry rejects rather than silently
+using stale loss. Existing reports must be regenerated, not relabeled. Numerical bounds
+are unchanged, and this fix does not turn the mixed-BF16 trajectory into a pass or
+establish task quality.</p>
+<pre><code>python -m unittest tests.test_v8_clef_evaluation tests.test_v8_grouped_loss_training tests.test_v8_selective_training -v
+python scripts/nightly_runner.py --tests training_clef_registered_recipe --require-executed</code></pre>
+</section>
+
+<section id="training-bridge-v2">
+<h2>Training bridge v2: opaque revisions and pinned worker identity</h2>
+<p><code>cke.training.jobs.v2</code> adds a bounded local contract for external application
+backends. It preserves the application's 32-character lowercase hexadecimal
+<code>client_revision</code> verbatim in the reviewed plan and durable job. It does not
+cast or hash that revision into an integer. Existing v1 integer-revision clients
+continue to use their unchanged contract. V2 plans/jobs carry a null legacy
+<code>draft_revision</code> and explicitly versioned schemas.</p>
+<p>This milestone is <strong>trusted local integration only</strong>. It opens no socket,
+adds no remote authentication, and does not reuse read-only control discovery for
+training execution. The principal comes from the trusted supervisor, never JSON.
+A future authenticated transport must bind a verified backend credential to the
+appropriate tenant/owner; a caller-selected owner or a tunnel is not authorization.</p>
+<h3>Lifecycle and freshness</h3>
+<ol>
+<li>Discover approved recipes and registered package IDs/hashes, geometry and split
+counts. Retain the returned <code>worker_boot_id</code> and
+<code>capabilities_sha256</code>. The latter hashes the complete v2 capability body,
+excluding its own digest. Hashes detect changed content; they do not authenticate a peer.</li>
+<li>Every non-discovery request includes both identities and the exact client revision.
+Preparation validates the configuration and persists a reviewable plan without
+executing training. The plan hash binds owner, configuration, revision, backend
+capabilities and expiration.</li>
+<li>Submit the reviewed <code>plan_sha256</code> with a stable owner-scoped
+<code>idempotency_key</code>. An uncertain timeout must retry the same plan/key/revision;
+it must not invent a new key. An exact duplicate returns the existing receipt.</li>
+<li>Observe and retrieve artifacts only for the authenticated supervisor's owner and
+matching revision. A different application draft must not publish an older job as current.
+The independent client rejects mismatched request hashes, boot/capability identities,
+revisions and corrupted artifact streams.</li>
+<li>After worker restart, discover its new boot identity before observing or retrying.
+An existing idempotency receipt can be recovered, but ambiguous interrupted jobs stay
+<code>recovery_required</code>; they are never automatically relaunched.</li>
+</ol>
+<p>Revisions are opaque, not ordered counters. CKE binds them to the submitted plan;
+the application remains responsible for tracking which draft is current. Unknown or
+unavailable capabilities remain unavailable. Missing metrics are absent, never fabricated
+as zero; clients should display them as unavailable. Cancellation remains unsupported.</p>
+<h3>Local setup and wire examples</h3>
+<p>Use the existing administrator package registry and private job store described below.
+The principal argument is supervisor configuration, not a field accepted from clients.
+The following command performs discovery only and contains no credentials:</p>
+<pre><code>printf '%s\n' '{"schema":"cke.training.jobs.v2","request_id":"discover-1","operation":"discover"}' | \
+  python -m server.training.jobs --store /private/jobs --principal demo \
+  --clef-registry /private/registry.json</code></pre>
+<p>A successful reply uses these fields (placeholders below are explanatory, not a
+valid pinned response):</p>
+<pre><code>{"schema":"cke.training.jobs.v2","request_id":"discover-1",
+ "request_sha256":"SHA256_OF_EXACT_REQUEST","worker_boot_id":"BOOT_HEX_32",
+ "capabilities_sha256":"CAPABILITIES_HEX_64","ok":true,"error":null,
+ "result":{"schema":"cke.training.jobs.v2","worker_boot_id":"BOOT_HEX_32",
+   "capabilities_sha256":"CAPABILITIES_HEX_64",
+   "operations":["discover","prepare","submit","observe","artifact"],
+   "cancel":"unsupported",
+   "transport":"trusted_local_only; remote authentication NOT_IMPLEMENTED"}}</code></pre>
+<p>The actual discovery result additionally contains the complete registered validation
+capabilities, execution scope, limits and authorization description. Never hash or pin
+this abbreviated example. Prepare with the actual returned identities:</p>
+<pre><code>{"schema":"cke.training.jobs.v2","request_id":"prepare-1","operation":"prepare",
+ "worker_boot_id":"BOOT_HEX_32","capabilities_sha256":"CAPABILITIES_HEX_64",
+ "client_revision":"00ffffffffffffffffffffffffffffff","experiment_id":"decision-demo",
+ "config":{"recipe":"clef_head_fp32_v1","package_id":"demo",
+   "package_sha256":"REGISTERED_PACKAGE_SHA256","dtype":"fp32","optimizer":"adamw",
+   "method":"head_only","epochs":2,"learning_rate":0.001}}</code></pre>
+<p>Submit requires <code>plan_sha256</code> and <code>idempotency_key</code>; observe requires
+<code>job_id</code>; artifact requires <code>job_id</code>, <code>artifact_id</code> and
+<code>offset</code>. All include schema, request ID, operation, boot/capability identities
+and client revision. Unknown fields, client paths, principals and shell commands reject.
+Artifacts retain the existing 8192-byte chunk limit and manifest SHA-256 verification;
+an application must retain the expected manifest and verify the entire resumed transfer.</p>
+<h3>Evidence and remaining agreement</h3>
+<p>Asset-free independent consumer tests cover no-execution preparation, exact revision
+preservation, duplicate/lost-reply recovery, restart, stale identities, cross-owner denial,
+wrong revisions and corrupt/truncated artifact responses. These tests simulate execution;
+they do not certify native arithmetic or the actual laptop application. The separate
+opt-in native Clef job test exercises opaque revisions through training and export.</p>
+<p>Before exposing a remote service, agree and test authenticated ZeroMQ peer/tenant
+mapping, server identity pinning, bounded messages and deadlines, disconnect/reconnect
+behavior and transport error envelopes. V2 local error handling remains the existing
+stdio rejection envelope. Do not advertise a production network endpoint or cancellation
+until those contracts exist. No backward kernels, optimizer math or compiler lowering
+change in this bridge milestone.</p>
+<pre><code>python -m unittest server.tests.test_training_bridge server.tests.test_training_jobs -v
+python scripts/nightly_runner.py --tests training_job_lifecycle --require-executed
+CKE_RUN_CLEF_JOB=1 python -m unittest \
+  tests.test_v8_clef_training_recipe.NativeRecipe.test_opaque_revision_native_job_and_export -v</code></pre>
+</section>
+
+<section id="bounded-dataset-expansion">
+<h2>Application training: larger supplied-feature packages</h2>
+<p>The FP32 head recipe now admits up to 4,096 records and 512 token positions,
+with 1–1,000 epochs and a combined ceiling of 100,000 updates. The loader retains
+its 512 MiB decoded-dataset bound and the compiler retains its 2 GiB native-workspace
+bound. These are admission ceilings, not evidence that every maximum-size geometry
+fits memory or has acceptable speed. Package manifests are bounded to 8 MiB.</p>
+<p>Application clients must rediscover capabilities: <code>clef_head_fp32_v1.limits</code>
+now explicitly reports records, tokens, update budget, dataset bytes and the exact-length
+restriction. The independent simulated consumer and job-progress checks use the expanded
+contract. An administrator can construct <code>Jobs(..., wall_seconds=3600)</code>
+for a longer local run; the default remains 600 seconds and the accepted range is
+60–86,400 seconds. This is local policy, not a client-requested timeout override.
+Cancellation and remote authentication remain unsupported.</p>
+<p>The trainer indexes the schedule instead of materializing one record reference for
+every update. Every 1,000 updates before the final/interrupted step it evaluates validation
+records and publishes an identity-bound checkpoint. Only the last two periodic checkpoints
+created by that invocation are retained; a resumed invocation preserves earlier files.
+The final checkpoint and explicit stop-after behavior remain available. Resumption requires
+the same dataset and configuration. Older checkpoint configurations without the new
+checkpoint/evaluation policy are not silently accepted.</p>
+<p>The final report includes per-split, per-question accuracy, macro-F1, support and confusion
+matrices, plus record logits, labels and stable per-question softmax scores. Candidate
+identities, not their array positions, define classes. Question IDs must denote the same
+task across records. Macro-F1 includes declared classes with zero support (zero-division
+score zero); softmax scores are not calibrated confidence. Sparse confusion entries
+are always supplied; dense matrices are omitted once their combined 65,536-cell budget
+is exhausted. This avoids quadratic reporting memory for many candidate identities. Reports include elapsed time
+and process high-water RSS on Linux. Timing includes preparation/export and is not a
+kernel-throughput measurement.</p>
+<p>Serving fixtures no longer grow with the training dataset: export registers at most
+64 question examples, prioritizing the first validation record then dataset order, and explicitly reports
+<code>inference_export_record_ids</code>. Native training-runtime evaluation still reports
+all records. Independent generated-inference export checks apply to the selected subset;
+the exported head contains the trained weights, not a claim of corpus-wide export parity.</p>
+<p>Executed stress test: 34 synthetic records, 96 token positions, 41 epochs / 1,353 updates,
+periodic validation at update 1,000, and 32 exported two-question records. This tests limits
+and lifecycle behavior, not sentiment accuracy or Qwen execution. The existing distinct-record
+pinned PyTorch head-update comparison also passes without tolerance changes.</p>
+<pre>make -j4 build/libckernel_engine.so
+python -m unittest tests.test_v8_clef_dataset_scale -v
+python scripts/nightly_runner.py --tests training_clef_registered_recipe --require-executed
+python version/v8/decision/train_clef_head.py \
+  --package /absolute/path/package.json --package-sha256 EXPECTED_SHA256 \
+  --run-dir /absolute/path/new-run --json-out /absolute/path/result.json \
+  --epochs 50 --lr 0.001</pre>
+<p><strong>Still required before claiming general real-text training:</strong> each package
+has one exact token/question/option geometry. No implicit padding or attention masking is
+provided. Mixed-length capture, bucketed shared-optimizer training, a checked multi-record
+capture-to-package converter, automatic best-validation-checkpoint selection, and a separate
+final test-set workflow remain follow-ups. The application should preserve train/validation/test
+separation and must not select models using the final test set. Native backbone execution,
+full-model LoRA and QLoRA are not enabled by this expansion. No real dataset benchmark or
+application-quality claim has been made.</p>
+</section>
+
+<section id="registered-fp32-training">
+<h2>Registered FP32 Clef head training</h2>
+<p>This opt-in recipe trains the complete supported Clef head on <strong>supplied backbone
+features</strong>. It does not execute or train a backbone, tokenize text, add adapters,
+or execute application actions. A successful job means generated training,
+frozen embedding checks, checkpoint reload and generated inference export passed.
+It does not certify the submitted dataset's quality, calibrated confidence or
+numerical parity against an oracle. Those report fields remain <code>NOT_TESTED</code>.</p>
+<h3>Ownership and precision</h3>
+<p>The existing v8 circuit authoring, backward rules and shared training code generator
+produce native forward, backward and AdamW execution. Python validates records,
+loads input features, invokes complete generated steps and packages artifacts.
+It never computes model gradients or updates parameters. No new compiler branch,
+model scheduler or training stack is introduced.</p>
+<p>The admitted recipe is <code>clef_head_fp32_v1</code>: FP32, AdamW, per-question cross entropy,
+1–1,000 epochs (at most 100,000 updates), learning rate <code>(0, 0.01]</code>, epsilon <code>1e-4</code>, betas <code>(0.9, 0.999)</code>, weight
+decay <code>0.01</code>, no dropout, gradient accumulation 1. All head parameters train;
+output embedding rows and supplied backbone features are frozen. Mixed BF16,
+LoRA and QLoRA are unavailable through this recipe. In particular, the existing
+mixed-BF16 trajectory failure has not become a pass.</p>
+<h3>Dataset/package contract</h3>
+<p><code>cke.clef.training-package.v1</code> has exactly five fields:</p>
+<ul>
+<li><code>schema</code>: the version above.</li>
+<li><code>model</code>: <code>id</code>, <code>revision</code>, <code>backbone_id</code>, <code>backbone_revision</code>,
+<code>tokenizer_revision</code>, and <code>feature_provenance: &quot;supplied&quot;</code>. Revisions are pinned
+hexadecimal identities. Supplied provenance records a declaration, not proof
+that CKE executed that backbone.</li>
+<li><code>geometry</code>: <code>tokens</code>, <code>channels</code>, <code>width</code>, <code>heads</code>, <code>feedforward</code>, <code>vocabulary</code>,
+<code>questions</code>, <code>options</code>. All records share this declared geometry.</li>
+<li><code>weights</code>: local basename <code>file</code> and <code>sha256</code> of the FP32 NPZ raw head weights,
+including <code>output_embedding.weight</code> and packed QKV weights.</li>
+<li><code>records</code>: 2–4,096 records with <code>id</code> (at most 60 characters), <code>split</code> (<code>train</code> or
+<code>validation</code>), <code>asset</code> (<code>file</code>, <code>sha256</code>), <code>question_ids</code> and grouped
+<code>candidate_ids</code>. Both splits must be present. IDs preserve question/option order.</li>
+</ul>
+<p>Each record NPZ contains <code>hidden</code> (FP32) and int32 <code>input_ids</code>, <code>question_spans</code>,
+<code>option_spans</code>, <code>global_span</code>, <code>option_counts</code>, <code>question_type_ids</code>, <code>labels</code>.
+Spans are half-open. Global span must select the last valid token. Labels index
+that question's allowed options; option counts partition flattened option rows.
+Arrays, finite values, IDs, counts, shapes, archive expansion and all asset hashes
+are checked before code generation. Archives must not contain Python objects.
+See <code>version/v8/decision/training_package.py</code> for exact bounds and inventories.
+The tests create synthetic, nonzero examples with overlapping spans and two
+questions with unequal option counts. Do not use private customer data for the
+first client demonstration.</p>
+<h3>Run locally</h3>
+<p>Build <code>build/libckernel_engine.so</code> first. Use a trusted package and retain its hash:</p>
+<pre><code class="language-sh">python version/v8/decision/train_clef_head.py \
+  --package /absolute/path/package.json --package-sha256 SHA256 \
+  --run-dir /private/new-run --json-out /private/result.json --epochs 2
+</code></pre>
+<p>The output contains native runtime/source identities, held-out loss before/after,
+per-record raw logits and identities, an identity-bound optimizer checkpoint,
+<code>trained_head.npz</code>, and <code>serving.zip</code>. The latter contains the ordinary generated
+head package and registered supplied feature artifacts. The recipe loads it with
+<code>NativeHead</code> and compares its logits with the trained runtime for every record.</p>
+<p>For a deliberate CLI checkpoint, add <code>--stop-after 2</code>; continue with the same
+package, configuration and run directory using <code>--resume /private/new-run/checkpoint-2</code>.
+This restores weights, AdamW state and step count. The saved runtime and engine
+identities must match. Completed checkpoints cannot be resumed as new training.
+This is local CLI resume, not a job-service resume or cancellation promise.</p>
+<h3>Independent client and job service</h3>
+<p>The existing <code>cke.training.v1</code> discovery/validation API remains non-executing.
+An administrator can opt into the head recipe by registering a package mapping:</p>
+<pre><code class="language-json">{&quot;demo&quot;:{&quot;path&quot;:&quot;/absolute/path/package.json&quot;,&quot;sha256&quot;:&quot;SHA256&quot;}}
+</code></pre>
+<p>Launch trusted local stdio, from a clean committed source tree:</p>
+<pre><code class="language-sh">python -m server.training.jobs --store /private/jobs --principal demo \
+  --clef-registry /private/registry.json
+</code></pre>
+<p>Use discovery before constructing a request. A head configuration is:</p>
+<pre><code class="language-json">{&quot;recipe&quot;:&quot;clef_head_fp32_v1&quot;,&quot;package_id&quot;:&quot;demo&quot;,&quot;package_sha256&quot;:&quot;SHA256&quot;,
+ &quot;dtype&quot;:&quot;fp32&quot;,&quot;optimizer&quot;:&quot;adamw&quot;,&quot;method&quot;:&quot;head_only&quot;,
+ &quot;epochs&quot;:2,&quot;learning_rate&quot;:0.001}
+</code></pre>
+<p><code>prepare</code> binds configuration, worker boot, capability/source/interpreter/package
+identities and expiration. <code>submit</code> returns a durable acknowledgement with an
+idempotency key. Only one job executes, with no backlog; discovery and preparation
+do not execute training. <code>observe</code> reports durable monotonic progress and metrics.
+Head metrics use <code>step_kind: update</code> and <code>unit: nats/question</code>; they must not be
+interpreted as decoder token losses. Artifact retrieval uses opaque IDs, bounded
+chunks and hashes. The independent clients in <code>server/training/consumer.py</code> and
+<code>job_consumer.py</code> do not import the worker implementation.</p>
+<h3>Readiness and gaps</h3>
+<table>
+<thead>
+<tr>
+<th>Boundary</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Supplied-feature FP32 generated head training and inference export</td>
+<td>Implemented; synthetic native regression</td>
+</tr>
+<tr>
+<td>Independent small-head PyTorch comparison</td>
+<td>Optional pinned-source test; explicit skip when unavailable</td>
+</tr>
+<tr>
+<td>Frozen output embeddings and fresh-process CLI resume</td>
+<td>Native regression</td>
+</tr>
+<tr>
+<td>Held-out loss</td>
+<td>Reported; no automatic quality acceptance</td>
+</tr>
+<tr>
+<td>Backbone execution, text-to-decision</td>
+<td>Not provided by this recipe</td>
+</tr>
+<tr>
+<td>Job cancellation / automatic restart / remote resume</td>
+<td>Unsupported; interrupted jobs become <code>recovery_required</code></td>
+</tr>
+<tr>
+<td>Remote authenticated transport</td>
+<td>Unsupported; trusted local stdio only</td>
+</tr>
+<tr>
+<td>BF16 trajectory certification, LoRA, QLoRA</td>
+<td>Not admitted</td>
+</tr>
+</tbody>
+</table>
+<p>Do not expose this interface as an authenticated remote service. A caller-provided
+principal is meaningful only inside a trusted local supervisor. A tunnel is a
+development bridge, not authorization. Evaluation continues to use the separate
+<code>cke.decision.evaluate.v1</code> contract; neither evaluation nor control discovery is
+a training command. Keep the current decision HTTP worker loopback-only.</p>
+<p>The service exports checkpoint metadata and serving artifacts, but remote
+checkpoint-state transfer/resume is not yet an application contract. Applications
+must surface <code>recovery_required</code>, <code>NOT_TESTED</code> and unsupported operations explicitly.</p>
+<h3>Validation retained for this change</h3>
+<p>On the local Intel i7-14700T host with PyTorch <code>2.12.1+cpu</code> and one requested
+OpenMP thread:</p>
+<ul>
+<li>Focused recipe and existing service/client suites: 31 passed, 2 explicit skips
+(opt-in real SVG and Clef jobs).</li>
+<li>Real registered Clef job rerun separately from the clean committed tree: passed,
+including independent observation and chunked artifact hash verification.</li>
+<li><code>training_clef_registered_recipe</code> through the standard nightly runner: passed.</li>
+<li>Existing independent FP32 complete-head 40-update trajectory: passed. Loss
+0.28329045 → 0.06633431; max absolute gradient error <code>1.374632e-6</code>, weight error
+<code>1.668930e-6</code>, optimizer-moment error <code>3.147870e-7</code>. Checkpoint/resume and
+generated inference export passed. These features and head geometry are
+synthetic; this run does not certify released-geometry training or task quality.</li>
+</ul>
+<p>Reproduce the new boundary with:</p>
+<pre><code class="language-sh">OMP_NUM_THREADS=1 CKE_CLEF_FLASH_REFERENCE_SOURCE=/path/to/pinned/joint_schema_model.py \
+  python -m unittest tests.test_v8_clef_training_recipe \
+  server.tests.test_training_contract server.tests.test_training_jobs -v
+OMP_NUM_THREADS=1 CKE_RUN_CLEF_JOB=1 python -m unittest \
+  tests.test_v8_clef_training_recipe.NativeRecipe.test_registered_job_and_independent_artifact_client -v
+python scripts/nightly_runner.py --tests training_clef_registered_recipe --require-executed
+</code></pre>
+<p>The oracle source must match the SHA-256 in
+<code>tests/fixtures/decision/clef_flash/identity.json</code>; no source means explicit skip.
+The production resume test blocks imports of <code>torch</code> and <code>transformers</code>.</p>
+</section>
+
+<section id="fp32-memory-boundary-experiment">
+<h2>FP32 memory-projection boundary: useful diagnosis, still not certified</h2>
+<p>The bounded <code>--mixed --fp32-memory-projection</code> experiment retains the existing FP32
+memory projection in the authored training graph. Other selected projections retain BF16 operands.
+The independent PyTorch reference uses its original FP32 linear operation for that same projection.
+The report lists actual selected providers and the exception. There is no production kernel, map,
+compiler or application admission change.</p>
+<p>All five experiments were rerun on the same build of main <code>f6f5e6b1e</code>, seed 611,
+CPU PyTorch 2.12.1. The complete small head still uses synthetic frozen features and a bounded task;
+these are not generalization or performance measurements.</p>
+<table class="table"><thead><tr><th>40-update comparison</th><th>Worst gradient error</th><th>Verdict</th></tr></thead><tbody>
+<tr><td>FP32 baseline</td><td>1.375e-6</td><td>PASS</td></tr>
+<tr><td>All selected projections mixed, same state</td><td>6.748e-4</td><td>FAIL at update 18</td></tr>
+<tr><td>FP32 memory exception, same state</td><td>4.170e-5</td><td>FAIL at update 37</td></tr>
+<tr><td>All selected projections mixed, independent trajectory</td><td>0.0328365</td><td>FAIL from update 8</td></tr>
+<tr><td>FP32 memory exception, independent trajectory</td><td>0.00409246</td><td>FAIL, first at update 21</td></tr>
+</tbody></table>
+<p>The exception removes the earlier memory-projection rounding failure, but a new same-state
+rounding boundary appears at <code>evidence1_feedforward_norm_op → evidence1_feedforward1</code>.
+Its first affected input is -1.4179686307907104 versus -1.41796875, rounding to -1.4140625 versus
+-1.421875. Identical-input projection replay gives zero output error and dW error 5.821e-11.
+The independent trajectory additionally encounters a QKV master-weight rounding boundary.
+This is evidence against treating one FP32 exception as a general solution.</p>
+<p>Thresholds are unchanged. Both mixed policies retain numerical FAIL. Native state hashes match
+across same-state/independent diagnostic modes for each policy; resume remains exact. Released-weight
+mixed precision, mixed inference export and performance remain NOT_TESTED. Full reports and packets
+are referenced in <code>docs/notes/clef_fp32_memory_boundary_20261113.json</code>.</p>
+<pre><code>python tests/run_clef_training_oracle.py --mixed --fp32-memory-projection --same-state \
+  --report /tmp/clef-boundary/same-state.json
+python tests/run_clef_training_oracle.py --mixed --fp32-memory-projection \
+  --report /tmp/clef-boundary/independent.json</code></pre>
+<h3>Application-agent readiness</h3>
+<p>The numerical experiment above is separate from the
+<a href="#registered-fp32-training">registered FP32 head-training recipe</a>.
+With an administrator-registered supplied-feature package, the local job service
+now admits <code>clef_head_fp32_v1</code>, executes generated forward/backward and AdamW,
+and exports a native inference package. Clients must discover the running worker's
+capabilities before submitting; <code>clef_head_v8</code> is not a supported alias.</p>
+<p>This is head-only integration, not raw-text/backbone execution. BF16 certification,
+LoRA, QLoRA, remote authentication and job cancellation remain unavailable.
+The mixed-policy numerical failures above remain unchanged.</p>
+</section>
+
+<section id="same-state-pytorch-oracle">
+<h2>Same-state update diagnosis: 39 of 40 comparisons pass</h2>
+<p><code>--same-state</code> copies CKE's pre-step master weights, both AdamW moments and optimizer
+step into PyTorch before each diagnostic comparison. Packed Q/K/V ownership and scalar parameters are
+restored explicitly and checked by byte-exact round trips through the effective-weight mapping.
+No oracle value is copied into CKE. The independent trajectory remains a separate required experiment.</p>
+<p>For the same small complete mixed head, only zero-based update 18 fails unchanged numerical gates.
+Maximum gradient, master-weight and moment errors are 6.748e-4, 2.578e-5 and 6.748e-5. This is still
+<strong>numerical FAIL</strong>, not complete mixed-precision certification. The earlier independent
+update-8 failure disappears when master weights and optimizer state are synchronized.</p>
+<p>The remaining first significant divergence is <code>hidden_norm → memory_projection</code>.
+With identical inputs and normalization parameters, native and PyTorch LayerNorm differ by at most
+2.384e-7. One value is 1.0976563692092896 versus 1.09765625; these round to BF16 values 1.1015625
+versus 1.09375. Replaying the projection on identical operands gives zero output error, dW error
+1.863e-9 and isolated dX error 4.657e-10. The packet retains the LayerNorm operands and the rounding
+witness. This exposes amplification at a precision boundary; it does not justify changing global tolerances.</p>
+<p>Input gradients may contain contributions from multiple branches. The diagnostic now replays the
+selected provider's dX into its own buffers rather than comparing it with the accumulated input gradient.
+A regression deliberately omits the accumulated dX to enforce this distinction.</p>
+<p>CKE's forty native losses, final master-weight hash and final optimizer-state hash are identical in
+same-state and independent runs. Checkpoint/restart remains exact. The report labels same-state comparison
+explicitly and marks independent trajectory parity NOT_TESTED in that report; the separate independent
+run remains FAIL. Production kernels, maps and compiler behavior are unchanged by this diagnostic.</p>
+<pre><code>python tests/run_clef_training_oracle.py --mixed --same-state \
+  --report /tmp/clef-oracle/same-state.json
+# Keep the independent run alongside it; both currently exit 1.
+python tests/run_clef_training_oracle.py --mixed \
+  --report /tmp/clef-oracle/independent.json</code></pre>
+<p>Evidence: <code>docs/notes/clef_same_state_oracle_20261113.json</code>. Next: evaluate the declared
+LayerNorm-to-BF16 precision boundary and a justified mixed-precision acceptance policy, preserving the
+independent FP32 and mixed trajectory checks. Do not force backend rounding history merely to obtain PASS.</p>
+</section>
+
+<section id="complete-head-pytorch-oracle">
+<h2>Complete-head PyTorch comparison: FP32 passes; mixed trajectory fails</h2>
+<p>The complete small topology now runs forty independent native/PyTorch AdamW updates with
+RNE BF16 projection operands and FP32 masters, bias, gradients, optimizer state and remaining operations.
+Biased projections use explicit generic forward/backward maps. Backward synthesis still owns the derivative
+graph; there is no Clef-specific compiler dispatch or Python update of CKE weights.</p>
+<p><strong>This is diagnostic mixed-precision training, not mixed-precision certification.</strong>
+The pinned reference owns the head topology; a test-only PyTorch autograd adapter declares the projection
+precision and identity-rounding VJP. This is not default autocast. Inputs are identical synthetic frozen
+backbone features, with two questions and unequal option counts. It is not complete backbone training.</p>
+<table class="table"><thead><tr><th>Comparison</th><th>Measured result</th></tr></thead><tbody>
+<tr><td>FP32 complete small head, 40 updates</td><td>PASS; loss 0.28329045 to 0.06633431; maximum gradient error 1.375e-6.</td></tr>
+<tr><td>Released FP32 head, 4 updates</td><td>PASS; pinned weights, synthetic frozen features; loss 0.59229440 to 0.13316446.</td></tr>
+<tr><td>Mixed small-head trajectory, 40 updates</td><td>FAIL under unchanged bounds; native loss 0.28323126 to 0.06657010. Maximum gradient, weight and moment errors: 0.0328365, 0.00121975 and 0.00366078.</td></tr>
+<tr><td>Mixed same/fresh-process resume</td><td>PASS, exact continuation. Separate generated mixed inference export: NOT_TESTED.</td></tr>
+</tbody></table>
+<p>At zero-based update 8, the first significant projection divergence is
+<code>fields0_cross_out</code>. Weight [7,2] is 0.0720214918255806 in CKE and
+0.07202146202325821 in PyTorch. Those nearby FP32 values round to different BF16 values:
+0.072265625 and 0.07177734375. Replaying the CKE operands in PyTorch yields zero output,
+weight-gradient and bias-gradient differences at this boundary; input-gradient error is 1.164e-10.
+This identifies a rounding-boundary amplification of prior master-weight drift, not a demonstrated local
+projection derivative defect. It does not establish that all later discrepancies are acceptable.</p>
+<p>The oracle runner compares raw option logits, loss, every parameter gradient, weights and optimizer
+moments throughout the trajectory. It retains per-parameter RMS/magnitude metrics, failed gates,
+artifact hashes and a first-divergence replay packet. Numerical FAIL exits 1; missing assets exit 2.
+Execution, loss reduction and exact resume cannot override numerical FAIL. Existing bounds are unchanged.</p>
+<pre><code>make build/libckernel_engine.so
+export CKE_CLEF_FLASH_REFERENCE_SOURCE=/path/to/pinned/joint_schema_model.py
+python tests/run_clef_training_oracle.py --report /tmp/clef-oracle/fp32.json
+CKE_CLEF_FLASH_HEAD_PATH=/path/to/pinned/joint_head.safetensors \
+  python tests/run_clef_training_oracle.py --released --report /tmp/clef-oracle/released.json
+# Expected exit 1: complete diagnostic comparison, known numerical FAIL.
+python tests/run_clef_training_oracle.py --mixed --report /tmp/clef-oracle/mixed.json
+python -m unittest tests.test_v8_clef_mixed_training -v</code></pre>
+<p>Recorded measurements and artifact identities: <code>docs/notes/clef_full_training_oracle_20261113.json</code>
+(Intel Core i7-14700T, CPU PyTorch 2.12.1; no Spark/GPU or performance comparison).</p>
+<p>Standard nightly adds biased-provider rejection/autograd, full-topology backward-generation and
+report-verdict regressions to the existing projection suite. That suite does not certify the failing mixed
+trajectory. Next: distinguish local same-state update accuracy from independent BF16 trajectories before
+proposing any mixed-precision acceptance policy. Released mixed training, mixed inference export, LoRA,
+quantized training, hardware speed and generalization remain unproven.</p>
+</section>
+
+<section id="bf16-projection-training">
+<h2>Bounded BF16 projection training with FP32 masters</h2>
+<p><strong>One mixed-storage projection graph is certified; complete BF16 Clef training remains unsupported.</strong>
+The authoring helper <code>version/v8/training/bf16_projection.py</code> replaces an explicitly selected projection
+with a map-declared provider. Ordinary backward synthesis creates the VJP and accumulation edges; the existing
+generated trainer performs all forward, backward and AdamW arithmetic. There is no model-name compiler branch.</p>
+<p>The precision policy is explicit: FP32 inputs and master weights are rounded at each forward projection boundary to
+BF16 using round-to-nearest, ties-to-even. Those saved compute operands occupy typed <code>uint16_t</code> buffers.
+The provider computes ascending-index FP32 products and sums without FMA contraction and publishes FP32 output.
+Backward consumes FP32 output gradients and the saved BF16 operands, producing FP32 input and master-weight
+gradients. Operand rounding uses a declared identity derivative; this is not the derivative of a discontinuous
+quantizer, nor a claim of equivalence to default PyTorch autocast. The independent reference uses explicit BF16
+rounding and FP32 matmul/autograd with the same chosen VJP. It does not call the CKE kernels.</p>
+<p>Master weights, gradient accumulation and AdamW moments remain FP32. Frozen projections still propagate
+activation gradients, but have no parameter-gradient publication or optimizer state. Compute operands refresh
+on every forward call after updates or checkpoint restore; derived caches are not checkpoint payloads.
+The runtime admits BF16 only for nonpersistent, nondifferentiable auxiliary tensors with a typed forward producer
+and typed map consumers. BF16 model weights, BF16 gradient buffers and a global BF16 training configuration still
+fail explicitly. Layout byte extents and pointer types are checked; canaries reserve whole 32-bit words around
+packed caches, with direct kernel tests checking the exact 16-bit tail.</p>
+<table class="table"><thead><tr><th>Generated experiment</th><th>Evidence</th></tr></thead><tbody>
+<tr><td>4-channel projection and frozen bridge</td><td>40 native updates: loss 1.42442214 to 0.03998315.</td></tr>
+<tr><td>5-to-7 projection, frozen 7-channel bridge</td><td>40 native updates: loss 1.37150788 to 0.00395414; odd BF16 cache extents.</td></tr>
+<tr><td>Independent trajectory comparisons</td><td>Worst absolute gradient error 5.41e-8, master-weight error 9.54e-7, moment error 2.43e-8 (PyTorch 2.12.1 CPU, seed 837).</td></tr>
+<tr><td>State</td><td>Byte-unchanged frozen weights, exact same-process and fresh-process checkpoint continuation, trained-weight forward reload.</td></tr>
+<tr><td>Primitive contracts</td><td>Rectangular/tail shapes, O0/O3 equality, FP32 dX/dW oracle, nonfinite and finite-overflow rejection, null/alignment/overlap/capacity rejection, unchanged published outputs and recovery.</td></tr>
+</tbody></table>
+<pre><code>make build/libckernel_engine.so
+python -m unittest tests.test_projection_bf16_train_kernel tests.test_v8_bf16_projection_training -v
+python scripts/nightly_runner.py --tests training_projection_bf16 training_selective_parameters --ci --require-executed</code></pre>
+<p>Missing PyTorch or the built native engine reports SKIP, not parity PASS. This scalar implementation establishes
+semantics, not acceleration or an end-to-end memory reduction. It retains FP32 external activations in addition to
+BF16 saved compute operands. Full-head mixed precision, BF16 normalization/attention policies, public training-job
+admission, LoRA and quantized-base training remain separate gates. The complete small-head diagnostic above
+now composes this policy but fails independent trajectory parity; released mixed-head certification remains pending.</p>
+</section>
+
+<section id="bf16-training-admission">
+<h2>Initial BF16 audit and remaining full-head prerequisites</h2>
+<p><strong>Complete BF16 head training remains unsupported.</strong> The initial audit found that the trainer represented all floating tensors as FP32. The bounded projection implementation above adds typed BF16 saved operands while retaining FP32 master hydration, snapshots and updates. The planner recognizing a two-byte BF16 dtype does not establish a typed runtime ABI.</p>
+<p>A controlled pre-fix reproduction supplied an FP32 layout and marked a trainable weight BF16.
+Codegen emitted a <code>float*</code> buffer, reported no skipped operations, and silently omitted the
+weight from <code>parameter_gradient_order</code> and optimizer updates. Storage admission now rejects
+unsupported tensor and reference dtypes before C emission. It also rejects inconsistent declarations,
+integer weights/gradients, and configurations claiming BF16 with FP32 tensors. The FP32 head author
+requires explicit FP32 arrays instead of interpreting packed uint16 weights as numeric FP32 values.</p>
+<p>The following table records the initial audit; the projection milestone above resolves its bounded typed-cache case, not every full-head precision boundary.</p>
+<table class="table"><thead><tr><th>Boundary</th><th>Existing evidence at audit</th><th>BF16 composition gap identified</th></tr></thead><tbody>
+<tr><td>Generated training ABI</td><td>FP32 buffers and INT32 metadata; FP32 updates and snapshots.</td><td>Typed BF16 buffers, byte extents, initialization, saved tensors and checkpoint/export representation. See <code>version/v7/scripts/codegen_train_runtime_v7.py</code>.</td></tr>
+<tr><td>Gradient synthesis</td><td>Existing backward lowering constructs FP32 gradient and temporary tensors.</td><td>Explicit gradient precision and conversion edges; no inferred casts from component names.</td></tr>
+<tr><td>Span mean, exact-erf GELU, grouped pooling</td><td>Checked BF16-storage VJPs in <code>src/kernels/head_backward_bf16.c</code>, three maps and independent leaf tests.</td><td>The maps lack generated-training contracts. These variants consume and publish BF16 gradients; they cannot silently stand in for FP32-gradient variants.</td></tr>
+<tr><td>Normalization and projection</td><td>BF16 LayerNorm and mixed MLP backward implementations exist in <code>layernorm_kernels_bf16.c</code> and <code>mlp_kernels_bf16.c</code>.</td><td>Map/ABI/scratch and cache contracts for the actual head shapes. The fused MLP uses a tanh GELU approximation; Clef's exact-erf GELU cannot be replaced by it.</td></tr>
+<tr><td>Noncausal attention and decision branches</td><td>FP32 generated-head derivatives; BF16 inference attention providers.</td><td>Compatible BF16 training forward/backward, indexed/scalar branches and branch-gradient accumulation with explicit rounding points.</td></tr>
+<tr><td>Optimizer</td><td><code>adamw_update_bf16</code> exists with BF16 weights/gradients and FP32 moments.</td><td>It is not the proposed FP32-master-weight recipe. Declare master/compute weight ownership and refresh boundaries before connecting updates.</td></tr>
+</tbody></table>
+<p><strong>Original implementation sequence (first step now demonstrated above):</strong> first prove typed storage and explicit conversion
+edges on one generic projection. The initial mixed-precision target uses BF16 projection operands,
+FP32 normalization/softmax/loss/scoring, FP32 master parameters, FP32 parameter-gradient accumulation
+and FP32 AdamW moments. Each provider retains its declared accumulation order; BF16 storage alone
+does not imply a particular compute instruction. Specify activation-gradient rounding separately and compare the exact declared
+operations against PyTorch; do not assume equivalence to arbitrary autocast settings. Then connect
+normalization, noncausal attention, pooling and scoring through the same graph. Certify the small complete
+head before repeating released-size tests. Existing BF16-gradient providers remain separately named
+variants rather than being silently repurposed.</p>
+<p>The initial admission-only change fixed unsafe dtype handling and defined the missing boundaries; it does not claim a
+BF16 speedup, memory reduction, generated BF16 update or complete BF16 head PASS.</p>
+<pre><code>python3 -m unittest tests.test_v8_training_storage_contract -v
+python3 scripts/nightly_runner.py --tests training_selective_parameters \
+  training_complete_clef_head decision_head_backward_bf16 --ci --require-executed</code></pre>
+<p>The full-head oracle lane requires the pinned source described below. Standalone BF16 derivatives
+retain their numerical gates. Unsupported BF16 training must remain a clear error until typed execution
+and composed training evidence replace this restriction.</p>
+</section>
+
+<section id="released-head-training">
+<h2>Released head weights: bounded FP32 training parity</h2>
+<p>The same canonical head topology now runs training at the released dimensions: 4,096-channel
+features, width 1,024, 16 attention heads, feedforward width 4,096, two evidence layers and four field
+layers. The head safetensors and independent reference source are checked against the pinned hashes
+before use. No kernel, derivative, compiler special case or numerical tolerance was changed.</p>
+<p>Four native AdamW updates compare every effective parameter gradient, updated weight and optimizer
+moment against pinned PyTorch. On the fixed synthetic-feature request, loss falls from
+<code>0.59229439</code> to <code>0.13316447</code>. Maximum absolute differences are
+<code>1.68e-7</code> for gradients, <code>9.54e-7</code> for weights and <code>2.36e-8</code>
+for moments. This measures arithmetic and state correctness, not downstream decision quality or generalization.</p>
+<p>The fixture deliberately keeps backbone features and a small output-embedding table synthetic and
+frozen. It is released-head training with supplied features, not training with a generated backbone or
+reproducing the publisher's training data. FP32 AdamW uses the existing declared recipe: learning rate
+0.001, epsilon 1e-4, weight decay 0.01, beta values 0.9 and 0.999.</p>
+<p>A fresh subprocess loads the generated library, restores the checked checkpoint and executes the
+remaining native updates. Its loss sequence, final weight hash, optimizer-state hash and step count must
+exactly match uninterrupted execution. The existing same-process recovery, frozen-weight checks,
+rejection tests and separately generated inference export remain in place.</p>
+<pre><code>make build/libckernel_engine.so
+CKE_CLEF_FLASH_REFERENCE_SOURCE=/path/to/pinned/joint_schema_model.py \
+CKE_CLEF_FLASH_HEAD_PATH=/path/to/pinned/joint_head.safetensors \
+  python3 scripts/nightly_runner.py --tests training_complete_clef_head \
+    training_released_clef_head --ci --require-executed</code></pre>
+<p>The released-weight test has its own asset-backed nightly lane and a 600-second limit. Missing assets
+produce SKIP; configured files with incorrect hashes fail. The small 40-update trajectory remains a
+separate fast regression. This asset-backed certificate uses substantial memory and is not a latency benchmark.</p>
+<p><strong>Still unproven:</strong> generated-backbone feature training, a public dataset/job recipe,
+complete-head BF16, LoRA/QLoRA and real decision-task accuracy. The next precision milestone must certify
+storage, accumulation, gradients, optimizer updates and export separately.</p>
+</section>
+
+<section id="complete-small-head-training">
+<h2>Complete head topology: FP32 training on frozen supplied features</h2>
+<p>The bounded experiment now derives the training graph from the canonical complete-head circuit:
+two evidence-routing layers, four field layers, and every scoring branch. The existing shared v7/v8
+backward synthesizer, memory planner, generated C and native AdamW execute 144 forward operations and
+494 backward operations. Python authors the graph and runs the independent oracle; it does not update
+CKE parameters. No Clef-name branch is added to generic lowering.</p>
+<p>On the small geometry (six tokens, eight channels, two questions with two/one options), all 162
+effective trainable parameter arrays are compared with the hash-pinned reference class using PyTorch
+autograd. Forty updates reduce loss from <code>0.28329045</code> to <code>0.06633431</code>.
+Maximum absolute differences over the trajectory were 1.38e-6 for gradients, 1.67e-6 for weights,
+and 3.15e-7 for optimizer moments (PyTorch 2.12.1 CPU, seed 611).
+The test checks gradients, weights, optimizer moments, byte-identical frozen feature/embedding weights,
+rejection without updates, exact checkpoint resume, and trained-weight reload through a separately
+generated inference entry. Overlapping spans and shared question indices exercise gradient accumulation.</p>
+<p>The declared recipe uses FP32 AdamW, learning rate 0.001, weight decay 0.01, beta values 0.9/0.999,
+and epsilon <code>1e-4</code> in both implementations. This explicit epsilon limits amplification of
+roundoff-sized gradients on shift-invariant biases; it does not change the forward or gradient tolerance.
+The existing component recipes retain their own epsilon and remain separate regressions.</p>
+<p>Reusable additions are checked indexed gather/scatter, explicit per-operation row counts for linear
+and add derivatives, generated integer metadata initialization checks, and opt-in contiguous flattening.
+The checked projection source is compiled with the generated library, using its existing scalar/AVX
+provider contract rather than changing global engine compiler flags.</p>
+<pre><code>make build/libckernel_engine.so
+CKE_CLEF_FLASH_REFERENCE_SOURCE=/path/to/pinned/joint_schema_model.py \
+  python3 -m unittest tests.test_v8_clef_full_training \
+    tests.test_v8_indexed_rows_training -v</code></pre>
+<p>Standard nightly registers <code>training_complete_clef_head</code>. Missing reference source or
+PyTorch is explicitly SKIP; structural and native gather/scatter checks do not stand in for oracle execution.</p>
+<p><strong>Remaining gates:</strong> real generated-backbone
+features, a public dataset/job recipe, and complete-head BF16/LoRA/QLoRA
+training remain NOT_TESTED here. This fixed-feature low-level composition is not an unrestricted
+<code>cke.v8.compile</code> training API or an application-ready trainer.</p>
+</section>
 
 <section id="reference-backbone-capture">
 <h2>Real-feature capture preparation — backbone run still NOT_TESTED</h2>
@@ -1315,6 +2410,128 @@ into the training IR, integration of the certified noncausal attention VJP, inde
 head parameter/optimizer/export comparisons. BF16 head trajectories and LoRA/QLoRA follow that baseline.</p>
 </section>
 
+<section id="pooling-automatic-training">
+<h2>Automatic pooling derivatives and typed training inputs</h2>
+<p>Span means and grouped softmax-weighted pooling now use declared FP32 training contracts and v8
+derivative rules. The shared lowerer generates their VJPs and explicitly accumulates gradients from
+separate branches. Integer spans and group counts are nondifferentiable; overlapping spans sum their
+feature-gradient contributions. Existing kernel arithmetic and inference ABIs are unchanged.</p>
+<p>Fixed-batch training graphs declare <code>config.training_integer_inputs</code>, an ordered list of
+INT32 input tensor IDs. Generated summaries expose <code>integer_inputs</code> (tensor, offset, count,
+dtype) and <code>integer_input_count</code>. These bindings participate in runtime/checkpoint identity.
+The host packs metadata in that order and calls:</p>
+<pre><code>ck_train_step_with_i32_ex(token_ids, targets, valid_tokens,
+                          integer_inputs, integer_count, loss_out, learning_rate)</code></pre>
+<p>The generated runtime copies metadata for the current batch and owns the forward/backward/optimizer
+schedule. The caller retains ownership of its source buffers. The old step entry cannot silently reuse
+metadata from a previous batch: it rejects graphs requiring these inputs. Forward-only inspection uses
+<code>ck_train_set_batch_with_i32_ex</code> followed by the existing generated forward entry.</p>
+<p>Counts, alignment and exact input extents are checked before binding. Providers validate span ranges
+and positive group counts with exact option coverage. Compile-time checks reject missing metadata,
+trainable integer inputs, incompatible shapes/dtypes, wrong contiguous strides, and partial-token span
+training. This initial contract requires fixed capacities with all token rows valid; it does not certify
+arbitrary dynamic shapes. The existing generated runtime remains non-reentrant and must be serialized
+per loaded instance.</p>
+<p>The regression composes fixed features → trainable projection → overlapping spans → exact-erf GELU
+→ grouped weighted pooling → frozen projection → scores. The projection also feeds the grouped queries,
+so backward must add both branches. Six spans form unequal groups [2,1,2,1]. Forty native AdamW updates
+reduce loss from 1.40194964 to 0.16358216. Against PyTorch 2.12.1 CPU, maximum absolute differences are
+8.01e-8 for gradients, 4.77e-7 for weights and 3.36e-8 for moments. Existing fixture bounds are unchanged.</p>
+<p>Tests compare every trainable gradient, update and moment, upstream finite differences, frozen weights,
+same-process checkpoint restoration and inference reload. A wrong saved-query control fails the oracle.
+A→B→A inputs, caller-buffer mutation after binding, malformed metadata, nonfinite input and injected
+backward failure cover reuse and recovery. Admission rejection leaves the current accumulation intact;
+provider failure discards its partial accumulation window and recovery matches fresh execution.
+PyTorch absence is an explicit oracle skip.</p>
+<pre><code>make -j4 build/libckernel_engine.so
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 python3 -m unittest tests.test_v8_pooling_training -v
+python3 scripts/nightly_runner.py --tests training_pooling_composition --ci --require-executed</code></pre>
+<p><strong>This does not register complete Clef training.</strong> Indexed/scalar scoring derivatives,
+grouped decision loss, full-head training authoring and released-head gradient/update/export evidence
+remain. BF16 training, LoRA/QLoRA and application submission remain separate acceptance gates.
+The existing job service continues to reject unsupported recipes.</p>
+</section>
+
+<section id="combined-scoring-training">
+<h2>Automatic training through learned gains and combined scoring branches</h2>
+<p>The FP32 scoring composition now joins normalized-dot prior scores, cosine joint scores and a
+residual MLP, with two learned exponential scales and a sigmoid gate, before grouped decision loss.
+Its derivatives are selected by v8 rules and map contracts; the existing shared lowerer emits branch
+accumulation, parameter gradients and native AdamW. This milestone adds no generic compiler logic or
+model-specific backward scheduler.</p>
+<p>Three reusable checked VJPs cover scalar exp-clamp, scalar sigmoid and vector scaling. Exp-clamp
+has derivative one at the clamp boundary and zero above it. Sigmoid differentiates the rounded stable
+forward value. Vector scaling computes input gradients and an ascending FP64 gain reduction, staging
+both outputs before publication. Caller-owned scratch, capacities, finite values, alias rejection and
+failure atomicity are explicit. Existing cosine/normalized-dot VJPs and checked addition gain training
+bindings. Their distinct below-epsilon norm derivatives remain explicitly selected; the forward result
+alone cannot identify which derivative is appropriate.</p>
+<p>The nonzero model-neutral fixture uses two questions with one and three options, repeated owner
+indices and overlapping spans. All three learned scalars have significant initial gradients and independent
+finite-difference checks. Every trainable parameter gradient, weight and moment is compared with PyTorch
+through 40 native AdamW updates. The frozen feature table and redundant common score bias remain
+byte-identical. Checkpoint restore reproduces the remaining trajectory exactly, and trained-weight
+reload reproduces scores. An injected sigmoid-VJP failure after partial accumulation preserves weights
+and moments, discards incomplete gradients and recovers to the exact fresh-run update.</p>
+<p>Measured on P3 with PyTorch 2.12.1 CPU, seed 837: loss 0.77345836 → 0.00013260. Maximum absolute
+errors were 2.38e-7 for gradients, 7.16e-7 for weights and 1.09e-7 for moments. Existing regression
+ceilings remain unchanged. Primitive tests cover independent ordered FP64 arithmetic, O0/O3, PyTorch,
+finite differences, saturation/clamp boundaries, finite overflow, one-element-short capacities, guards,
+partial overlap and rejection/reuse. The explicit FP64 gain test sums [1e8, 1, -1e8] to one.</p>
+<p>The unchanged complete-head forward test also passes with hash-verified released head weights and
+pinned source at six and eight synthetic feature tokens: maximum raw-logit errors are 1.19e-7 and
+1.79e-7. This protects forward inference; it does not certify released-head backward execution.</p>
+<pre><code>make -j4 build/libckernel_engine.so
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 python3 -m unittest tests.test_v8_scoring_training -v
+python3 scripts/nightly_runner.py --tests training_scoring_composition --ci --require-executed</code></pre>
+<p><strong>Complete released-head training remains NOT_TESTED.</strong> This is a reduced scoring graph,
+not the four field layers and evidence stack trained together. Next assemble those existing training
+components into complete head authoring, audit remaining broadcast/selection and trainable-embedding
+bindings, and certify every head gradient, update and export with released weights. No new application
+recipe is exposed. BF16 composed training, backbone execution, LoRA and QLoRA remain separate gates.
+The current trainer requires fixed capacities and positive scalar constants; the standalone exp-clamp
+kernel's finite-maximum domain is wider. Missing PyTorch or a native engine is reported as SKIP.</p>
+</section>
+
+<section id="grouped-loss-training">
+<h2>Declared grouped decision loss and indexed scoring training</h2>
+<p>A training graph can now declare its scalar loss and score tensor explicitly instead of requiring
+an operation named <code>logits</code>. The selected map declares the gradient input, gradient output,
+scalar value and reduction identity. The existing shared backward lowerer seeds that tensor and applies
+the normal derivative rules and branch accumulation. The existing generated native runtime performs
+forward, backward and AdamW; no model-name dispatch or separate decision training loop is added.</p>
+<p>The new checked FP32 grouped cross-entropy provider accepts positive option counts summing exactly
+to the score count and one relative label per question. Loss is the mean over questions, including
+zero-loss singleton questions. It uses ascending FP64 max-shift exponential reductions and FP32 output
+stores. Loss and gradients publish only after validation. Scratch, typed INT32 labels/counts, fixed
+capacities and numerical identity are declared; BF16, ignore-index, weighting and double backward are
+not supported. Existing decoder graphs retain their implicit cross-entropy seed.</p>
+<p>The small nonzero regression composes frozen features → trainable projection → overlapping spans
+and indexed pair features → biased projection → erf GELU → scores → grouped loss. It tests repeated
+owner indices, unequal option counts, all trainable gradients, an upstream finite difference, 40 native
+AdamW updates, frozen bytes, optimizer moments, checkpoint restoration and trained-logit reload.
+Invalid question counts or labels after a partial accumulation window must discard that window without
+updating weights or moments; subsequent updates must match a clean runtime.</p>
+<p>The final scalar score bias is explicitly frozen: adding the same offset to every option cannot
+change cross-entropy. During bring-up, near-zero FP32 PyTorch reduction residuals caused AdamW to move
+that redundant bias differently (about 0.02246 on the first update). This fixture does not certify a
+trainable shared score bias. The hidden projection bias remains trainable. No tolerance was widened.</p>
+<p>On P3 with PyTorch 2.12.1 CPU, the bounded fixture loss fell from 0.55899101 to approximately 3e-8.
+Maximum absolute errors across 40 updates were 1.94e-7 for gradients, 6.56e-7 for weights and 5.96e-8
+for moments. The existing absolute ceilings remain 3e-5 for gradients/weights/logits and 3e-6 for
+moments, with relative 3e-4. Kernel tests also use an explicit FP64 scalar oracle, finite differences,
+O0/O3 comparison, padding and malformed-buffer rejection. Missing PyTorch or engine assets are skips.</p>
+<pre><code>make -j4 build/libckernel_engine.so
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 python3 -m unittest tests.test_v8_grouped_loss_training -v
+python3 scripts/nightly_runner.py --tests training_grouped_loss_composition --ci --require-executed</code></pre>
+<p><strong>This is component training, not complete Clef head training.</strong> Remaining work includes
+complete head training authoring (the combined scoring update above now covers scalar/gain and cosine derivatives),
+released-head gradient/update/export comparisons and the application recipe. BF16 composed training,
+backbone integration, LoRA and QLoRA remain separate gates. The job service still rejects unsupported
+Clef recipes. These low-level declarations do not yet make arbitrary inference circuits trainable through
+<code>cke.v8.compile</code>.</p>
+</section>
+
 <section id="gelu-automatic-training">
 <h2>Exact-erf GELU in automatic backward lowering</h2>
 <p>The existing FP32 checked GELU forward and derivative now expose contiguous, fixed-batch training
@@ -1340,7 +2557,7 @@ with relative 3e-4. PyTorch absence explicitly skips the independent comparison.
 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 python3 -m unittest tests.test_v8_gelu_training -v
 python3 scripts/nightly_runner.py --tests training_gelu_composition --ci --require-executed</code></pre>
 <p><strong>Complete Clef training remains unsupported.</strong> The complete inference circuit still
-needs automatic bindings for pooling, indexed/scalar scoring, grouped loss and their branch joins.
+now has indexed/scalar and grouped-loss component evidence; complete graph authoring remains.
 Training authoring must then connect that graph to the existing workflow. Only after complete gradients,
 updates and export/reload pass should the local job registry advertise a Clef head recipe.
 Backbone-feature capture and frozen-backbone execution remain separate evidence levels.</p>
@@ -1536,10 +2753,10 @@ checkpoint/resume and inference-export workflow. Do not add a second model execu
 <tr><td>LayerNorm</td><td><code>layernorm_backward_kernel</code> in <code>layernorm_kernels.c</code>; BF16 variant in <code>layernorm_kernels_bf16.c</code>.</td><td>Cached-statistics training maps and native optimizer composition now pass; wire them into the complete head while preserving operation-local epsilon.</td></tr>
 <tr><td>Erf GELU</td><td>Checked erf derivative now has FP32 VJP and generated-chain evidence; earlier <code>gelu_backward_exact</code> differentiates tanh.</td><td>Wire the erf provider into automatic head backward; BF16 remains separate.</td></tr>
 <tr><td>Unmasked self/cross-attention</td><td>Checked FP32 noncausal dQ/dK/dV with ordered oracle, PyTorch autograd and native optimizer composition now pass.</td><td>Integrate the provider into the complete head. Masked and BF16 attention training are separate; existing causal providers are not substitutes.</td></tr>
-<tr><td>Token-span pooling and last-token selection</td><td>Checked span VJP accumulates overlapping spans with generated-chain evidence.</td><td>Wire automatic backward and final-row selection, with explicit accumulation for separate branches.</td></tr>
+<tr><td>Token-span pooling and last-token selection</td><td>Checked span VJP accumulates overlapping spans with generated-chain evidence.</td><td>Automatic span VJP and branch accumulation pass in the typed-input training composition; integrate final-row selection and the complete head.</td></tr>
 <tr><td>Embedding/gather and residual branches</td><td><code>embedding_backward_f32.json</code>, native BF16 embedding scatter, <code>residual_add_backward_f32.json</code>, gradient-accumulation providers.</td><td>Wire type-embedding gradients, indexed-owner scatter and broadcast reductions. Frozen output embeddings need no updates, while required hidden-feature gradient paths remain explicit.</td></tr>
-<tr><td>Grouped softmax-weighted pooling</td><td>Checked options/query VJP covers both score and value paths, unequal and singleton groups.</td><td>Connect to full-head backward synthesis and loss; the tested isolated chain is not head training.</td></tr>
-<tr><td>Cosine, pair features, scalar transforms</td><td>Indexed pair features and distinct normalized-dot/cosine FP32 VJPs now have generated branch-join evidence.</td><td>Wire automatic head backward with explicit clamp policy; add scalar/gain and remaining indexed derivatives, then certify complete scoring parameter gradients.</td></tr>
+<tr><td>Grouped softmax-weighted pooling</td><td>Checked options/query VJP covers both score and value paths, unequal and singleton groups.</td><td>Automatic VJP and shared-input branch accumulation pass in generated training; connect complete-head authoring and loss.</td></tr>
+<tr><td>Cosine, pair features, scalar transforms</td><td>Indexed pair features and distinct normalized-dot/cosine FP32 VJPs now have generated branch-join evidence.</td><td>Automatic FP32 combined scoring now covers pair/cosine branches and learned scalar/gain gradients with 40 native updates. Complete released-head authoring and training remain uncertified.</td></tr>
 <tr><td>Loss and optimizer</td><td><code>softmax_cross_entropy_loss.json</code> and <code>adamw_update_f32.json</code>; existing trajectory/resume/export machinery.</td><td>Declare one label per question and loss reduction over unequal option counts, then verify every trainable parameter, frozen hashes, optimizer moments and restart equivalence.</td></tr>
 </tbody></table>
 <p><code>version/v8/scripts/run_training_workflow_v8.py:_apply_semantic_model</code> currently admits
@@ -1830,7 +3047,7 @@ export CKE_CLEF_FLASH_REFERENCE_SOURCE=/path/to/joint_schema_model.py</code></pr
             </div>
             <div style="text-align: right;">
                 <p style="color: #606060; font-size: 0.75rem; margin: 0;">Static docs · C-first execution</p>
-                <p style="color: #606060; font-size: 0.75rem; margin: 0.5rem 0 0 0;">2026-11-08</p>
+                <p style="color: #606060; font-size: 0.75rem; margin: 0.5rem 0 0 0;">2026-11-14</p>
             </div>
         </div>
     </footer>

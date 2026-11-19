@@ -1,4 +1,4 @@
-"""Independent simulated Antsand job observer; no worker implementation imports."""
+"""Independent simulated external job observer; no worker implementation imports."""
 import math
 import re
 
@@ -8,30 +8,41 @@ def check(ok):
     if not ok:raise InvalidObservation('INVALID_OR_STALE_OBSERVATION')
 def hexid(x,n):return type(x) is str and re.fullmatch('[a-f0-9]{'+str(n)+'}',x) is not None
 
-def observe(value,*,worker_boot_id,owner,job_id,plan_sha256,experiment_id,draft_revision,last=None,allow_simulation=False):
+def observe(value,*,worker_boot_id,owner,job_id,plan_sha256,experiment_id,draft_revision=None,client_revision=None,last=None,allow_simulation=False):
     check(type(value) is dict and set(value)=={'job','worker_boot_id','observed_at','cancel_supported'})
     check(hexid(worker_boot_id,32) and value['worker_boot_id']==worker_boot_id and value['cancel_supported'] is False)
-    j=value['job'];check(type(j) is dict and set(j)=={'schema','job_id','owner','experiment_id','draft_revision','submitted_worker_boot_id','cke_commit','plan_sha256','status','stage','created_at','updated_at','error_code','artifacts','metrics','execution_kind','progress'})
-    check(j['schema']=='cke.training.job.v1' and hexid(job_id,32) and j['job_id']==job_id and hexid(plan_sha256,64) and j['plan_sha256']==plan_sha256)
-    check(type(owner) is str and bool(owner) and j['owner']==owner and j['experiment_id']==experiment_id and type(draft_revision) is int and j['draft_revision']==draft_revision)
+    j=value['job'];v2=client_revision is not None
+    check(type(j) is dict and set(j)-({'client_revision'} if v2 else set())=={'schema','job_id','owner','experiment_id','draft_revision','submitted_worker_boot_id','cke_commit','plan_sha256','status','stage','created_at','updated_at','error_code','artifacts','metrics','execution_kind','progress'})
+    check(j['schema']==('cke.training.job.v2' if v2 else 'cke.training.job.v1') and hexid(job_id,32) and j['job_id']==job_id and hexid(plan_sha256,64) and j['plan_sha256']==plan_sha256)
+    check(type(owner) is str and bool(owner) and j['owner']==owner and j['experiment_id']==experiment_id and j['draft_revision']==draft_revision)
+    if v2:check(draft_revision is None and hexid(client_revision,32) and j.get('client_revision')==client_revision)
+    else:check(type(draft_revision) is int and type(j['draft_revision']) is int)
     check(hexid(j['submitted_worker_boot_id'],32) and hexid(j['cke_commit'],40))
     for t in (value['observed_at'],j['created_at'],j['updated_at']):check(type(t) in (float,int) and math.isfinite(t) and t>0)
     check(j['created_at']<=j['updated_at']<=value['observed_at'])
     check(j['status'] in ('queued','running','succeeded','failed','recovery_required'))
     check(j['stage']=={'queued':'admission','running':'workflow','succeeded':'complete','failed':'complete','recovery_required':'unknown'}[j['status']])
     check(j['execution_kind']=='native_generated_workflow' or (allow_simulation and j['execution_kind']=='contract_simulation'))
-    check(j['progress'] is None and type(j['metrics']) is list and len(j['metrics'])<=2)
+    p=j['progress']
+    if p is not None:
+        check(type(p) is dict and set(p)=={'stage','completed_steps','total_steps'})
+        check(p['stage'] in ('training','complete') and type(p['completed_steps']) is int and type(p['total_steps']) is int and 0<=p['completed_steps']<=p['total_steps']<=100000)
+        check(p['stage']!='complete' or p['completed_steps']==p['total_steps'])
+    check(type(j['metrics']) is list and len(j['metrics'])<=2)
     for metric in j['metrics']:
         check(type(metric) is dict and set(metric)=={'name','step','step_kind','value','unit','observed_at'})
-        check(metric['name'] in ('training_cross_entropy','validation_cross_entropy') and type(metric['step']) is int and metric['step']>=2 and metric['step_kind']=='epoch' and metric['unit']=='nats/token')
+        check(type(metric['step']) is int)
+        decoder=(metric['name'] in ('training_cross_entropy','validation_cross_entropy') and metric['step']>=2 and metric['step_kind']=='epoch' and metric['unit']=='nats/token')
+        head=(metric['name'] in ('validation_cross_entropy_before','validation_cross_entropy') and 1<=metric['step']<=100000 and metric['step_kind']=='update' and metric['unit']=='nats/question')
+        check(decoder or head)
         check(type(metric['value']) in (int,float) and math.isfinite(metric['value']) and metric['value']>=0)
         check(type(metric['observed_at']) in (int,float) and j['created_at']<=metric['observed_at']<=value['observed_at'])
     check(type(j['artifacts']) is list and len(j['artifacts'])<=16)
     ids=[]
     for a in j['artifacts']:
         check(type(a) is dict and set(a)=={'artifact_id','type','bytes','sha256'})
-        check(hexid(a['artifact_id'],32) and hexid(a['sha256'],64) and type(a['bytes']) is int and 0<a['bytes']<=16*1024**2)
-        check(a['type'] in ('execution_plan','training_report','checkpoint_manifest','training_plan','training_pipeline'));ids.append(a['artifact_id'])
+        check(hexid(a['artifact_id'],32) and hexid(a['sha256'],64) and type(a['bytes']) is int and 0<a['bytes']<=(512 if a['type'] in ('trained_head','inference_package','training_report') else 16)*1024**2)
+        check(a['type'] in ('execution_plan','training_report','checkpoint_manifest','training_plan','training_pipeline','trained_head','inference_package'));ids.append(a['artifact_id'])
     check(len(ids)==len(set(ids)))
     if j['status']=='succeeded':check(j['error_code'] is None and {'training_report','execution_plan'}<={a['type'] for a in j['artifacts']})
     elif j['status'] in ('failed','recovery_required'):check(type(j['error_code']) is str and bool(j['error_code']))

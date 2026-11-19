@@ -1056,6 +1056,152 @@
 
 <div class="alert alert-warning"><strong>No full vision artifact is certified for the HTTP harness yet.</strong> Generated image paths run, but independent numerical, task-quality, and live-serving gates have not all passed on one pinned artifact. Unsupported bundles should continue rejecting image requests.</div>
 
+<section id="experimental-vision-http">
+<h2>Experimental Qwen3-VL image HTTP adapter</h2>
+<p>The separate <code>server.vision_http</code> service connects uploaded PNG/JPEG bytes to the
+existing generated encoder and visual native-session entry. Ordinary text serving remains unchanged.
+It binds only to loopback. Its supported surface is <code>/v1/chat/completions</code>, streamed or
+non-streamed, with exactly one image across the caller-supplied conversation. Tools, PDFs, remote
+image fetching and additional images are explicitly unsupported. A PDF must first be rendered into
+page images by the client; this first endpoint handles one page per request.</p>
+<p>One request owns admission before upload starts; other requests receive 429. Uploads are bounded
+at 12 MiB and 30 seconds, image bytes at 8 MiB, decoded pixels at 16 million, text at 64 KiB and
+output at 1,024 tokens, further restricted by the generated context capacity. Each request uses a
+fresh subprocess with a 32 GiB address-space limit. This is not resident serving or batching.
+Cancellation kills and reaps that worker before releasing admission. A streaming response supplies
+<code>X-Request-ID</code>; cancel it with <code>DELETE /v1/requests/{id}</code>. Closing the client
+connection also cancels work. Healthy native execution has no automatic inference deadline.</p>
+<p>Pin operator-owned generated artifacts before launch. The decoder directory needs
+<code>libmodel.so</code>, its packaged engine/tokenizer, weights, layouts and imported publisher
+<code>chat_template.jinja</code>. The profile hashes these inputs, the GGUF tokenizer source and the
+native session library. Artifact changes require explicit re-pinning; rebuilding a bundle does not
+silently upgrade the running profile.</p>
+<pre><code>make ck-session-v8
+python -m server.vision_bundle --encoder /path/to/encoder --decoder /path/to/decoder \
+  --tokenizer-gguf /path/to/model.gguf --model cke-qwen3-vl-experimental \
+  --image-placeholder '&lt;|image_pad|&gt;' --output /path/to/profile.json
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 python -m server.vision_http \
+  --profile /path/to/profile.json --threads 4 --port 8120
+curl http://127.0.0.1:8120/v1/capabilities
+python scripts/vision_http_client.py --model cke-qwen3-vl-experimental \
+  --image ./example.png --prompt 'Describe the image.' --max-tokens 4 --stream</code></pre>
+<p>The client example uses only Python's standard library and can be copied to another machine.
+Connect through SSH forwarding for remote use. No unauthenticated remote listener is provided.
+Capabilities describe preflight validation, not full numerical certification. Startup loads and frees
+both native models; workers verify pinned artifacts again for every request.</p>
+<p>The November 14 P3 smoke test uses a generated 56-by-56 two-color fixture, four visual rows,
+20 prompt rows and only 256 tokens of compiled capacity. Both response modes produced the same
+four tokens and first full-vocabulary logit hash as retained standalone execution. This is a budget-
+truncated output, not an answer-quality or normal-EOS pass. Rejection, busy admission, cancellation
+and follow-up recovery were exercised separately. Cold request cost includes hashing and loading;
+these timings must not be presented as warm resident performance. See the
+<a href="assets/vision-http-20261114.json">retained scope and evidence</a>.</p>
+<p>Next gates: larger pinned context and image geometry, complete answers, repeated image/follow-up
+trajectories, disconnect stress, then a real harness task. Independent encoder accuracy remains a
+separate open gate. Stop this isolated service to roll back; it does not replace text or speech services.</p>
+</section>
+
+<section id="image-answer-acceptance">
+<h2>Repeatable image answers and follow-up acceptance</h2>
+<p>Cancellation now retains ownership while subprocess creation finishes, then reaps the child before
+releasing admission. The delayed-creation regression fails against the previous controller and passes
+with this change; test cleanup also reaps its deliberate negative-control child. A failed transport
+before stream iteration also releases admission, and nested generators close before a new request
+can start. The CLI allows five seconds for graceful server shutdown before cancelling active requests;
+this does not impose a normal inference deadline.</p>
+<p>The acceptance lane uses committed two-color PNG/JPEG fixtures, swapped left/right colors,
+repeated requests and caller-supplied follow-up history. The assessor requires the requested JSON
+answer and normal stop; a truncated answer, swapped colors, duplicate JSON keys, extra contradictory
+text, reused request ID or service restart cannot pass. Every attempt gets its own report directory;
+it starts INCOMPLETE and preserves responses collected before a failure. A timeout is INCOMPLETE,
+not a model-quality verdict. This command is suitable for an opt-in local nightly; no timer is installed
+and no old result is substituted for a current attempt.</p>
+<p>For a stronger connection check, launch the isolated test service with <code>--verify-reference</code>.
+This operator-only flag repeats direct generated prefill using the identical rendered IDs and encoded
+prefix before native-session execution. Initial full-vocabulary logits must match exactly. It doubles
+prefill work and is intended for diagnosis, not performance measurement. The independent encoder
+oracle, later decode logits and full mutable-state comparisons remain separate gates.</p>
+<pre><code>python -m server.vision_http --profile /path/to/2k-profile.json --port 8121 \
+  --threads 4 --verify-reference
+python scripts/certify_vision_http.py --base-url http://127.0.0.1:8121 \
+  --model cke-qwen3-vl-2k --fixtures tests/fixtures/vision_http_acceptance \
+  --expected-bundle THE_PINNED_BUNDLE_SHA256 --require-reference \
+  --output-root /private/vision-acceptance --timeout 600</code></pre>
+<p>The expected bundle must come from the operator's retained profile and preflight evidence; do not
+silently adopt whichever identity happens to answer. The client verifies boot identity and loaded
+libraries across the run. Output contains the public fixture answers, hashes, token counts and timings.
+Use a dedicated endpoint so other clients do not interrupt single-request admission.</p>
+<p>The retained 2K bundle has 32 visual rows and preprocesses the 224-by-112 fixtures to its compiled
+256-by-128 geometry. Allocated 2K capacity is not certification of 2K rendered prompts. These simple
+color tasks do not establish OCR, arbitrary visual reasoning, tools, real harness integration, resident
+latency or sustained unattended operation. See the <a href="assets/vision-http-acceptance-20261114.json">actual acceptance verdicts and prompt counts</a>.</p>
+</section>
+
+<section id="native-visual-session">
+<h2>Native visual session: first connected decoder boundary</h2>
+<p>The next experimental step adds <code>ck_session_v8_generate_visual</code> and
+<code>SessionV8.generate_visual</code>. One already-encoded visual block sits between exact rendered token
+segments. The existing generation lock, decoder loop, token callbacks, cancellation flag and failure reset
+remain the execution owner. That native change alone did not add HTTP serving; the experimental adapter above now connects it. It is not a resident encoder service.</p>
+<p>The generated decoder exports its exact visual-row width, including any deep-stack slices. Older bundles
+without that contract reject this entry. Native admission checks token IDs, finite visual values, buffer
+extent, grid geometry, explicit text position, sampling parameters and both requested and loaded context
+capacities before reset. Failed or cancelled execution resets the affected state. Visual requests do not
+publish text checkpoints or enable prefix reuse. The Python binding owns a prefix copy during execution;
+its storage must be included in the future HTTP memory budget.</p>
+<p>A fresh Qwen3-VL-8B-Instruct Q4_K_M decoder and BF16 vision projector processed a generated 56-by-56
+image into four visual rows of 16,384 floats, with 20 total prompt rows. Three native session repetitions
+matched direct generated execution for all four full-vocabulary logit rows, active positions and declared
+KV arenas. KV comparison includes arena padding; internal bridge scratch is not captured. This establishes
+same-artifact session equivalence, not an independent encoder oracle, OCR accuracy, long-context or harness
+certification. Four-token generation stopped at its requested budget.</p>
+<p>The first real load exposed a deployment gap: standalone bridge libraries relied on a globally preloaded
+tokenizer. The bundle compiler now links and packages that dependency, hashes it in the build fingerprint,
+and invalidates old compile stamps. A fresh-process relocation test covers this defect.</p>
+<p><a href="assets/vision-native-session-20261114.json">Retained native evidence and limitations</a>.
+The opt-in replay command consumes an existing bridge report and its exact prefix/logit captures:</p>
+<pre><code>python version/v8/scripts/certify_visual_session_v8.py   --bridge-report /path/to/bridge_report.json   --prefix-f32 /path/to/prefix.f32   --reference-logits-f32 /path/to/logits.f32   --output /path/to/current-session-report.json</code></pre>
+<p>The probe writes INCOMPLETE before starting and FAIL on missing inputs or an execution error. It verifies
+actually loaded library hashes. Synthetic compiled tests separately exercise A/B/A, failed prefill, invalid
+admission without mutation, cancellation, close ownership and successful follow-up. They are not model
+arithmetic certification. These native tests remain separate from the HTTP smoke evidence above.</p>
+<p>The experimental HTTP adapter above connects this boundary for one pinned bundle. Larger-context task acceptance and image-plus-tool continuation remain open. Ordinary text and speech services are unchanged.</p>
+</section>
+
+<section id="serving-integration">
+<h2>Experimental serving integration: upload contract first</h2>
+<p>As of 2026-11-13, the ordinary HTTP session still rejects live images. The generated standalone bridge
+already executes image preprocessing, encoder, visual prefix and decoder, but the complete upload/encoder/session path is not
+yet exposed through HTTP. The first serving change adds <code>server.vision_input.prepare_vision_input</code>:
+a model-independent, ordered input contract. This is a callable validation helper, not a new HTTP endpoint
+or a claim of harness acceptance.</p>
+<p>The harness owns local file access. It must read an explicitly selected file and upload its bytes as a
+PNG/JPEG base64 data URL. A filename on the laptop is not a filename on P3. The helper accepts Responses
+<code>input_text/input_image</code> and Chat Completions <code>text/image_url</code> parts and preserves their
+order and original image bytes. It does not flatten images into text, resize them, fetch URLs, read server
+paths, or modify publisher templates. Model-specific preprocessing remains in the generated pipeline.</p>
+<p>Initial defaults allow one image, 8 MiB total compressed image data, 16 million decoded pixels,
+64 KiB of UTF-8 text and 32 ordered parts. These are input-safety bounds, not a bundle's token capacity or
+supported visual geometry. Future HTTP integration must additionally bound raw body size and concurrent
+uploads before JSON parsing. Animated images, PDF, audio/video parts, remote URLs, file IDs and explicit
+image detail modes are rejected until their own contracts exist.</p>
+<ol>
+<li>Pin and rebuild one Qwen3-VL encoder/decoder pair with loaded library, tokenizer and preprocessing identities.</li>
+<li>Expose generated mixed-image/text execution through a checked native session adapter. Bind visual rows,
+positions, masks and any deep-stack inputs to their owner. Reject unsupported order/geometry before mutation.</li>
+<li>Use the upload contract at HTTP admission only for a bundle declaring the connected capability. Validate
+visual plus text plus output capacity; serialize native ownership and keep prefix caches disabled until certified.</li>
+<li>Compare identical image bytes and rendered tokens through standalone and HTTP execution, including full
+logits and applicable state. Exercise reset, cancellation, streaming and a successful follow-up.</li>
+<li>Connect a real harness, then add image-plus-tool continuation and explicitly tested multi-image ordering.</li>
+</ol>
+<p>The server suite covers malformed images, MIME mismatches, truncation, aggregate limits, part order,
+Unicode, request independence and rejection before expensive decoding. It also retains the live-media
+rejection tests. These are admission tests, not encoder parity tests. Qwen Code, Nemotron harnesses and other
+clients gain image support only for an explicitly supported vision artifact; text-family support alone is
+insufficient. PDF rasterization and its page/pixel limits belong to a separate follow-up.</p>
+</section>
+
 <div class="vision-status-table-wrap" role="region" aria-label="Vision artifact status" tabindex="0">
 <table class="vision-status-table">
 <thead><tr><th scope="col">CKE artifact</th><th scope="col">Encoder vs llama.cpp</th><th scope="col">Decoder vs llama.cpp</th><th scope="col">PyTorch</th><th scope="col">Image tasks</th><th scope="col">HTTP / harness</th><th scope="col">First unresolved boundary</th></tr></thead>
@@ -1066,7 +1212,7 @@
   <td><span class="vision-status-label pending">Historical scoped PASS</span><small>Shared-prefix decoder campaigns passed under older artifacts and oracle settings. Current independent-prefix certification is open. <a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/pull/506">#506</a></small></td>
   <td><span class="vision-status-label none">NOT TESTED</span><small>No complete independent PyTorch encoder-to-decoder verdict recorded here.</small></td>
   <td><span class="vision-status-label pending">NOT CERTIFIED</span><small>Current independent image-to-answer and broader quality gates remain open.</small></td>
-  <td><span class="vision-status-label none">NOT CONNECTED</span><small>Image upload and tool continuation are not promoted. <a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/issues/894">#894</a></small></td>
+  <td><span class="vision-status-label pending">EXPERIMENTAL HTTP</span><small>Tiny pinned upload smoke passed; full harness and tool continuation are not promoted. <a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/issues/894">#894</a></small></td>
   <td>Late visual-prefix row outlier; its first causal layer is unresolved. <a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/issues/893">Track</a></td>
 </tr>
 <tr>
@@ -1354,7 +1500,7 @@
             </div>
             <div style="text-align: right;">
                 <p style="color: #606060; font-size: 0.75rem; margin: 0;">Static docs · C-first execution</p>
-                <p style="color: #606060; font-size: 0.75rem; margin: 0.5rem 0 0 0;">2026-11-06</p>
+                <p style="color: #606060; font-size: 0.75rem; margin: 0.5rem 0 0 0;">2026-11-14</p>
             </div>
         </div>
     </footer>
