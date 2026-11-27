@@ -1,6 +1,22 @@
 {
-  "updated": "2026-11-26T12:14:32.971862Z",
+  "updated": "2026-11-27T10:53:34.387121Z",
   "reports": [
+    {
+      "date": "2026-11-27",
+      "file": "report-2026-11-27.json",
+      "summary": {
+        "total": 469,
+        "passed": 423,
+        "failed": 0,
+        "skipped": 46,
+        "timeout": 0,
+        "sub_tests_total": 2369,
+        "sub_tests_passed": 2172,
+        "sub_tests_failed": 35,
+        "sub_tests_not_tested": 162
+      },
+      "duration_sec": 10106.538155794144
+    },
     {
       "date": "2026-11-26",
       "file": "report-2026-11-26.json",
@@ -464,22 +480,6 @@
         "sub_tests_not_tested": 132
       },
       "duration_sec": 9953.727198600769
-    },
-    {
-      "date": "2026-10-28",
-      "file": "report-2026-10-28.json",
-      "summary": {
-        "total": 354,
-        "passed": 319,
-        "failed": 0,
-        "skipped": 35,
-        "timeout": 0,
-        "sub_tests_total": 1933,
-        "sub_tests_passed": 1766,
-        "sub_tests_failed": 35,
-        "sub_tests_not_tested": 132
-      },
-      "duration_sec": 9097.254838466644
     }
   ]
 }
