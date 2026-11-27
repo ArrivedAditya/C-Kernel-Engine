@@ -1012,6 +1012,512 @@ git diff --exit-code -- version/v8/kernel_maps/KERNEL_REGISTRY.json   <span clas
   </div>
   <div class="svg-expand-hint">click / tap the diagram to expand</div>
 
+  <h3 id="inkling2-mini-import">Inkling 2 Mini checkpoint audit</h3>
+  <p>The <a href="https://huggingface.co/thinkingmachines/Inkling-2-Mini/tree/ed40e7da625f594fc9c4990f5f66be24873c22d7">pinned publisher checkpoint</a>
+  contains 24 physical text layers. The 12-layer core runs three passes, yielding
+  48 text-layer evaluations. A later pass restarts from the prelude and consumes
+  messages from the prior pass. Each occurrence has independent KV and causal
+  convolution state. The schedule is cross-checked against the
+  <a href="https://github.com/huggingface/transformers/blob/046bdb8cc2cee29d233964bb77fe6fd37cfe4aa3/src/transformers/models/inkling2_loop/modeling_inkling2_loop.py">Transformers implementation</a>.</p>
+  <p>The audit checks the publisher tensor index against the shard header and validates
+  the expert matrices and scale-sidecar shapes. Layers 0&ndash;19 declare NVFP4
+  and its per-token four-over-six activation policy. Layers 20&ndash;23 declare MXFP8
+  and E8M0 activation scales. CKE's existing packed NVFP4 providers require an explicit
+  packing and arithmetic comparison before selection. This stage produces
+  a metadata report. The main-shard inventory includes vision tensors and
+  excludes the separate MTP shard.</p>
+  <pre class="mb-code"><code>python3 version/v8/scripts/audit_inkling2_mini_v8.py /path/to/new-metadata-dir --fetch \
+  --revision ed40e7da625f594fc9c4990f5f66be24873c22d7</code></pre>
+  <p>Fetch uses HTTP ranges for the safetensors header and downloads no tensor payload.
+  The retained <a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/blob/main/docs/notes/artifacts/inkling2_mini_import_audit.json">audit report</a>
+  records the metadata identities, observed storage and explicit state schedule.
+  The next execution gate is a text-only generated block replay with matching
+  projection inputs, attention and convolution state, followed by one cross-pass
+  message/control replay. Speculative decoding, images and serving follow text execution.</p>
+
+  <h3 id="inkling2-mini-gguf-import">Inkling 2 Mini GGUF import contract</h3>
+  <p>The normal GGUF inspection command checks the 704 tensor names, tensor
+  shapes, storage types and declared byte extents. It resolves the 24
+  physical layers into 48 execution slots with separate sequence state.
+  The report distinguishes a complete tensor directory from a local file
+  containing only the header.</p>
+  <pre class="mb-code"><code>python3 version/v8/scripts/convert_gguf_to_bump_v8.py \
+  --gguf /path/to/Inkling-2-Mini-Q8_0.gguf --inspect --inspect-layers</code></pre>
+  <p>The <a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/blob/main/docs/notes/artifacts/inkling2_mini_gguf_header_audit.json">retained inspection</a> passed on pinned ggml-org BF16, Q8_0, and IQ4_NL headers.
+  The BF16 file declares BF16 expert tensors and F32 control tensors.
+  The IQ4_NL file declares IQ4_NL expert tensors in layers 0 to 19 and
+  Q8_0 expert tensors in layers 20 to 23. The Q8_0 and IQ4_NL replays
+  below test selected expert-layer computation. Complete native conversion
+  and generation remain unavailable for all three files.</p>
+
+  <h3 id="inkling2-mini-q4km-block">Inkling 2 Mini Q4_K_M mixed decoder blocks</h3>
+  <p>The bounded decoder probe reads the stored type of each projection from
+  the pinned GGUF tensor directory. It keeps Q4_K and Q6_K attention weights
+  packed and selects the expert provider for Q4_K gate/up with Q5_0 or Q8_0 down.
+  Projections currently use FP32 inputs and ordered FP64 accumulation.</p>
+  <p>The asset-free regression uses both down formats and checks generated
+  provider selection, prefill/append outputs, KV, and convolution history.
+  The real-weight probe replays physical layers 0 and 6. Layer 6 receives the
+  captured layer-5 output and the original depth-bank row for each position.
+  It reports full-block error against the pinned llama.cpp capture under that
+  runtime's arithmetic.</p>
+  <p>The generated token replay also accepts the pinned Q4_K_M file. It
+  selects storage per tensor, including the Q4_K token embedding and Q6_K
+  output projection, and invokes the same prefill and append entries used by
+  the Q8_0 lane. The mixed path uses ordered FP64 accumulation. On x86,
+  AVX2 and F16C accelerate Q4_K unpacking and products while preserving
+  the accumulation order. Independent expert work uses the CKE worker pool.</p>
+  <p>For the opt-in packed activation experiments, pass
+  <code>--q8-k-expert-hidden</code> to select Q8_K inputs to routed Q4_K gate
+  and up projections, or <code>--q8-k-linear-input</code> to select Q8_K inputs
+  to dense Q4_K projections. Combine <code>--q8-0-expert-down</code> with
+  <code>--q8-k-expert-hidden</code> to pack down-projection inputs as Q8_0.
+  The compiler plans checked scratch for the selected providers. These flags
+  change the activation arithmetic.</p>
+  <p><code>--q8-k-q6-input</code> selects packed Q8_K inputs for Q6_K
+  projections, including the output head. <code>--group-experts</code>
+  groups prefill rows by expert. With <code>--pair-expert-rows</code> two
+  routed rows can share the Q4_K weight unpacking.
+  <code>--dispatch-expert-pairs</code> lets workers take independent row
+  pairs from a shared queue. The grouped providers mix results in each
+  token's original expert order.</p>
+  <pre class="mb-code"><code>python3 version/v8/scripts/replay_inkling2_text_loop_v8.py \
+  --gguf /path/to/Inkling-2-Mini-Q4_K_M.gguf --weight-format q4_k_m \
+  --config /path/to/config.json --tokens-file /path/to/prompt.ids \
+  --append-tokens-file /path/to/continuation.ids --context-capacity 64 \
+  --chunk-tokens 4 --circular-sliding --last-prefill-logit \
+  --output /path/to/new-q4km-replay</code></pre>
+
+  <h3 id="inkling2-mini-layer6">Inkling 2 Mini layer 6 projection replay</h3>
+  <p>The generated checked graphs replay layer 6 Q, K, V, relative-logit and sink
+  projections, plus the query controller's forget and gain projections and tanh.
+  The command reads seven BF16 tensors (26.1 MB) from pinned shard byte ranges,
+  expands them to FP32 and compares against PyTorch eager FP32. Both paths receive
+  the same deterministic synthetic operands. The largest absolute difference
+  across one- and eight-row executions was 1.19 &times; 10<sup>&minus;7</sup>.
+  The <a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/blob/main/docs/notes/artifacts/inkling2_mini_layer6_projection_replay.json">replay report</a>
+  records tensor hashes, generated build identities and per-checkpoint error.</p>
+  <pre class="mb-code"><code>python3 version/v8/scripts/replay_inkling2_mini_projections.py \
+  --header /path/to/metadata/safetensors-header.json --output /path/to/new-replay</code></pre>
+  <p>The generated path currently starts at normalized attention rows or a supplied
+  controller bottleneck. Certification of a full block needs the causal
+  convolution, attention score and sink algebra, quantized experts, controller
+  merge, and state continuity. Validate prefill and a continuation token before
+  comparing the second occurrence of layer 6 with independent state.</p>
+
+  <h3 id="inkling2-mini-kv-continuation">Inkling 2 Mini layer 6 K/V continuation</h3>
+  <p>The next generated graph connects the pinned K/V projections to static causal
+  depthwise convolution, residual scaling, headwise key clipping and value RMS
+  normalization, and checked cache writes. The new providers use FP32 storage,
+  ordered FP64 accumulators and caller-owned sequence buffers. The bounded replay
+  compares 8-row prefill plus one append with uninterrupted 9-row execution in
+  state slots 6, 24 and 36. Each slot shares the physical layer's weights and owns
+  independent convolution history and head-major K/V storage.</p>
+  <p>With real publisher weights and supplied synthetic activations, all six K/V
+  comparisons were bit-exact for split versus uninterrupted execution in the
+  output, convolution history and logical stored K/V. The maximum stored K/V
+  error against PyTorch eager FP32 was 2.86 &times; 10<sup>&minus;6</sup>.
+  Giving slot 24 the convolution history from slot 6 changed the continuation
+  by up to 3.25. See the
+  <a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/blob/main/docs/notes/artifacts/inkling2_mini_layer6_causal_kv.json">pinned replay report</a>.</p>
+  <pre class="mb-code"><code>python3 version/v8/scripts/replay_inkling2_mini_causal_kv.py \
+  --header /path/to/metadata/safetensors-header.json --output /path/to/new-kv-replay</code></pre>
+  <p>This is state isolation for one generated K/V component using supplied inputs.
+  The cache is large enough for the tested prefix and append. Later gates cover
+  attention scores and sinks, sliding-window eviction, cross-pass message
+  generation, quantized experts and full native decoder and HTTP execution.</p>
+
+  <h3 id="inkling2-mini-relative-attention">Inkling 2 Mini cached attention replay</h3>
+  <p>Generated layer-6 attention consumes the preserved K/V cache. It applies a
+  causal window, gathers one relative logit per visible distance, and includes
+  the sink in softmax with a zero value. The replay supplies prepared query rows
+  and sink logits. It forms the relative band from synthetic per-head features
+  and the pinned publisher table.</p>
+  <p>In the <a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/blob/main/docs/notes/artifacts/inkling2_mini_layer6_relative_attention.json">real-weight replay</a>,
+  eight rows plus one append agreed bit for bit with nine uninterrupted rows in
+  each of the three state slots. The maximum difference from dense eager FP32
+  PyTorch across attention outputs was 1.67 &times; 10<sup>&minus;6</sup>. The
+  smaller asset-free check uses a short window and a bias band shorter than that
+  window. Its comparisons detect missing window masking, relative bias, or sinks.</p>
+  <pre class="mb-code"><code>python3 version/v8/scripts/replay_inkling2_mini_causal_kv.py --attention \
+  --header /path/to/metadata/safetensors-header.json --output /path/to/new-attention-replay</code></pre>
+  <p>This scoped reader uses a non-evicting cache. Connecting the remaining
+  projections and clipping, output gating, messages, experts and native
+  text generation remains separate from this attention replay.</p>
+
+  <h3 id="inkling2-mini-sliding-output">Inkling 2 Mini generated sliding-attention output</h3>
+  <p>The layer-6 sliding path now generates query projection and learned
+  per-head L2 clipping, relative projection and clipping, the distance
+  bias band, and the sink. It reads the generated K/V cache, applies the
+  learned sigmoid output gate, and projects back to hidden width.</p>
+  <p>The <a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/blob/main/docs/notes/artifacts/inkling2_mini_sliding_attention_output.json">pinned replay</a>
+  used the real layer-6 weights expanded to FP32, with synthetic already
+  normalized Q/K/V inputs. The projected result matched bit for bit for
+  eight rows plus one append versus nine uninterrupted rows in slots 6,
+  24, and 36. The largest difference from FP32 PyTorch was 6.56 &times;
+  10<sup>&minus;7</sup>. The asset-free case uses active clipping,
+  short window and bias extents, and an ungated-output negative control.</p>
+  <pre class="mb-code"><code>python3 version/v8/scripts/replay_inkling2_mini_causal_kv.py --sliding-output \
+  --header /path/to/metadata/safetensors-header.json --output /path/to/new-sliding-replay</code></pre>
+  <p>This path leaves the cross-pass message construction, block residual
+  attention, full-attention layers, and live request state to subsequent
+  integration. These measurements use expanded FP32 attention weights.</p>
+
+  <h3 id="inkling2-mini-expert-execution">Inkling 2 Mini generated expert replay</h3>
+  <p>The replay reads one NVFP4 expert from physical layer 6 and one MXFP8
+  expert from layer 20. It checks the serialized scale grids, applies each
+  NVFP4 expert's outer scale, and splits interleaved gate and up rows. For
+  MXFP8 the shard provides one scale for every output row and 32 input
+  columns, while the quantization metadata declares a 32-by-32 block.</p>
+  <p>The FP32-expanded weights feed a generated gate projection, up
+  projection, softcapped SwiGLU and down projection. The sigmoid uses the
+  original gate, and two separate tanh softcaps bound the gate and up
+  factors. The <a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/blob/main/docs/notes/artifacts/inkling2_mini_generated_experts.json">retained replay</a>
+  contains the source ranges, error at each boundary and loaded library
+  identities. Expert selection is fixed by the fixture. Routing and the
+  publisher's activation quantization still require their own tests.</p>
+  <pre class="mb-code"><code>python3 version/v8/scripts/replay_inkling2_expert_weights.py \
+  --header /path/to/metadata/safetensors-header.json --output /path/to/new-expert-replay</code></pre>
+
+  <h3 id="inkling2-mini-router">Inkling 2 Mini generated expert routing</h3>
+  <p>The connected router projects hidden rows using the checkpoint's layer-6
+  router weight. It ranks sigmoid scores plus the correction bias and
+  normalizes the original scores for the selected experts, then applies
+  the configured scale. Exact ties use ascending expert IDs in the CKE
+  provider.</p>
+  <p>The <a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/blob/main/docs/notes/artifacts/inkling2_mini_generated_router.json">pinned replay</a>
+  matched all 64 routed IDs across eight synthetic hidden rows. The largest
+  routing-weight difference from PyTorch FP32 was 1.19 &times;
+  10<sup>&minus;7</sup>. Removing the correction bias changed the selected
+  sets. This replay verifies route selection and weighting before dispatch.</p>
+  <pre class="mb-code"><code>python3 version/v8/scripts/replay_inkling2_router.py \
+  --header /path/to/metadata/safetensors-header.json --output /path/to/new-router-replay</code></pre>
+
+  <h3 id="inkling2-mini-routed-moe">Inkling 2 Mini routed expert mixture</h3>
+  <p>One generated entry runs the router, uses its IDs and weights to
+  dispatch eight experts, and sums their outputs in ascending checkpoint
+  expert-ID order. The native entry accepts a caller-owned expert bank and
+  rejects missing or duplicate bank bindings before publishing results.
+  It reads Q8_0 and IQ4_NL blocks directly in the dot product with FP32
+  activations and ordered FP64 accumulation.</p>
+  <p>The <a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/blob/main/docs/notes/artifacts/inkling2_mini_routed_moe.json">pinned replay</a>
+  covers layers 6 and 20 using the publisher checkpoint and two ggml-org
+  GGUF files. The Q8_0 GGUF uses Q8_0 expert blocks in both tested layers.
+  The IQ4_NL GGUF uses IQ4_NL in layer 6 and Q8_0 in layer 20. Native
+  binding checks use the tensor dtype. The publisher cases expand NVFP4
+  or MXFP8 weights to FP32 before native execution. All six cases match
+  the reference route IDs, and the largest mixed-output difference from
+  PyTorch FP32 is below 8 &times; 10<sup>&minus;7</sup>.</p>
+  <pre class="mb-code"><code>python3 version/v8/scripts/replay_inkling2_routed_moe.py --gguf q8_0 --layer 6 \
+  --output /path/to/new-routed-replay
+python3 version/v8/scripts/replay_inkling2_routed_moe.py --gguf iq4_nl --layer 6 \
+  --output /path/to/new-iq4-replay</code></pre>
+  <p>These replays use one synthetic hidden row at a time and fetch only
+  the selected experts. Full GGUF import, attention-to-MoE composition,
+  cross-pass state, publisher activation quantization and text generation
+  remain separate integration gates.</p>
+
+  <h3 id="inkling2-mini-q8-first-block">Inkling 2 Mini Q8_0 first decoder block</h3>
+  <p>One generated entry connects layer 0 from supplied residual rows
+  through RMS normalization, packed Q8_0 projections, causal K/V and
+  attention, output gating, depth-wise residual mixing, routed experts,
+  and the final residual addition. The block owns K/V plus K, V,
+  post-attention, and post-MoE convolution histories. Layer 0 starts
+  a depth block, so the input goes into the depth bank and the final
+  residual adds the post-attention and post-MoE outputs.</p>
+  <p>The <a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/blob/main/docs/notes/artifacts/inkling2_mini_q8_first_decoder_block.json">pinned replay</a>
+  uses the original GGUF bytes for packed tensors and loads a bounded
+  bank of experts needed by the input fixture. The native router still
+  calculates all selected IDs. Four tokens plus one append match five
+  uninterrupted tokens exactly at the layer output, K/V cache, and all
+  four convolution histories. The maximum output difference against
+  PyTorch with expanded copies of the same weights is 1.05 &times;
+  10<sup>&minus;5</sup>.</p>
+  <pre class="mb-code"><code>python3 version/v8/scripts/replay_inkling2_q8_decoder_block_v8.py \
+  --output /path/to/new-q8-block-replay</code></pre>
+  <p>This is a fixed-size, synthetic-hidden-state replay. It uses
+  FP32 activations and state with ordered FP64 packed-dot accumulation.
+  Token embeddings, full model conversion, later layers and cross-pass
+  messages remain outside this result. A failed segmented replay
+  requires state reset before reuse.</p>
+
+  <p>The CPU comparison builds llama.cpp at
+  <a href="https://github.com/ggml-org/llama.cpp/pull/32694">the Inkling
+  support revision</a> and captures its layer-0 output with the same
+  input rows and exact GGUF layer tensors. One near-cutoff route
+  changes expert 110 to expert 0 on row five. Maximum block-output
+  difference is 1.9751. Replaying the captured query dot on identical
+  weights and input gives a maximum error of 0.0382 with FP32
+  activations and 9.83 &times; 10<sup>&minus;7</sup> with Q8_0
+  activations. The report keeps this execution difference separate
+  from the FP32 arithmetic reference for the CKE provider.</p>
+  <pre class="mb-code"><code>c++ -std=c++17 -O2 -I"$LLAMA_SOURCE/include" -I"$LLAMA_SOURCE/ggml/include" \
+  version/v8/tools/llama_inkling_layer0_probe_v8.cpp -L"$LLAMA_BUILD/bin" \
+  -Wl,-rpath,"$LLAMA_BUILD/bin" -lllama -lggml -lggml-base -o /tmp/inkling-layer0-probe
+/tmp/inkling-layer0-probe "$GGUF" "$REPLAY/hidden.f32" "$REPLAY/llama-layer0"
+python3 version/v8/scripts/compare_inkling2_llama_layer0_v8.py \
+  --gguf "$GGUF" --native-replay "$REPLAY" --llama-prefix "$REPLAY/llama-layer0"</code></pre>
+  <p>Use a CPU-only llama.cpp build. The retained run backed every
+  layer-0 weight with the pinned source bytes and stopped evaluation
+  at <code>l_out-0</code>. Later weights were absent from the sparse
+  fixture.</p>
+
+  <h3 id="inkling2-mini-q8-activation">Inkling 2 Mini Q8_0 activation variant</h3>
+  <p>Selecting the opt-in variant packs FP32 operands into Q8_0 blocks
+  with FP16 scales and nearest-even integer codes. Its portable reference
+  implements the pinned x86 eight-lane FP32 FMA reduction for packed
+  projections and expert gate, up, and down products. The existing
+  FP32-activation providers remain the default reference.</p>
+  <p>The <a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/blob/main/docs/notes/artifacts/inkling2_mini_q8_activation_layer0.json">retained replay</a>
+  matches all 40 expert selections and the raw query projection against
+  the pinned llama.cpp CPU capture. Maximum layer-output error drops
+  from 1.9751 to 0.0144. Split native output, logical cache, and all four
+  convolution histories remain exact. The composed PyTorch check still
+  fails its original tolerance at the expert mixture and later boundaries.</p>
+  <p>The captured gated attention input differs by at most
+  9.54 &times; 10<sup>&minus;7</sup>, enough to change one FP16 scale
+  in the output projection's activation packing. The later FFN inputs
+  differ in two scale blocks and seven codes. Feeding llama.cpp's exact
+  captured FFN input to the generated CKE MoE matches every selected
+  expert and the mixture within 9.54 &times; 10<sup>&minus;7</sup>.</p>
+  <pre class="mb-code"><code>python3 version/v8/scripts/replay_inkling2_q8_decoder_block_v8.py \
+  --gguf "$GGUF" --q8-activations --output "$REPLAY"
+/tmp/inkling-layer0-probe "$GGUF" "$REPLAY/hidden.f32" "$REPLAY/llama-layer0"
+python3 version/v8/scripts/compare_inkling2_llama_layer0_v8.py \
+  --gguf "$GGUF" --native-replay "$REPLAY" --llama-prefix "$REPLAY/llama-layer0" \
+  --ffn-replay "$REPLAY/identical-ffn"</code></pre>
+  <p>The composed replay writes its report and exits unsuccessfully when
+  the fixed comparison fails. These are layer-zero results on synthetic
+  hidden rows. Native text generation and HTTP serving still require the
+  full decoder circuit.</p>
+
+  <h3 id="inkling2-mini-cross-pass">Inkling 2 Mini cross-pass controls</h3>
+  <p>The generated sliding block accepts the current residual, the current pass depth bank,
+  and the previous pass bank and final output. Four learned message controllers feed Q, K, V,
+  and the expert input. Each occurrence owns its KV and convolution state. The native
+  fixture checks a later-pass block with nonzero weights, an exact split comparison,
+  and an output change when the previous-pass input is changed.</p>
+  <p>A separate <a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/blob/main/docs/notes/artifacts/inkling2_mini_cross_pass.json">pinned GGUF controller replay</a>
+  compares all four controls on synthetic input banks against PyTorch FP32 at physical layers
+  6 and 11. The maximum absolute difference across checkpoints was 2.72 &times; 10<sup>&minus;6</sup>.
+  This measurement covers bounded controller tensors, with packed Q8_0 used in the compiled
+  sliding-block fixture. Full attention, the 48-occurrence execution schedule and text
+  serving remain open.</p>
+
+  <h3 id="inkling2-mini-full-attention">Inkling 2 Mini generated full-attention block</h3>
+  <p>The bounded decoder authoring can also compose full causal attention with
+  distinct Q, K and V depth queries and input normalization weights. The
+  K/V convolutions add per-token, per-head learned taps to the static filters.
+  Full attention also applies the declared logarithmic position scale to
+  Q and relative features. Relative bias becomes zero beyond its extent;
+  older keys remain visible.</p>
+  <p>The asset-free generated regression covers independent convolution and
+  position-scale comparisons, state preservation on invalid calls, and
+  exact split versus uninterrupted logits-input rows, KV, and convolution
+  histories for one later-pass full-attention layer. The kernel variant uses
+  ordered FP64 arithmetic and FP32 storage. The full model, text output and
+  long-prompt serving still require connected execution and oracle evidence.</p>
+
+  <h3 id="inkling2-mini-text-loop">Inkling 2 Mini generated fixed text loop</h3>
+  <p>A checked graph connects packed token embeddings, all 48 scheduled
+  decoder occurrences, final depth mixing and normalization, the packed
+  vocabulary head, and logit softcapping. Each occurrence owns its KV and
+  four convolution histories. Later passes restart from the pre-loop
+  residual and depth bank, and compiled edges bind the previous pass's
+  messages. The 24 physical layers share their weights.</p>
+  <p>The synthetic fixture compares full logits and each occurrence's state
+  for multiple prefill chunks and an append against uninterrupted execution.
+  The native entries validate positions before committing state. Named token,
+  logit and position ports are bound to the loaded build identity.</p>
+  <p>The <a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/blob/main/docs/notes/artifacts/inkling2_mini_q8_text_loop.json">pinned Q8_0 replay</a>
+  emits all 200,058 logits. Against an FP32 KV llama.cpp replay, the selected
+  FP64 sum of FP32 RMS squares made the first layer's query output exact.
+  Final RMSE was 0.183 for eight input tokens and 0.171 after a
+  teacher-forced append. The first 128 rendered tokens of the SVG workload
+  completed native prefill in 106.1 seconds on P3 and gave final-logit
+  RMSE 0.348. All three comparisons had the same highest-scoring token.
+  These development timings describe individual executions.</p>
+  <p>The eight-token trace showed the first substantial layer-output drift
+  at physical layer 2. The raw Q projection matched bit-for-bit on the
+  oracle's weighted normalized input. In a separate 128-output-token chat
+  comparison, the two greedy trajectories agreed for five tokens and only
+  the oracle emitted a final answer within the budget.</p>
+  <pre class="mb-code"><code>python3 version/v8/scripts/replay_inkling2_text_loop_v8.py \
+  --config "$PUBLISHER_CONFIG" --gguf "$Q8_GGUF" \
+  --tokens-file "$TOKEN_IDS" --context-capacity 256 --chunk-tokens 16 \
+  --append-token "$CONTINUATION_ID" --output "$REPLAY"</code></pre>
+  <p>Supply whitespace-separated token IDs. The replay verifies the exact
+  GGUF checksum and builds a file-backed arena. The resident entry processes
+  full chunks and uses single-token appends for the tail. Optional greedy
+  continuation requires a context with room for the requested output and
+  explicit stop IDs when stopping on model tokens is desired.</p>
+  <p>SVG workloads have been rendered at 8,192 and 32,768 input tokens.
+  Builds reserving an additional 2,048 decode tokens compiled with 34.0 GB
+  and 47.8 GB arenas, respectively. The full workloads, native tokenizer
+  integration and HTTP lifecycle remain to be verified.</p>
+
+  <h3 id="inkling2-mini-xray">Inkling Q8_0 X-Ray and threaded prefill</h3>
+  <p>The replay's <code>--threads</code> option enables OpenMP for packed Q8
+  projections and routed experts. The planner allocates packed input rows,
+  staged projection outputs and per-row expert scratch. Each route keeps its
+  selected Q8 reduction and accumulation order. On x86 with AVX2, FMA and F16C,
+  the dot routine converts packed half scales with hardware instructions.</p>
+  <p>Add <code>--xray-token-position</code> to capture all 48 layer outputs at
+  one zero-based processed token. The index records the execution sequence,
+  physical layer, loop pass and state slot. A generated token only acquires a
+  layer capture when that token is processed by an append.</p>
+  <pre class="mb-code"><code>python3 version/v8/scripts/replay_inkling2_text_loop_v8.py \
+  --config "$PUBLISHER_CONFIG" --gguf "$Q8_GGUF" --tokens-file "$TOKEN_IDS" \
+  --context-capacity 256 --chunk-tokens 16 --last-prefill-logit \
+  --threads 8 --xray-token-position 127 --output "$REPLAY"
+python3 version/v8/scripts/xray_layer_output_sweep_v8.py \
+  --subject-dir "$REPLAY/xray" --oracle-dir "$ORACLE_CAPTURES" \
+  --parity-report "$COMPARISON_METADATA" --ordered-capture \
+  --model inkling2-mini --layers 48 --token-count 128 --hidden-size 2304 \
+  --logical-token 127 --output-dir "$XRAY_REPORT"</code></pre>
+  <p>Provide oracle <code>l_out</code> tensors for the same position and
+  token history. The ordered sweep matches oracle state slots even when loop
+  execution jumps between slot ranges. A layer-output difference localizes
+  observed drift. Attribution to an individual kernel requires replay on
+  identical operands.</p>
+  <p>On P3 the 128-token matched single-thread replay fell from 98.85 to
+  58.86 seconds. The optimized eight-thread median was 18.98 seconds
+  across two trials, compared with 12.61 seconds across three llama.cpp
+  trials. At 240 tokens, a single eight-thread trial took 43.13 seconds
+  in CKE and 20.47 seconds in llama.cpp. These timings exclude setup.
+  Both native builds agreed bitwise on all prefill and append logits and
+  288 state regions in the 128-token replay.</p>
+  <p>The fixed sixth-token comparison still differs from llama.cpp.
+  X-Ray observed the first layer-output drift at slot 0, with much
+  larger errors at slots 3 and 4. Identical-input V normalization was
+  exact using the experimental FP32 square and scaling sequence. That
+  sequence increased full-logit error at the sixth token in the complete
+  graph, so the current runtime keeps the existing V provider. See the
+  <a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/blob/main/docs/notes/artifacts/inkling2_mini_q8_xray_prefill.json">artifact-bound measurements</a>.</p>
+
+  <h3 id="inkling2-mini-32k">Inkling Q8_0 32K prefill and teacher-forced decode</h3>
+  <p>Run the generated prefill and append entries on the same 32,768 token
+  IDs and FP32 KV contract used by the oracle. Reserve room for the decode
+  tokens. The replay host loads caller-owned weights and token IDs and
+  invokes the generated C entry points. The oracle comparison reads a
+  little-endian FP32 file with the final prompt row followed by one complete
+  vocabulary row for each forced decode token.</p>
+  <pre class="mb-code"><code>python3 version/v8/scripts/replay_inkling2_text_loop_v8.py \
+  --config "$PUBLISHER_CONFIG" --gguf "$Q8_GGUF" --tokens-file "$PROMPT_IDS" \
+  --append-tokens-file "$FORCED_IDS" --oracle-logits "$ORACLE_LOGITS_F32" \
+  --context-capacity 32776 --chunk-tokens 16 --last-prefill-logit \
+  --threads 8 --xray-token-position 32767 --output "$REPLAY"</code></pre>
+  <p>The output separates native execution from numerical agreement. Any
+  differing logit makes the comparison fail even if both runtimes rank
+  the same token first. The generated regression seeds cache and history
+  before positions 32766 through 32769. It tests prefill, decode, and
+  capacity rejection at that boundary. A full 32K model run processes
+  the actual prefix to build that state.</p>
+  <p>The <a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/blob/main/docs/notes/artifacts/inkling2_mini_q8_32k_replay.json">pinned replay report</a>
+  records a real-weight, 26-token prefill followed by five forced decode
+  tokens. All six logit rows matched the earlier CKE runtime bit for bit.
+  Every row had a difference from llama.cpp. In an isolated attention
+  test with a 32K cached extent, four OpenMP workers produced the same
+  12,288 outputs as the prior serial implementation and lowered the
+  median time from 0.880 to 0.246 seconds. That timing covers the attention
+  call only.</p>
+  <p>For same-input non-flash attention replay, use the oracle query bytes
+  captured at the score matmul. Capturing the query at the final attention
+  output can read temporary memory reused by a later operation.</p>
+
+  <h3 id="inkling2-mini-64k-tiles">Inkling Q8_0 attention tiles and 64K boundary</h3>
+  <p>On AVX2 the checked attention provider computes scores for four
+  independent keys together and updates the context in the original key
+  order. Each dot keeps its FP64 channel order. The portable path and
+  online softmax policy remain available at every supported extent.
+  A 16-token generated-C chunk at position 32752 ran in 3.30 seconds
+  versus 3.76 seconds on the prior build. The seeded trials matched
+  every logit and all 288 state regions. The full 32K timing is measured
+  separately.</p>
+  <p>The generated regression covers both sides of the 32K and 64K
+  boundaries, including prefill, decode and capacity rejection. The real
+  configuration compiled at 65544 positions, with eight positions reserved
+  after a 65536-token prompt. Its non-evicting cache plan uses 65.1 GB of
+  arena capacity. The full 64K prompt remains a separate run.</p>
+  <p>The layer-zero PyTorch replay accepts
+  <code>--q8-activations --torch-q8-block-contract</code> for an independent
+  model of the packed dot reduction. Both the whole-layer comparison
+  and the PyTorch replay on the generated C FFN inputs and routes are
+  reported. The same-input expert output matched all 11520 elements
+  bitwise. The whole-layer comparison still failed. One changed Q8
+  activation code differed at the input to the expert projections.
+  See the <a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/blob/main/docs/notes/artifacts/inkling2_mini_q8_attention_tiles.json">pinned replay data</a>.</p>
+
+  <h3 id="inkling2-mini-sliding-kv">Inkling Q8_0 bounded sliding KV</h3>
+  <p>Add <code>--circular-sliding</code> to a resident replay to bound each
+  sliding layer's K and V to its visible window plus the extra positions
+  needed by a complete prefill chunk. The generated 64K plan allocates
+  1039 physical rows per sliding cache for a 1024-token window and
+  16-token chunks. The full-attention layers continue to store their whole
+  prefix. Relative bias, sink softmax and convolution use absolute token positions.</p>
+  <p>The 65544-position generated build requires 43.9 GB of arena space,
+  down from 65.1 GB with linear KV. A nonzero generated regression matched
+  logits, visible KV and convolution history bitwise through multiple wraps.
+  These measurements cover arena planning and the generated regression.
+  The full 64K model comparison and process memory measurement are pending.
+  See the <a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/blob/main/docs/notes/artifacts/inkling2_mini_q8_sliding_kv.json">build and fixture evidence</a>.</p>
+
+  <h3 id="inkling2-mini-parallel-decode">Inkling Q8_0 parallel decode experts</h3>
+  <p>The resident replay can reserve independent per-route scratch for a single
+  decode row with <code>--parallel-decode-experts</code> and at least two
+  threads. The provider projects experts independently, then applies the
+  original ordered FP32 weighted reduction. It uses serial execution when
+  the parallel workspace or OpenMP support is unavailable.</p>
+  <p>In three paired generated-C trials on P3 E-cores, three forced decode
+  tokens near position 32768 took 5.98 seconds with parallel
+  expert projections versus 9.09 seconds with serial expert projections.
+  All four measured logit rows and 288 mutable state regions matched bitwise.
+  The prefix state was seeded. This comparison uses the same model weights
+  across generated variants while another workload runs on the P-cores.
+  See the <a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/blob/main/docs/notes/artifacts/inkling2_mini_q8_parallel_decode.json">matched replay evidence</a>.</p>
+
+  <h3 id="inkling2-mini-prefill-chunk64">Inkling Q8_0 64-row prefill chunks</h3>
+  <p>The checked resident replay accepts up to 64 rows per prefill call.
+  Circuit authoring and the native routed provider use the limit declared
+  in <code>include/ckernel_transformer_rows_checked.h</code>.
+  Set <code>--chunk-tokens 64</code> with the explicit context capacity.
+  The planner accounts for each row's staging and the complete visible
+  sliding KV span. Smaller chunks remain available.</p>
+  <p>In three paired generated-C trials on P3 E-cores, processing 64 real
+  input tokens near position 32768 took 36.22 seconds in one call
+  versus 47.36 seconds in four 16-row calls. Both variants used seeded
+  state and circular sliding KV. The final prefill and three decode logits
+  matched bitwise, along with the logical cache and convolution state.
+  The 64-row plan used 1.20 GB more arena space than the 16-row plan at
+  the same context capacity.
+  See <a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/blob/main/docs/notes/artifacts/inkling2_mini_q8_prefill_chunk64.json">the individual trials</a>.</p>
+
+  <h3 id="inkling2-mini-continuation-replay">Inkling Q8_0 continuation replay</h3>
+  <p>The layer 2 Q input contains one changed Q8 scale on the eight-token
+  trace. Replacing the incoming layer 1 residual with the captured oracle
+  residual removes that scale difference. Identical-input layer 1 replay
+  also exposes separate differences in SiTU, weighted expert reduction,
+  and static convolution.</p>
+  <p>Use <code>--reference-moe</code> to select the reciprocal-scaled FP32
+  SiTU and router-slot reduction together. On captured layer 1 FFN inputs,
+  route IDs and routing weights, the composed provider matches the oracle's
+  raw expert and aggregate outputs exactly. <code>--fp32-static-conv</code>
+  selects ordered FP32 tap products, residual addition and scaling for
+  static convolutions. The layer 1 post-FFN convolution matches exactly on
+  captured input rows. Both switches are opt-in for numerical replay.
+  The complete short replay with both switches yields final-logit RMSE
+  0.194 at prefill and 0.278 after append, compared with 0.183 and 0.171
+  under the existing provider selection. The exact component results
+  expose remaining effects elsewhere in the composed trajectory. The
+  greedy short chat with both switches still diverges after five shared
+  tokens and reaches 128 output tokens without emitting an answer.</p>
+  <p><code>--last-prefill-logit</code> projects only the final hidden row
+  of a prefill chunk. On the identical 128-token SVG prefix the final
+  vocabulary row remains bitwise equal and the arena shrinks by 23 MiB.
+  The individual P3 timings were approximately 106 and 105 seconds.
+  Generated regression coverage also checks KV, all convolution histories,
+  and append after using the single-row export.</p>
+
   <h2 id="lowering">9. Run lowering and inspect the generated C</h2>
   <p>The verified entry point is the wrapper <code>version/v8/scripts/cks-v8-run</code> (it selects a Python, checks requirements, and drives <code>ck_run_v8.py</code>). The full pipeline, exactly as run for this page <span class="tag tag-executed">executed</span>:</p>
   <pre class="mb-code"><code>version/v8/scripts/cks-v8-run run \
@@ -1123,6 +1629,16 @@ python3 version/v8/scripts/export_llama_hidden_v8.py \
   </svg>
   </div>
   <div class="svg-expand-hint">click / tap the diagram to expand</div>
+
+  <h3 id="sigma-denoiser-replay">Sigma-3B BF16 denoiser replay</h3>
+  <p>The generated entry runs 26 denoiser layers and the output projection.
+     The pinned comparison supplies the hidden input and attention mask and checks
+     all 131,072 vocabulary scores per row against PyTorch. Guidance, noise updates
+     and token selection require separate end-to-end tests.</p>
+  <p>Set <code>CK_SIGMA_BF16_CHECKPOINT</code> to the pinned safetensors and
+     <code>CK_BLAS_LIBRARY</code> to an LP64 library exporting <code>dgemm_</code>.
+     Allow about 12 GiB of additional available RAM for the weight-backed replay.</p>
+  <pre><code>python -m pytest -q tests/test_v8_sigma_bf16_denoiser_stack.py</code></pre>
 
   <h2 id="xray-diagnosis">11. Diagnose divergence with X-Ray</h2>
   <p>When parity fails, do not poke at tolerances. Walk the decision tree &mdash; each branch names an owner, and the fix lands in that owner's artifact (see <a href="xray.html">the X-Ray page</a> for the full evidence model and capture-neutrality gates):</p>

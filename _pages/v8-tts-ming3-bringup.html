@@ -11,6 +11,26 @@ arithmetic and serving infrastructure, but does not certify this composition.</p
 <a href="https://github.com/inclusionAI/Ming-3.0-tts/blob/a39b80660bdc5a4394d5e1d41af6dbfd9c443a54/fm/CFM.py">fm/CFM.py</a>.</li>
 <li>Checkpoint metadata: <code>7247f4c94a5b2e987404ed28a5cfec41b1a4ca61</code>.
 The initial flow milestone did not load weights. A subsequent isolated publisher CPU reference loaded this checkpoint; that is not native CKE synthesis.</li></ul>
+<h2>Try a recorded voice with the dense 0.5B checkpoint</h2>
+<p>The native CLI accepts one 192-value FP32 speaker vector. The pinned publisher's CAM++ encoder extracts it from a recording. CKE projects that vector into the speaker slot before the backbone reads the text. The same voice can be reused for another sentence. Treat the vector as private voice data.</p>
+<p>From the pinned publisher checkout, with its Python environment active, prepare a personal reference file locally. Set <code>MING_CHECKPOINT</code> to the checkpoint directory.</p>
+<pre><code>import os
+from pathlib import Path
+import numpy as np
+import torchaudio
+from spkemb_extractor import SpkembExtractor
+
+audio, rate = torchaudio.load("reference.wav")
+mono = torchaudio.functional.resample(audio.mean(0, keepdim=True), rate, 16000)
+extract = SpkembExtractor(str(Path(os.environ["MING_CHECKPOINT"]) / "campplus.onnx"))
+vector = extract(mono).detach().cpu().float().numpy().reshape(192)
+np.save("speaker.npy", vector)</code></pre>
+<p>Then run the CKE CLI from its checkout.</p>
+<pre><code>python version/v8/tts/run_ming3_native_v8.py \
+  --checkpoint "$MING_CHECKPOINT" --publisher-root "$MING_PUBLISHER" \
+  --speaker-vector /path/to/speaker.npy --cached-backbone \
+  --text "The motor is spinning." --output ./ming-voice-trial</code></pre>
+<p>A CPU trial produced 59,976 samples at 44.1 kHz. A separate Whisper pass recovered the four requested words. Speaker resemblance and consistency over longer narration need listening tests. Reference-audio latent conditioning is a separate feature.</p>
 <h2>Flow update component</h2>
 <pre>difference = prediction - null_prediction
 velocity   = prediction + cfg * difference
@@ -263,6 +283,45 @@ python3 version/v8/tts/run_ming3_paragraph_v8.py \
   --checkpoint /path/to/checkpoint --publisher-root /path/to/pinned/publisher \
   --text-file /path/to/paragraph.txt --output /path/to/new-paragraph-run \
   --capacity 512 --max-frames 200 --threads 2</pre>
+<h2>Checked projection threading on P3, 21 November 2026</h2>
+<p>A sampled run of the pinned 144-token short phrase on the Intel Core i7-14700T
+attributed 10,127 of 20,066 process-wide user CPU samples to DiT projection compute
+and weight validation. The inverse transform accounted for 285 samples.
+The checked AVX2 projection now divides large output-channel ranges across up to four
+OpenMP workers. Each output keeps its original FP64 accumulation order. All
+weight tiles finish validation before any output is written.</p>
+<p>In one before-and-after pair with two configured threads, latent generation fell
+from 91.4 to 47.5 seconds and waveform decoding from 14.0 to 8.6 seconds.
+Compute time fell from 105.4 to 56.1 seconds, excluding bundle preparation.
+Both runs produced 32 latent frames and 112,896 samples with bit-identical latents,
+waveform and WAV. This measures one short phrase with the cached execution profile
+and seed 731. Longer utterance latency and first audible output remain unmeasured
+for this provider.</p>
+<pre>python3 -m pytest -q tests/test_v8_linear_rows_oracle.py tests/test_v8_ming3_dit.py \
+  tests/test_v8_ming3_runtime_audio_decoder.py tests/test_v8_kokoro_generated_projection.py \
+  tests/test_v8_qwen3_tts_runtime_prompt_first_block.py</pre>
+<h2>Long text and final WAV assembly</h2>
+<p>The paragraph runner writes each completed chunk to disk. It assembles the final
+WAV in bounded PCM blocks after all chunks have completed and checks each chunk's
+hash, format and valid sample count. The completed WAV appears via atomic rename.
+A failed chunk leaves its evidence available for inspection and the run report
+carries the failure or incomplete status.</p>
+<p>Kokoro's HTTP service checks the pinned text planner before creating a ready
+native worker. Deploy both the checked configuration and Python frontend
+dependencies from persistent storage. The native worker alone cannot verify the
+text frontend.</p>
+<p>A P3 trial used the full 116-word body of
+<a href="https://www.shivasnotes.com/blog/5818/Recovering-...">Recovering ...</a>.
+Ming generated all seven sentence spans and assembled 44.32 seconds of audio.
+Generation and decoding took 536.3 seconds, excluding 21.0 seconds of model
+preparation. The final PCM matched the exact ordered chunk concatenation.
+A separate Kokoro HTTP trial returned 25 chunks and 53.28 seconds of audio in
+126.8 seconds, with the first chunk received after 11.2 seconds. Its input
+removed three replacement glyphs from the page; the article's words were retained.
+These runs used different speech paths and are not a matched kernel benchmark.
+Whisper readback was non-exact for both paths. Human listening remains
+unmeasured. The tested Qwen TTS session rejected the 151-token article against
+its 16-token runtime prompt capacity.</p>
 <h2>Kernel and circuit work still required</h2>
 <table><thead><tr><th>Component</th><th>Reuse candidates</th><th>Remaining gate</th></tr></thead><tbody>
 <tr><td>Qwen2.5 backbone</td><td>Linear projections, RMSNorm, RoPE, attention, KV</td><td>Connected prompt/weight mapping and cached continuation tested; artifact-specific BF16 parity remains</td></tr>

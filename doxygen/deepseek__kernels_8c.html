@@ -148,8 +148,8 @@ Functions</h2></td></tr>
 <tr class="memitem:ac451c9ff5160ef54c93e6a366cf06818" id="r_ac451c9ff5160ef54c93e6a366cf06818"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ac451c9ff5160ef54c93e6a366cf06818">deepseek_dsa_topk_softmax_backward_f32</a> (const int *indices, const float *weights, const float *d_weights, float *d_scores, int tokens, int heads, int key_count, int top_k)</td></tr>
 <tr class="memitem:abea6ebffc16d57c91872f89feb0e7862" id="r_abea6ebffc16d57c91872f89feb0e7862"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#abea6ebffc16d57c91872f89feb0e7862">deepseek_dsa_topk_softmax_f32</a> (const float *scores, int *indices, float *weights, int tokens, int heads, int key_count, int top_k)</td></tr>
 <tr class="memitem:aec87431dad26024ce459e7f7b751631c" id="r_aec87431dad26024ce459e7f7b751631c"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#aec87431dad26024ce459e7f7b751631c">deepseek_hybrid_attention_f32</a> (const float *q, const float *k, const float *v, const int *indices, float *out, float *attn, int query_tokens, int key_tokens, int heads, int dim, int top_k, float scale, int mode)</td></tr>
-<tr class="memitem:ab9a59b0578508c087ab9e8b664fc3d9f" id="r_ab9a59b0578508c087ab9e8b664fc3d9f"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ab9a59b0578508c087ab9e8b664fc3d9f">deepseek_mhc_mix_backward_f32</a> (const float *d_out, const float *streams, const float *mix, float *d_streams, float *d_mix, int tokens, int n_streams, int dim)</td></tr>
-<tr class="memitem:a5cf609c6189f831fd35aebb7b18d14da" id="r_a5cf609c6189f831fd35aebb7b18d14da"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a5cf609c6189f831fd35aebb7b18d14da">deepseek_mhc_mix_f32</a> (const float *streams, const float *mix, float *out, int tokens, int n_streams, int dim)</td></tr>
+<tr class="memitem:ab9a59b0578508c087ab9e8b664fc3d9f" id="r_ab9a59b0578508c087ab9e8b664fc3d9f"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ab9a59b0578508c087ab9e8b664fc3d9f">deepseek_mhc_mix_backward_f32</a> (const float *d_out, const float *streams, const float *<a class="el" href="message__control__rows__checked_8c.html#a9d90a8dac746d6cf7cb4c3d3f6e36fa7">mix</a>, float *d_streams, float *d_mix, int tokens, int n_streams, int dim)</td></tr>
+<tr class="memitem:a5cf609c6189f831fd35aebb7b18d14da" id="r_a5cf609c6189f831fd35aebb7b18d14da"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a5cf609c6189f831fd35aebb7b18d14da">deepseek_mhc_mix_f32</a> (const float *streams, const float *<a class="el" href="message__control__rows__checked_8c.html#a9d90a8dac746d6cf7cb4c3d3f6e36fa7">mix</a>, float *out, int tokens, int n_streams, int dim)</td></tr>
 <tr class="memitem:a4e29c86ada4d525f0e3ffc4aeb03c3b7" id="r_a4e29c86ada4d525f0e3ffc4aeb03c3b7"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a4e29c86ada4d525f0e3ffc4aeb03c3b7">deepseek_mla_attention_bf16_phases_parallel_dispatch</a> (const float *q, const float *k, const float *v, float *output, int num_heads, int num_kv_heads, int num_tokens, int qk_head_dim, int v_head_dim, float scale, float *scores, size_t scores_bytes)</td></tr>
 <tr class="memitem:aafebbcbfb2a95c0a529aa509893d926d" id="r_aafebbcbfb2a95c0a529aa509893d926d"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#aafebbcbfb2a95c0a529aa509893d926d">deepseek_mla_attention_bf16_phases_workspace</a> (const float *q, const float *k, const float *v, float *output, int num_heads, int num_kv_heads, int num_tokens, int qk_head_dim, int v_head_dim, float scale, float *scores, size_t scores_bytes)</td></tr>
 <tr class="memitem:ad6270580122323c369efac2c8e3e7e70" id="r_ad6270580122323c369efac2c8e3e7e70"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ad6270580122323c369efac2c8e3e7e70">deepseek_mla_attention_decode_bf16_phases_workspace</a> (const float *q, const float *k_cache, const float *v_cache, float *output, int num_heads, int num_kv_heads, int cache_len, int qk_head_dim, int v_head_dim, int max_seq_len, int cache_stride, float scale, float *scores, size_t scores_bytes)</td></tr>
@@ -514,9 +514,9 @@ Functions</h2></td></tr>
 <div class="line"><span class="lineno">  170</span>                              key_count,</div>
 <div class="line"><span class="lineno">  171</span>                              top_k);</div>
 <div class="line"><span class="lineno">  172</span>}</div>
-<div class="ttc" id="adeepseek__kernels_8c_html_a4882861ab445aaffa944b4b8ce3c633d"><div class="ttname"><a href="#a4882861ab445aaffa944b4b8ce3c633d">topk_softmax_backward_f32</a></div><div class="ttdeci">void topk_softmax_backward_f32(const int *indices, const float *weights, const float *d_weights, float *d_scores, int num_tokens, int n_experts_or_keys, int k)</div><div class="ttdoc">Backward for hard top-k followed by softmax over selected values.</div><div class="ttdef"><b>Definition</b> <a href="topk__kernels_8c_source.html#l00408">topk_kernels.c:408</a></div></div>
+<div class="ttc" id="adeepseek__kernels_8c_html_a4882861ab445aaffa944b4b8ce3c633d"><div class="ttname"><a href="#a4882861ab445aaffa944b4b8ce3c633d">topk_softmax_backward_f32</a></div><div class="ttdeci">void topk_softmax_backward_f32(const int *indices, const float *weights, const float *d_weights, float *d_scores, int num_tokens, int n_experts_or_keys, int k)</div><div class="ttdoc">Backward for hard top-k followed by softmax over selected values.</div><div class="ttdef"><b>Definition</b> <a href="topk__kernels_8c_source.html#l00410">topk_kernels.c:410</a></div></div>
 </div><!-- fragment -->
-<p class="reference">References <a class="el" href="topk__kernels_8c_source.html#l00408">topk_softmax_backward_f32()</a>.</p>
+<p class="reference">References <a class="el" href="topk__kernels_8c_source.html#l00410">topk_softmax_backward_f32()</a>.</p>
 
 </div>
 </div>
@@ -768,7 +768,7 @@ Functions</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="deepseek__kernels_8c_source.html#l00053">53</a> of file <a class="el" href="deepseek__kernels_8c_source.html">deepseek_kernels.c</a>.</p>
 <div class="fragment"><div class="line"><span class="lineno">   61</span>{</div>
-<div class="line"><span class="lineno">   62</span>    <span class="keywordflow">if</span> (!d_out || !streams || !mix || !d_streams || !d_mix ||</div>
+<div class="line"><span class="lineno">   62</span>    <span class="keywordflow">if</span> (!d_out || !streams || !<a class="code hl_function" href="message__control__rows__checked_8c.html#a9d90a8dac746d6cf7cb4c3d3f6e36fa7">mix</a> || !d_streams || !d_mix ||</div>
 <div class="line"><span class="lineno">   63</span>        tokens &lt;= 0 || n_streams &lt;= 0 || dim &lt;= 0) <span class="keywordflow">return</span>;</div>
 <div class="line"><span class="lineno">   64</span> </div>
 <div class="line"><span class="lineno">   65</span>    <span class="keyword">const</span> <span class="keywordtype">size_t</span> stream_count = (size_t)tokens * (<span class="keywordtype">size_t</span>)n_streams * (size_t)dim;</div>
@@ -780,7 +780,7 @@ Functions</h2></td></tr>
 <div class="line"><span class="lineno">   71</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> os = 0; os &lt; n_streams; ++os) {</div>
 <div class="line"><span class="lineno">   72</span>            <span class="keywordflow">for</span> (<span class="keywordtype">int</span> is = 0; is &lt; n_streams; ++is) {</div>
 <div class="line"><span class="lineno">   73</span>                <span class="keywordtype">float</span> d_mix_acc = 0.0f;</div>
-<div class="line"><span class="lineno">   74</span>                <span class="keyword">const</span> <span class="keywordtype">float</span> m = mix[<a class="code hl_function" href="#a055589c2ea54c496e37add9646657afc">ds_mix_idx</a>(t, os, is, n_streams)];</div>
+<div class="line"><span class="lineno">   74</span>                <span class="keyword">const</span> <span class="keywordtype">float</span> m = <a class="code hl_function" href="message__control__rows__checked_8c.html#a9d90a8dac746d6cf7cb4c3d3f6e36fa7">mix</a>[<a class="code hl_function" href="#a055589c2ea54c496e37add9646657afc">ds_mix_idx</a>(t, os, is, n_streams)];</div>
 <div class="line"><span class="lineno">   75</span>                <span class="keywordflow">for</span> (<span class="keywordtype">int</span> d = 0; d &lt; dim; ++d) {</div>
 <div class="line"><span class="lineno">   76</span>                    <span class="keyword">const</span> <span class="keywordtype">float</span> go = d_out[<a class="code hl_function" href="#a42069d74cf9da1df1e67b745cc299e11">ds_mhc_idx</a>(t, os, d, n_streams, dim)];</div>
 <div class="line"><span class="lineno">   77</span>                    d_streams[<a class="code hl_function" href="#a42069d74cf9da1df1e67b745cc299e11">ds_mhc_idx</a>(t, is, d, n_streams, dim)] += m * go;</div>
@@ -793,8 +793,9 @@ Functions</h2></td></tr>
 <div class="line"><span class="lineno">   84</span>}</div>
 <div class="ttc" id="adeepseek__kernels_8c_html_a055589c2ea54c496e37add9646657afc"><div class="ttname"><a href="#a055589c2ea54c496e37add9646657afc">ds_mix_idx</a></div><div class="ttdeci">static size_t ds_mix_idx(int t, int out_s, int in_s, int n_streams)</div><div class="ttdef"><b>Definition</b> <a href="deepseek__kernels_8c_source.html#l00025">deepseek_kernels.c:25</a></div></div>
 <div class="ttc" id="adeepseek__kernels_8c_html_a42069d74cf9da1df1e67b745cc299e11"><div class="ttname"><a href="#a42069d74cf9da1df1e67b745cc299e11">ds_mhc_idx</a></div><div class="ttdeci">static size_t ds_mhc_idx(int t, int s, int d, int n_streams, int dim)</div><div class="ttdef"><b>Definition</b> <a href="deepseek__kernels_8c_source.html#l00020">deepseek_kernels.c:20</a></div></div>
+<div class="ttc" id="amessage__control__rows__checked_8c_html_a9d90a8dac746d6cf7cb4c3d3f6e36fa7"><div class="ttname"><a href="message__control__rows__checked_8c.html#a9d90a8dac746d6cf7cb4c3d3f6e36fa7">mix</a></div><div class="ttdeci">static double mix(float input, float message, float forget, float gain)</div><div class="ttdef"><b>Definition</b> <a href="message__control__rows__checked_8c_source.html#l00038">message_control_rows_checked.c:38</a></div></div>
 </div><!-- fragment -->
-<p class="reference">References <a class="el" href="deepseek__kernels_8c_source.html#l00020">ds_mhc_idx()</a>, and <a class="el" href="deepseek__kernels_8c_source.html#l00025">ds_mix_idx()</a>.</p>
+<p class="reference">References <a class="el" href="deepseek__kernels_8c_source.html#l00020">ds_mhc_idx()</a>, <a class="el" href="deepseek__kernels_8c_source.html#l00025">ds_mix_idx()</a>, and <a class="el" href="message__control__rows__checked_8c_source.html#l00038">mix()</a>.</p>
 
 </div>
 </div>
@@ -839,14 +840,14 @@ Functions</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="deepseek__kernels_8c_source.html#l00030">30</a> of file <a class="el" href="deepseek__kernels_8c_source.html">deepseek_kernels.c</a>.</p>
 <div class="fragment"><div class="line"><span class="lineno">   36</span>{</div>
-<div class="line"><span class="lineno">   37</span>    <span class="keywordflow">if</span> (!streams || !mix || !out || tokens &lt;= 0 || n_streams &lt;= 0 || dim &lt;= 0) <span class="keywordflow">return</span>;</div>
+<div class="line"><span class="lineno">   37</span>    <span class="keywordflow">if</span> (!streams || !<a class="code hl_function" href="message__control__rows__checked_8c.html#a9d90a8dac746d6cf7cb4c3d3f6e36fa7">mix</a> || !out || tokens &lt;= 0 || n_streams &lt;= 0 || dim &lt;= 0) <span class="keywordflow">return</span>;</div>
 <div class="line"><span class="lineno">   38</span> </div>
 <div class="line"><span class="lineno">   39</span>    <span class="keywordflow">for</span> (<span class="keywordtype">int</span> t = 0; t &lt; tokens; ++t) {</div>
 <div class="line"><span class="lineno">   40</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> os = 0; os &lt; n_streams; ++os) {</div>
 <div class="line"><span class="lineno">   41</span>            <span class="keywordflow">for</span> (<span class="keywordtype">int</span> d = 0; d &lt; dim; ++d) {</div>
 <div class="line"><span class="lineno">   42</span>                <span class="keywordtype">float</span> acc = 0.0f;</div>
 <div class="line"><span class="lineno">   43</span>                <span class="keywordflow">for</span> (<span class="keywordtype">int</span> is = 0; is &lt; n_streams; ++is) {</div>
-<div class="line"><span class="lineno">   44</span>                    acc += mix[<a class="code hl_function" href="#a055589c2ea54c496e37add9646657afc">ds_mix_idx</a>(t, os, is, n_streams)] *</div>
+<div class="line"><span class="lineno">   44</span>                    acc += <a class="code hl_function" href="message__control__rows__checked_8c.html#a9d90a8dac746d6cf7cb4c3d3f6e36fa7">mix</a>[<a class="code hl_function" href="#a055589c2ea54c496e37add9646657afc">ds_mix_idx</a>(t, os, is, n_streams)] *</div>
 <div class="line"><span class="lineno">   45</span>                           streams[<a class="code hl_function" href="#a42069d74cf9da1df1e67b745cc299e11">ds_mhc_idx</a>(t, is, d, n_streams, dim)];</div>
 <div class="line"><span class="lineno">   46</span>                }</div>
 <div class="line"><span class="lineno">   47</span>                out[<a class="code hl_function" href="#a42069d74cf9da1df1e67b745cc299e11">ds_mhc_idx</a>(t, os, d, n_streams, dim)] = acc;</div>
@@ -855,7 +856,7 @@ Functions</h2></td></tr>
 <div class="line"><span class="lineno">   50</span>    }</div>
 <div class="line"><span class="lineno">   51</span>}</div>
 </div><!-- fragment -->
-<p class="reference">References <a class="el" href="deepseek__kernels_8c_source.html#l00020">ds_mhc_idx()</a>, and <a class="el" href="deepseek__kernels_8c_source.html#l00025">ds_mix_idx()</a>.</p>
+<p class="reference">References <a class="el" href="deepseek__kernels_8c_source.html#l00020">ds_mhc_idx()</a>, <a class="el" href="deepseek__kernels_8c_source.html#l00025">ds_mix_idx()</a>, and <a class="el" href="message__control__rows__checked_8c_source.html#l00038">mix()</a>.</p>
 
 </div>
 </div>
@@ -3534,40 +3535,40 @@ Functions</h2></td></tr>
 <p>Matches PyTorch behavior for: values, indices = torch.topk(scores, k, dim=-1) weights = torch.softmax(values, dim=-1)</p>
 <p>The hard selected indices are treated as fixed for this backward pass. Gradients are scattered only to selected scores; unselected scores are zero. </p>
 
-<p class="definition">Definition at line <a class="el" href="topk__kernels_8c_source.html#l00408">408</a> of file <a class="el" href="topk__kernels_8c_source.html">topk_kernels.c</a>.</p>
-<div class="fragment"><div class="line"><span class="lineno">  415</span>{</div>
-<div class="line"><span class="lineno">  416</span>    <span class="keywordflow">if</span> (!indices || !weights || !d_weights || !d_scores ||</div>
-<div class="line"><span class="lineno">  417</span>        num_tokens &lt;= 0 || n_experts_or_keys &lt;= 0 || k &lt;= 0) {</div>
-<div class="line"><span class="lineno">  418</span>        <span class="keywordflow">return</span>;</div>
-<div class="line"><span class="lineno">  419</span>    }</div>
-<div class="line"><span class="lineno">  420</span> </div>
-<div class="line"><span class="lineno">  421</span>    <span class="keyword">const</span> <span class="keywordtype">size_t</span> total = (size_t)num_tokens * (<span class="keywordtype">size_t</span>)n_experts_or_keys;</div>
-<div class="line"><span class="lineno">  422</span>    <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> i = 0; i &lt; total; ++i) {</div>
-<div class="line"><span class="lineno">  423</span>        d_scores[i] = 0.0f;</div>
-<div class="line"><span class="lineno">  424</span>    }</div>
-<div class="line"><span class="lineno">  425</span> </div>
-<div class="line"><span class="lineno">  426</span>    <span class="keywordflow">for</span> (<span class="keywordtype">int</span> t = 0; t &lt; num_tokens; ++t) {</div>
-<div class="line"><span class="lineno">  427</span>        <span class="keyword">const</span> <span class="keywordtype">int</span> *row_indices = indices + (size_t)t * (<span class="keywordtype">size_t</span>)k;</div>
-<div class="line"><span class="lineno">  428</span>        <span class="keyword">const</span> <span class="keywordtype">float</span> *row_weights = weights + (size_t)t * (<span class="keywordtype">size_t</span>)k;</div>
-<div class="line"><span class="lineno">  429</span>        <span class="keyword">const</span> <span class="keywordtype">float</span> *row_d_weights = d_weights + (size_t)t * (<span class="keywordtype">size_t</span>)k;</div>
-<div class="line"><span class="lineno">  430</span>        <span class="keywordtype">float</span> *row_d_scores = d_scores + (size_t)t * (<span class="keywordtype">size_t</span>)n_experts_or_keys;</div>
-<div class="line"><span class="lineno">  431</span> </div>
-<div class="line"><span class="lineno">  432</span>        <span class="keywordtype">float</span> <a class="code hl_function" href="attention__cross__token__major__checked_8c.html#a8645ebc14bd224f816fa123347a1e15e">dot</a> = 0.0f;</div>
-<div class="line"><span class="lineno">  433</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> i = 0; i &lt; k; ++i) {</div>
-<div class="line"><span class="lineno">  434</span>            <span class="keyword">const</span> <span class="keywordtype">int</span> idx = row_indices[i];</div>
-<div class="line"><span class="lineno">  435</span>            <span class="keywordflow">if</span> (idx &gt;= 0 &amp;&amp; idx &lt; n_experts_or_keys) {</div>
-<div class="line"><span class="lineno">  436</span>                <a class="code hl_function" href="attention__cross__token__major__checked_8c.html#a8645ebc14bd224f816fa123347a1e15e">dot</a> += row_weights[i] * row_d_weights[i];</div>
-<div class="line"><span class="lineno">  437</span>            }</div>
-<div class="line"><span class="lineno">  438</span>        }</div>
-<div class="line"><span class="lineno">  439</span> </div>
-<div class="line"><span class="lineno">  440</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> i = 0; i &lt; k; ++i) {</div>
-<div class="line"><span class="lineno">  441</span>            <span class="keyword">const</span> <span class="keywordtype">int</span> idx = row_indices[i];</div>
-<div class="line"><span class="lineno">  442</span>            <span class="keywordflow">if</span> (idx &gt;= 0 &amp;&amp; idx &lt; n_experts_or_keys) {</div>
-<div class="line"><span class="lineno">  443</span>                row_d_scores[idx] += row_weights[i] * (row_d_weights[i] - <a class="code hl_function" href="attention__cross__token__major__checked_8c.html#a8645ebc14bd224f816fa123347a1e15e">dot</a>);</div>
-<div class="line"><span class="lineno">  444</span>            }</div>
-<div class="line"><span class="lineno">  445</span>        }</div>
-<div class="line"><span class="lineno">  446</span>    }</div>
-<div class="line"><span class="lineno">  447</span>}</div>
+<p class="definition">Definition at line <a class="el" href="topk__kernels_8c_source.html#l00410">410</a> of file <a class="el" href="topk__kernels_8c_source.html">topk_kernels.c</a>.</p>
+<div class="fragment"><div class="line"><span class="lineno">  417</span>{</div>
+<div class="line"><span class="lineno">  418</span>    <span class="keywordflow">if</span> (!indices || !weights || !d_weights || !d_scores ||</div>
+<div class="line"><span class="lineno">  419</span>        num_tokens &lt;= 0 || n_experts_or_keys &lt;= 0 || k &lt;= 0) {</div>
+<div class="line"><span class="lineno">  420</span>        <span class="keywordflow">return</span>;</div>
+<div class="line"><span class="lineno">  421</span>    }</div>
+<div class="line"><span class="lineno">  422</span> </div>
+<div class="line"><span class="lineno">  423</span>    <span class="keyword">const</span> <span class="keywordtype">size_t</span> total = (size_t)num_tokens * (<span class="keywordtype">size_t</span>)n_experts_or_keys;</div>
+<div class="line"><span class="lineno">  424</span>    <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> i = 0; i &lt; total; ++i) {</div>
+<div class="line"><span class="lineno">  425</span>        d_scores[i] = 0.0f;</div>
+<div class="line"><span class="lineno">  426</span>    }</div>
+<div class="line"><span class="lineno">  427</span> </div>
+<div class="line"><span class="lineno">  428</span>    <span class="keywordflow">for</span> (<span class="keywordtype">int</span> t = 0; t &lt; num_tokens; ++t) {</div>
+<div class="line"><span class="lineno">  429</span>        <span class="keyword">const</span> <span class="keywordtype">int</span> *row_indices = indices + (size_t)t * (<span class="keywordtype">size_t</span>)k;</div>
+<div class="line"><span class="lineno">  430</span>        <span class="keyword">const</span> <span class="keywordtype">float</span> *row_weights = weights + (size_t)t * (<span class="keywordtype">size_t</span>)k;</div>
+<div class="line"><span class="lineno">  431</span>        <span class="keyword">const</span> <span class="keywordtype">float</span> *row_d_weights = d_weights + (size_t)t * (<span class="keywordtype">size_t</span>)k;</div>
+<div class="line"><span class="lineno">  432</span>        <span class="keywordtype">float</span> *row_d_scores = d_scores + (size_t)t * (<span class="keywordtype">size_t</span>)n_experts_or_keys;</div>
+<div class="line"><span class="lineno">  433</span> </div>
+<div class="line"><span class="lineno">  434</span>        <span class="keywordtype">float</span> <a class="code hl_function" href="attention__cross__token__major__checked_8c.html#a8645ebc14bd224f816fa123347a1e15e">dot</a> = 0.0f;</div>
+<div class="line"><span class="lineno">  435</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> i = 0; i &lt; k; ++i) {</div>
+<div class="line"><span class="lineno">  436</span>            <span class="keyword">const</span> <span class="keywordtype">int</span> idx = row_indices[i];</div>
+<div class="line"><span class="lineno">  437</span>            <span class="keywordflow">if</span> (idx &gt;= 0 &amp;&amp; idx &lt; n_experts_or_keys) {</div>
+<div class="line"><span class="lineno">  438</span>                <a class="code hl_function" href="attention__cross__token__major__checked_8c.html#a8645ebc14bd224f816fa123347a1e15e">dot</a> += row_weights[i] * row_d_weights[i];</div>
+<div class="line"><span class="lineno">  439</span>            }</div>
+<div class="line"><span class="lineno">  440</span>        }</div>
+<div class="line"><span class="lineno">  441</span> </div>
+<div class="line"><span class="lineno">  442</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> i = 0; i &lt; k; ++i) {</div>
+<div class="line"><span class="lineno">  443</span>            <span class="keyword">const</span> <span class="keywordtype">int</span> idx = row_indices[i];</div>
+<div class="line"><span class="lineno">  444</span>            <span class="keywordflow">if</span> (idx &gt;= 0 &amp;&amp; idx &lt; n_experts_or_keys) {</div>
+<div class="line"><span class="lineno">  445</span>                row_d_scores[idx] += row_weights[i] * (row_d_weights[i] - <a class="code hl_function" href="attention__cross__token__major__checked_8c.html#a8645ebc14bd224f816fa123347a1e15e">dot</a>);</div>
+<div class="line"><span class="lineno">  446</span>            }</div>
+<div class="line"><span class="lineno">  447</span>        }</div>
+<div class="line"><span class="lineno">  448</span>    }</div>
+<div class="line"><span class="lineno">  449</span>}</div>
 </div><!-- fragment -->
 <p class="reference">Referenced by <a class="el" href="deepseek__kernels_8c_source.html#l00153">deepseek_dsa_topk_softmax_backward_f32()</a>.</p>
 

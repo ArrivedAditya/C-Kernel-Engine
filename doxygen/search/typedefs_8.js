@@ -1,4 +1,4 @@
 var searchData=
 [
-  ['void_5ffunc_5ft_0',['void_func_t',['../ck__cli__v5_8c.html#a2425c2b3462f867da9fd2ab76d9d47b1',1,'void_func_t:&#160;ck_cli_v5.c'],['../ck__cli__v6_8c.html#a2425c2b3462f867da9fd2ab76d9d47b1',1,'void_func_t:&#160;ck_cli_v6.c']]]
+  ['rmsnorm_5fforward_5ffn_0',['rmsnorm_forward_fn',['../rmsnorm__bf16__checked_8c.html#a6500c588a9aa68f448efe40463f271c3',1,'rmsnorm_bf16_checked.c']]]
 ];
